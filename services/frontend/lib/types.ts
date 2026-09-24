@@ -1,0 +1,126 @@
+export type User = {
+  id: string
+  email: string
+  displayName: string
+  isAdmin: boolean
+  createdAt: string
+}
+
+export type Project = {
+  id: string
+  name: string
+  description: string
+  role: "owner" | "deployer" | "viewer"
+  createdAt: string
+}
+
+export type Credential = {
+  id: string
+  projectId?: string
+  name: string
+  kind: "git-ssh" | "git-https" | "kubernetes-token" | "kubeconfig"
+  expiresAt?: string
+  createdAt: string
+}
+
+export type Cluster = {
+  id: string
+  name: string
+  apiServer: string
+  insecureSkipVerify: boolean
+  defaultCredentialId?: string
+  clusterScopeCredentialId?: string
+  createdAt: string
+}
+
+export type NamespaceBinding = { namespace: string; credentialId?: string }
+
+export type GitSource = {
+  id: string
+  projectId: string
+  name: string
+  repositoryUrl: string
+  credentialId?: string
+  createdAt: string
+}
+
+export type Application = {
+  id: string
+  projectId: string
+  name: string
+  sourceId: string
+  revision: string
+  manifestPath: string
+  renderer: "yaml" | "kustomize" | "helm"
+  clusterId: string
+  namespaces: NamespaceBinding[]
+  syncPolicy: "manual" | "auto-safe"
+  pollSeconds: number
+  lastCheckedAt?: string
+  lastSyncedRevision?: string
+  health: string
+  createdAt: string
+}
+
+export type Identity = {
+  clusterId?: string
+  apiVersion: string
+  kind: string
+  namespace: string
+  name: string
+  clusterScoped?: boolean
+}
+
+export type Change = {
+  kind: "create" | "update" | "delete"
+  identity: Identity
+  liveUid?: string
+  liveResourceVersion?: string
+  desiredFingerprint?: string
+  liveFingerprint?: string
+  before?: unknown
+  after?: unknown
+}
+
+export type Plan = {
+  applicationId: string
+  revision: string
+  bindings: { clusterId: string; namespace: string; credentialRef: string; clusterScope?: boolean }[]
+  changes: Change[]
+  requiresApproval: boolean
+  digest: string
+}
+
+export type PlanRecord = {
+  id: string
+  plan: Plan
+  createdBy: string
+  createdAt: string
+  expiresAt: string
+  status: string
+}
+
+export type ManagedResource = { identity: Identity; uid: string; resourceVersion: string }
+
+export type Operation = {
+  id: string
+  applicationId: string
+  planId?: string
+  actorId?: string
+  status: string
+  message: string
+  startedAt: string
+  finishedAt?: string
+}
+
+export type OIDCProvider = {
+  id: string
+  name: string
+  issuer?: string
+  clientId?: string
+  redirectUrl?: string
+  groupsClaim?: string
+  enabled?: boolean
+}
+
+export type ListResponse<T> = { items: T[] }

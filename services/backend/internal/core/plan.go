@@ -1,0 +1,247 @@
+package core
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"reflect"
+	"slices"
+	"time"
+)
+
+// Binding ties one namespace to one credential reference. Secrets stay outside plans.
+type Binding struct {
+	ClusterID     string `json:"clusterId"`
+	Namespace     string `json:"namespace"`
+	CredentialRef string `json:"credentialRef"`
+	ClusterScope  bool   `json:"clusterScope,omitempty"`
+}
+
+type Identity struct {
+	ClusterID     string `json:"clusterId,omitempty"`
+	APIVersion    string `json:"apiVersion"`
+	Kind          string `json:"kind"`
+	Namespace     string `json:"namespace"`
+	Name          string `json:"name"`
+	ClusterScoped bool   `json:"clusterScoped,omitempty"`
+}
+
+func (id Identity) key() string {
+	return id.ClusterID + "\x00" + id.APIVersion + "\x00" + id.Kind + "\x00" + id.Namespace + "\x00" + id.Name
+}
+
+// Key returns a stable, collision-safe key for this Kubernetes identity.
+func (id Identity) Key() string { return id.key() }
+
+func (id Identity) valid() bool {
+	if id.APIVersion == "" || id.Kind == "" || id.Name == "" {
+		return false
+	}
+	return id.ClusterScoped == (id.Namespace == "")
+}
+
+// Resource is a normalized manifest or live object. Fingerprint is a canonical
+// hash of the fields JustCD manages; UID is populated only for live objects.
+type Resource struct {
+	Identity        Identity        `json:"identity"`
+	Fingerprint     string          `json:"fingerprint"`
+	UID             string          `json:"uid,omitempty"`
+	ResourceVersion string          `json:"resourceVersion,omitempty"`
+	Owner           string          `json:"owner,omitempty"`
+	Manifest        json.RawMessage `json:"manifest,omitempty"`
+}
+
+type ChangeKind string
+
+const (
+	Create ChangeKind = "create"
+	Update ChangeKind = "update"
+	Delete ChangeKind = "delete"
+)
+
+type Change struct {
+	Kind                ChangeKind      `json:"kind"`
+	Identity            Identity        `json:"identity"`
+	LiveUID             string          `json:"liveUid,omitempty"`
+	LiveResourceVersion string          `json:"liveResourceVersion,omitempty"`
+	DesiredFingerprint  string          `json:"desiredFingerprint,omitempty"`
+	LiveFingerprint     string          `json:"liveFingerprint,omitempty"`
+	Before              json.RawMessage `json:"before,omitempty"`
+	After               json.RawMessage `json:"after,omitempty"`
+}
+
+type Plan struct {
+	ApplicationID    string    `json:"applicationId"`
+	Revision         string    `json:"revision"`
+	Bindings         []Binding `json:"bindings"`
+	Changes          []Change  `json:"changes"`
+	RequiresApproval bool      `json:"requiresApproval"`
+	Digest           string    `json:"digest"`
+}
+
+// BuildPlan is pure: callers must provide a complete, authorized live snapshot
+// for all managed resource kinds. An incomplete snapshot must fail before this call.
+func BuildPlan(applicationID, revision string, bindings []Binding, desired, live []Resource) (Plan, error) {
+	if applicationID == "" || revision == "" || len(bindings) == 0 {
+		return Plan{}, errors.New("application, revision, and bindings are required")
+	}
+	allowed := make(map[string]struct{}, len(bindings))
+	clusters := make(map[string]struct{}, len(bindings))
+	for _, binding := range bindings {
+		if binding.ClusterID == "" || binding.CredentialRef == "" || (binding.ClusterScope && binding.Namespace != "") || (!binding.ClusterScope && binding.Namespace == "") {
+			return Plan{}, errors.New("namespace bindings require cluster, namespace, and credential reference; cluster-scope bindings require cluster and credential reference")
+		}
+		key := binding.ClusterID + "\x00" + binding.Namespace
+		if binding.ClusterScope {
+			key = binding.ClusterID + "\x00*"
+		}
+		if _, exists := allowed[key]; exists {
+			return Plan{}, fmt.Errorf("duplicate binding %q", key)
+		}
+		allowed[key] = struct{}{}
+		clusters[binding.ClusterID] = struct{}{}
+	}
+	defaultCluster := ""
+	if len(clusters) == 1 {
+		for clusterID := range clusters {
+			defaultCluster = clusterID
+		}
+	}
+	index := make(map[string]Resource, len(live))
+	for _, resource := range live {
+		identity := resource.Identity
+		if identity.ClusterID == "" {
+			identity.ClusterID = defaultCluster
+		}
+		if !identity.valid() || resource.Fingerprint == "" || resource.UID == "" {
+			return Plan{}, errors.New("live resource requires identity, fingerprint, and UID")
+		}
+		resource.Identity = identity
+		if !resourceInBindings(identity, allowed) {
+			return Plan{}, fmt.Errorf("live resource outside bound target %q", identity.Namespace)
+		}
+		key := identity.key()
+		if _, exists := index[key]; exists {
+			return Plan{}, fmt.Errorf("duplicate live resource %q", key)
+		}
+		index[key] = resource
+	}
+	seen := make(map[string]struct{}, len(desired))
+	changes := make([]Change, 0)
+	for _, resource := range desired {
+		identity := resource.Identity
+		if identity.ClusterID == "" {
+			identity.ClusterID = defaultCluster
+		}
+		if !identity.valid() || resource.Fingerprint == "" {
+			return Plan{}, errors.New("desired resource requires identity and fingerprint")
+		}
+		resource.Identity = identity
+		if !resourceInBindings(identity, allowed) {
+			return Plan{}, fmt.Errorf("desired resource outside bound target %q", identity.Namespace)
+		}
+		key := identity.key()
+		if _, exists := seen[key]; exists {
+			return Plan{}, fmt.Errorf("duplicate desired resource %q", key)
+		}
+		seen[key] = struct{}{}
+		current, exists := index[key]
+		if !exists {
+			changes = append(changes, Change{Kind: Create, Identity: identity, DesiredFingerprint: resource.Fingerprint, After: resource.Manifest})
+		} else if current.Fingerprint != resource.Fingerprint {
+			changes = append(changes, Change{Kind: Update, Identity: identity, LiveUID: current.UID, LiveResourceVersion: current.ResourceVersion, DesiredFingerprint: resource.Fingerprint, LiveFingerprint: current.Fingerprint, Before: current.Manifest, After: resource.Manifest})
+		}
+	}
+	for key, resource := range index {
+		if resource.Owner != applicationID {
+			continue
+		}
+		if _, exists := seen[key]; !exists {
+			changes = append(changes, Change{Kind: Delete, Identity: resource.Identity, LiveUID: resource.UID, LiveResourceVersion: resource.ResourceVersion, LiveFingerprint: resource.Fingerprint, Before: resource.Manifest})
+		}
+	}
+	slices.SortFunc(changes, func(a, b Change) int {
+		if a.Identity.key() < b.Identity.key() {
+			return -1
+		}
+		if a.Identity.key() > b.Identity.key() {
+			return 1
+		}
+		return 0
+	})
+	bindings = slices.Clone(bindings)
+	slices.SortFunc(bindings, func(a, b Binding) int {
+		ak := a.ClusterID + "\x00" + a.Namespace + "\x00" + fmt.Sprint(a.ClusterScope)
+		bk := b.ClusterID + "\x00" + b.Namespace + "\x00" + fmt.Sprint(b.ClusterScope)
+		if ak < bk {
+			return -1
+		}
+		if ak > bk {
+			return 1
+		}
+		return 0
+	})
+	requiresApproval := false
+	for _, change := range changes {
+		if change.Kind == Delete || change.Identity.ClusterScoped {
+			requiresApproval = true
+			break
+		}
+	}
+	plan := Plan{ApplicationID: applicationID, Revision: revision, Bindings: bindings, Changes: changes, RequiresApproval: requiresApproval}
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		return Plan{}, err
+	}
+	sum := sha256.Sum256(encoded)
+	plan.Digest = hex.EncodeToString(sum[:])
+	return plan, nil
+}
+
+func resourceInBindings(identity Identity, allowed map[string]struct{}) bool {
+	key := identity.ClusterID + "\x00" + identity.Namespace
+	if identity.ClusterScoped {
+		key = identity.ClusterID + "\x00*"
+	}
+	_, ok := allowed[key]
+	return ok
+}
+
+type DeletionApproval struct {
+	PlanDigest string    `json:"planDigest"`
+	ActorID    string    `json:"actorId"`
+	Deletes    []Change  `json:"deletes"`
+	Privileged []Change  `json:"privileged,omitempty"`
+	ExpiresAt  time.Time `json:"expiresAt"`
+}
+
+// AuthorizeApply rejects any deletion unless the exact plan's deletion set was
+// approved. The executor must also verify plan freshness, ownership and UID
+// against Kubernetes immediately before mutating a resource.
+func AuthorizeApply(plan Plan, approval *DeletionApproval, now time.Time) error {
+	var deletes []Change
+	var privileged []Change
+	for _, change := range plan.Changes {
+		if change.Kind == Delete {
+			deletes = append(deletes, change)
+		}
+		if change.Identity.ClusterScoped {
+			privileged = append(privileged, change)
+		}
+	}
+	if len(deletes) == 0 && len(privileged) == 0 {
+		return nil
+	}
+	if approval == nil || approval.ActorID == "" || approval.PlanDigest != plan.Digest || !now.Before(approval.ExpiresAt) {
+		return errors.New("deletion requires a current approval for this plan")
+	}
+	if !reflect.DeepEqual(deletes, approval.Deletes) {
+		return errors.New("approval does not match the exact deletion set")
+	}
+	if !reflect.DeepEqual(privileged, approval.Privileged) {
+		return errors.New("approval does not match the exact cluster-scoped change set")
+	}
+	return nil
+}

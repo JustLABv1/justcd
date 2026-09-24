@@ -14,6 +14,9 @@ import { Input } from "@/components/ui/input"
 import { ResourceMap } from "@/components/resource-map"
 import { Textarea } from "@/components/ui/textarea"
 import { EmptyState, FormField, PageHeading, Panel, StatusBadge } from "@/components/ui-kit"
+import { ErrorDetailsButton } from "@/components/error-details"
+import { ErrorNotice } from "@/components/workspace-ui"
+import { useToast } from "@/components/toast-provider"
 import { APIError, api, apiDelete, apiPost, errorMessage } from "@/lib/api"
 import { diffJsonLines } from "@/lib/line-diff"
 import type { Application, Change, FieldExclusion, Identity, IgnoreRule, IgnoreSelector, ListResponse, ManagedResource, Operation, PlanRecord, Project, ResourceTopology } from "@/lib/types"
@@ -39,11 +42,12 @@ function safeIgnorePath(pointer: string) {
 export default function ApplicationDetailPage() {
   const { applicationID } = useParams<{ applicationID: string }>()
   const router = useRouter()
+  const toast = useToast()
   const [application, setApplication] = useState<Application | null>(null)
   const [kustomizeHelmDraft, setKustomizeHelmDraft] = useState(false)
   const [namespaceOverrideDraft, setNamespaceOverrideDraft] = useState(false)
   const [kustomization, setKustomization] = useState<{ namespace: string; commit: string } | null>(null)
-  const [kustomizationError, setKustomizationError] = useState("")
+  const [kustomizationError, setKustomizationError] = useState<unknown | null>(null)
   const [project, setProject] = useState<Project | null>(null)
   const [plans, setPlans] = useState<PlanRecord[]>([])
   const [activePlan, setActivePlan] = useState<PlanRecord | null>(null)
@@ -61,7 +65,6 @@ export default function ApplicationDetailPage() {
   const [ignoreLabelKey, setIgnoreLabelKey] = useState("")
   const [ignoreLabelValue, setIgnoreLabelValue] = useState("")
   const [ignoreReason, setIgnoreReason] = useState("")
-  const [ignoreFeedback, setIgnoreFeedback] = useState<{ tone: "success" | "error"; text: string } | null>(null)
   const [deletePolicy, setDeletePolicy] = useState("keep")
   const [selectionDraft, setSelectionDraft] = useState<{ planId: string; resources: Identity[]; fields: FieldExclusion[] } | null>(null)
   const [ignoreReasons, setIgnoreReasons] = useState<Record<string, string>>({})
@@ -69,8 +72,7 @@ export default function ApplicationDetailPage() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [pendingAction, setPendingAction] = useState("")
-  const [notice, setNotice] = useState("")
-  const [error, setError] = useState("")
+  const [error, setError] = useState<unknown | null>(null)
   const [activeTab, setActiveTab] = useState("overview")
 
   const selectionDraftForPlan = activePlan && selectionDraft?.planId === activePlan.id ? selectionDraft : null
@@ -119,7 +121,7 @@ export default function ApplicationDetailPage() {
       api<ResourceTopology>(`/api/v1/applications/${encodeURIComponent(applicationID)}/topology`).catch(() => null),
       api<ListResponse<IgnoreRule>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ignore-rules`),
       api<ListResponse<IgnoreSelector>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ignore-selectors`),
-      app.renderer === "kustomize" ? api<{ namespace: string; commit: string }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/kustomization`).then((value) => ({ value, error: "" })).catch((cause) => ({ value: null, error: errorMessage(cause) })) : Promise.resolve({ value: null, error: "" }),
+      app.renderer === "kustomize" ? api<{ namespace: string; commit: string }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/kustomization`).then((value) => ({ value, error: null })).catch((cause) => ({ value: null, error: cause })) : Promise.resolve({ value: null, error: null }),
     ])
     setApplication(app)
     if (app.decommissioning) setDeletePolicy("delete")
@@ -139,7 +141,7 @@ export default function ApplicationDetailPage() {
 
   useEffect(() => {
     let active = true
-    Promise.resolve().then(loadData).catch((cause) => active && setError(errorMessage(cause))).finally(() => active && setLoading(false))
+    Promise.resolve().then(loadData).catch((cause) => active && setError(cause)).finally(() => active && setLoading(false))
     return () => { active = false }
   // loadData is intentionally tied to this resource identifier only.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -166,26 +168,26 @@ export default function ApplicationDetailPage() {
   }, [applicationID, busy, hasPendingOperation])
 
   async function createPlan() {
-    setBusy(true); setPendingAction("create-plan"); setError(""); setNotice(""); setApprovalId("")
+    setBusy(true); setPendingAction("create-plan"); setError(null); setApprovalId("")
     try {
       const plan = await apiPost<PlanRecord>(`/api/v1/applications/${encodeURIComponent(applicationID)}/plans`)
       setActivePlan(plan)
       setPlans((current) => [plan, ...current.filter((item) => item.id !== plan.id)])
-      setNotice(plan.plan.changes.length ? `Plan ready: ${plan.plan.changes.length} change${plan.plan.changes.length === 1 ? "" : "s"} to review.` : "The application already matches its Git revision.")
+      toast.success(plan.plan.changes.length ? `Plan ready: ${plan.plan.changes.length} change${plan.plan.changes.length === 1 ? "" : "s"} to review.` : "The application already matches its Git revision.")
       selectTab("changes")
       await refreshSummary()
-    } catch (cause) { if (!acceptRefreshedPlan(cause)) setError(errorMessage(cause)) } finally { setBusy(false); setPendingAction("") }
+    } catch (cause) { if (!acceptRefreshedPlan(cause)) toast.error(errorMessage(cause), cause) } finally { setBusy(false); setPendingAction("") }
   }
 
   async function saveRenderSettings() {
     if (!application || application.renderer !== "kustomize") return
-    setBusy(true); setPendingAction("render-settings"); setError(""); setNotice("")
+    setBusy(true); setPendingAction("render-settings"); setError(null)
     try {
       await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}/render-settings`, { method: "PUT", body: JSON.stringify({ kustomizeHelmEnabled: kustomizeHelmDraft, kustomizeNamespaceOverride: namespaceOverrideDraft }) })
       setApprovalId("")
       await loadData()
-      setNotice("Render setting saved. Earlier plans are stale; create and review a new plan before syncing.")
-    } catch (cause) { setError(errorMessage(cause)) }
+      toast.success("Render setting saved. Earlier plans are stale; create and review a new plan before syncing.")
+    } catch (cause) { toast.error(errorMessage(cause), cause) }
     finally { setBusy(false); setPendingAction("") }
   }
 
@@ -195,7 +197,7 @@ export default function ApplicationDetailPage() {
     setActivePlan(refreshed)
     setPlans((current) => [refreshed, ...current.filter((item) => item.id !== refreshed.id)])
     setApprovalId("")
-    setError("The plan changed since it was reviewed. A fresh snapshot is shown; review it before continuing.")
+    toast.error("The plan changed since it was reviewed. A fresh snapshot is shown; review it before continuing.", cause)
     return true
   }
 
@@ -222,13 +224,13 @@ export default function ApplicationDetailPage() {
 
   async function savePlanSelection() {
     if (!activePlan || !selectionDirty) return
-    setBusy(true); setPendingAction("selection"); setError(""); setNotice(""); setApprovalId("")
+    setBusy(true); setPendingAction("selection"); setError(null); setApprovalId("")
     try {
       const plan = await apiPost<PlanRecord>(`/api/v1/plans/${encodeURIComponent(activePlan.id)}/selections`, { resources: selectionResources, fields: selectionFields })
       setActivePlan(plan)
       setPlans((current) => [plan, ...current.filter((item) => item.id !== plan.id)])
-      setNotice(`A new immutable plan is ready with ${plan.plan.changes.length} change${plan.plan.changes.length === 1 ? "" : "s"} to apply.`)
-    } catch (cause) { if (!acceptRefreshedPlan(cause)) setError(errorMessage(cause)) }
+      toast.success(`A new immutable plan is ready with ${plan.plan.changes.length} change${plan.plan.changes.length === 1 ? "" : "s"} to apply.`)
+    } catch (cause) { if (!acceptRefreshedPlan(cause)) toast.error(errorMessage(cause), cause) }
     finally { setBusy(false); setPendingAction("") }
   }
 
@@ -240,31 +242,31 @@ export default function ApplicationDetailPage() {
 
   async function saveIgnoreRule(identity: Identity, path: string, reason: string) {
     const cleanReason = reason.trim()
-    if (cleanReason.length < 5) { setError("Add a short reason before saving a permanent ignore rule."); return }
-    setBusy(true); setPendingAction("save-ignore-rule"); setError(""); setNotice("")
+    if (cleanReason.length < 5) { toast.error("Add a short reason before saving a permanent ignore rule."); return }
+    setBusy(true); setPendingAction("save-ignore-rule"); setError(null)
     try {
       const rule = await apiPost<IgnoreRule>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ignore-rules`, { identity, path, reason: cleanReason })
       setIgnoreRules((current) => [rule, ...current])
       invalidatePlans()
-      setNotice("Ignore rule saved. Existing plans are stale; refresh the plan when ready.")
-    } catch (cause) { setError(errorMessage(cause)) }
+      toast.success("Ignore rule saved. Existing plans are stale; refresh the plan when ready.")
+    } catch (cause) { toast.error(errorMessage(cause), cause) }
     finally { setBusy(false); setPendingAction("") }
   }
 
   async function removeIgnoreRule(rule: IgnoreRule) {
-    setBusy(true); setPendingAction("remove-ignore-rule"); setError(""); setNotice("")
+    setBusy(true); setPendingAction("remove-ignore-rule"); setError(null)
     try {
       await apiDelete<void>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ignore-rules/${encodeURIComponent(rule.id)}`)
       setIgnoreRules((current) => current.filter((item) => item.id !== rule.id))
       invalidatePlans()
-      setNotice("Ignore rule removed. Refresh the plan before syncing.")
-    } catch (cause) { setError(errorMessage(cause)) }
+      toast.success("Ignore rule removed. Refresh the plan before syncing.")
+    }
     finally { setBusy(false); setPendingAction("") }
   }
 
   async function addIgnore() {
     if (!application) return
-    setBusy(true); setPendingAction("add-ignore"); setIgnoreFeedback(null); setError(""); setNotice("")
+    setBusy(true); setPendingAction("add-ignore"); setError(null)
     try {
       if (ignoreMode === "resource") {
         const rule = await apiPost<IgnoreRule>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ignore-rules`, { identity: { clusterId: application.clusterId, apiVersion: ignoreVersion.trim(), kind: ignoreKind.trim(), namespace: ignoreNamespace.trim(), name: ignoreName.trim() }, reason: ignoreReason.trim() })
@@ -274,40 +276,39 @@ export default function ApplicationDetailPage() {
         setIgnoreSelectors((current) => [selector, ...current])
       }
       setIgnoreReason(""); setIgnoreName(""); invalidatePlans()
-      setIgnoreFeedback({ tone: "success", text: "Exclusion saved. Reviewed plans are now stale." })
-      setNotice("Exclusion saved. Existing plans are stale; refresh the plan before syncing.")
-    } catch (cause) { setError(errorMessage(cause)); setIgnoreFeedback({ tone: "error", text: errorMessage(cause) }) }
+      toast.success("Exclusion saved. Existing plans are stale; refresh the plan before syncing.")
+    } catch (cause) { toast.error(errorMessage(cause), cause) }
     finally { setBusy(false); setPendingAction("") }
   }
 
   async function removeIgnoreSelector(selector: IgnoreSelector) {
-    setBusy(true); setPendingAction("remove-ignore-selector"); setError(""); setNotice("")
+    setBusy(true); setPendingAction("remove-ignore-selector"); setError(null)
     try {
       await apiDelete(`/api/v1/applications/${encodeURIComponent(applicationID)}/ignore-selectors/${encodeURIComponent(selector.id)}`)
       setIgnoreSelectors((current) => current.filter((item) => item.id !== selector.id))
       invalidatePlans()
-      setNotice("Exclusion removed. Refresh the plan before syncing.")
+      toast.success("Exclusion removed. Refresh the plan before syncing.")
     } finally { setBusy(false); setPendingAction("") }
   }
 
   async function deleteApplication() {
     const result = await api<{ deleted: boolean; plan?: PlanRecord }>(`/api/v1/applications/${encodeURIComponent(applicationID)}?resources=${deletePolicy}`, { method: "DELETE" })
-    if (result.deleted) { router.push(`/projects/${application?.projectId ?? ""}`); router.refresh(); return }
+    if (result.deleted) { toast.success("Application deleted."); router.push(`/projects/${application?.projectId ?? ""}`); router.refresh(); return }
     if (result.plan) {
       setDeletePolicy("delete")
       setActivePlan(result.plan)
       setPlans((current) => [result.plan!, ...current.filter((item) => item.id !== result.plan!.id)])
       setApplication((current) => current ? { ...current, decommissioning: true } : current)
       setApprovalId("")
-      setNotice(`Deletion plan ready for ${result.plan.plan.changes.length} managed resources. Review and approve it before applying.`)
+      toast.success(`Deletion plan ready for ${result.plan.plan.changes.length} managed resources. Review and approve it before applying.`)
       selectTab("changes")
     }
   }
 
   async function cancelDecommission() {
-    setBusy(true); setPendingAction("cancel-decommission"); setError("")
-    try { await apiPost(`/api/v1/applications/${encodeURIComponent(applicationID)}/cancel-decommission`); await loadData(); setNotice("Application deletion cancelled. Refresh a normal plan before syncing.") }
-    catch (cause) { setError(errorMessage(cause)) }
+    setBusy(true); setPendingAction("cancel-decommission"); setError(null)
+    try { await apiPost(`/api/v1/applications/${encodeURIComponent(applicationID)}/cancel-decommission`); await loadData(); toast.success("Application deletion cancelled. Refresh a normal plan before syncing.") }
+    catch (cause) { toast.error(errorMessage(cause), cause) }
     finally { setBusy(false); setPendingAction("") }
   }
 
@@ -327,24 +328,24 @@ export default function ApplicationDetailPage() {
 
   async function approvePlan() {
     if (!activePlan || selectionDirty) return
-    setBusy(true); setPendingAction("approve-plan"); setError(""); setNotice("")
+    setBusy(true); setPendingAction("approve-plan"); setError(null)
     try {
       const approval = await apiPost<{ id: string; expiresAt: string }>(`/api/v1/plans/${encodeURIComponent(activePlan.id)}/approvals`)
       setApprovalId(approval.id)
-      setNotice(`Owner approval recorded. It expires at ${new Date(approval.expiresAt).toLocaleTimeString()}.`)
-    } catch (cause) { if (!acceptRefreshedPlan(cause)) setError(errorMessage(cause)) } finally { setBusy(false); setPendingAction("") }
+      toast.success(`Owner approval recorded. It expires at ${new Date(approval.expiresAt).toLocaleTimeString()}.`)
+    } catch (cause) { if (!acceptRefreshedPlan(cause)) toast.error(errorMessage(cause), cause) } finally { setBusy(false); setPendingAction("") }
   }
 
   async function applyPlan() {
     if (!activePlan || selectionDirty) return
-    setBusy(true); setPendingAction("apply-plan"); setError(""); setNotice("")
+    setBusy(true); setPendingAction("apply-plan"); setError(null)
     try {
       const result = await apiPost<{ operation: Operation }>(`/api/v1/plans/${encodeURIComponent(activePlan.id)}/apply`, { approvalId })
-      setNotice(result.operation.message || "Sync queued.")
+      toast.success(result.operation.message || "Sync queued.")
       setApprovalId("")
       await loadData()
     } catch (cause) {
-      if (!acceptRefreshedPlan(cause)) setError(errorMessage(cause))
+      if (!acceptRefreshedPlan(cause)) toast.error(errorMessage(cause), cause)
     } finally { setBusy(false); setPendingAction(""); await refreshSummary() }
   }
 
@@ -366,15 +367,14 @@ export default function ApplicationDetailPage() {
 
   return <>
     <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.renderer} · ${application.manifestPath} · ${application.revision}` : ""} actions={application && <><StatusBadge status={application.health} />{canApprove && !application.decommissioning && <Link href={`/applications/${applicationID}/edit`}><Button variant="outline">Edit application</Button></Link>}<Button variant="outline" loading={pendingAction === "create-plan"} loadingText="Calculating plan…" onClick={() => void createPlan()} disabled={application.decommissioning || !canDeploy || busy || (namespaceMismatch && !application.kustomizeNamespaceOverride)} title={namespaceMismatch && !application.kustomizeNamespaceOverride ? "Choose a namespace override before refreshing the plan" : undefined}><span aria-hidden="true">↻</span> Refresh plan</Button></>} />
-    {error && <div role="alert" className="mb-4 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</div>}
-    {notice && <div role="status" className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">{notice}</div>}
+    {error && <ErrorNotice error={error} />}
     {application?.decommissioning && <div role="status" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300/70 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><span>Deletion in progress. Auto-sync is paused. Review and apply the deletion plan, then finish removing the application.</span>{canApprove && <Button size="sm" variant="outline" disabled={busy || hasPendingOperation} onClick={() => void cancelDecommission()}>Cancel deletion</Button>}</div>}
     {namespaceMismatch && !application?.kustomizeNamespaceOverride && <div role="alert" className="mb-5 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><strong>Kustomize namespace: {kustomization?.namespace}.</strong> JustCD target: {application?.namespaces[0]?.namespace}. The namespaces differ, so a plan cannot be refreshed until an owner enables the override. <button type="button" className="font-semibold underline underline-offset-4" onClick={() => selectTab("settings")}>Review namespace setting →</button></div>}
     {!loading && application && <>
       {visibleOperation && <div role="status" aria-live="polite" className={`mb-5 rounded-xl border px-4 py-3 ${visibleOperation.status === "failed" ? "border-destructive/30 bg-destructive/5" : "bg-card"}`}>
         <div className="flex flex-wrap items-center gap-3"><StatusBadge status={visibleOperation.status} /><span className="text-xs font-medium">{operationPhaseLabel(visibleOperation.progress?.phase, visibleOperation.status)}</span><span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{visibleOperation.progress?.completed.length ?? 0} / {visibleOperation.progress?.total ?? 0} resources</span></div>
         {visibleOperation.progress?.total ? <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted"><div className={`h-full rounded-full ${visibleOperation.status === "failed" ? "bg-destructive" : "bg-primary"}`} style={{ width: `${Math.min(100, Math.round((visibleOperation.progress.completed.length / visibleOperation.progress.total) * 100))}%` }} /></div> : null}
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground"><span>{visibleOperation.progress?.current ? `Now: ${resourceLabel(visibleOperation.progress.current)}` : visibleOperation.message}</span>{visibleOperation.status === "failed" && visibleOperation.progress?.current && <span>{visibleOperation.message}</span>}</div>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground"><span>{visibleOperation.progress?.current ? `Now: ${resourceLabel(visibleOperation.progress.current)}` : visibleOperation.message}</span>{visibleOperation.status === "failed" && <ErrorDetailsButton label="Debug details" error={{ name: "SyncOperationError", message: visibleOperation.message, operationId: visibleOperation.id, applicationId: visibleOperation.applicationId, planId: visibleOperation.planId, status: visibleOperation.status, startedAt: visibleOperation.startedAt, finishedAt: visibleOperation.finishedAt, progress: visibleOperation.progress }} />}</div>
       </div>}
       <div className="mb-6 grid gap-3 rounded-xl border bg-card p-4 sm:grid-cols-3 sm:divide-x sm:p-5">
         <SummaryFact label="Target" value={application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"} />
@@ -419,7 +419,7 @@ export default function ApplicationDetailPage() {
         <Tabs.Panel value="topology" className="outline-none">
       <ResourceMap application={application} plan={plans[0] ?? null} inventory={resources} operations={operations} topology={topology} refreshing={topologyRefreshing} onRefresh={() => {
         setTopologyRefreshing(true)
-        void api<ResourceTopology>(`/api/v1/applications/${encodeURIComponent(applicationID)}/topology?refresh=1`).then(setTopology).catch((cause) => setError(errorMessage(cause))).finally(() => setTopologyRefreshing(false))
+        void api<ResourceTopology>(`/api/v1/applications/${encodeURIComponent(applicationID)}/topology?refresh=1`).then(setTopology).catch((cause) => toast.error(errorMessage(cause), cause)).finally(() => setTopologyRefreshing(false))
       }} onViewDiff={(identity) => {
         const matching = plans[0]?.plan.changes.some((change) => diffId(change.identity) === diffId(identity))
         if (matching && plans[0]?.id !== activePlan?.id) setActivePlan(plans[0])
@@ -460,14 +460,14 @@ export default function ApplicationDetailPage() {
 
         <Tabs.Panel value="activity" className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px] outline-none">
           <Panel title="Recent operations" description="Sync history and result state">
-            {operations.length ? <div className="divide-y">{operations.slice(0, 8).map((operation) => <div key={operation.id} className="px-5 py-3.5"><div className="flex items-center justify-between gap-3"><span className="text-xs font-medium">{operation.status === "succeeded" ? "Sync completed" : operation.status === "failed" ? "Sync stopped" : operation.status === "queued" ? "Sync queued" : "Sync running"}</span><StatusBadge status={operation.status} /></div><p className="mt-1 line-clamp-2 text-[10px] leading-4 text-muted-foreground">{operation.message || "Sync operation"}</p>{operation.progress && <p className="mt-1 text-[10px] text-muted-foreground">{operationPhaseLabel(operation.progress.phase, operation.status)} · {operation.progress.completed.length}/{operation.progress.total} resources{operation.progress.current ? ` · ${resourceLabel(operation.progress.current)}` : ""}</p>}<p className="mt-1.5 text-[9px] text-muted-foreground">{new Date(operation.startedAt).toLocaleString()}</p></div>)}</div> : <EmptyState title="No syncs yet" description="Operations will be recorded here with the actor and resulting status." />}
+            {operations.length ? <div className="divide-y">{operations.slice(0, 8).map((operation) => <div key={operation.id} className="px-5 py-3.5"><div className="flex items-center justify-between gap-3"><span className="text-xs font-medium">{operation.status === "succeeded" ? "Sync completed" : operation.status === "failed" ? "Sync stopped" : operation.status === "queued" ? "Sync queued" : "Sync running"}</span><StatusBadge status={operation.status} /></div><p className="mt-1 line-clamp-2 text-[10px] leading-4 text-muted-foreground">{operation.message || "Sync operation"}</p>{operation.progress && <p className="mt-1 text-[10px] text-muted-foreground">{operationPhaseLabel(operation.progress.phase, operation.status)} · {operation.progress.completed.length}/{operation.progress.total} resources{operation.progress.current ? ` · ${resourceLabel(operation.progress.current)}` : ""}</p>}{operation.status === "failed" && <div className="mt-2"><ErrorDetailsButton label="Debug details" error={{ name: "SyncOperationError", message: operation.message, operationId: operation.id, applicationId: operation.applicationId, planId: operation.planId, status: operation.status, startedAt: operation.startedAt, finishedAt: operation.finishedAt, progress: operation.progress }} /></div>}<p className="mt-1.5 text-[9px] text-muted-foreground">{new Date(operation.startedAt).toLocaleString()}</p></div>)}</div> : <EmptyState title="No syncs yet" description="Operations will be recorded here with the actor and resulting status." />}
           </Panel>
-          <Panel title="Application source" description="Configuration stored in JustCD"><div className="space-y-3 p-5 text-xs"><KeyValue label="Manifest path" value={application.manifestPath} mono /><KeyValue label="Renderer" value={application.renderer} /><KeyValue label="Cluster" value={application.clusterId.slice(0, 12)} mono /><KeyValue label="Poll interval" value={`${application.pollSeconds} seconds`} />{application.renderer === "kustomize" && <KeyValue label="Namespace from Git" value={kustomization ? kustomization.namespace || "Not set in kustomization" : kustomizationError || "Checking kustomization…"} />}{canApprove && <Link href={`/applications/${applicationID}/edit`} className="inline-block text-xs font-medium text-primary hover:underline">Edit application →</Link>}<Link href={`/projects/${application.projectId}`} className="block text-xs font-medium text-primary hover:underline">Open project →</Link></div></Panel>
+          <Panel title="Application source" description="Configuration stored in JustCD"><div className="space-y-3 p-5 text-xs"><KeyValue label="Manifest path" value={application.manifestPath} mono /><KeyValue label="Renderer" value={application.renderer} /><KeyValue label="Cluster" value={application.clusterId.slice(0, 12)} mono /><KeyValue label="Poll interval" value={`${application.pollSeconds} seconds`} />{application.renderer === "kustomize" && <><KeyValue label="Namespace from Git" value={kustomization ? kustomization.namespace || "Not set in kustomization" : kustomizationError ? errorMessage(kustomizationError) : "Checking kustomization…"} />{kustomizationError && <ErrorDetailsButton error={kustomizationError} />}</>}{canApprove && <Link href={`/applications/${applicationID}/edit`} className="inline-block text-xs font-medium text-primary hover:underline">Edit application →</Link>}<Link href={`/projects/${application.projectId}`} className="block text-xs font-medium text-primary hover:underline">Open project →</Link></div></Panel>
         </Tabs.Panel>
 
         <Tabs.Panel value="settings" className="space-y-5 outline-none">
           {application.renderer === "kustomize" && <Panel title="Render settings" description="Control how Kustomize builds this application's manifests."><div className="space-y-4 p-5 text-xs">
-            <div className="rounded-lg border bg-muted/30 p-3"><p className="font-medium">Namespace from Git</p><p className="mt-1 font-mono text-muted-foreground">{kustomization ? kustomization.namespace || "Not set in kustomization" : kustomizationError || "Checking kustomization…"}</p><p className="mt-1 text-muted-foreground">JustCD target: {application.namespaces.map((binding) => binding.namespace).join(", ")}</p></div>
+            <div className="rounded-lg border bg-muted/30 p-3"><p className="font-medium">Namespace from Git</p><p className="mt-1 font-mono text-muted-foreground">{kustomization ? kustomization.namespace || "Not set in kustomization" : kustomizationError ? errorMessage(kustomizationError) : "Checking kustomization…"}</p>{kustomizationError != null && <div className="mt-2"><ErrorDetailsButton error={kustomizationError} /></div>}<p className="mt-1 text-muted-foreground">JustCD target: {application.namespaces.map((binding) => binding.namespace).join(", ")}</p></div>
             {kustomization?.namespace && application.namespaces.length === 1 && <label className="flex items-start gap-2"><Checkbox checked={namespaceOverrideDraft} onCheckedChange={(checked) => setNamespaceOverrideDraft(Boolean(checked))} disabled={!canApprove || busy || hasPendingOperation} /><span><span className="block font-medium">Override Git namespace with JustCD target</span><span className="mt-1 block leading-5 text-muted-foreground">Kustomize builds resources in {application.namespaces[0].namespace} instead of {kustomization.namespace}. Explicit namespace references inside manifests may remain unchanged. This can create or delete resources on the next sync, so review the new plan first.</span></span></label>}
             {kustomization?.namespace && application.namespaces.length !== 1 && <p className="text-muted-foreground">An override needs exactly one bound target namespace.</p>}
             <label className="flex items-start gap-2"><Checkbox checked={kustomizeHelmDraft} onCheckedChange={(checked) => setKustomizeHelmDraft(Boolean(checked))} disabled={!canApprove || busy || hasPendingOperation} /><span><span className="block font-medium">Enable Helm charts in Kustomize</span><span className="mt-1 block leading-5 text-muted-foreground">Permits helmCharts from this Git source. Helm may fetch pinned charts from public HTTPS repositories while building the plan.</span></span></label>
@@ -483,7 +483,6 @@ export default function ApplicationDetailPage() {
                 <div className="sm:col-span-2 lg:col-span-4"><FormField label="Reason" htmlFor="ignore-reason"><Textarea id="ignore-reason" value={ignoreReason} onChange={(event) => setIgnoreReason(event.target.value)} placeholder="Managed by another controller or outside this service account's permissions" maxLength={500} /></FormField></div>
                 <Button size="sm" className="w-fit sm:col-span-2" loading={pendingAction === "add-ignore"} loadingText="Saving exclusion…" onClick={() => void addIgnore()} disabled={busy || hasPendingOperation || ignoreReason.trim().length < 5 || ((ignoreMode === "kind" || ignoreMode === "resource") && (!ignoreVersion.trim() || !ignoreKind.trim())) || (ignoreMode === "resource" && !ignoreName.trim()) || (ignoreMode === "label" && !ignoreLabelKey.trim())}>Add exclusion</Button>
                 {pendingAction === "add-ignore" && <p role="status" aria-live="polite" className="self-center text-xs text-muted-foreground sm:col-span-2">Saving the exclusion and invalidating reviewed plans…</p>}
-                {ignoreFeedback && <p role={ignoreFeedback.tone === "error" ? "alert" : "status"} className={`text-xs sm:col-span-2 lg:col-span-4 ${ignoreFeedback.tone === "error" ? "text-destructive" : "text-emerald-700 dark:text-emerald-300"}`}>{ignoreFeedback.text}</p>}
               </div>}
               <p className="text-xs text-muted-foreground">Ignored resources stay visible here and are not read, updated, or deleted by normal plans. Existing plans become stale when these rules change.</p>
               {(ignoreSelectors.length > 0 || ignoreRules.length > 0) && <div className="divide-y rounded-lg border">{ignoreSelectors.map((rule) => <div key={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-xs"><span className="min-w-0 flex-1"><strong>{rule.kind ? `${rule.apiVersion} · ${rule.kind}` : "Any kind"}</strong>{rule.labelKey && <span className="ml-2 font-mono text-muted-foreground">{rule.labelKey}={rule.labelValue}</span>}<span className="mt-1 block text-muted-foreground">{rule.reason}</span></span>{canApprove && <ConfirmDisclosure trigger="Remove" title="Remove exclusion?" description="Future plans may manage matching resources again." confirmLabel="Remove exclusion" onConfirm={() => removeIgnoreSelector(rule)} disabled={busy || hasPendingOperation} />}</div>)}{ignoreRules.map((rule) => <div key={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-xs"><span className="min-w-0 flex-1"><strong>{rule.identity.kind} {rule.identity.namespace}/{rule.identity.name}</strong><span className="ml-2 font-mono text-muted-foreground">{rule.path || "whole resource"}</span><span className="mt-1 block text-muted-foreground">{rule.reason}</span></span>{canApprove && <ConfirmDisclosure trigger="Remove" title="Remove ignore rule?" description="Future plans may manage this resource again." confirmLabel="Remove rule" onConfirm={async () => { await removeIgnoreRule(rule) }} disabled={busy || hasPendingOperation} />}</div>)}</div>}

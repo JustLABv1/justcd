@@ -6,15 +6,16 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { ThemePicker } from "@/components/theme-picker"
 import { Input } from "@/components/ui/input"
+import { useToast } from "@/components/toast-provider"
 import { api, apiPost, errorMessage } from "@/lib/api"
 import type { OIDCProvider, User } from "@/lib/types"
 
 export default function LoginPage() {
   const router = useRouter()
+  const toast = useToast()
   const [providers, setProviders] = useState<OIDCProvider[]>([])
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
   const [signupAvailable, setSignupAvailable] = useState(false)
 
@@ -27,12 +28,11 @@ export default function LoginPage() {
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setBusy(true)
-    setError("")
     try {
       await apiPost("/api/v1/auth/login", { email, password })
       router.replace("/")
     } catch (cause) {
-      setError(errorMessage(cause))
+      toast.error(errorMessage(cause), cause)
     } finally {
       setBusy(false)
     }
@@ -71,7 +71,6 @@ export default function LoginPage() {
           <form className="mt-7 space-y-4" onSubmit={submit}>
             <div className="space-y-1.5"><label htmlFor="email" className="text-xs font-medium">Email address</label><Input id="email" type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} required /></div>
             <div className="space-y-1.5"><label htmlFor="password" className="text-xs font-medium">Password</label><Input id="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></div>
-            {error && <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</p>}
             <Button className="w-full" type="submit" loading={busy} loadingText="Signing in…">Continue with email</Button>
           </form>
 

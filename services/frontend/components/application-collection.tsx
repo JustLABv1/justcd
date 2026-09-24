@@ -11,6 +11,7 @@ import { ConfirmDisclosure } from "@/components/confirm-disclosure"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { EmptyState, StatusBadge } from "@/components/ui-kit"
 import { WorkspaceIcon } from "@/components/workspace-ui"
+import { useToast } from "@/components/toast-provider"
 import {
   needsAttention,
   type WorkspaceApplication,
@@ -20,12 +21,18 @@ import { api } from "@/lib/api"
 
 function ApplicationActions({ app, canManage, onDeleted }: { app: WorkspaceApplication; canManage: boolean; onDeleted?: (id: string) => void }) {
   const router = useRouter()
+  const toast = useToast()
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [policy, setPolicy] = useState("keep")
   async function remove() {
     const result = await api<{ deleted: boolean }>(`/api/v1/applications/${encodeURIComponent(app.id)}?resources=${policy}`, { method: "DELETE" })
-    if (result.deleted) onDeleted?.(app.id)
-    else router.push(`/applications/${app.id}?tab=changes`)
+    if (result.deleted) {
+      toast.success(`${app.name} deleted.`)
+      onDeleted?.(app.id)
+    } else {
+      toast.info("Deletion plan created. Review it before applying.")
+      router.push(`/applications/${app.id}?tab=changes`)
+    }
   }
   return <>
     <DropdownMenu>

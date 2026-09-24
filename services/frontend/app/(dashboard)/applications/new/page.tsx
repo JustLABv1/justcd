@@ -7,11 +7,14 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
 import { FormField, PageHeading, Panel } from "@/components/ui-kit"
+import { ErrorNotice } from "@/components/workspace-ui"
+import { useToast } from "@/components/toast-provider"
 import { api, apiPost, errorMessage } from "@/lib/api"
 import type { Application, Cluster, GitSource, ListResponse, NamespaceBinding, Project } from "@/lib/types"
 
 export default function NewApplicationPage() {
   const router = useRouter()
+  const toast = useToast()
   const [projects, setProjects] = useState<Project[]>([])
   const [clusters, setClusters] = useState<Cluster[]>([])
   const [projectId, setProjectId] = useState("")
@@ -27,7 +30,7 @@ export default function NewApplicationPage() {
   const [kustomizeHelmEnabled, setKustomizeHelmEnabled] = useState(false)
   const [syncPolicy, setSyncPolicy] = useState("manual")
   const [pollSeconds, setPollSeconds] = useState("300")
-  const [error, setError] = useState("")
+  const [error, setError] = useState<unknown | null>(null)
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
 
@@ -42,7 +45,7 @@ export default function NewApplicationPage() {
       setProjectId(writable.find((project) => project.id === queryProject)?.id ?? writable[0]?.id ?? "")
       setClusters(clusterResult.items)
       setClusterId(clusterResult.items[0]?.id ?? "")
-    }).catch((cause) => setError(errorMessage(cause))).finally(() => setLoading(false))
+    }).catch((cause) => setError(cause)).finally(() => setLoading(false))
   }, [])
 
   useEffect(() => {
@@ -50,7 +53,7 @@ export default function NewApplicationPage() {
     api<ListResponse<GitSource>>(`/api/v1/git-sources?projectId=${encodeURIComponent(projectId)}`).then((result) => {
       setSources(result.items)
       setSourceId(result.items[0]?.id ?? "")
-    }).catch((cause) => setError(errorMessage(cause)))
+    }).catch((cause) => setError(cause))
   }, [projectId])
 
   useEffect(() => {
@@ -58,23 +61,24 @@ export default function NewApplicationPage() {
     api<ListResponse<NamespaceBinding>>(`/api/v1/clusters/${encodeURIComponent(clusterId)}/bindings?projectId=${encodeURIComponent(projectId)}`).then((result) => {
       setBindings(result.items)
       setNamespaces((current) => current.filter((namespace) => result.items.some((item) => item.namespace === namespace)))
-    }).catch((cause) => setError(errorMessage(cause)))
+    }).catch((cause) => setError(cause))
   }, [projectId, clusterId])
 
   const selectedProject = useMemo(() => projects.find((project) => project.id === projectId), [projects, projectId])
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setBusy(true); setError("")
-    if (!projectId || !sourceId || !clusterId || !namespaces.length) { setError("Choose a project, Git source, cluster, and at least one namespace."); setBusy(false); return }
+    event.preventDefault(); setBusy(true); setError(null)
+    if (!projectId || !sourceId || !clusterId || !namespaces.length) { toast.error("Choose a project, Git source, cluster, and at least one namespace."); setBusy(false); return }
     try {
       const app = await apiPost<Application>("/api/v1/applications", { projectId, name, sourceId, revision, manifestPath, renderer, kustomizeHelmEnabled: renderer === "kustomize" && kustomizeHelmEnabled, clusterId, namespaces, syncPolicy, pollSeconds: Number(pollSeconds) })
+      toast.success("Application created.")
       router.push(`/applications/${app.id}`)
-    } catch (cause) { setError(errorMessage(cause)) } finally { setBusy(false) }
+    } catch (cause) { toast.error(errorMessage(cause), cause) } finally { setBusy(false) }
   }
 
   return <>
     <PageHeading title="Create an application" description="Point JustCD at a Git revision and a repository path. We’ll render, diff, and review the changes before they reach Kubernetes." />
-    {error && <div role="alert" className="mb-5 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</div>}
+    {error && <ErrorNotice error={error} />}
     <form className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]" onSubmit={submit}>
       <div className="space-y-5">
         <Panel title="Source" description="Select the project repository and the exact Git path to render."><div className="grid gap-4 p-5 sm:grid-cols-2">
@@ -88,7 +92,7 @@ export default function NewApplicationPage() {
         </div></Panel>
         <Panel title="Cluster target" description="Applications are restricted to the namespaces already bound to this project."><div className="space-y-5 p-5">
           <FormField label="Cluster" htmlFor="cluster"><FormSelect id="cluster" value={clusterId} onValueChange={(value) => { setClusterId(value); setNamespaces([]) }} placeholder="Select cluster" required items={clusters.map((cluster) => ({ value: cluster.id, label: `${cluster.name} · ${cluster.apiServer}` }))} /></FormField>
-          <div><p className="mb-2 text-xs font-medium">Namespace bindings</p>{bindings.length ? <div className="grid gap-2 sm:grid-cols-2">{bindings.map((binding) => <label key={binding.namespace} className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-xs transition-colors ${namespaces.includes(binding.namespace) ? "border-primary/40 bg-primary/5" : "hover:bg-muted/40"}`}><Checkbox checked={namespaces.includes(binding.namespace)} onCheckedChange={(checked) => setNamespaces((current) => checked ? [...current, binding.namespace] : current.filter((namespace) => namespace !== binding.namespace))} /><span className="flex-1 font-medium">{binding.namespace}</span><span className="text-[10px] text-muted-foreground">{binding.credentialId ? "namespace credential" : "cluster default"}</span></label>)}</div> : <div className="rounded-lg border border-dashed px-4 py-5 text-xs text-muted-foreground">No namespaces are bound to this project on this cluster. <a href={`/settings?projectId=${projectId}`} className="font-medium text-primary hover:underline">Configure a binding</a></div>}</div>
+          <div><p className="mb-2 text-xs font-medium">Namespace bindings</p>{bindings.length ? <div className="grid gap-2 sm:grid-cols-2">{bindings.map((binding) => <label key={binding.namespace} className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-xs transition-colors ${namespaces.includes(binding.namespace) ? "border-primary/40 bg-primary/5" : "hover:bg-muted/40"}`}><Checkbox checked={namespaces.includes(binding.namespace)} onCheckedChange={(checked) => setNamespaces((current) => checked ? [...current, binding.namespace] : current.filter((namespace) => namespace !== binding.namespace))} /><span className="flex-1 font-medium">{binding.namespace}</span><span className="text-[10px] text-muted-foreground">{binding.credentialId ? "namespace credential" : "cluster default"}</span></label>)}</div> : <div className="rounded-lg border border-dashed px-4 py-5 text-xs text-muted-foreground">No namespaces are bound to this project on this cluster. <a href={`/projects/${projectId}/connections/namespaces`} className="font-medium text-primary hover:underline">Configure a binding</a></div>}</div>
         </div></Panel>
       </div>
       <div className="space-y-5">

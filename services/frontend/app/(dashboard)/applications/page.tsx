@@ -42,7 +42,7 @@ function ApplicationsContent() {
         }
       />
       {error ? (
-        <LoadError message={error} retry={refresh} />
+        <LoadError error={error} retry={refresh} />
       ) : loading ? (
         <CollectionSkeleton />
       ) : (

@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react"
 import { DataGridList } from "@/components/data-grid-table"
 import { EmptyState, PageHeading, Panel } from "@/components/ui-kit"
-import { api, errorMessage } from "@/lib/api"
+import { ErrorNotice } from "@/components/workspace-ui"
+import { api } from "@/lib/api"
 import type { ListResponse } from "@/lib/types"
 
 type AuditEvent = {
@@ -18,11 +19,11 @@ type AuditEvent = {
 
 export default function AuditPage() {
   const [events, setEvents] = useState<AuditEvent[]>([])
-  const [error, setError] = useState("")
-  useEffect(() => { api<ListResponse<AuditEvent>>("/api/v1/audit").then((result) => setEvents(result.items)).catch((cause) => setError(errorMessage(cause))) }, [])
+  const [error, setError] = useState<unknown | null>(null)
+  useEffect(() => { api<ListResponse<AuditEvent>>("/api/v1/audit").then((result) => setEvents(result.items)).catch((cause) => setError(cause)) }, [])
   return <>
     <PageHeading title="Audit trail" description="Recent changes to users, access, connections, plans, and sync operations." />
-    {error && <div role="alert" className="mb-5 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</div>}
+    {error && <ErrorNotice error={error} />}
     <Panel surface="flat" title="Recent activity" description="The audit trail is available to instance administrators.">
       {events.length ? <div className="min-w-0"><DataGridList rows={events} columns={[
         { id: "when", title: "When", cell: (event) => <span className="text-[10px] text-muted-foreground">{new Date(event.createdAt).toLocaleString()}</span> },

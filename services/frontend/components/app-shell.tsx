@@ -14,7 +14,7 @@ const navigation = [
   { href: "/", label: "Overview", icon: Home01Icon },
   { href: "/projects", label: "Projects", icon: Folder01Icon },
   { href: "/applications", label: "Applications", icon: Layers01Icon },
-  { href: "/settings", label: "Settings", icon: Settings02Icon },
+  { href: "/settings", label: "Instance settings", icon: Settings02Icon, adminOnly: true },
   { href: "/audit", label: "Audit trail", icon: Audit01Icon, adminOnly: true },
 ]
 
@@ -102,7 +102,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="px-4 pt-6">
           <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">Workspace</p>
           <nav className="space-y-1">
-            {navigation.filter((item) => !item.adminOnly || user.isAdmin).map((item) => {
+            {navigation.filter((item) => !item.adminOnly).map((item) => {
               const selected = isSelected(item.href, pathname)
               return (
                 <Link
@@ -117,6 +117,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               )
             })}
           </nav>
+          {user.isAdmin && <>
+            <p className="px-3 pb-2 pt-6 text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">Administration</p>
+            <nav aria-label="Administration" className="space-y-1">
+              {navigation.filter((item) => item.adminOnly).map((item) => {
+                const selected = isSelected(item.href, pathname)
+                return <Link key={item.href} href={item.href} aria-current={selected ? "page" : undefined} className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-colors ${selected ? "bg-primary/8 font-semibold text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}><HugeiconsIcon icon={item.icon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />{item.label}</Link>
+              })}
+            </nav>
+          </>}
         </div>
         <div className="mt-auto border-t p-4">
           <div className="flex items-center gap-3 rounded-lg px-2 py-2">
@@ -189,6 +198,10 @@ function pageCrumbs(pathname: string, project: Project | null, application: Appl
   if (!parts.length) return [{ label: "Overview" }]
   if (parts[0] === "projects") {
     if (!parts[1]) return [{ label: "Projects" }]
+    if (parts[2] === "connections") {
+      const connection = { "git-sources": "Git sources", clusters: "Kubernetes clusters", namespaces: "Namespace bindings", credentials: "Credentials" }[parts[3] as "git-sources"]
+      return [{ label: "Projects", href: "/projects" }, { label: project?.name ?? "Project", href: `/projects/${parts[1]}?tab=connections` }, { label: connection ?? "Connections" }]
+    }
     return [{ label: "Projects", href: "/projects" }, { label: parts[1] === "new" ? "New project" : project?.name ?? "Project" }]
   }
   if (parts[0] === "applications") {
@@ -198,7 +211,7 @@ function pageCrumbs(pathname: string, project: Project | null, application: Appl
   }
   if (parts[0] === "settings") {
     const section = { "git-sources": "Git sources", clusters: "Kubernetes clusters", namespaces: "Namespace bindings", credentials: "Credentials", oidc: "OIDC providers", users: "Local users" }[parts[1] as "git-sources"]
-    return parts[1] ? [{ label: "Settings", href: "/settings" }, { label: section ?? "Section" }] : [{ label: "Settings" }]
+    return parts[1] ? [{ label: "Instance settings", href: "/settings" }, { label: section ?? "Section" }] : [{ label: "Instance settings" }]
   }
   if (parts[0] === "audit") return [{ label: "Audit trail" }]
   return [{ label: "Overview", href: "/" }, { label: "Not found" }]

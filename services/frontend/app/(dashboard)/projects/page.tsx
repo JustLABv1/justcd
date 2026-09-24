@@ -35,7 +35,7 @@ export default function ProjectsPage() {
         }
       />
       {error ? (
-        <LoadError message={error} retry={refresh} />
+        <LoadError error={error} retry={refresh} />
       ) : loading ? (
         <CollectionSkeleton />
       ) : (

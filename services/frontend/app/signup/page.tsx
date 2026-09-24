@@ -6,32 +6,35 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { ThemePicker } from "@/components/theme-picker"
 import { Input } from "@/components/ui/input"
+import { ErrorDetailsButton } from "@/components/error-details"
+import { useToast } from "@/components/toast-provider"
 import { api, apiPost, errorMessage } from "@/lib/api"
 import type { User } from "@/lib/types"
 
 export default function SignupPage() {
   const router = useRouter()
+  const toast = useToast()
   const [available, setAvailable] = useState<boolean | null>(null)
   const [displayName, setDisplayName] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [confirm, setConfirm] = useState("")
-  const [error, setError] = useState("")
+  const [loadError, setLoadError] = useState<unknown | null>(null)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     api<{ user: User }>("/api/v1/auth/session").then(() => router.replace("/")).catch(() => undefined)
-    api<{ signupAvailable: boolean }>("/api/v1/auth/setup").then((result) => setAvailable(result.signupAvailable)).catch((cause) => setError(errorMessage(cause)))
+    api<{ signupAvailable: boolean }>("/api/v1/auth/setup").then((result) => setAvailable(result.signupAvailable)).catch((cause) => setLoadError(cause))
   }, [router])
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (password !== confirm) { setError("Passwords do not match."); return }
-    setBusy(true); setError("")
+    if (password !== confirm) { toast.error("Passwords do not match."); return }
+    setBusy(true)
     try {
       await apiPost("/api/v1/auth/signup", { displayName, email, password })
       router.replace("/")
-    } catch (cause) { setError(errorMessage(cause)) }
+    } catch (cause) { toast.error(errorMessage(cause), cause) }
     finally { setBusy(false) }
   }
 
@@ -47,10 +50,9 @@ export default function SignupPage() {
         <div className="space-y-1.5"><label htmlFor="email" className="text-xs font-medium">Email address</label><Input id="email" type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} required /></div>
         <div className="space-y-1.5"><label htmlFor="password" className="text-xs font-medium">Password</label><Input id="password" type="password" autoComplete="new-password" minLength={12} value={password} onChange={(event) => setPassword(event.target.value)} required /><p className="text-xs text-muted-foreground">At least 12 characters.</p></div>
         <div className="space-y-1.5"><label htmlFor="confirm" className="text-xs font-medium">Confirm password</label><Input id="confirm" type="password" autoComplete="new-password" minLength={12} value={confirm} onChange={(event) => setConfirm(event.target.value)} required /></div>
-        {error && <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</p>}
         <Button className="w-full" loading={busy} loadingText="Creating administrator…" type="submit">Create administrator</Button>
       </form> : <p role="status" className="mt-7 text-sm text-muted-foreground">Checking setup status…</p>}
-      {error && !available && <p role="alert" className="mt-4 text-xs text-destructive">{error}</p>}
+      {loadError != null && <div role="alert" className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive"><span>{errorMessage(loadError)}</span><ErrorDetailsButton error={loadError} /></div>}
     </section>
   </main>
 }

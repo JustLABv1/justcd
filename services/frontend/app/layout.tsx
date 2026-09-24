@@ -1,5 +1,6 @@
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
+import { ToastProvider } from "@/components/toast-provider"
 
 export const metadata = {
   title: "JustCD — continuous delivery",
@@ -14,7 +15,9 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning className="antialiased font-sans">
       <body>
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          <ToastProvider>{children}</ToastProvider>
+        </ThemeProvider>
       </body>
     </html>
   )

@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { api, errorMessage } from "@/lib/api"
+import { api } from "@/lib/api"
 import type { Application, ListResponse, Project } from "@/lib/types"
 
 export type WorkspaceApplication = Application & { projectName?: string }
@@ -20,7 +20,7 @@ export function useWorkspace() {
   const [projects, setProjects] = useState<Project[]>([])
   const [applications, setApplications] = useState<WorkspaceApplication[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState("")
+  const [error, setError] = useState<unknown | null>(null)
   const [version, setVersion] = useState(0)
   const refresh = useCallback(() => {
     setLoading(true)
@@ -49,10 +49,10 @@ export function useWorkspace() {
         if (!controller.signal.aborted) {
           setProjects(result.items)
           setApplications(grouped.flat())
-          setError("")
+          setError(null)
         }
       } catch (cause) {
-        if (!controller.signal.aborted) setError(errorMessage(cause))
+        if (!controller.signal.aborted) setError(cause)
       } finally {
         if (!controller.signal.aborted) setLoading(false)
       }

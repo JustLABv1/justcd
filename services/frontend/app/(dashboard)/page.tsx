@@ -44,7 +44,7 @@ export default function OverviewPage() {
         }
       />
       {error ? (
-        <LoadError message={error} retry={refresh} />
+        <LoadError error={error} retry={refresh} />
       ) : loading ? (
         <CollectionSkeleton />
       ) : (
@@ -279,16 +279,10 @@ export default function OverviewPage() {
                 <div className="mt-3 space-y-1">
                   {[
                     {
-                      href: "/settings/git-sources",
-                      title: "Connect a repository",
-                      description: "Bring your manifests into JustCD",
+                      href: "/projects",
+                      title: "Manage project connections",
+                      description: "Choose a project to configure its Git and Kubernetes access",
                       icon: "branch" as const,
-                    },
-                    {
-                      href: "/settings/clusters",
-                      title: "Manage cluster targets",
-                      description: "Choose where applications run",
-                      icon: "server" as const,
                     },
                   ].map((item) => (
                     <Link

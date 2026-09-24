@@ -11,6 +11,8 @@ import {
   ServerStack01Icon,
 } from "@hugeicons/core-free-icons"
 import { buttonVariants } from "@/components/ui/button"
+import { ErrorDetailsButton } from "@/components/error-details"
+import { errorMessage } from "@/lib/api"
 import type { Project } from "@/lib/types"
 
 const icons = {
@@ -80,10 +82,10 @@ export function CollectionSkeleton() {
 }
 
 export function LoadError({
-  message,
+  error,
   retry,
 }: {
-  message: string
+  error: unknown
   retry: () => void
 }) {
   return (
@@ -91,14 +93,29 @@ export function LoadError({
       role="alert"
       className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive"
     >
-      <span>{message}</span>
-      <button
-        type="button"
-        onClick={retry}
-        className="rounded-md px-2 py-1 font-medium underline underline-offset-4"
-      >
-        Try again
-      </button>
+      <span className="min-w-0 flex-1">{errorMessage(error)}</span>
+      <div className="flex items-center gap-2">
+        <ErrorDetailsButton error={error} />
+        <button
+          type="button"
+          onClick={retry}
+          className="rounded-md px-2 py-1 font-medium underline underline-offset-4"
+        >
+          Try again
+        </button>
+      </div>
+    </div>
+  )
+}
+
+export function ErrorNotice({ error }: { error: unknown }) {
+  return (
+    <div
+      role="alert"
+      className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+    >
+      <span className="min-w-0 flex-1">{errorMessage(error)}</span>
+      <ErrorDetailsButton error={error} />
     </div>
   )
 }

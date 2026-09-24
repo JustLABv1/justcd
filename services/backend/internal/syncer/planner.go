@@ -27,6 +27,23 @@ type Service struct {
 	EncryptionKey []byte
 }
 
+// OwnershipConflict is returned when a rendered object already exists but has
+// never been claimed by this application. It contains only review metadata;
+// callers must recheck the object before adopting it.
+type OwnershipConflict struct {
+	Identity           core.Identity `json:"identity"`
+	UID                string        `json:"uid"`
+	ResourceVersion    string        `json:"resourceVersion"`
+	Owner              string        `json:"owner,omitempty"`
+	DesiredFingerprint string        `json:"desiredFingerprint"`
+	HasOwnerReferences bool          `json:"hasOwnerReferences"`
+	DesiredManifest    []byte        `json:"-"`
+}
+
+func (e *OwnershipConflict) Error() string {
+	return fmt.Sprintf("%s %s/%s exists but is not recorded as managed by this application", e.Identity.Kind, e.Identity.Namespace, e.Identity.Name)
+}
+
 type planInput struct {
 	Application        store.Application
 	Cluster            store.Cluster
@@ -724,7 +741,7 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 		}
 		tracked, owned := managedByKey[identity.Key()]
 		if !owned {
-			return nil, nil, fmt.Errorf("%s %s/%s exists but is not recorded as managed by this application", identity.Kind, identity.Namespace, identity.Name)
+			return nil, nil, &OwnershipConflict{Identity: identity, UID: string(object.GetUID()), ResourceVersion: object.GetResourceVersion(), Owner: object.GetLabels()["justcd.io/application-id"], DesiredFingerprint: desired[desiredIndex[key]].Fingerprint, DesiredManifest: desired[desiredIndex[key]].Manifest, HasOwnerReferences: len(object.GetOwnerReferences()) > 0}
 		}
 		if object.GetLabels()["justcd.io/application-id"] != input.Application.ID || string(object.GetUID()) != tracked.UID {
 			return nil, nil, fmt.Errorf("%s %s/%s ownership changed; refusing to adopt or mutate it", identity.Kind, identity.Namespace, identity.Name)

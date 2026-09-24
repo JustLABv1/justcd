@@ -8,12 +8,15 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
 import { FormField, PageHeading, Panel } from "@/components/ui-kit"
+import { ErrorNotice } from "@/components/workspace-ui"
+import { useToast } from "@/components/toast-provider"
 import { api, errorMessage } from "@/lib/api"
 import type { Application, Cluster, GitSource, ListResponse, NamespaceBinding, Project } from "@/lib/types"
 
 export default function EditApplicationPage() {
   const { applicationID } = useParams<{ applicationID: string }>()
   const router = useRouter()
+  const toast = useToast()
   const [app, setApp] = useState<Application | null>(null)
   const [project, setProject] = useState<Project | null>(null)
   const [sources, setSources] = useState<GitSource[]>([])
@@ -21,7 +24,7 @@ export default function EditApplicationPage() {
   const [bindings, setBindings] = useState<NamespaceBinding[]>([])
   const [namespaces, setNamespaces] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState("")
+  const [error, setError] = useState<unknown | null>(null)
 
   useEffect(() => {
     let active = true
@@ -31,7 +34,7 @@ export default function EditApplicationPage() {
         setApp(application); setNamespaces(application.namespaces.map((item) => item.namespace))
         setProject(projects.items.find((item) => item.id === application.projectId) ?? null)
         setClusters(clusterList.items)
-      }).catch((cause) => active && setError(errorMessage(cause)))
+      }).catch((cause) => active && setError(cause))
     return () => { active = false }
   }, [applicationID])
 
@@ -43,14 +46,14 @@ export default function EditApplicationPage() {
     Promise.all([
       api<ListResponse<GitSource>>(`/api/v1/git-sources?projectId=${encodeURIComponent(projectId)}`),
       api<ListResponse<NamespaceBinding>>(`/api/v1/clusters/${encodeURIComponent(clusterId)}/bindings?projectId=${encodeURIComponent(projectId)}`),
-    ]).then(([sourceList, bindingList]) => { if (active) { setSources(sourceList.items); setBindings(bindingList.items) } }).catch((cause) => active && setError(errorMessage(cause)))
+    ]).then(([sourceList, bindingList]) => { if (active) { setSources(sourceList.items); setBindings(bindingList.items) } }).catch((cause) => active && setError(cause))
     return () => { active = false }
   }, [projectId, clusterId])
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!app) return
-    setBusy(true); setError("")
+    setBusy(true); setError(null)
     try {
       await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`, { method: "PUT", body: JSON.stringify({
         name: app.name, sourceId: app.sourceId, revision: app.revision, manifestPath: app.manifestPath,
@@ -58,14 +61,15 @@ export default function EditApplicationPage() {
         kustomizeNamespaceOverride: app.renderer === "kustomize" && app.kustomizeNamespaceOverride,
         clusterId: app.clusterId, namespaces, syncPolicy: app.syncPolicy, pollSeconds: app.pollSeconds,
       }) })
+      toast.success("Application updated.")
       router.push(`/applications/${applicationID}?tab=activity`); router.refresh()
-    } catch (cause) { setError(errorMessage(cause)) }
+    } catch (cause) { toast.error(errorMessage(cause), cause) }
     finally { setBusy(false) }
   }
 
   return <>
     <PageHeading title={app ? `Edit ${app.name}` : "Edit application"} description="Changes invalidate existing plans. Review a fresh plan before the next sync." />
-    {error && <p role="alert" className="mb-5 rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">{error}</p>}
+    {error && <ErrorNotice error={error} />}
     {!app ? <p className="text-sm text-muted-foreground">Loading application…</p> : project?.role !== "owner" ? <p className="text-sm text-muted-foreground">Only project owners can edit applications.</p> : <form className="max-w-4xl space-y-5" onSubmit={save}>
       <Panel title="Source" description="The Git revision and repository path used for future plans."><div className="grid gap-4 p-5 sm:grid-cols-2">
         <FormField label="Application name" htmlFor="edit-app-name"><Input id="edit-app-name" value={app.name} onChange={(event) => setApp({ ...app, name: event.target.value })} required pattern="[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?" /></FormField>

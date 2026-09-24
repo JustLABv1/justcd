@@ -30,12 +30,12 @@ func (s *Service) Apply(ctx context.Context, planID, actorID, approvalID string)
 	if err != nil {
 		return store.Operation{}, err
 	}
-	fresh, _, err := s.CalculatePlanWithSelection(ctx, app, record.Plan.Selection)
+	fresh, err := s.RecheckPlan(ctx, app, record)
 	if err != nil {
 		return store.Operation{}, err
 	}
 	if record.Status != "current" || !time.Now().Before(record.ExpiresAt) || fresh.Digest != record.Plan.Digest {
-		newRecord, err := s.BuildPlanWithSelection(ctx, app, actorID, record.Plan.Selection)
+		newRecord, err := s.RefreshPlan(ctx, app, actorID, record)
 		if err != nil {
 			return store.Operation{}, err
 		}
@@ -103,6 +103,9 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		if err != nil || (role != "owner" && role != "deployer") {
 			return finishFailure(errors.New("sync actor no longer has deploy permission"), "failed")
 		}
+		if record.Plan.Decommission && role != "owner" {
+			return finishFailure(errors.New("decommission requires a project owner"), "failed")
+		}
 	}
 	if record.Plan.RequiresApproval {
 		stored, err := s.Store.ApprovalByID(ctx, operation.ApprovalID)
@@ -125,7 +128,7 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 	if err := s.Store.SetOperationProgress(ctx, operationID, operation.Progress); err != nil {
 		return finishFailure(err, "failed")
 	}
-	fresh, _, err := s.CalculatePlanWithSelection(ctx, app, record.Plan.Selection)
+	fresh, err := s.RecheckPlan(ctx, app, record)
 	if err != nil {
 		return finishFailure(err, "failed")
 	}
@@ -196,7 +199,11 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 	if err := s.Store.SetPlanStatus(ctx, record.ID, "applied"); err != nil {
 		return operation, err
 	}
-	if err := s.Store.MarkApplicationSynced(ctx, app.ID, record.Plan.Revision, "synced"); err != nil {
+	health := "synced"
+	if record.Plan.Decommission {
+		health = "decommissioned"
+	}
+	if err := s.Store.MarkApplicationSynced(ctx, app.ID, record.Plan.Revision, health); err != nil {
 		return operation, err
 	}
 	operation.Progress.Phase = "complete"

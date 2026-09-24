@@ -36,6 +36,7 @@ type planInput struct {
 	ClusterScopeClient *kube.Clients
 	Mapper             *kube.Clients
 	IgnoreRules        []store.ApplicationIgnoreRule
+	IgnoreSelectors    []core.IgnoreSelector
 	Selection          core.PlanSelection
 }
 
@@ -64,12 +65,88 @@ func (s *Service) BuildPlanWithSelection(ctx context.Context, app store.Applicat
 	return record, nil
 }
 
+func (s *Service) BuildDecommissionPlan(ctx context.Context, app store.Application, actorID string) (store.PlanRecord, error) {
+	if app.Decommissioning {
+		current, err := s.Store.ListPlans(ctx, app.ID, 1)
+		if err == nil && len(current) > 0 && current[0].Plan.Decommission && current[0].Status == "current" && time.Now().Before(current[0].ExpiresAt) {
+			return current[0], nil
+		}
+	}
+	plan, err := s.CalculateDecommissionPlan(ctx, app)
+	if err != nil {
+		return store.PlanRecord{}, err
+	}
+	now := time.Now().UTC()
+	record := store.PlanRecord{ID: store.NewID(), Plan: plan, Desired: []core.Resource{}, CreatedBy: actorID, CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute), Status: "current"}
+	if err := s.Store.SavePlan(ctx, record); err != nil {
+		return store.PlanRecord{}, err
+	}
+	_ = s.Store.Audit(ctx, actorID, "application.decommission_plan_created", "application", app.ID, map[string]any{"planId": record.ID, "deletions": len(plan.Changes), "digest": plan.Digest})
+	return record, nil
+}
+
+func (s *Service) CalculateDecommissionPlan(ctx context.Context, app store.Application) (core.Plan, error) {
+	input, err := s.loadPlanInput(ctx, app)
+	if err != nil {
+		return core.Plan{}, err
+	}
+	live, _, err := s.liveSnapshot(ctx, input, nil)
+	if err != nil {
+		return core.Plan{}, err
+	}
+	revision := app.LastSyncedRevision
+	if revision == "" {
+		revision = "decommission"
+	}
+	plan, err := core.BuildPlan(app.ID, revision, input.Bindings, nil, live)
+	if err != nil {
+		return core.Plan{}, err
+	}
+	plan.Decommission = true
+	plan.RequiresApproval = len(plan.Changes) > 0
+	if err := core.RefreshDigest(&plan); err != nil {
+		return core.Plan{}, err
+	}
+	return plan, nil
+}
+
+func (s *Service) RecheckPlan(ctx context.Context, app store.Application, record store.PlanRecord) (core.Plan, error) {
+	if record.Plan.Decommission {
+		if !app.Decommissioning {
+			return core.Plan{}, errors.New("decommission plan was cancelled")
+		}
+		return s.CalculateDecommissionPlan(ctx, app)
+	}
+	if app.Decommissioning {
+		return core.Plan{}, errors.New("application is being decommissioned; cancel deletion before normal sync")
+	}
+	plan, _, err := s.CalculatePlanWithSelection(ctx, app, record.Plan.Selection)
+	return plan, err
+}
+
+func (s *Service) RefreshPlan(ctx context.Context, app store.Application, actorID string, record store.PlanRecord) (store.PlanRecord, error) {
+	if record.Plan.Decommission {
+		if !app.Decommissioning {
+			return store.PlanRecord{}, errors.New("decommission plan was cancelled")
+		}
+		return s.BuildDecommissionPlan(ctx, app, actorID)
+	}
+	return s.BuildPlanWithSelection(ctx, app, actorID, record.Plan.Selection)
+}
+
 func (s *Service) CalculatePlan(ctx context.Context, app store.Application) (core.Plan, []core.Resource, error) {
 	return s.CalculatePlanWithSelection(ctx, app, core.PlanSelection{})
 }
 
 func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Application, selection core.PlanSelection) (core.Plan, []core.Resource, error) {
+	if app.Decommissioning {
+		return core.Plan{}, nil, errors.New("application is being decommissioned; cancel deletion before normal sync")
+	}
 	rules, err := s.Store.IgnoreRules(ctx, app.ID)
+	if err != nil {
+		return core.Plan{}, nil, err
+	}
+	selectors, err := s.Store.IgnoreSelectors(ctx, app.ID)
 	if err != nil {
 		return core.Plan{}, nil, err
 	}
@@ -88,6 +165,7 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 		return core.Plan{}, nil, err
 	}
 	input.IgnoreRules = rules
+	input.IgnoreSelectors = selectors
 	input.Selection = selection
 	namespaceBindings := make([]core.Binding, 0, len(input.Bindings))
 	for _, binding := range input.Bindings {
@@ -95,7 +173,13 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 			namespaceBindings = append(namespaceBindings, binding)
 		}
 	}
-	desired, err := render.Render(ctx, render.Options{RepositoryRoot: checkout.Root, ManifestPath: app.ManifestPath, Renderer: app.Renderer, KustomizeHelmEnabled: app.KustomizeHelmEnabled, ApplicationID: app.ID, ClusterID: app.ClusterID, Namespaces: namespaceBindings, Mapper: input.Mapper.Mapper})
+	ignoredResources := make([]core.Identity, 0, len(rules))
+	for _, rule := range rules {
+		if rule.Path == "" {
+			ignoredResources = append(ignoredResources, rule.Identity)
+		}
+	}
+	desired, err := render.Render(ctx, render.Options{RepositoryRoot: checkout.Root, ManifestPath: app.ManifestPath, Renderer: app.Renderer, KustomizeHelmEnabled: app.KustomizeHelmEnabled, KustomizeNamespaceOverride: app.KustomizeNamespaceOverride, ApplicationID: app.ID, ClusterID: app.ClusterID, Namespaces: namespaceBindings, Mapper: input.Mapper.Mapper, IgnoredResources: ignoredResources, IgnoredSelectors: selectors})
 	if err != nil {
 		return core.Plan{}, nil, err
 	}
@@ -133,7 +217,7 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 		}
 	}
 	plan.Selection = selection
-	plan.IgnoreRulesDigest = ignoreRulesDigest(rules)
+	plan.IgnoreRulesDigest = ignoreRulesDigest(rules, selectors)
 	plan.Ignored = append(plan.Ignored, applyResourceExclusions(&plan, rules, selection)...)
 	ignoredKeys := make([]string, 0, len(changedIgnoredFields))
 	for key := range changedIgnoredFields {
@@ -260,7 +344,7 @@ func normalizeSelection(selection core.PlanSelection) core.PlanSelection {
 	return selection
 }
 
-func ignoreRulesDigest(rules []store.ApplicationIgnoreRule) string {
+func ignoreRulesDigest(rules []store.ApplicationIgnoreRule, selectors []core.IgnoreSelector) string {
 	canonical := make([]core.IgnoreRule, 0, len(rules))
 	for _, rule := range rules {
 		canonical = append(canonical, rule.IgnoreRule)
@@ -269,7 +353,10 @@ func ignoreRulesDigest(rules []store.ApplicationIgnoreRule) string {
 		a, b := canonical[i].Identity.Key()+"\x00"+canonical[i].Path+"\x00"+canonical[i].ID, canonical[j].Identity.Key()+"\x00"+canonical[j].Path+"\x00"+canonical[j].ID
 		return a < b
 	})
-	encoded, _ := json.Marshal(canonical)
+	encoded, _ := json.Marshal(struct {
+		Rules     []core.IgnoreRule     `json:"rules"`
+		Selectors []core.IgnoreSelector `json:"selectors"`
+	}{canonical, selectors})
 	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:])
 }
@@ -371,6 +458,21 @@ func resourceExcluded(input planInput, identity core.Identity) bool {
 	return false
 }
 
+func selectorMatchesManifest(selectors []core.IgnoreSelector, identity core.Identity, manifest []byte) bool {
+	var object struct {
+		Metadata struct {
+			Labels map[string]string `json:"labels"`
+		} `json:"metadata"`
+	}
+	_ = json.Unmarshal(manifest, &object)
+	for _, selector := range selectors {
+		if selector.Matches(identity, object.Metadata.Labels) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Service) ValidateIgnoreRule(ctx context.Context, app store.Application, identity core.Identity, path string) error {
 	if identity.ClusterID == "" {
 		identity.ClusterID = app.ClusterID
@@ -399,6 +501,11 @@ func (s *Service) ValidateIgnoreRule(ctx context.Context, app store.Application,
 		if _, err := render.ParseJSONPointer(path); err != nil {
 			return err
 		}
+	}
+	// Whole-resource exclusions must be installable before a plan exists: the
+	// Kubernetes identity may be undiscoverable or unreadable by design.
+	if path == "" {
+		return nil
 	}
 	_, desired, err := s.CalculatePlan(ctx, app)
 	if err != nil {
@@ -566,6 +673,9 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 	for _, resource := range managed {
 		identity := resource.Identity
 		identity.ClusterScoped = identity.Namespace == ""
+		if resourceExcluded(input, identity) || selectorMatchesManifest(input.IgnoreSelectors, identity, resource.Manifest) {
+			continue
+		}
 		identities[identity.Key()] = identity
 		managedByKey[identity.Key()] = resource
 		previousManifests[identity.Key()] = resource.Manifest
@@ -771,7 +881,10 @@ func clientFor(input planInput, identity core.Identity) (*kube.Clients, error) {
 	}
 	return client, nil
 }
-func groupVersion(identity core.Identity) string { return identity.APIVersion }
+func groupVersion(identity core.Identity) string {
+	gv, _ := schema.ParseGroupVersion(identity.APIVersion)
+	return gv.Version
+}
 func groupKind(identity core.Identity) schema.GroupKind {
 	gv, _ := schema.ParseGroupVersion(identity.APIVersion)
 	return schema.GroupKind{Group: gv.Group, Kind: identity.Kind}

@@ -1,19 +1,22 @@
 "use client"
 
 import Link from "next/link"
-import { useParams } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
 import { useEffect, useMemo, useState } from "react"
 import { Tabs } from "@base-ui/react/tabs"
 import { Button } from "@/components/ui/button"
+import { ApplicationDetailSkeleton } from "@/components/application-detail-skeleton"
+import { ConfirmDisclosure } from "@/components/confirm-disclosure"
 import { Checkbox } from "@/components/ui/checkbox"
 import { DataGridList } from "@/components/data-grid-table"
 import { FormSelect } from "@/components/ui/form-select"
+import { Input } from "@/components/ui/input"
 import { ResourceMap } from "@/components/resource-map"
 import { Textarea } from "@/components/ui/textarea"
-import { EmptyState, PageHeading, Panel, StatusBadge } from "@/components/ui-kit"
+import { EmptyState, FormField, PageHeading, Panel, StatusBadge } from "@/components/ui-kit"
 import { APIError, api, apiDelete, apiPost, errorMessage } from "@/lib/api"
 import { diffJsonLines } from "@/lib/line-diff"
-import type { Application, Change, FieldExclusion, Identity, IgnoreRule, ListResponse, ManagedResource, Operation, PlanRecord, Project, ResourceTopology } from "@/lib/types"
+import type { Application, Change, FieldExclusion, Identity, IgnoreRule, IgnoreSelector, ListResponse, ManagedResource, Operation, PlanRecord, Project, ResourceTopology } from "@/lib/types"
 
 function diffId(identity: Identity) {
   return `diff-${[identity.clusterId ?? "", identity.apiVersion, identity.kind, identity.namespace, identity.name].map(encodeURIComponent).join("-")}`
@@ -35,8 +38,12 @@ function safeIgnorePath(pointer: string) {
 
 export default function ApplicationDetailPage() {
   const { applicationID } = useParams<{ applicationID: string }>()
+  const router = useRouter()
   const [application, setApplication] = useState<Application | null>(null)
   const [kustomizeHelmDraft, setKustomizeHelmDraft] = useState(false)
+  const [namespaceOverrideDraft, setNamespaceOverrideDraft] = useState(false)
+  const [kustomization, setKustomization] = useState<{ namespace: string; commit: string } | null>(null)
+  const [kustomizationError, setKustomizationError] = useState("")
   const [project, setProject] = useState<Project | null>(null)
   const [plans, setPlans] = useState<PlanRecord[]>([])
   const [activePlan, setActivePlan] = useState<PlanRecord | null>(null)
@@ -45,6 +52,16 @@ export default function ApplicationDetailPage() {
   const [topologyRefreshing, setTopologyRefreshing] = useState(false)
   const [operations, setOperations] = useState<Operation[]>([])
   const [ignoreRules, setIgnoreRules] = useState<IgnoreRule[]>([])
+  const [ignoreSelectors, setIgnoreSelectors] = useState<IgnoreSelector[]>([])
+  const [ignoreMode, setIgnoreMode] = useState("kind")
+  const [ignoreVersion, setIgnoreVersion] = useState("")
+  const [ignoreKind, setIgnoreKind] = useState("")
+  const [ignoreNamespace, setIgnoreNamespace] = useState("")
+  const [ignoreName, setIgnoreName] = useState("")
+  const [ignoreLabelKey, setIgnoreLabelKey] = useState("")
+  const [ignoreLabelValue, setIgnoreLabelValue] = useState("")
+  const [ignoreReason, setIgnoreReason] = useState("")
+  const [deletePolicy, setDeletePolicy] = useState("keep")
   const [selectionDraft, setSelectionDraft] = useState<{ planId: string; resources: Identity[]; fields: FieldExclusion[] } | null>(null)
   const [ignoreReasons, setIgnoreReasons] = useState<Record<string, string>>({})
   const [approvalId, setApprovalId] = useState("")
@@ -92,16 +109,22 @@ export default function ApplicationDetailPage() {
 
   async function loadData() {
     const app = await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`)
-    const [projectList, planList, inventory, operationList, topologyResult, ignoreRuleList] = await Promise.all([
+    const [projectList, planList, inventory, operationList, topologyResult, ignoreRuleList, selectorList, kustomizationResult] = await Promise.all([
       api<ListResponse<Project>>("/api/v1/projects"),
       api<ListResponse<PlanRecord>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/plans`),
       api<ListResponse<ManagedResource>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/resources`),
       api<ListResponse<Operation>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/operations`),
       api<ResourceTopology>(`/api/v1/applications/${encodeURIComponent(applicationID)}/topology`).catch(() => null),
       api<ListResponse<IgnoreRule>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ignore-rules`),
+      api<ListResponse<IgnoreSelector>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ignore-selectors`),
+      app.renderer === "kustomize" ? api<{ namespace: string; commit: string }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/kustomization`).then((value) => ({ value, error: "" })).catch((cause) => ({ value: null, error: errorMessage(cause) })) : Promise.resolve({ value: null, error: "" }),
     ])
     setApplication(app)
+    if (app.decommissioning) setDeletePolicy("delete")
     setKustomizeHelmDraft(app.kustomizeHelmEnabled)
+    setNamespaceOverrideDraft(app.kustomizeNamespaceOverride)
+    setKustomization(kustomizationResult.value)
+    setKustomizationError(kustomizationResult.error)
     setProject(projectList.items.find((item) => item.id === app.projectId) ?? null)
     setPlans(planList.items)
     setActivePlan((current) => current ? planList.items.find((item) => item.id === current.id) ?? planList.items[0] ?? null : planList.items[0] ?? null)
@@ -109,6 +132,7 @@ export default function ApplicationDetailPage() {
     setTopology(topologyResult)
     setOperations(operationList.items)
     setIgnoreRules(ignoreRuleList.items)
+    setIgnoreSelectors(selectorList.items)
   }
 
   useEffect(() => {
@@ -155,7 +179,7 @@ export default function ApplicationDetailPage() {
     if (!application || application.renderer !== "kustomize") return
     setBusy(true); setError(""); setNotice("")
     try {
-      await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}/render-settings`, { method: "PUT", body: JSON.stringify({ kustomizeHelmEnabled: kustomizeHelmDraft }) })
+      await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}/render-settings`, { method: "PUT", body: JSON.stringify({ kustomizeHelmEnabled: kustomizeHelmDraft, kustomizeNamespaceOverride: namespaceOverrideDraft }) })
       setApprovalId("")
       await loadData()
       setNotice("Render setting saved. Earlier plans are stale; create and review a new plan before syncing.")
@@ -212,10 +236,9 @@ export default function ApplicationDetailPage() {
     setBusy(true); setError(""); setNotice("")
     try {
       await apiPost<IgnoreRule>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ignore-rules`, { identity, path, reason: cleanReason })
-      const plan = await apiPost<PlanRecord>(`/api/v1/applications/${encodeURIComponent(applicationID)}/plans`)
       await loadData()
-      setActivePlan(plan)
-      setNotice(`Permanent ignore rule saved. Existing plans were invalidated; the new plan includes the updated rule set.`)
+      setApprovalId("")
+      setNotice("Ignore rule saved. Existing plans are stale; refresh the plan when ready.")
     } catch (cause) { setError(errorMessage(cause)) }
     finally { setBusy(false) }
   }
@@ -224,11 +247,52 @@ export default function ApplicationDetailPage() {
     setBusy(true); setError(""); setNotice("")
     try {
       await apiDelete<void>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ignore-rules/${encodeURIComponent(rule.id)}`)
-      const plan = await apiPost<PlanRecord>(`/api/v1/applications/${encodeURIComponent(applicationID)}/plans`)
       await loadData()
-      setActivePlan(plan)
-      setNotice("Ignore rule removed. A fresh plan is ready for review.")
+      setApprovalId("")
+      setNotice("Ignore rule removed. Refresh the plan before syncing.")
     } catch (cause) { setError(errorMessage(cause)) }
+    finally { setBusy(false) }
+  }
+
+  async function addIgnore() {
+    if (!application) return
+    setBusy(true); setError(""); setNotice("")
+    try {
+      if (ignoreMode === "resource") {
+        await apiPost<IgnoreRule>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ignore-rules`, { identity: { clusterId: application.clusterId, apiVersion: ignoreVersion.trim(), kind: ignoreKind.trim(), namespace: ignoreNamespace.trim(), name: ignoreName.trim() }, reason: ignoreReason.trim() })
+      } else {
+        await apiPost<IgnoreSelector>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ignore-selectors`, { apiVersion: ignoreMode === "kind" ? ignoreVersion.trim() : "", kind: ignoreMode === "kind" ? ignoreKind.trim() : "", labelKey: ignoreMode === "label" ? ignoreLabelKey.trim() : "", labelValue: ignoreMode === "label" ? ignoreLabelValue.trim() : "", reason: ignoreReason.trim() })
+      }
+      setIgnoreReason(""); setIgnoreName(""); setApprovalId("")
+      await loadData()
+      setNotice("Exclusion saved. Existing plans are stale; refresh the plan before syncing.")
+    } catch (cause) { setError(errorMessage(cause)) }
+    finally { setBusy(false) }
+  }
+
+  async function removeIgnoreSelector(selector: IgnoreSelector) {
+    await apiDelete(`/api/v1/applications/${encodeURIComponent(applicationID)}/ignore-selectors/${encodeURIComponent(selector.id)}`)
+    await loadData(); setApprovalId(""); setNotice("Exclusion removed. Refresh the plan before syncing.")
+  }
+
+  async function deleteApplication() {
+    const result = await api<{ deleted: boolean; plan?: PlanRecord }>(`/api/v1/applications/${encodeURIComponent(applicationID)}?resources=${deletePolicy}`, { method: "DELETE" })
+    if (result.deleted) { router.push(`/projects/${application?.projectId ?? ""}`); router.refresh(); return }
+    if (result.plan) {
+      setDeletePolicy("delete")
+      setActivePlan(result.plan)
+      setPlans((current) => [result.plan!, ...current.filter((item) => item.id !== result.plan!.id)])
+      setApplication((current) => current ? { ...current, decommissioning: true } : current)
+      setApprovalId("")
+      setNotice(`Deletion plan ready for ${result.plan.plan.changes.length} managed resources. Review and approve it before applying.`)
+      selectTab("changes")
+    }
+  }
+
+  async function cancelDecommission() {
+    setBusy(true); setError("")
+    try { await apiPost(`/api/v1/applications/${encodeURIComponent(applicationID)}/cancel-decommission`); await loadData(); setNotice("Application deletion cancelled. Refresh a normal plan before syncing.") }
+    catch (cause) { setError(errorMessage(cause)) }
     finally { setBusy(false) }
   }
 
@@ -248,10 +312,6 @@ export default function ApplicationDetailPage() {
 
   async function approvePlan() {
     if (!activePlan || selectionDirty) return
-    const deletes = activePlan.plan.changes.filter((change) => change.kind === "delete")
-    const privileged = activePlan.plan.changes.filter((change) => change.identity.clusterScoped)
-    const summary = deletes.length ? `This approves deletion of ${deletes.length} resource${deletes.length === 1 ? "" : "s"}:\n\n${deletes.map((change) => `${change.identity.kind} ${change.identity.namespace}/${change.identity.name}`).join("\n")}\n\nThe approval applies only to this plan and expires shortly.` : `This approves ${privileged.length} cluster-scoped change${privileged.length === 1 ? "" : "s"} in this exact plan. It expires shortly.`
-    if (!window.confirm(summary)) return
     setBusy(true); setError(""); setNotice("")
     try {
       const approval = await apiPost<{ id: string; expiresAt: string }>(`/api/v1/plans/${encodeURIComponent(activePlan.id)}/approvals`)
@@ -285,10 +345,16 @@ export default function ApplicationDetailPage() {
     return counts
   }, {})).sort((a, b) => b[1] - a[1])
 
+  const namespaceMismatch = Boolean(application?.renderer === "kustomize" && kustomization?.namespace && application.namespaces.length === 1 && kustomization.namespace !== application.namespaces[0].namespace)
+
+  if (loading && !application) return <ApplicationDetailSkeleton />
+
   return <>
-    <PageHeading title={application?.name ?? (loading ? "Loading application…" : "Application not found")} description={application ? `${application.renderer} · ${application.manifestPath} · ${application.revision}` : ""} actions={<><StatusBadge status={application?.health ?? "unknown"} /><Button variant="outline" onClick={() => void createPlan()} disabled={!application || !canDeploy || busy}><span aria-hidden="true">↻</span> {busy ? "Working…" : "Refresh plan"}</Button></>} />
+    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.renderer} · ${application.manifestPath} · ${application.revision}` : ""} actions={application && <><StatusBadge status={application.health} />{canApprove && !application.decommissioning && <Link href={`/applications/${applicationID}/edit`}><Button variant="outline">Edit application</Button></Link>}<Button variant="outline" onClick={() => void createPlan()} disabled={application.decommissioning || !canDeploy || busy || (namespaceMismatch && !application.kustomizeNamespaceOverride)} title={namespaceMismatch && !application.kustomizeNamespaceOverride ? "Choose a namespace override before refreshing the plan" : undefined}><span aria-hidden="true">↻</span> {busy ? "Working…" : "Refresh plan"}</Button></>} />
     {error && <div role="alert" className="mb-4 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</div>}
     {notice && <div role="status" className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">{notice}</div>}
+    {application?.decommissioning && <div role="status" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300/70 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><span>Deletion in progress. Auto-sync is paused. Review and apply the deletion plan, then finish removing the application.</span>{canApprove && <Button size="sm" variant="outline" disabled={busy || hasPendingOperation} onClick={() => void cancelDecommission()}>Cancel deletion</Button>}</div>}
+    {namespaceMismatch && !application?.kustomizeNamespaceOverride && <div role="alert" className="mb-5 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><strong>Kustomize namespace: {kustomization?.namespace}.</strong> JustCD target: {application?.namespaces[0]?.namespace}. The namespaces differ, so a plan cannot be refreshed until an owner enables the override. <button type="button" className="font-semibold underline underline-offset-4" onClick={() => selectTab("activity")}>Review namespace setting →</button></div>}
     {!loading && application && <>
       {visibleOperation && <div role="status" aria-live="polite" className={`mb-5 rounded-xl border px-4 py-3 ${visibleOperation.status === "failed" ? "border-destructive/30 bg-destructive/5" : "bg-card"}`}>
         <div className="flex flex-wrap items-center gap-3"><StatusBadge status={visibleOperation.status} /><span className="text-xs font-medium">{operationPhaseLabel(visibleOperation.progress?.phase, visibleOperation.status)}</span><span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{visibleOperation.progress?.completed.length ?? 0} / {visibleOperation.progress?.total ?? 0} resources</span></div>
@@ -347,18 +413,18 @@ export default function ApplicationDetailPage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="changes" className="max-w-6xl outline-none">
-          <Panel title="Plan & diff" description="A reviewed plan is a snapshot of the desired Git commit and live cluster state." action={plans.length > 0 && <FormSelect ariaLabel="Select plan" value={activePlan?.id ?? ""} onValueChange={(id) => { setApprovalId(""); setActivePlan(plans.find((plan) => plan.id === id) ?? null) }} className="h-8 max-w-[220px] text-xs" items={plans.map((plan) => ({ value: plan.id, label: `${new Date(plan.createdAt).toLocaleString()} · ${plan.status}` }))} />}>
+          <Panel title={activePlan?.plan.decommission ? "Deletion plan & diff" : "Plan & diff"} description={activePlan?.plan.decommission ? "Every managed resource below will be checked again before it is deleted." : "A reviewed plan is a snapshot of the desired Git commit and live cluster state."} action={plans.length > 0 && <FormSelect ariaLabel="Select plan" value={activePlan?.id ?? ""} onValueChange={(id) => { setApprovalId(""); setActivePlan(plans.find((plan) => plan.id === id) ?? null) }} className="h-8 max-w-[220px] text-xs" items={plans.map((plan) => ({ value: plan.id, label: `${new Date(plan.createdAt).toLocaleString()} · ${plan.plan.decommission ? "deletion · " : ""}${plan.status}` }))} />}>
             {!activePlan ? <EmptyState title="No review plan yet" description="Build a plan to render Git manifests and compare them with live, app-owned resources." /> : <div className="p-4 sm:p-5">
               <div className="mb-4 flex flex-wrap items-center gap-2"><StatusBadge status={activePlan.status} /><span className="font-mono text-[10px] text-muted-foreground">{activePlan.plan.revision.slice(0, 12)}</span><span className="text-[10px] text-muted-foreground">· expires {new Date(activePlan.expiresAt).toLocaleTimeString()}</span><span className="ml-auto font-mono text-[9px] text-muted-foreground">{activePlan.plan.digest.slice(0, 16)}</span></div>
               <div className="mb-5 grid grid-cols-3 gap-2"><ChangeCount label="Create" count={changeCounts?.create ?? 0} color="text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/40" /><ChangeCount label="Update" count={changeCounts?.update ?? 0} color="text-blue-700 bg-blue-50 dark:text-blue-300 dark:bg-blue-950/40" /><ChangeCount label="Delete" count={changeCounts?.delete ?? 0} color="text-rose-700 bg-rose-50 dark:text-rose-300 dark:bg-rose-950/40" /></div>
-              {ignoreRules.length > 0 && <section className="mb-5 rounded-lg border bg-muted/10"><div className="flex items-start justify-between gap-3 border-b px-4 py-3"><div><h3 className="text-xs font-semibold">Persistent ignore rules</h3><p className="mt-1 text-[10px] text-muted-foreground">Applied to manual and Auto-safe plans. Changes invalidate reviewed plans.</p></div><span className="rounded-md bg-muted px-2 py-1 text-[10px] tabular-nums">{ignoreRules.length}</span></div><div className="divide-y">{ignoreRules.map((rule) => <div key={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3"><span className="min-w-0 flex-1 text-xs font-medium">{rule.identity.kind} {rule.identity.namespace ? `${rule.identity.namespace}/` : ""}{rule.identity.name}<span className="ml-2 font-mono text-[10px] font-normal text-muted-foreground">{rule.path || "entire resource"}</span><span className="mt-1 block text-[10px] font-normal text-muted-foreground">{rule.reason}</span></span>{canApprove && <Button size="sm" variant="ghost" disabled={busy} onClick={() => void removeIgnoreRule(rule)}>Remove</Button>}</div>)}</div></section>}
-              {activePlan.plan.changes.length ? <div className="space-y-3">{activePlan.plan.changes.map((change, index) => <DiffCard key={`${change.identity.apiVersion}/${change.identity.kind}/${change.identity.namespace}/${change.identity.name}/${index}`} change={change} canSelect={canDeploy} canManageIgnores={canApprove} excluded={selectionResources.some((identity) => sameIdentity(identity, change.identity))} excludedPaths={selectionFields.filter((field) => sameIdentity(field.identity, change.identity)).map((field) => field.path)} permanentResourceIgnore={ignoreRules.some((rule) => !rule.path && sameIdentity(rule.identity, change.identity))} permanentFieldIgnores={ignoreRules.filter((rule) => Boolean(rule.path) && sameIdentity(rule.identity, change.identity)).map((rule) => rule.path!)} reason={ignoreReasons[diffId(change.identity)] ?? ""} onReasonChange={(reason) => setIgnoreReasons((current) => ({ ...current, [diffId(change.identity)]: reason }))} onToggleResource={() => toggleResourceExclusion(change.identity)} onToggleField={(path) => toggleFieldExclusion(change.identity, path)} onSaveIgnore={(path) => void saveIgnoreRule(change.identity, path, ignoreReasons[diffId(change.identity)] ?? "")} busy={busy} />)}</div> : <div className="rounded-lg border border-dashed px-4 py-8 text-center"><span className="text-emerald-600">✓</span><p className="mt-2 text-sm font-medium">No changes to apply</p><p className="mt-1 text-xs text-muted-foreground">Git and the managed cluster fields are in sync, or every difference is excluded below.</p></div>}
+              {ignoreRules.length > 0 && <section className="mb-5 rounded-lg border bg-muted/10"><div className="flex items-start justify-between gap-3 border-b px-4 py-3"><div><h3 className="text-xs font-semibold">Persistent ignore rules</h3><p className="mt-1 text-[10px] text-muted-foreground">Applied to manual and Auto-safe plans. Changes invalidate reviewed plans.</p></div><span className="rounded-md bg-muted px-2 py-1 text-[10px] tabular-nums">{ignoreRules.length}</span></div><div className="divide-y">{ignoreRules.map((rule) => <div key={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3"><span className="min-w-0 flex-1 text-xs font-medium">{rule.identity.kind} {rule.identity.namespace ? `${rule.identity.namespace}/` : ""}{rule.identity.name}<span className="ml-2 font-mono text-[10px] font-normal text-muted-foreground">{rule.path || "entire resource"}</span><span className="mt-1 block text-[10px] font-normal text-muted-foreground">{rule.reason}</span></span>{canApprove && <ConfirmDisclosure trigger="Remove" title="Remove ignore rule?" description="The next plan may update or delete this resource again." confirmLabel="Remove rule" onConfirm={async () => { await removeIgnoreRule(rule) }} disabled={busy} />}</div>)}</div></section>}
+              {activePlan.plan.changes.length ? <div className="space-y-3">{activePlan.plan.changes.map((change, index) => <DiffCard key={`${change.identity.apiVersion}/${change.identity.kind}/${change.identity.namespace}/${change.identity.name}/${index}`} change={change} canSelect={canDeploy && !activePlan.plan.decommission} canManageIgnores={canApprove && !activePlan.plan.decommission} excluded={selectionResources.some((identity) => sameIdentity(identity, change.identity))} excludedPaths={selectionFields.filter((field) => sameIdentity(field.identity, change.identity)).map((field) => field.path)} permanentResourceIgnore={ignoreRules.some((rule) => !rule.path && sameIdentity(rule.identity, change.identity))} permanentFieldIgnores={ignoreRules.filter((rule) => Boolean(rule.path) && sameIdentity(rule.identity, change.identity)).map((rule) => rule.path!)} reason={ignoreReasons[diffId(change.identity)] ?? ""} onReasonChange={(reason) => setIgnoreReasons((current) => ({ ...current, [diffId(change.identity)]: reason }))} onToggleResource={() => toggleResourceExclusion(change.identity)} onToggleField={(path) => toggleFieldExclusion(change.identity, path)} onSaveIgnore={(path) => void saveIgnoreRule(change.identity, path, ignoreReasons[diffId(change.identity)] ?? "")} busy={busy} />)}</div> : <div className="rounded-lg border border-dashed px-4 py-8 text-center"><span className="text-emerald-600">✓</span><p className="mt-2 text-sm font-medium">No changes to apply</p><p className="mt-1 text-xs text-muted-foreground">Git and the managed cluster fields are in sync, or every difference is excluded below.</p></div>}
               {(activePlan.plan.ignored?.length ?? 0) > 0 && <section className="mt-6 space-y-3"><div className="flex items-end justify-between gap-3"><div><h3 className="text-sm font-semibold">Excluded from this sync</h3><p className="mt-1 text-xs text-muted-foreground">These differences stay visible and will appear again in a later plan unless covered by a permanent rule.</p></div><span className="text-xs tabular-nums text-muted-foreground">{activePlan.plan.ignored?.length} excluded</span></div>{activePlan.plan.ignored?.map((change, index) => <DiffCard key={`ignored-${change.identity.kind}-${change.identity.namespace}-${change.identity.name}-${index}`} change={change} canSelect={canDeploy} canManageIgnores={canApprove} excluded={selectionResources.some((identity) => sameIdentity(identity, change.identity))} excludedPaths={selectionFields.filter((field) => sameIdentity(field.identity, change.identity)).map((field) => field.path)} permanentResourceIgnore={ignoreRules.some((rule) => !rule.path && sameIdentity(rule.identity, change.identity))} permanentFieldIgnores={ignoreRules.filter((rule) => Boolean(rule.path) && sameIdentity(rule.identity, change.identity)).map((rule) => rule.path!)} reason={ignoreReasons[diffId(change.identity)] ?? ""} onReasonChange={(reason) => setIgnoreReasons((current) => ({ ...current, [diffId(change.identity)]: reason }))} onToggleResource={() => toggleResourceExclusion(change.identity)} onToggleField={(path) => toggleFieldExclusion(change.identity, path)} onSaveIgnore={(path) => void saveIgnoreRule(change.identity, path, ignoreReasons[diffId(change.identity)] ?? "")} busy={busy} ignored />)}</section>}
               {selectionDirty && <div className="mt-5 flex flex-wrap items-center gap-3 rounded-lg border border-primary/20 bg-primary/5 p-3"><p className="min-w-0 flex-1 text-xs text-muted-foreground">Exclusions are drafts until you save. Saving creates a new immutable plan and clears any earlier approval.</p><Button size="sm" variant="outline" onClick={() => { setSelectionResources(activePlan.plan.selection?.resources ?? []); setSelectionFields(activePlan.plan.selection?.fields ?? []) }} disabled={busy}>Reset</Button><Button size="sm" onClick={() => void savePlanSelection()} disabled={busy}>{busy ? "Recalculating…" : "Create selected plan"}</Button></div>}
               {activePlan.plan.requiresApproval && <div className="mt-5 rounded-lg border border-amber-300/70 bg-amber-50/70 p-3.5 text-xs leading-5 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><strong>Owner approval required.</strong> {changeCounts?.delete ? "Deletion is never automatic. Review the exact targets above; an owner must approve this plan before the sync button is enabled." : "Cluster-scoped changes need explicit owner approval."}</div>}
               <div className="mt-5 flex flex-wrap justify-end gap-2 border-t pt-4">
-                {activePlan.plan.requiresApproval && <Button variant="outline" onClick={() => void approvePlan()} disabled={busy || selectionDirty || !canApprove || activePlan.status !== "current"}>{approvalId ? "Approved ✓" : "Approve reviewed changes"}</Button>}
-                <Button onClick={() => void applyPlan()} disabled={busy || selectionDirty || !canDeploy || activePlan.status !== "current" || activePlan.plan.changes.length === 0 || (activePlan.plan.requiresApproval && !approvalId)}>{busy ? "Syncing…" : activePlan.plan.requiresApproval ? "Apply approved plan" : "Sync application"}</Button>
+                {activePlan.plan.requiresApproval && <ConfirmDisclosure trigger={approvalId ? "Approved ✓" : "Approve reviewed changes"} triggerVariant="outline" title="Approve this exact plan?" description={`${activePlan.plan.changes.filter((change) => change.kind === "delete").length} resource deletions and ${activePlan.plan.changes.filter((change) => change.identity.clusterScoped).length} cluster-scoped changes will be authorized for this short-lived plan only.`} confirmLabel="Approve plan" onConfirm={approvePlan} disabled={busy || selectionDirty || !canApprove || activePlan.status !== "current"}><ul className="max-h-36 space-y-1 overflow-y-auto text-xs text-muted-foreground">{activePlan.plan.changes.filter((change) => change.kind === "delete").map((change) => <li key={diffId(change.identity)}>{change.identity.kind} {change.identity.namespace}/{change.identity.name}</li>)}</ul></ConfirmDisclosure>}
+                <Button onClick={() => void applyPlan()} disabled={busy || selectionDirty || !canDeploy || (activePlan.plan.decommission && !canApprove) || activePlan.status !== "current" || activePlan.plan.changes.length === 0 || (activePlan.plan.requiresApproval && !approvalId)}>{busy ? "Starting…" : activePlan.plan.decommission ? "Delete approved resources" : activePlan.plan.requiresApproval ? "Apply approved plan" : "Sync application"}</Button>
               </div>
               {!canApprove && activePlan.plan.requiresApproval && <p className="mt-2 text-right text-[10px] text-muted-foreground">Only a project owner can approve this plan.</p>}
             </div>}
@@ -380,7 +446,28 @@ export default function ApplicationDetailPage() {
           <Panel title="Recent operations" description="Sync history and result state">
             {operations.length ? <div className="divide-y">{operations.slice(0, 8).map((operation) => <div key={operation.id} className="px-5 py-3.5"><div className="flex items-center justify-between gap-3"><span className="text-xs font-medium">{operation.status === "succeeded" ? "Sync completed" : operation.status === "failed" ? "Sync stopped" : operation.status === "queued" ? "Sync queued" : "Sync running"}</span><StatusBadge status={operation.status} /></div><p className="mt-1 line-clamp-2 text-[10px] leading-4 text-muted-foreground">{operation.message || "Sync operation"}</p>{operation.progress && <p className="mt-1 text-[10px] text-muted-foreground">{operationPhaseLabel(operation.progress.phase, operation.status)} · {operation.progress.completed.length}/{operation.progress.total} resources{operation.progress.current ? ` · ${resourceLabel(operation.progress.current)}` : ""}</p>}<p className="mt-1.5 text-[9px] text-muted-foreground">{new Date(operation.startedAt).toLocaleString()}</p></div>)}</div> : <EmptyState title="No syncs yet" description="Operations will be recorded here with the actor and resulting status." />}
           </Panel>
-          <Panel title="Application source" description="Configuration stored in JustCD"><div className="space-y-3 p-5 text-xs"><KeyValue label="Manifest path" value={application.manifestPath} mono /><KeyValue label="Renderer" value={application.renderer} /><KeyValue label="Cluster" value={application.clusterId.slice(0, 12)} mono /><KeyValue label="Poll interval" value={`${application.pollSeconds} seconds`} />{application.renderer === "kustomize" && <div className="space-y-3 border-t pt-4"><label className="flex items-start gap-2"><Checkbox checked={kustomizeHelmDraft} onCheckedChange={(checked) => setKustomizeHelmDraft(Boolean(checked))} disabled={!canApprove || busy || hasPendingOperation} /><span><span className="block font-medium">Enable Helm charts in Kustomize</span><span className="mt-1 block leading-5 text-muted-foreground">Permits helmCharts from this Git source. Helm may fetch pinned charts from public HTTPS repositories while building the plan.</span></span></label>{canApprove && <Button size="sm" variant="outline" disabled={busy || hasPendingOperation || kustomizeHelmDraft === application.kustomizeHelmEnabled} onClick={() => void saveRenderSettings()}>Save render setting</Button>}</div>}<Link href={`/projects/${application.projectId}`} className="mt-1 inline-block text-xs font-medium text-primary hover:underline">Open project →</Link></div></Panel>
+          <Panel title="Application source" description="Configuration stored in JustCD"><div className="space-y-3 p-5 text-xs"><KeyValue label="Manifest path" value={application.manifestPath} mono /><KeyValue label="Renderer" value={application.renderer} /><KeyValue label="Cluster" value={application.clusterId.slice(0, 12)} mono /><KeyValue label="Poll interval" value={`${application.pollSeconds} seconds`} />{application.renderer === "kustomize" && <div className="space-y-4 border-t pt-4">
+            <div className="rounded-lg border bg-muted/30 p-3"><p className="font-medium">Namespace from Git</p><p className="mt-1 font-mono text-muted-foreground">{kustomization ? kustomization.namespace || "Not set in kustomization" : kustomizationError || "Checking kustomization…"}</p><p className="mt-1 text-muted-foreground">JustCD target: {application.namespaces.map((binding) => binding.namespace).join(", ")}</p></div>
+            {kustomization?.namespace && application.namespaces.length === 1 && <label className="flex items-start gap-2"><Checkbox checked={namespaceOverrideDraft} onCheckedChange={(checked) => setNamespaceOverrideDraft(Boolean(checked))} disabled={!canApprove || busy || hasPendingOperation} /><span><span className="block font-medium">Override Git namespace with JustCD target</span><span className="mt-1 block leading-5 text-muted-foreground">Kustomize builds resources in {application.namespaces[0].namespace} instead of {kustomization.namespace}. Explicit namespace references inside manifests may remain unchanged. This can create or delete resources on the next sync, so review the new plan first.</span></span></label>}
+            {kustomization?.namespace && application.namespaces.length !== 1 && <p className="text-muted-foreground">An override needs exactly one bound target namespace.</p>}
+            <label className="flex items-start gap-2"><Checkbox checked={kustomizeHelmDraft} onCheckedChange={(checked) => setKustomizeHelmDraft(Boolean(checked))} disabled={!canApprove || busy || hasPendingOperation} /><span><span className="block font-medium">Enable Helm charts in Kustomize</span><span className="mt-1 block leading-5 text-muted-foreground">Permits helmCharts from this Git source. Helm may fetch pinned charts from public HTTPS repositories while building the plan.</span></span></label>
+            {canApprove && <Button size="sm" variant="outline" disabled={busy || hasPendingOperation || (kustomizeHelmDraft === application.kustomizeHelmEnabled && namespaceOverrideDraft === application.kustomizeNamespaceOverride)} onClick={() => void saveRenderSettings()}>Save render settings</Button>}
+          </div>}<Link href={`/projects/${application.projectId}`} className="mt-1 inline-block text-xs font-medium text-primary hover:underline">Open project →</Link></div></Panel>
+          <Panel title="Ignored resources" description="Exclude an exact resource, an entire Kubernetes kind, or resources with a label. Exclusions apply before cluster discovery and live reads." className="xl:col-span-2">
+            <div className="space-y-5 p-5">
+              {canApprove && <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <FormField label="Exclude by" htmlFor="ignore-mode"><FormSelect id="ignore-mode" value={ignoreMode} onValueChange={setIgnoreMode} items={[{ value: "kind", label: "API kind" }, { value: "label", label: "Label" }, { value: "resource", label: "Exact resource" }]} /></FormField>
+                {(ignoreMode === "kind" || ignoreMode === "resource") && <><FormField label="API version" htmlFor="ignore-api-version"><Input id="ignore-api-version" placeholder="secrets.hashicorp.com/v1beta1" value={ignoreVersion} onChange={(event) => setIgnoreVersion(event.target.value)} /></FormField><FormField label="Kind" htmlFor="ignore-kind"><Input id="ignore-kind" placeholder="VaultStaticSecret" value={ignoreKind} onChange={(event) => setIgnoreKind(event.target.value)} /></FormField></>}
+                {ignoreMode === "resource" && <><FormField label="Namespace" htmlFor="ignore-namespace"><Input id="ignore-namespace" placeholder={application.namespaces[0]?.namespace ?? "namespace"} value={ignoreNamespace} onChange={(event) => setIgnoreNamespace(event.target.value)} /></FormField><FormField label="Resource name" htmlFor="ignore-name"><Input id="ignore-name" placeholder="ntfy-secret" value={ignoreName} onChange={(event) => setIgnoreName(event.target.value)} /></FormField></>}
+                {ignoreMode === "label" && <><FormField label="Label key" htmlFor="ignore-label-key"><Input id="ignore-label-key" placeholder="justcd.io/exclude" value={ignoreLabelKey} onChange={(event) => setIgnoreLabelKey(event.target.value)} /></FormField><FormField label="Label value" htmlFor="ignore-label-value"><Input id="ignore-label-value" placeholder="true" value={ignoreLabelValue} onChange={(event) => setIgnoreLabelValue(event.target.value)} /></FormField></>}
+                <div className="sm:col-span-2 lg:col-span-4"><FormField label="Reason" htmlFor="ignore-reason"><Textarea id="ignore-reason" value={ignoreReason} onChange={(event) => setIgnoreReason(event.target.value)} placeholder="Managed by another controller or outside this service account's permissions" maxLength={500} /></FormField></div>
+                <Button size="sm" className="w-fit sm:col-span-2" onClick={() => void addIgnore()} disabled={busy || hasPendingOperation || ignoreReason.trim().length < 5 || ((ignoreMode === "kind" || ignoreMode === "resource") && (!ignoreVersion.trim() || !ignoreKind.trim())) || (ignoreMode === "resource" && !ignoreName.trim()) || (ignoreMode === "label" && !ignoreLabelKey.trim())}>Add exclusion</Button>
+              </div>}
+              <p className="text-xs text-muted-foreground">Ignored resources stay visible here and are not read, updated, or deleted by normal plans. Existing plans become stale when these rules change.</p>
+              {(ignoreSelectors.length > 0 || ignoreRules.length > 0) && <div className="divide-y rounded-lg border">{ignoreSelectors.map((rule) => <div key={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-xs"><span className="min-w-0 flex-1"><strong>{rule.kind ? `${rule.apiVersion} · ${rule.kind}` : "Any kind"}</strong>{rule.labelKey && <span className="ml-2 font-mono text-muted-foreground">{rule.labelKey}={rule.labelValue}</span>}<span className="mt-1 block text-muted-foreground">{rule.reason}</span></span>{canApprove && <ConfirmDisclosure trigger="Remove" title="Remove exclusion?" description="Future plans may manage matching resources again." confirmLabel="Remove exclusion" onConfirm={() => removeIgnoreSelector(rule)} disabled={busy || hasPendingOperation} />}</div>)}{ignoreRules.map((rule) => <div key={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-xs"><span className="min-w-0 flex-1"><strong>{rule.identity.kind} {rule.identity.namespace}/{rule.identity.name}</strong><span className="ml-2 font-mono text-muted-foreground">{rule.path || "whole resource"}</span><span className="mt-1 block text-muted-foreground">{rule.reason}</span></span>{canApprove && <ConfirmDisclosure trigger="Remove" title="Remove ignore rule?" description="Future plans may manage this resource again." confirmLabel="Remove rule" onConfirm={async () => { await removeIgnoreRule(rule) }} disabled={busy || hasPendingOperation} />}</div>)}</div>}
+            </div>
+          </Panel>
+          {canApprove && <Panel title="Delete application" description="Choose whether JustCD keeps or removes the resources it manages." className="xl:col-span-2"><div className="flex flex-wrap items-center justify-between gap-3 p-5"><p className="text-xs text-muted-foreground">{`${resources.length} managed resource${resources.length === 1 ? "" : "s"} currently recorded.`} Keeping them removes ownership tracking from JustCD.</p><ConfirmDisclosure trigger="Delete application" title={`Delete ${application.name}?`} description="Removing this application from JustCD cannot be undone. Choose what happens to its managed Kubernetes resources." confirmLabel="Delete application" onConfirm={deleteApplication} disabled={busy || hasPendingOperation}><FormField label="Managed cluster resources" htmlFor="application-delete-policy"><FormSelect id="application-delete-policy" value={deletePolicy} onValueChange={setDeletePolicy} items={[{ value: "keep", label: "Keep resources in Kubernetes" }, { value: "delete", label: "Delete resources through a reviewed plan" }]} /></FormField>{deletePolicy === "delete" && resources.length > 0 && <p className="mt-2 text-xs text-muted-foreground">A deletion plan and owner approval are required before this application can be removed.</p>}</ConfirmDisclosure></div></Panel>}
         </Tabs.Panel>
       </Tabs.Root>
     </>}

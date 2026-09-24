@@ -50,119 +50,78 @@ export default function OverviewPage() {
       ) : (
         <>
           <section
-            className="mb-8 overflow-hidden rounded-2xl border bg-card"
             aria-label="Delivery overview"
+            className="mb-8 rounded-2xl border bg-card"
           >
-            <div className="grid lg:grid-cols-[1.15fr_1fr]">
-              <div className="relative overflow-hidden bg-[#142b2a] p-6 text-white sm:p-8">
-                <div
-                  aria-hidden="true"
-                  className="pointer-events-none absolute -top-16 -right-16 size-64 rounded-full border border-white/5 before:absolute before:inset-8 before:rounded-full before:border before:border-white/5 after:absolute after:inset-16 after:rounded-full after:border after:border-white/5"
-                />
-                <p className="relative text-[10px] font-medium tracking-[0.18em] text-emerald-200/80 uppercase">
-                  Delivery pulse
-                </p>
-                <h2 className="relative mt-5 max-w-sm text-2xl leading-tight font-medium tracking-tight sm:text-3xl">
-                  {!applications.length
-                    ? "Ready when you are."
-                    : attention.length
-                      ? "A few things need your attention."
-                      : synced === applications.length
-                        ? "Everything is in sync."
-                        : "Your workspace is taking shape."}
-                </h2>
-                <p className="relative mt-3 max-w-md text-sm leading-6 text-slate-300">
-                  {!applications.length
-                    ? "Bring your Git repositories and Kubernetes applications together in one workspace."
-                    : attention.length
-                      ? `${attention.length} application${attention.length === 1 ? " has" : "s have"} changes or health issues to review.`
-                      : `${synced} of ${applications.length} applications in sync. ${other ? `${other} awaiting a confirmed sync state.` : "You’re up to date with your desired state."}`}
-                </p>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-4">
+              <h2 className="text-sm font-semibold">Deployment status</h2>
+              <Link
+                href="/applications"
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                View applications →
+              </Link>
+            </div>
+            <div className="grid grid-cols-2 divide-x divide-border sm:grid-cols-4">
+              {[
+                {
+                  label: "Applications",
+                  value: applications.length,
+                  color: "bg-primary",
+                  href: "/applications",
+                },
+                {
+                  label: "In sync",
+                  value: synced,
+                  color: "bg-emerald-500",
+                  href: "/applications?status=synced",
+                },
+                {
+                  label: "Needs attention",
+                  value: attention.length,
+                  color: "bg-amber-500",
+                  href: "/applications?status=attention",
+                },
+                {
+                  label: "Other states",
+                  value: other,
+                  color: "bg-muted-foreground",
+                  href: "/applications?status=other",
+                },
+              ].map((item) => (
                 <Link
-                  href={
-                    applications.length
-                      ? `/applications${attention.length ? "?status=attention" : ""}`
-                      : projects.length
-                        ? "/applications/new"
-                        : "/projects/new"
-                  }
-                  className="relative mt-6 inline-flex items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-xs font-medium hover:bg-white/15"
+                  key={item.label}
+                  href={item.href}
+                  className="p-5 transition-colors hover:bg-muted/40 sm:p-6"
                 >
-                  {applications.length
-                    ? attention.length
-                      ? "Review applications"
-                      : "Explore applications"
-                    : "Set up your workspace"}
-                  <WorkspaceIcon name="arrow" className="size-4" />
+                  <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <span className={`size-1.5 rounded-full ${item.color}`} />
+                    {item.label}
+                  </span>
+                  <span className="mt-3 block text-3xl font-semibold tracking-tight tabular-nums">
+                    {item.value}
+                  </span>
                 </Link>
-              </div>
-              <div className="flex flex-col justify-center p-6 sm:p-8">
-                <div className="flex items-end justify-between">
-                  <div>
-                    <p className="text-xs text-muted-foreground">
-                      Applications in sync
-                    </p>
-                    <p className="mt-2 text-5xl font-medium tracking-tight tabular-nums">
-                      {synced}
-                      <span className="ml-2 text-xl font-normal text-muted-foreground">
-                        / {applications.length}
-                      </span>
-                    </p>
-                  </div>
-                  <span className="pb-1 text-sm text-muted-foreground tabular-nums">
-                    {applications.length
-                      ? `${Math.round((synced / applications.length) * 100)}%`
-                      : "—"}
-                  </span>
-                </div>
-                <div
-                  className="mt-6 flex h-2 overflow-hidden rounded-full bg-muted"
-                  aria-hidden="true"
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t px-6 py-3 text-xs text-muted-foreground">
+              <span>
+                {projects.length} project{projects.length === 1 ? "" : "s"} ·{" "}
+                {applications.length
+                  ? `${Math.round((synced / applications.length) * 100)}% of applications in sync`
+                  : "No applications connected yet"}
+              </span>
+              {!applications.length && (
+                <Link
+                  href={projects.length ? "/applications/new" : "/projects/new"}
+                  className="font-medium text-primary hover:underline"
                 >
-                  {applications.length > 0 && (
-                    <>
-                      <span
-                        className="bg-emerald-500"
-                        style={{
-                          width: `${(synced / applications.length) * 100}%`,
-                        }}
-                      />
-                      <span
-                        className="bg-amber-400"
-                        style={{
-                          width: `${(attention.length / applications.length) * 100}%`,
-                        }}
-                      />
-                    </>
-                  )}
-                </div>
-                <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted-foreground">
-                  <span className="flex items-center gap-2">
-                    <span className="size-1.5 rounded-full bg-emerald-500" />
-                    {synced} in sync
-                  </span>
-                  <span className="flex items-center gap-2">
-                    <span className="size-1.5 rounded-full bg-amber-400" />
-                    {attention.length} need attention
-                  </span>
-                  <span className="flex items-center gap-2">
-                    <span className="size-1.5 rounded-full bg-muted-foreground/40" />
-                    {other} other
-                  </span>
-                </div>
-                <div className="mt-6 flex items-center justify-between border-t pt-4 text-xs">
-                  <span className="text-muted-foreground">
-                    Across {projects.length} project
-                    {projects.length === 1 ? "" : "s"}
-                  </span>
-                  <Link
-                    href="/applications"
-                    className="font-medium hover:text-primary"
-                  >
-                    View all applications →
-                  </Link>
-                </div>
-              </div>
+                  {projects.length
+                    ? "Create an application"
+                    : "Create your first project"}{" "}
+                  →
+                </Link>
+              )}
             </div>
           </section>
           <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_320px]">

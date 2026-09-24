@@ -7,6 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/justlab/justcd/services/backend/internal/core"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 func TestKustomizeHelmRequiresApplicationOptIn(t *testing.T) {
@@ -115,6 +119,17 @@ func TestKustomizeAllowsSharedComponentInsideRepository(t *testing.T) {
 	}
 }
 
+func TestKustomizeIgnoresUnrelatedKustomizations(t *testing.T) {
+	repo := t.TempDir()
+	overlay := filepath.Join(repo, "envs", "demo", "dev", "ntfy")
+	writeRenderTestFile(t, filepath.Join(overlay, "kustomization.yml"), "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - configmap.yaml\n")
+	writeRenderTestFile(t, filepath.Join(overlay, "configmap.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: ntfy\n")
+	writeRenderTestFile(t, filepath.Join(repo, ".guide", "netpol", "kustomization.yaml"), "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../../../../../outside.yaml\n")
+	if err := validateKustomizeSources(context.Background(), overlay, repo, false); err != nil {
+		t.Fatalf("unrelated kustomization blocked application: %v", err)
+	}
+}
+
 func TestKustomizeHelmRejectsNonPublicChartRepos(t *testing.T) {
 	for _, repo := range []string{"http://charts.example.com", "https://127.0.0.1/charts", "https://localhost/charts", "https://user:secret@charts.example.com"} {
 		if err := validateHelmRepository(context.Background(), repo); err == nil {
@@ -130,5 +145,56 @@ func writeRenderTestFile(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestKustomizeNamespaceOverrideBuildsForBoundTarget(t *testing.T) {
+	if _, err := exec.LookPath("kustomize"); err != nil {
+		if _, err := exec.LookPath("kubectl"); err != nil {
+			t.Skip("kustomize and kubectl are not installed")
+		}
+	}
+	repo := t.TempDir()
+	overlay := filepath.Join(repo, "envs", "demo", "dev", "ntfy")
+	writeRenderTestFile(t, filepath.Join(overlay, "kustomization.yaml"), "namespace: ntfy-dev\nresources:\n  - configmap.yaml\n  - rolebinding.yaml\n")
+	writeRenderTestFile(t, filepath.Join(overlay, "configmap.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: oauth2-proxy-config\n")
+	writeRenderTestFile(t, filepath.Join(overlay, "rolebinding.yaml"), "apiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\nmetadata:\n  name: access\nsubjects:\n  - kind: ServiceAccount\n    name: ntfy\n    namespace: ntfy-dev\nroleRef:\n  apiGroup: rbac.authorization.k8s.io\n  kind: Role\n  name: access\n")
+	writeRenderTestFile(t, filepath.Join(repo, ".guide", "unrelated", "kustomization.yaml"), "resources:\n  - ../../../../../outside.yaml\n")
+	if err := validateKustomizeSources(context.Background(), overlay, repo, false); err != nil {
+		t.Fatalf("unrelated guide blocked application overlay: %v", err)
+	}
+	declared, err := KustomizationNamespace(repo, "envs/demo/dev/ntfy")
+	if err != nil || declared != "ntfy-dev" {
+		t.Fatalf("namespace = %q, err = %v", declared, err)
+	}
+	wrapper, cleanup, err := namespaceOverrideOverlay(repo, overlay, "justintest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	output, err := runKustomizeRenderer(context.Background(), wrapper, repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(output), "namespace: justintest") != 2 || !strings.Contains(string(output), "namespace: ntfy-dev") {
+		t.Fatalf("resource namespaces were not transformed or explicit subject was unexpectedly changed: %s", output)
+	}
+	cleanup()
+	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{{Version: "v1"}})
+	mapper.Add(schema.GroupVersionKind{Version: "v1", Kind: "ConfigMap"}, meta.RESTScopeNamespace)
+	options := Options{RepositoryRoot: repo, ManifestPath: "envs/demo/dev/ntfy", Renderer: "kustomize", ApplicationID: "app", ClusterID: "cluster", Namespaces: []core.Binding{{Namespace: "justintest"}}, Mapper: mapper}
+	// Keep the end-to-end assertion focused on the ConfigMap. The RoleBinding above
+	// demonstrates that explicit subject references remain unchanged by Kustomize.
+	writeRenderTestFile(t, filepath.Join(overlay, "kustomization.yaml"), "namespace: ntfy-dev\nresources:\n  - configmap.yaml\n")
+	if _, err := Render(context.Background(), options); err == nil || !strings.Contains(err.Error(), "unbound namespace") {
+		t.Fatalf("expected unbound namespace before override, got %v", err)
+	}
+	options.KustomizeNamespaceOverride = true
+	resources, err := Render(context.Background(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resources) != 1 || resources[0].Identity.Namespace != "justintest" {
+		t.Fatalf("override rendered unexpected resources: %+v", resources)
 	}
 }

@@ -155,13 +155,13 @@ func (s *Server) approvePlan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	fresh, _, err := s.Syncer.CalculatePlanWithSelection(r.Context(), app, record.Plan.Selection)
+	fresh, err := s.Syncer.RecheckPlan(r.Context(), app, record)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "could not safely recheck the plan")
 		return
 	}
 	if record.Status != "current" || !time.Now().Before(record.ExpiresAt) || fresh.Digest != record.Plan.Digest {
-		refreshed, err := s.Syncer.BuildPlanWithSelection(r.Context(), app, currentUser(r).ID, record.Plan.Selection)
+		refreshed, err := s.Syncer.RefreshPlan(r.Context(), app, currentUser(r).ID, record)
 		if err != nil {
 			writeError(w, http.StatusConflict, "plan is no longer current; refresh it before approval")
 			return
@@ -200,6 +200,9 @@ func (s *Server) approvePlan(w http.ResponseWriter, r *http.Request) {
 func (s *Server) applyPlan(w http.ResponseWriter, r *http.Request) {
 	record, app, ok := s.authorizedPlan(w, r, "deployer")
 	if !ok {
+		return
+	}
+	if record.Plan.Decommission && !s.requireProjectRole(w, r, app.ProjectID, "owner") {
 		return
 	}
 	var input struct {
@@ -246,6 +249,10 @@ func (s *Server) applyPlan(w http.ResponseWriter, r *http.Request) {
 func (s *Server) createPlanSelection(w http.ResponseWriter, r *http.Request) {
 	record, app, ok := s.authorizedPlan(w, r, "deployer")
 	if !ok {
+		return
+	}
+	if record.Plan.Decommission {
+		writeError(w, http.StatusBadRequest, "decommission plans cannot exclude managed resource deletions")
 		return
 	}
 	var input core.PlanSelection

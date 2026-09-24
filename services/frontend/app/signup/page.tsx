@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
+import { ThemePicker } from "@/components/theme-picker"
 import { Input } from "@/components/ui/input"
 import { api, apiPost, errorMessage } from "@/lib/api"
 import type { User } from "@/lib/types"
@@ -34,7 +35,8 @@ export default function SignupPage() {
     finally { setBusy(false) }
   }
 
-  return <main className="grid min-h-svh place-items-center bg-muted/30 px-5 py-10">
+  return <main className="relative grid min-h-svh place-items-center bg-muted/30 px-5 py-10">
+    <div className="absolute right-4 top-4"><ThemePicker /></div>
     <section className="w-full max-w-md rounded-2xl border bg-background p-6 shadow-sm sm:p-8">
       <Link href="/login" className="inline-flex items-center gap-3 text-sm font-semibold"><span className="grid size-9 place-items-center rounded-xl bg-primary text-primary-foreground">J</span> JustCD</Link>
       <p className="mt-8 text-xs font-semibold uppercase tracking-widest text-primary">First-time setup</p>

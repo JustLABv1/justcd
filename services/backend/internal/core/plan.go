@@ -92,8 +92,35 @@ type IgnoreRule struct {
 	Reason   string   `json:"reason"`
 }
 
+// IgnoreSelector excludes a rendered resource by exact GVK or label before
+// discovery/live reads. It is scoped to one application and audited separately.
+type IgnoreSelector struct {
+	ID         string    `json:"id"`
+	APIVersion string    `json:"apiVersion,omitempty"`
+	Kind       string    `json:"kind,omitempty"`
+	LabelKey   string    `json:"labelKey,omitempty"`
+	LabelValue string    `json:"labelValue,omitempty"`
+	Reason     string    `json:"reason"`
+	CreatedBy  string    `json:"createdBy,omitempty"`
+	CreatedAt  time.Time `json:"createdAt,omitempty"`
+}
+
+func (selector IgnoreSelector) Matches(identity Identity, labels map[string]string) bool {
+	if selector.Kind != "" && (selector.Kind != identity.Kind || selector.APIVersion != identity.APIVersion) {
+		return false
+	}
+	if selector.LabelKey != "" {
+		value, exists := labels[selector.LabelKey]
+		if !exists || value != selector.LabelValue {
+			return false
+		}
+	}
+	return selector.Kind != "" || selector.LabelKey != ""
+}
+
 type Plan struct {
 	ApplicationID     string        `json:"applicationId"`
+	Decommission      bool          `json:"decommission,omitempty"`
 	Revision          string        `json:"revision"`
 	Bindings          []Binding     `json:"bindings"`
 	Changes           []Change      `json:"changes"`

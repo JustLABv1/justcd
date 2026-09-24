@@ -384,6 +384,46 @@ func (s *Store) CreateProject(ctx context.Context, project Project, ownerID stri
 	return tx.Commit()
 }
 
+func (s *Store) UpdateProject(ctx context.Context, id, name, description string) error {
+	result, err := s.DB.ExecContext(ctx, `UPDATE projects SET name=$2,description=$3,updated_at=NOW() WHERE id=$1`, id, name, description)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) DeleteProjectKeepingResources(ctx context.Context, id string, requireEmpty bool) (int, int, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer tx.Rollback()
+	var lockedID string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE id=$1 FOR UPDATE`, id).Scan(&lockedID); err != nil {
+		return 0, 0, err
+	}
+	var apps, managed, active int
+	if err := tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM applications WHERE project_id=$1), (SELECT COUNT(*) FROM managed_resources m JOIN applications a ON a.id=m.application_id WHERE a.project_id=$1), (SELECT COUNT(*) FROM operations o JOIN applications a ON a.id=o.application_id WHERE a.project_id=$1 AND o.status IN ('queued','running'))`, id).Scan(&apps, &managed, &active); err != nil {
+		return 0, 0, err
+	}
+	if active > 0 {
+		return 0, 0, errors.New("project has active sync operations")
+	}
+	if requireEmpty && managed > 0 {
+		return 0, 0, errors.New("project still manages Kubernetes resources")
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM projects WHERE id=$1`, id); err != nil {
+		return 0, 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, 0, err
+	}
+	return apps, managed, nil
+}
+
 func (s *Store) ProjectRole(ctx context.Context, user User, projectID string) (string, error) {
 	if user.IsAdmin {
 		return "owner", nil
@@ -631,22 +671,24 @@ func (s *Store) ListGitSources(ctx context.Context, projectID string) ([]GitSour
 }
 
 type Application struct {
-	ID                   string             `json:"id"`
-	ProjectID            string             `json:"projectId"`
-	Name                 string             `json:"name"`
-	SourceID             string             `json:"sourceId"`
-	Revision             string             `json:"revision"`
-	ManifestPath         string             `json:"manifestPath"`
-	Renderer             string             `json:"renderer"`
-	KustomizeHelmEnabled bool               `json:"kustomizeHelmEnabled"`
-	ClusterID            string             `json:"clusterId"`
-	Namespaces           []NamespaceBinding `json:"namespaces"`
-	SyncPolicy           string             `json:"syncPolicy"`
-	PollSeconds          int                `json:"pollSeconds"`
-	LastCheckedAt        *time.Time         `json:"lastCheckedAt,omitempty"`
-	LastSyncedRevision   string             `json:"lastSyncedRevision,omitempty"`
-	Health               string             `json:"health"`
-	CreatedAt            time.Time          `json:"createdAt"`
+	ID                         string             `json:"id"`
+	ProjectID                  string             `json:"projectId"`
+	Name                       string             `json:"name"`
+	SourceID                   string             `json:"sourceId"`
+	Revision                   string             `json:"revision"`
+	ManifestPath               string             `json:"manifestPath"`
+	Renderer                   string             `json:"renderer"`
+	KustomizeHelmEnabled       bool               `json:"kustomizeHelmEnabled"`
+	KustomizeNamespaceOverride bool               `json:"kustomizeNamespaceOverride"`
+	ClusterID                  string             `json:"clusterId"`
+	Namespaces                 []NamespaceBinding `json:"namespaces"`
+	SyncPolicy                 string             `json:"syncPolicy"`
+	PollSeconds                int                `json:"pollSeconds"`
+	LastCheckedAt              *time.Time         `json:"lastCheckedAt,omitempty"`
+	LastSyncedRevision         string             `json:"lastSyncedRevision,omitempty"`
+	Health                     string             `json:"health"`
+	Decommissioning            bool               `json:"decommissioning"`
+	CreatedAt                  time.Time          `json:"createdAt"`
 }
 
 func (s *Store) CreateApplication(ctx context.Context, a Application) error {
@@ -654,33 +696,129 @@ func (s *Store) CreateApplication(ctx context.Context, a Application) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.DB.ExecContext(ctx, `INSERT INTO applications(id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,cluster_id,namespaces,sync_policy,poll_seconds) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, a.ID, a.ProjectID, a.Name, a.SourceID, a.Revision, a.ManifestPath, a.Renderer, a.KustomizeHelmEnabled, a.ClusterID, namespaces, a.SyncPolicy, a.PollSeconds)
+	_, err = s.DB.ExecContext(ctx, `INSERT INTO applications(id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,cluster_id,namespaces,sync_policy,poll_seconds) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, a.ID, a.ProjectID, a.Name, a.SourceID, a.Revision, a.ManifestPath, a.Renderer, a.KustomizeHelmEnabled, a.KustomizeNamespaceOverride, a.ClusterID, namespaces, a.SyncPolicy, a.PollSeconds)
 	return err
 }
 
 func scanApplication(row interface{ Scan(...any) error }) (Application, error) {
 	var a Application
 	var namespaces []byte
-	err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.SourceID, &a.Revision, &a.ManifestPath, &a.Renderer, &a.KustomizeHelmEnabled, &a.ClusterID, &namespaces, &a.SyncPolicy, &a.PollSeconds, &a.LastCheckedAt, &a.LastSyncedRevision, &a.Health, &a.CreatedAt)
+	err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.SourceID, &a.Revision, &a.ManifestPath, &a.Renderer, &a.KustomizeHelmEnabled, &a.KustomizeNamespaceOverride, &a.ClusterID, &namespaces, &a.SyncPolicy, &a.PollSeconds, &a.LastCheckedAt, &a.LastSyncedRevision, &a.Health, &a.Decommissioning, &a.CreatedAt)
 	if err == nil {
 		err = json.Unmarshal(namespaces, &a.Namespaces)
 	}
 	return a, err
 }
 
-const applicationColumns = `id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,COALESCE(last_synced_revision,''),health,created_at`
+const applicationColumns = `id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,COALESCE(last_synced_revision,''),health,decommissioning,created_at`
 
 func (s *Store) ApplicationByID(ctx context.Context, id string) (Application, error) {
 	return scanApplication(s.DB.QueryRowContext(ctx, `SELECT `+applicationColumns+` FROM applications WHERE id=$1`, id))
 }
 
-func (s *Store) SetApplicationKustomizeHelm(ctx context.Context, id string, enabled bool) error {
+func (s *Store) UpdateApplication(ctx context.Context, app Application) error {
+	namespaces, err := json.Marshal(app.Namespaces)
+	if err != nil {
+		return err
+	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE applications SET kustomize_helm_enabled=$2,updated_at=NOW() WHERE id=$1`, id, enabled); err != nil {
+	var oldCluster string
+	var oldNamespaces []byte
+	if err := tx.QueryRowContext(ctx, `SELECT cluster_id,namespaces FROM applications WHERE id=$1 FOR UPDATE`, app.ID).Scan(&oldCluster, &oldNamespaces); err != nil {
+		return err
+	}
+	var managed, active int
+	if err := tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM managed_resources WHERE application_id=$1), (SELECT COUNT(*) FROM operations WHERE application_id=$1 AND status IN ('queued','running'))`, app.ID).Scan(&managed, &active); err != nil {
+		return err
+	}
+	if active > 0 {
+		return errors.New("application is currently syncing")
+	}
+	var decommissioning bool
+	if err := tx.QueryRowContext(ctx, `SELECT decommissioning FROM applications WHERE id=$1`, app.ID).Scan(&decommissioning); err != nil {
+		return err
+	}
+	if decommissioning {
+		return errors.New("application is being decommissioned; cancel deletion first")
+	}
+	if managed > 0 && (oldCluster != app.ClusterID || string(oldNamespaces) != string(namespaces)) {
+		return errors.New("cannot change cluster or namespace bindings while resources are managed")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET name=$2,source_id=$3,revision=$4,manifest_path=$5,renderer=$6,kustomize_helm_enabled=$7,kustomize_namespace_override=$8,cluster_id=$9,namespaces=$10,sync_policy=$11,poll_seconds=$12,last_checked_at=NULL,health='unknown',updated_at=NOW() WHERE id=$1`, app.ID, app.Name, app.SourceID, app.Revision, app.ManifestPath, app.Renderer, app.KustomizeHelmEnabled, app.KustomizeNamespaceOverride, app.ClusterID, namespaces, app.SyncPolicy, app.PollSeconds); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, app.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) DeleteApplicationKeepingResources(ctx context.Context, id string, requireEmpty bool) (int, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	var lockedID string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE id=$1 FOR UPDATE`, id).Scan(&lockedID); err != nil {
+		return 0, err
+	}
+	var managed, active int
+	if err := tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM managed_resources WHERE application_id=$1), (SELECT COUNT(*) FROM operations WHERE application_id=$1 AND status IN ('queued','running'))`, id).Scan(&managed, &active); err != nil {
+		return 0, err
+	}
+	if active > 0 {
+		return 0, errors.New("application is currently syncing")
+	}
+	if requireEmpty && managed > 0 {
+		return 0, errors.New("application still manages Kubernetes resources")
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM applications WHERE id=$1`, id); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return managed, nil
+}
+
+func (s *Store) SetApplicationRenderSettings(ctx context.Context, id string, helmEnabled, namespaceOverride bool) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET kustomize_helm_enabled=$2,kustomize_namespace_override=$3,updated_at=NOW() WHERE id=$1`, id, helmEnabled, namespaceOverride); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) CancelApplicationDecommission(ctx context.Context, id string) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var locked string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE id=$1 FOR UPDATE`, id).Scan(&locked); err != nil {
+		return err
+	}
+	var active bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM operations WHERE application_id=$1 AND status IN ('queued','running'))`, id).Scan(&active); err != nil {
+		return err
+	}
+	if active {
+		return errors.New("application is currently syncing")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET decommissioning=FALSE,updated_at=NOW() WHERE id=$1`, id); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, id); err != nil {
@@ -709,7 +847,7 @@ func (s *Store) DueApplications(ctx context.Context, limit int) ([]Application, 
 	if limit < 1 || limit > 100 {
 		limit = 25
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+applicationColumns+` FROM applications a WHERE (a.last_checked_at IS NULL OR a.last_checked_at<=NOW()-(a.poll_seconds * INTERVAL '1 second')) AND NOT EXISTS (SELECT 1 FROM operation_leases l WHERE l.application_id=a.id AND l.expires_at>NOW()) ORDER BY a.last_checked_at ASC NULLS FIRST LIMIT $1`, limit)
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+applicationColumns+` FROM applications a WHERE NOT a.decommissioning AND (a.last_checked_at IS NULL OR a.last_checked_at<=NOW()-(a.poll_seconds * INTERVAL '1 second')) AND NOT EXISTS (SELECT 1 FROM operation_leases l WHERE l.application_id=a.id AND l.expires_at>NOW()) ORDER BY a.last_checked_at ASC NULLS FIRST LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -806,9 +944,14 @@ func (s *Store) SavePlan(ctx context.Context, record PlanRecord) error {
 	if _, err = tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, record.Plan.ApplicationID); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO plans(id,application_id,revision,digest,bindings,changes,desired,created_by,expires_at,status,ignored_changes,selection,ignore_rules_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, record.ID, record.Plan.ApplicationID, record.Plan.Revision, record.Plan.Digest, bindings, changes, desired, record.CreatedBy, record.ExpiresAt, record.Status, ignored, selection, record.Plan.IgnoreRulesDigest)
+	_, err = tx.ExecContext(ctx, `INSERT INTO plans(id,application_id,revision,digest,bindings,changes,desired,created_by,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, record.ID, record.Plan.ApplicationID, record.Plan.Revision, record.Plan.Digest, bindings, changes, desired, record.CreatedBy, record.ExpiresAt, record.Status, ignored, selection, record.Plan.IgnoreRulesDigest, record.Plan.Decommission)
 	if err != nil {
 		return err
+	}
+	if record.Plan.Decommission {
+		if _, err := tx.ExecContext(ctx, `UPDATE applications SET decommissioning=TRUE,updated_at=NOW() WHERE id=$1`, record.Plan.ApplicationID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -816,7 +959,7 @@ func (s *Store) SavePlan(ctx context.Context, record PlanRecord) error {
 func (s *Store) PlanByID(ctx context.Context, id string) (PlanRecord, error) {
 	var out PlanRecord
 	var bindings, changes, desired, ignored, selection []byte
-	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest FROM plans WHERE id=$1`, id).Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest)
+	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission FROM plans WHERE id=$1`, id).Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission)
 	if err != nil {
 		return PlanRecord{}, err
 	}
@@ -848,7 +991,7 @@ func (s *Store) ListPlans(ctx context.Context, applicationID string, limit int) 
 	if limit < 1 || limit > 100 {
 		limit = 20
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status FROM plans WHERE application_id=$1 ORDER BY created_at DESC LIMIT $2`, applicationID, limit)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission FROM plans WHERE application_id=$1 ORDER BY created_at DESC LIMIT $2`, applicationID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -857,7 +1000,7 @@ func (s *Store) ListPlans(ctx context.Context, applicationID string, limit int) 
 	for rows.Next() {
 		var out PlanRecord
 		var bindings, changes, desired, ignored, selection []byte
-		if err := rows.Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest); err != nil {
+		if err := rows.Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(bindings, &out.Plan.Bindings); err != nil {
@@ -964,6 +1107,59 @@ func (s *Store) DeleteIgnoreRule(ctx context.Context, applicationID, id string) 
 		return item, err
 	}
 	return item, tx.Commit()
+}
+
+func (s *Store) IgnoreSelectors(ctx context.Context, applicationID string) ([]core.IgnoreSelector, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,api_version,kind,label_key,label_value,reason,created_by,created_at FROM application_ignore_selectors WHERE application_id=$1 ORDER BY created_at,id`, applicationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]core.IgnoreSelector, 0)
+	for rows.Next() {
+		var item core.IgnoreSelector
+		if err := rows.Scan(&item.ID, &item.APIVersion, &item.Kind, &item.LabelKey, &item.LabelValue, &item.Reason, &item.CreatedBy, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) ChangeIgnoreSelector(ctx context.Context, applicationID, actorID string, rule core.IgnoreSelector, deleteID string) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var locked string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE id=$1 FOR UPDATE`, applicationID).Scan(&locked); err != nil {
+		return err
+	}
+	var active bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM operation_leases WHERE application_id=$1 AND expires_at>NOW())`, applicationID).Scan(&active); err != nil {
+		return err
+	}
+	if active {
+		return errors.New("application is currently syncing; ignore rules cannot change")
+	}
+	if deleteID != "" {
+		result, err := tx.ExecContext(ctx, `DELETE FROM application_ignore_selectors WHERE id=$1 AND application_id=$2`, deleteID, applicationID)
+		if err != nil {
+			return err
+		}
+		if n, _ := result.RowsAffected(); n == 0 {
+			return sql.ErrNoRows
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO application_ignore_selectors(id,application_id,api_version,kind,label_key,label_value,reason,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, rule.ID, applicationID, rule.APIVersion, rule.Kind, rule.LabelKey, rule.LabelValue, rule.Reason, actorID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, applicationID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) SetPlanStatus(ctx context.Context, id, status string) error {

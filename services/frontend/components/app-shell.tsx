@@ -4,6 +4,7 @@ import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
+import { ThemePicker } from "@/components/theme-picker"
 import { api, apiPost } from "@/lib/api"
 import type { Application, ListResponse, Project, User } from "@/lib/types"
 import { HugeiconsIcon } from "@hugeicons/react"
@@ -148,6 +149,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </nav>
           </div>
           <div className="flex items-center gap-3">
+            <ThemePicker />
             <Link href="/applications/new" className="hidden shrink-0 items-center gap-1.5 rounded-md border bg-background px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-muted md:inline-flex">
               <HugeiconsIcon icon={PlusSignIcon} className="size-3.5" aria-hidden="true" /> New application
             </Link>

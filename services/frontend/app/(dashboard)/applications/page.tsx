@@ -22,8 +22,11 @@ export default function ApplicationsPage() {
 function ApplicationsContent() {
   const { projects, applications, loading, error, refresh } = useWorkspace()
   const searchParams = useSearchParams()
-  const initialFilter =
-    searchParams.get("status") === "attention" ? "attention" : "all"
+  const initialFilter = ["attention", "synced", "other"].includes(
+    searchParams.get("status") ?? ""
+  )
+    ? searchParams.get("status")!
+    : "all"
   return (
     <>
       <p className="mb-2 text-[10px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">

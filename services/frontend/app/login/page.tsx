@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
+import { ThemePicker } from "@/components/theme-picker"
 import { Input } from "@/components/ui/input"
 import { api, apiPost, errorMessage } from "@/lib/api"
 import type { OIDCProvider, User } from "@/lib/types"
@@ -38,7 +39,8 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="grid min-h-svh bg-background lg:grid-cols-[1fr_0.86fr]">
+    <main className="relative grid min-h-svh bg-background lg:grid-cols-[1fr_0.86fr]">
+      <div className="absolute right-4 top-4 z-10"><ThemePicker /></div>
       <div className="relative hidden overflow-hidden bg-[#101828] px-12 py-10 text-white lg:flex lg:flex-col lg:justify-between">
         <div className="absolute -right-32 -top-32 size-[520px] rounded-full border border-white/5" />
         <div className="absolute -right-10 -top-10 size-[340px] rounded-full border border-white/5" />

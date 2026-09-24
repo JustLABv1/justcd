@@ -1,11 +1,14 @@
 "use client"
 
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useState } from "react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { FormSelect } from "@/components/ui/form-select"
 import { DataGridList } from "@/components/data-grid-table"
+import { ConfirmDisclosure } from "@/components/confirm-disclosure"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { EmptyState, StatusBadge } from "@/components/ui-kit"
 import { WorkspaceIcon } from "@/components/workspace-ui"
 import {
@@ -13,13 +16,35 @@ import {
   type WorkspaceApplication,
 } from "@/hooks/use-workspace"
 import type { Project } from "@/lib/types"
+import { api } from "@/lib/api"
 
-export function ApplicationCard({ app }: { app: WorkspaceApplication }) {
+function ApplicationActions({ app, canManage, onDeleted }: { app: WorkspaceApplication; canManage: boolean; onDeleted?: (id: string) => void }) {
+  const router = useRouter()
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [policy, setPolicy] = useState("keep")
+  async function remove() {
+    const result = await api<{ deleted: boolean }>(`/api/v1/applications/${encodeURIComponent(app.id)}?resources=${policy}`, { method: "DELETE" })
+    if (result.deleted) onDeleted?.(app.id)
+    else router.push(`/applications/${app.id}?tab=changes`)
+  }
+  return <>
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<Button type="button" variant="ghost" size="icon" aria-label={`Actions for ${app.name}`} title={`Actions for ${app.name}`} />}><span className="text-lg leading-none" aria-hidden="true">⋯</span></DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-36">
+        <DropdownMenuItem onClick={() => router.push(`/applications/${app.id}`)}>View application</DropdownMenuItem>
+        {canManage && <><DropdownMenuItem onClick={() => router.push(`/applications/${app.id}/edit`)}>Edit application</DropdownMenuItem><DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>Delete application</DropdownMenuItem></>}
+      </DropdownMenuContent>
+    </DropdownMenu>
+    <ConfirmDisclosure open={deleteOpen} onOpenChange={setDeleteOpen} title={`Delete ${app.name}?`} description="Choose whether JustCD keeps the managed Kubernetes resources or prepares a deletion plan for review." confirmLabel="Continue" onConfirm={remove}>
+      <FormSelect ariaLabel="Managed cluster resources" value={policy} onValueChange={setPolicy} items={[{ value: "keep", label: "Keep resources in Kubernetes" }, { value: "delete", label: "Delete through a reviewed plan" }]} />
+      {policy === "delete" && <p className="mt-2 text-xs text-muted-foreground">Resources are not deleted immediately. Review and approve the deletion plan on the application page.</p>}
+    </ConfirmDisclosure>
+  </>
+}
+
+export function ApplicationCard({ app, canManage, onDeleted }: { app: WorkspaceApplication; canManage?: boolean; onDeleted?: (id: string) => void }) {
   return (
-    <Link
-      href={`/applications/${app.id}`}
-      className="workspace-card group flex min-w-0 flex-col overflow-hidden rounded-2xl border bg-card"
-    >
+    <article className="workspace-card group flex min-w-0 flex-col overflow-hidden rounded-2xl border bg-card">
       <div
         className={`h-0.5 ${app.health === "synced" ? "bg-emerald-500/70" : needsAttention(app) ? "bg-amber-500/80" : "bg-border"}`}
       />
@@ -28,13 +53,13 @@ export function ApplicationCard({ app }: { app: WorkspaceApplication }) {
           <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/7 text-primary">
             <WorkspaceIcon name="app" />
           </span>
-          <StatusBadge status={app.health} />
+          <div className="flex items-center gap-1"><StatusBadge status={app.health} /><ApplicationActions app={app} canManage={Boolean(canManage)} onDeleted={onDeleted} /></div>
         </div>
         <h3
           className="mt-4 truncate text-base font-semibold tracking-tight group-hover:text-primary"
           title={app.name}
         >
-          {app.name}
+          <Link href={`/applications/${app.id}`} className="hover:underline focus-visible:rounded focus-visible:outline-2 focus-visible:outline-primary">{app.name}</Link>
         </h3>
         <p className="mt-1 truncate text-xs text-muted-foreground">
           {app.projectName || app.renderer} <span aria-hidden="true">/</span>{" "}
@@ -61,7 +86,7 @@ export function ApplicationCard({ app }: { app: WorkspaceApplication }) {
           </dd>
         </dl>
       </div>
-      <div className="mt-auto flex items-center justify-between gap-2 border-t bg-muted/20 px-5 py-3 text-[11px] text-muted-foreground">
+      <Link href={`/applications/${app.id}`} className="mt-auto flex items-center justify-between gap-2 border-t bg-muted/20 px-5 py-3 text-[11px] text-muted-foreground hover:text-foreground">
         <span className="flex min-w-0 items-center gap-2">
           <span className="rounded border bg-card px-1.5 py-0.5 font-mono">
             {app.renderer}
@@ -74,8 +99,8 @@ export function ApplicationCard({ app }: { app: WorkspaceApplication }) {
           name="arrow"
           className="size-4 shrink-0 group-hover:text-primary"
         />
-      </div>
-    </Link>
+      </Link>
+    </article>
   )
 }
 
@@ -85,27 +110,34 @@ export function ApplicationCollection({
   initialFilter = "all",
   createHref = "/applications/new",
   canCreate = true,
+  projectRole,
+  onDeleted,
 }: {
   applications: WorkspaceApplication[]
   projects?: Project[]
   initialFilter?: string
   createHref?: string
   canCreate?: boolean
+  projectRole?: Project["role"]
+  onDeleted?: (id: string) => void
 }) {
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState(initialFilter)
   const [projectId, setProjectId] = useState("all")
   const [view, setView] = useState<"cards" | "table">("cards")
   const [sort, setSort] = useState("attention")
+  const [removedIds, setRemovedIds] = useState<string[]>([])
+  const handleDeleted = (id: string) => { setRemovedIds((current) => [...current, id]); onDeleted?.(id) }
+  const available = applications.filter((app) => !removedIds.includes(app.id))
   const counts = {
-    all: applications.length,
-    attention: applications.filter(needsAttention).length,
-    synced: applications.filter((app) => app.health === "synced").length,
-    other: applications.filter(
+    all: available.length,
+    attention: available.filter(needsAttention).length,
+    synced: available.filter((app) => app.health === "synced").length,
+    other: available.filter(
       (app) => !needsAttention(app) && app.health !== "synced"
     ).length,
   }
-  const visible = applications
+  const visible = available
     .filter((app) => {
       const matchesStatus =
         filter === "all" ||
@@ -131,7 +163,7 @@ export function ApplicationCollection({
             a.name.localeCompare(b.name)
     )
 
-  if (!applications.length)
+  if (!available.length)
     return (
       <div className="rounded-2xl border border-dashed bg-card">
         <EmptyState
@@ -163,7 +195,7 @@ export function ApplicationCollection({
               type="button"
               aria-pressed={filter === value}
               onClick={() => setFilter(value)}
-              className={`flex min-h-9 items-center gap-2 rounded-lg px-3 text-xs font-medium transition-colors ${filter === value ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted"}`}
+              className={`flex min-h-9 items-center gap-2 rounded-lg px-3 text-xs font-medium transition-colors ${filter === value ? "border border-foreground bg-foreground text-background" : "border border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground"}`}
             >
               {label}
               <span
@@ -234,13 +266,13 @@ export function ApplicationCollection({
         />
       </div>
       <p role="status" className="mb-3 text-xs text-muted-foreground">
-        {visible.length} of {applications.length} applications
+        {visible.length} of {available.length} applications
       </p>
       {visible.length ? (
         view === "cards" ? (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-4">
             {visible.map((app) => (
-              <ApplicationCard key={app.id} app={app} />
+              <ApplicationCard key={app.id} app={app} canManage={projectRole === "owner" || projects?.some((project) => project.id === app.projectId && project.role === "owner")} onDeleted={handleDeleted} />
             ))}
           </div>
         ) : (
@@ -297,6 +329,12 @@ export function ApplicationCollection({
                 cell: (app) => (
                   <span className="text-xs">{app.syncPolicy}</span>
                 ),
+              },
+              {
+                id: "actions",
+                title: "",
+                size: 64,
+                cell: (app) => <ApplicationActions app={app} canManage={projectRole === "owner" || Boolean(projects?.some((project) => project.id === app.projectId && project.role === "owner"))} onDeleted={handleDeleted} />,
               },
             ]}
           />

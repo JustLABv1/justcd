@@ -7,7 +7,23 @@ import (
 
 	"github.com/justlab/justcd/services/backend/internal/core"
 	"github.com/justlab/justcd/services/backend/internal/store"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
+
+func TestGroupVersionResolvesCoreAndGroupedResources(t *testing.T) {
+	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{{Version: "v1"}, {Group: "apps", Version: "v1"}})
+	mapper.Add(schema.GroupVersionKind{Version: "v1", Kind: "ConfigMap"}, meta.RESTScopeNamespace)
+	mapper.Add(schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}, meta.RESTScopeNamespace)
+	for _, identity := range []core.Identity{
+		{APIVersion: "v1", Kind: "ConfigMap"},
+		{APIVersion: "apps/v1", Kind: "Deployment"},
+	} {
+		if _, err := mapper.RESTMapping(groupKind(identity), groupVersion(identity)); err != nil {
+			t.Errorf("cannot map %s %s: %v", identity.APIVersion, identity.Kind, err)
+		}
+	}
+}
 
 func TestPartialSyncFailureExplainsNoAutomaticRollback(t *testing.T) {
 	progress := store.OperationProgress{Total: 4, Completed: []core.Identity{{Kind: "Deployment", Namespace: "apps", Name: "api"}}}

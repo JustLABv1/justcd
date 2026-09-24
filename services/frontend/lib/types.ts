@@ -54,6 +54,7 @@ export type Application = {
   manifestPath: string
   renderer: "yaml" | "kustomize" | "helm"
   kustomizeHelmEnabled: boolean
+  kustomizeNamespaceOverride: boolean
   clusterId: string
   namespaces: NamespaceBinding[]
   syncPolicy: "manual" | "auto-safe"
@@ -61,6 +62,7 @@ export type Application = {
   lastCheckedAt?: string
   lastSyncedRevision?: string
   health: string
+  decommissioning: boolean
   createdAt: string
 }
 
@@ -99,8 +101,20 @@ export type IgnoreRule = {
   createdAt: string
 }
 
+export type IgnoreSelector = {
+  id: string
+  apiVersion?: string
+  kind?: string
+  labelKey?: string
+  labelValue?: string
+  reason: string
+  createdBy?: string
+  createdAt?: string
+}
+
 export type Plan = {
   applicationId: string
+  decommission?: boolean
   revision: string
   bindings: { clusterId: string; namespace: string; credentialRef: string; clusterScope?: boolean }[]
   changes: Change[]

@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/base64"
 	"encoding/json"
+	"github.com/justlab/justcd/services/backend/internal/gitops"
+	"github.com/justlab/justcd/services/backend/internal/render"
 	"net/http"
 	"net/url"
 	"path"
@@ -575,6 +577,38 @@ func (s *Server) getApplication(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, app)
 }
 
+func (s *Server) getApplicationKustomization(w http.ResponseWriter, r *http.Request) {
+	app, err := s.Store.ApplicationByID(r.Context(), r.PathValue("applicationID"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "application not found")
+		return
+	}
+	if !s.requireProjectRole(w, r, app.ProjectID, "viewer") {
+		return
+	}
+	if app.Renderer != "kustomize" {
+		writeError(w, http.StatusBadRequest, "application does not use Kustomize")
+		return
+	}
+	source, err := s.Store.GitSourceByID(r.Context(), app.SourceID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "application Git source is unavailable")
+		return
+	}
+	checkout, err := gitops.Fetch(r.Context(), s.Store, s.EncryptionKey, source, app.Revision)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	defer checkout.Close()
+	namespace, err := render.KustomizationNamespace(checkout.Root, app.ManifestPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"namespace": namespace, "commit": checkout.Commit})
+}
+
 func (s *Server) updateApplicationRenderSettings(w http.ResponseWriter, r *http.Request) {
 	app, err := s.Store.ApplicationByID(r.Context(), r.PathValue("applicationID"))
 	if err != nil {
@@ -585,22 +619,28 @@ func (s *Server) updateApplicationRenderSettings(w http.ResponseWriter, r *http.
 		return
 	}
 	if app.Renderer != "kustomize" {
-		writeError(w, http.StatusBadRequest, "Kustomize Helm is only available for Kustomize applications")
+		writeError(w, http.StatusBadRequest, "render settings are only available for Kustomize applications")
 		return
 	}
 	var input struct {
-		KustomizeHelmEnabled bool `json:"kustomizeHelmEnabled"`
+		KustomizeHelmEnabled       bool `json:"kustomizeHelmEnabled"`
+		KustomizeNamespaceOverride bool `json:"kustomizeNamespaceOverride"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := s.Store.SetApplicationKustomizeHelm(r.Context(), app.ID, input.KustomizeHelmEnabled); err != nil {
+	if input.KustomizeNamespaceOverride && len(app.Namespaces) != 1 {
+		writeError(w, http.StatusBadRequest, "namespace override requires exactly one bound namespace")
+		return
+	}
+	if err := s.Store.SetApplicationRenderSettings(r.Context(), app.ID, input.KustomizeHelmEnabled, input.KustomizeNamespaceOverride); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not update render settings")
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "application.render_settings.updated", "application", app.ID, map[string]bool{"kustomizeHelmEnabled": input.KustomizeHelmEnabled})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "application.render_settings.updated", "application", app.ID, map[string]bool{"kustomizeHelmEnabled": input.KustomizeHelmEnabled, "kustomizeNamespaceOverride": input.KustomizeNamespaceOverride})
 	app.KustomizeHelmEnabled = input.KustomizeHelmEnabled
+	app.KustomizeNamespaceOverride = input.KustomizeNamespaceOverride
 	writeJSON(w, http.StatusOK, app)
 }
 

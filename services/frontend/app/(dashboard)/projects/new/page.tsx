@@ -28,7 +28,7 @@ export default function NewProjectPage() {
       <FormField label="Project name" htmlFor="project-name"><Input id="project-name" placeholder="payments-platform" value={name} onChange={(event) => setName(event.target.value)} required maxLength={100} /></FormField>
       <FormField label="Description" htmlFor="project-description" hint="Optional; briefly explain what this project deploys."><Textarea id="project-description" className="min-h-24" placeholder="Services and infrastructure for…" value={description} onChange={(event) => setDescription(event.target.value)} maxLength={500} /></FormField>
       {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
-      <div className="flex justify-end gap-2 border-t pt-4"><Button type="button" variant="outline" onClick={() => router.back()}>Cancel</Button><Button type="submit" disabled={busy}>{busy ? "Creating…" : "Create project"}</Button></div>
+      <div className="flex justify-end gap-2 border-t pt-4"><Button type="button" variant="outline" onClick={() => router.back()}>Cancel</Button><Button type="submit" loading={busy} loadingText="Creating project…">Create project</Button></div>
     </form></Panel></div>
   </>
 }

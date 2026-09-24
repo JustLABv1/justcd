@@ -40,7 +40,7 @@ export function ConfirmDisclosure({ trigger, title, description, confirmLabel, o
           {error && <p role="alert" className="mt-3 text-xs text-destructive">{error}</p>}
           <div className="mt-6 flex justify-end gap-2 border-t pt-4">
             <AlertDialog.Close render={<Button type="button" variant="outline" disabled={busy} />}>Cancel</AlertDialog.Close>
-            <Button type="button" variant="destructive" disabled={busy} onClick={() => void confirm()}>{busy ? "Working…" : confirmLabel}</Button>
+            <Button type="button" variant="destructive" loading={busy} loadingText="Working…" onClick={() => void confirm()}>{confirmLabel}</Button>
           </div>
         </AlertDialog.Popup>
       </AlertDialog.Viewport>

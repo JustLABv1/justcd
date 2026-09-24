@@ -48,7 +48,7 @@ export default function SignupPage() {
         <div className="space-y-1.5"><label htmlFor="password" className="text-xs font-medium">Password</label><Input id="password" type="password" autoComplete="new-password" minLength={12} value={password} onChange={(event) => setPassword(event.target.value)} required /><p className="text-xs text-muted-foreground">At least 12 characters.</p></div>
         <div className="space-y-1.5"><label htmlFor="confirm" className="text-xs font-medium">Confirm password</label><Input id="confirm" type="password" autoComplete="new-password" minLength={12} value={confirm} onChange={(event) => setConfirm(event.target.value)} required /></div>
         {error && <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</p>}
-        <Button className="w-full" disabled={busy} type="submit">{busy ? "Creating administrator…" : "Create administrator"}</Button>
+        <Button className="w-full" loading={busy} loadingText="Creating administrator…" type="submit">Create administrator</Button>
       </form> : <p role="status" className="mt-7 text-sm text-muted-foreground">Checking setup status…</p>}
       {error && !available && <p role="alert" className="mt-4 text-xs text-destructive">{error}</p>}
     </section>

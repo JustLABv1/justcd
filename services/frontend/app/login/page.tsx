@@ -72,7 +72,7 @@ export default function LoginPage() {
             <div className="space-y-1.5"><label htmlFor="email" className="text-xs font-medium">Email address</label><Input id="email" type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} required /></div>
             <div className="space-y-1.5"><label htmlFor="password" className="text-xs font-medium">Password</label><Input id="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></div>
             {error && <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</p>}
-            <Button className="w-full" type="submit" disabled={busy}>{busy ? "Signing in…" : "Continue with email"}</Button>
+            <Button className="w-full" type="submit" loading={busy} loadingText="Signing in…">Continue with email</Button>
           </form>
 
           {providers.length > 0 && <div className="mt-6"><div className="relative mb-4 text-center"><span className="relative z-10 bg-background px-3 text-[10px] uppercase tracking-wider text-muted-foreground">or continue with</span><span className="absolute inset-x-0 top-1/2 border-t" /></div><div className="space-y-2">{providers.map((provider) => <a key={provider.id} href={`/api/v1/auth/oidc/${encodeURIComponent(provider.id)}/start`} className="flex h-9 w-full items-center justify-center gap-2 rounded-lg border bg-background text-sm font-medium transition-colors hover:bg-muted"><span className="grid size-5 place-items-center rounded-full bg-muted text-[10px]">↗</span>{provider.name}</a>)}</div></div>}

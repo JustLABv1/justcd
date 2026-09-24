@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation"
 import Link from "next/link"
 import { WorkspaceIcon } from "@/components/workspace-ui"
 import { Button } from "@/components/ui/button"
+import { Spinner } from "@/components/ui/spinner"
 import { Checkbox } from "@/components/ui/checkbox"
 import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
@@ -78,6 +79,7 @@ export default function SettingsPage() {
   const [error, setError] = useState("")
   const [notice, setNotice] = useState("")
   const [busy, setBusy] = useState(false)
+  const [busyMessage, setBusyMessage] = useState("")
   const [loading, setLoading] = useState(true)
 
   async function loadBase() {
@@ -195,6 +197,7 @@ export default function SettingsPage() {
     after?: (value: T) => void
   ) {
     setBusy(true)
+    setBusyMessage(success === "Cluster authentication verified." ? "Testing cluster connection…" : success === "Git source connection verified." ? "Testing Git source…" : "Saving changes…")
     setError("")
     setNotice("")
     try {
@@ -205,6 +208,7 @@ export default function SettingsPage() {
       setError(errorMessage(cause))
     } finally {
       setBusy(false)
+      setBusyMessage("")
     }
   }
 
@@ -233,6 +237,7 @@ export default function SettingsPage() {
           {notice}
         </div>
       )}
+      {busy && <div role="status" aria-live="polite" className="mb-4 flex items-center gap-2 rounded-lg border bg-muted/40 px-4 py-3 text-sm text-foreground"><Spinner aria-hidden="true" className="size-4 motion-reduce:animate-none" />{busyMessage}</div>}
       {loading ? (
         <div role="status" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {Array.from({ length: section ? 1 : 6 }, (_, index) => (
@@ -957,6 +962,8 @@ function CredentialPanel({
             <Button
               size="sm"
               type="submit"
+              loading={busy}
+              loadingText={editing ? "Saving credential…" : "Adding credential…"}
               disabled={
                 busy ||
                 (!global && project?.role !== "owner") ||
@@ -1026,6 +1033,7 @@ function ClusterPanel({
   const [insecure, setInsecure] = useState(false)
   const [editing, setEditing] = useState<Cluster | null>(null)
   const [testResult, setTestResult] = useState("")
+  const [testingClusterId, setTestingClusterId] = useState("")
   useEffect(() => {
     if (!project || !selectedClusterId) return
     let active = true
@@ -1121,7 +1129,8 @@ function ClusterPanel({
   async function test(cluster: Cluster) {
     if (!project) return
     setTestResult("")
-    await action(
+    setTestingClusterId(cluster.id)
+    try { await action(
       () =>
         apiPost<{
           status: string
@@ -1137,7 +1146,7 @@ function ClusterPanel({
           return result
         }),
       "Cluster authentication verified."
-    )
+    ) } finally { setTestingClusterId("") }
   }
   return (
     <div className="space-y-6">
@@ -1164,6 +1173,8 @@ function ClusterPanel({
                   size="sm"
                   variant="outline"
                   type="button"
+                  loading={testingClusterId === cluster.id}
+                  loadingText="Testing…"
                   disabled={busy || !project}
                   onClick={() => test(cluster)}
                 >
@@ -1388,7 +1399,7 @@ function ClusterPanel({
             </div>
           </details>
           <div className="flex gap-2">
-            <Button size="sm" type="submit" disabled={busy}>
+            <Button size="sm" type="submit" loading={busy} loadingText={editing ? "Saving cluster…" : "Adding cluster…"}>
               {editing ? "Save cluster" : "Add cluster"}
             </Button>
             {editing && (
@@ -1447,6 +1458,7 @@ function GitSourcePanel({
   const [credentialId, setCredentialId] = useState("")
   const [editing, setEditing] = useState<GitSource | null>(null)
   const [testResult, setTestResult] = useState("")
+  const [testingSourceId, setTestingSourceId] = useState("")
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     await action(
@@ -1488,7 +1500,8 @@ function GitSourcePanel({
   }
   async function test(source: GitSource) {
     setTestResult("")
-    await action(
+    setTestingSourceId(source.id)
+    try { await action(
       () =>
         apiPost<{ status: string; commit: string }>(
           `/api/v1/git-sources/${encodeURIComponent(source.id)}/test`
@@ -1499,7 +1512,7 @@ function GitSourcePanel({
           return result
         }),
       "Git source connection verified."
-    )
+    ) } finally { setTestingSourceId("") }
   }
   return (
     <div className="space-y-6">
@@ -1521,6 +1534,8 @@ function GitSourcePanel({
                   size="sm"
                   variant="outline"
                   type="button"
+                  loading={testingSourceId === source.id}
+                  loadingText="Testing…"
                   disabled={busy}
                   onClick={() => test(source)}
                 >
@@ -1611,6 +1626,8 @@ function GitSourcePanel({
           <Button
             size="sm"
             type="submit"
+            loading={busy}
+            loadingText={editing ? "Saving Git source…" : "Adding Git source…"}
             disabled={busy || !project || project.role !== "owner"}
           >
             {editing ? "Save Git source" : "Add Git source"}
@@ -1808,6 +1825,8 @@ function NamespacePanel({
           <Button
             size="sm"
             type="submit"
+            loading={busy}
+            loadingText={editing ? "Saving binding…" : "Binding namespace…"}
             disabled={busy || !project || project.role !== "owner" || !cluster}
           >
             {editing ? "Save binding" : "Bind namespace"}
@@ -1858,9 +1877,11 @@ function OIDCPanel({
   const [projectId, setProjectId] = useState("")
   const [groupName, setGroupName] = useState("")
   const [groupRole, setGroupRole] = useState("viewer")
+  const [oidcPending, setOidcPending] = useState<"provider" | "group" | null>(null)
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    await action(
+    setOidcPending("provider")
+    try { await action(
       async () => {
         const provider = await apiPost<OIDCProvider>(
           "/api/v1/admin/oidc-providers",
@@ -1873,14 +1894,15 @@ function OIDCPanel({
       },
       "OIDC provider added. Verify the callback URL in your identity provider.",
       onCreated
-    )
+    ) } finally { setOidcPending(null) }
   }
   async function mapGroup(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const selectedProvider = providerId || providers[0]?.id
     const selectedProject = projectId || projects[0]?.id
     if (!selectedProvider || !selectedProject) return
-    await action(
+    setOidcPending("group")
+    try { await action(
       () =>
         apiPost(
           `/api/v1/admin/oidc-providers/${encodeURIComponent(selectedProvider)}/groups`,
@@ -1888,7 +1910,7 @@ function OIDCPanel({
         ),
       "OIDC group mapping saved.",
       () => setGroupName("")
-    )
+    ) } finally { setOidcPending(null) }
   }
   return (
     <div className="space-y-6">
@@ -1989,7 +2011,7 @@ function OIDCPanel({
           </code>
           . It is available after the provider is created.
         </p>
-        <Button size="sm" type="submit" disabled={busy}>
+        <Button size="sm" type="submit" loading={oidcPending === "provider"} loadingText="Adding provider…" disabled={busy}>
           Add OIDC provider
         </Button>
       </form>
@@ -2052,7 +2074,7 @@ function OIDCPanel({
               />
             </FormField>
           </div>
-          <Button size="sm" type="submit" disabled={busy || !groupName}>
+          <Button size="sm" type="submit" loading={oidcPending === "group"} loadingText="Saving mapping…" disabled={busy || !groupName}>
             Save group mapping
           </Button>
         </form>
@@ -2177,7 +2199,7 @@ function LocalUsersPanel({
           />
           Instance administrator
         </label>
-        <Button size="sm" type="submit" disabled={busy}>
+        <Button size="sm" type="submit" loading={busy} loadingText="Adding user…">
           Add local user
         </Button>
       </form>

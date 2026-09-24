@@ -95,7 +95,7 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 			namespaceBindings = append(namespaceBindings, binding)
 		}
 	}
-	desired, err := render.Render(ctx, render.Options{RepositoryRoot: checkout.Root, ManifestPath: app.ManifestPath, Renderer: app.Renderer, ApplicationID: app.ID, ClusterID: app.ClusterID, Namespaces: namespaceBindings, Mapper: input.Mapper.Mapper})
+	desired, err := render.Render(ctx, render.Options{RepositoryRoot: checkout.Root, ManifestPath: app.ManifestPath, Renderer: app.Renderer, KustomizeHelmEnabled: app.KustomizeHelmEnabled, ApplicationID: app.ID, ClusterID: app.ClusterID, Namespaces: namespaceBindings, Mapper: input.Mapper.Mapper})
 	if err != nil {
 		return core.Plan{}, nil, err
 	}
@@ -499,6 +499,10 @@ func (s *Service) loadPlanInput(ctx context.Context, app store.Application) (pla
 	if len(app.Namespaces) == 0 {
 		return planInput{}, errors.New("application has no namespace bindings")
 	}
+	projectCredentialID, err := s.Store.ProjectClusterCredential(ctx, app.ProjectID, app.ClusterID)
+	if err != nil {
+		return planInput{}, fmt.Errorf("load project cluster credential: %w", err)
+	}
 	for _, binding := range app.Namespaces {
 		stored, err := s.Store.NamespaceBinding(ctx, app.ProjectID, app.ClusterID, binding.Namespace)
 		if err != nil {
@@ -506,13 +510,16 @@ func (s *Service) loadPlanInput(ctx context.Context, app store.Application) (pla
 		}
 		credentialID := stored.CredentialID
 		if credentialID == nil {
+			credentialID = projectCredentialID
+		}
+		if credentialID == nil {
 			credentialID = cluster.DefaultCredentialID
 		}
 		if credentialID == nil {
 			return planInput{}, fmt.Errorf("namespace %q has no Kubernetes credential", binding.Namespace)
 		}
 		input.Bindings = append(input.Bindings, core.Binding{ClusterID: cluster.ID, Namespace: stored.Namespace, CredentialRef: *credentialID})
-		client, err := kube.ForBinding(ctx, s.Store, s.EncryptionKey, cluster, stored.CredentialID, false)
+		client, err := kube.ForBinding(ctx, s.Store, s.EncryptionKey, cluster, credentialID, false)
 		if err != nil {
 			return planInput{}, err
 		}

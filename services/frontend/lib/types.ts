@@ -19,6 +19,7 @@ export type Credential = {
   projectId?: string
   name: string
   kind: "git-ssh" | "git-https" | "kubernetes-token" | "kubeconfig"
+  username?: string
   expiresAt?: string
   createdAt: string
 }
@@ -52,6 +53,7 @@ export type Application = {
   revision: string
   manifestPath: string
   renderer: "yaml" | "kustomize" | "helm"
+  kustomizeHelmEnabled: boolean
   clusterId: string
   namespaces: NamespaceBinding[]
   syncPolicy: "manual" | "auto-safe"

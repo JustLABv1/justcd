@@ -7,12 +7,12 @@ import { Button } from "@/components/ui/button"
 import { api, apiPost } from "@/lib/api"
 import type { Application, ListResponse, Project, User } from "@/lib/types"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Home01Icon, Folder01Icon, PlusSignIcon, Settings02Icon, Audit01Icon, Logout01Icon } from "@hugeicons/core-free-icons"
+import { Home01Icon, Folder01Icon, Layers01Icon, PlusSignIcon, Settings02Icon, Audit01Icon, Logout01Icon } from "@hugeicons/core-free-icons"
 
 const navigation = [
   { href: "/", label: "Overview", icon: Home01Icon },
   { href: "/projects", label: "Projects", icon: Folder01Icon },
-  { href: "/applications/new", label: "New application", icon: PlusSignIcon },
+  { href: "/applications", label: "Applications", icon: Layers01Icon },
   { href: "/settings", label: "Settings", icon: Settings02Icon },
   { href: "/audit", label: "Audit trail", icon: Audit01Icon, adminOnly: true },
 ]
@@ -89,9 +89,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="min-h-svh bg-muted/30 text-foreground">
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-[248px] flex-col border-r bg-background lg:flex">
-        <Link href="/" className="flex h-[72px] items-center gap-3 border-b px-6">
+    <div className="min-h-svh bg-[#f7f8f8] text-foreground dark:bg-background">
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-[224px] flex-col border-r bg-card lg:flex">
+        <Link href="/" className="flex h-[64px] items-center gap-3 border-b px-6">
           <span className="grid size-9 place-items-center rounded-xl bg-primary text-sm font-bold text-primary-foreground">J</span>
           <span>
             <span className="block text-[15px] font-semibold tracking-tight">JustCD</span>
@@ -107,7 +107,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-colors ${selected ? "bg-primary/8 font-medium text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                  aria-current={selected ? "page" : undefined}
+                  className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-colors ${selected ? "bg-primary/8 font-semibold text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
                 >
                   <HugeiconsIcon icon={item.icon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />
                   {item.label}
@@ -132,7 +133,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      <div className="lg:pl-[248px]">
+      <div className="lg:pl-[224px]">
         <header className="sticky top-0 z-10 flex h-[64px] items-center justify-between border-b bg-background/90 px-5 backdrop-blur-md sm:px-8">
           <div className="flex min-w-0 items-center gap-3">
             <Link href="/" className="flex items-center gap-2 lg:hidden">
@@ -162,7 +163,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <nav className="flex gap-1 overflow-x-auto border-b bg-background px-4 py-2 lg:hidden">
           {navigation.filter((item) => !item.adminOnly || user.isAdmin).map((item) => {
             const selected = isSelected(item.href, pathname)
-            return <Link key={item.href} href={item.href} className={`shrink-0 rounded-md px-3 py-1.5 text-[11px] ${selected ? "bg-primary/8 font-medium text-primary" : "text-muted-foreground hover:bg-muted"}`}>{item.label}</Link>
+            return <Link key={item.href} href={item.href} className={`shrink-0 rounded-md px-3 py-1.5 text-[11px] ${selected ? "bg-primary/8 font-semibold text-primary" : "text-muted-foreground hover:bg-muted"}`}>{item.label}</Link>
           })}
         </nav>
         <main className="mx-auto w-full max-w-[1440px] px-5 py-7 sm:px-8 sm:py-9">{children}</main>
@@ -177,7 +178,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
 function isSelected(href: string, pathname: string) {
   if (href === "/") return pathname === "/"
-  if (href === "/projects") return pathname.startsWith("/projects") || (pathname.startsWith("/applications/") && pathname !== "/applications/new")
+  if (href === "/projects") return pathname.startsWith("/projects")
   return pathname === href || pathname.startsWith(`${href}/`)
 }
 
@@ -189,8 +190,9 @@ function pageCrumbs(pathname: string, project: Project | null, application: Appl
     return [{ label: "Projects", href: "/projects" }, { label: parts[1] === "new" ? "New project" : project?.name ?? "Project" }]
   }
   if (parts[0] === "applications") {
-    if (parts[1] === "new") return [{ label: "Projects", href: "/projects" }, { label: "New application" }]
-    return [{ label: "Projects", href: "/projects" }, { label: project?.name ?? "Project", href: application ? `/projects/${application.projectId}` : "/projects" }, { label: application?.name ?? "Application" }]
+    if (!parts[1]) return [{ label: "Applications" }]
+    if (parts[1] === "new") return [{ label: "Applications", href: "/applications" }, { label: "New application" }]
+    return [{ label: "Applications", href: "/applications" }, { label: project?.name ?? "Project", href: application ? `/projects/${application.projectId}` : "/projects" }, { label: application?.name ?? "Application" }]
   }
   if (parts[0] === "settings") {
     const section = { "git-sources": "Git sources", clusters: "Kubernetes clusters", namespaces: "Namespace bindings", credentials: "Credentials", oidc: "OIDC providers", users: "Local users" }[parts[1] as "git-sources"]

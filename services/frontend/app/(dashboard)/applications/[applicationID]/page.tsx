@@ -36,6 +36,7 @@ function safeIgnorePath(pointer: string) {
 export default function ApplicationDetailPage() {
   const { applicationID } = useParams<{ applicationID: string }>()
   const [application, setApplication] = useState<Application | null>(null)
+  const [kustomizeHelmDraft, setKustomizeHelmDraft] = useState(false)
   const [project, setProject] = useState<Project | null>(null)
   const [plans, setPlans] = useState<PlanRecord[]>([])
   const [activePlan, setActivePlan] = useState<PlanRecord | null>(null)
@@ -100,6 +101,7 @@ export default function ApplicationDetailPage() {
       api<ListResponse<IgnoreRule>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ignore-rules`),
     ])
     setApplication(app)
+    setKustomizeHelmDraft(app.kustomizeHelmEnabled)
     setProject(projectList.items.find((item) => item.id === app.projectId) ?? null)
     setPlans(planList.items)
     setActivePlan((current) => current ? planList.items.find((item) => item.id === current.id) ?? planList.items[0] ?? null : planList.items[0] ?? null)
@@ -147,6 +149,18 @@ export default function ApplicationDetailPage() {
       selectTab("changes")
       await refreshSummary()
     } catch (cause) { if (!acceptRefreshedPlan(cause)) setError(errorMessage(cause)) } finally { setBusy(false) }
+  }
+
+  async function saveRenderSettings() {
+    if (!application || application.renderer !== "kustomize") return
+    setBusy(true); setError(""); setNotice("")
+    try {
+      await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}/render-settings`, { method: "PUT", body: JSON.stringify({ kustomizeHelmEnabled: kustomizeHelmDraft }) })
+      setApprovalId("")
+      await loadData()
+      setNotice("Render setting saved. Earlier plans are stale; create and review a new plan before syncing.")
+    } catch (cause) { setError(errorMessage(cause)) }
+    finally { setBusy(false) }
   }
 
   function acceptRefreshedPlan(cause: unknown) {
@@ -366,7 +380,7 @@ export default function ApplicationDetailPage() {
           <Panel title="Recent operations" description="Sync history and result state">
             {operations.length ? <div className="divide-y">{operations.slice(0, 8).map((operation) => <div key={operation.id} className="px-5 py-3.5"><div className="flex items-center justify-between gap-3"><span className="text-xs font-medium">{operation.status === "succeeded" ? "Sync completed" : operation.status === "failed" ? "Sync stopped" : operation.status === "queued" ? "Sync queued" : "Sync running"}</span><StatusBadge status={operation.status} /></div><p className="mt-1 line-clamp-2 text-[10px] leading-4 text-muted-foreground">{operation.message || "Sync operation"}</p>{operation.progress && <p className="mt-1 text-[10px] text-muted-foreground">{operationPhaseLabel(operation.progress.phase, operation.status)} · {operation.progress.completed.length}/{operation.progress.total} resources{operation.progress.current ? ` · ${resourceLabel(operation.progress.current)}` : ""}</p>}<p className="mt-1.5 text-[9px] text-muted-foreground">{new Date(operation.startedAt).toLocaleString()}</p></div>)}</div> : <EmptyState title="No syncs yet" description="Operations will be recorded here with the actor and resulting status." />}
           </Panel>
-          <Panel title="Application source" description="Configuration stored in JustCD"><div className="space-y-3 p-5 text-xs"><KeyValue label="Manifest path" value={application.manifestPath} mono /><KeyValue label="Renderer" value={application.renderer} /><KeyValue label="Cluster" value={application.clusterId.slice(0, 12)} mono /><KeyValue label="Poll interval" value={`${application.pollSeconds} seconds`} /><Link href={`/projects/${application.projectId}`} className="mt-1 inline-block text-xs font-medium text-primary hover:underline">Open project →</Link></div></Panel>
+          <Panel title="Application source" description="Configuration stored in JustCD"><div className="space-y-3 p-5 text-xs"><KeyValue label="Manifest path" value={application.manifestPath} mono /><KeyValue label="Renderer" value={application.renderer} /><KeyValue label="Cluster" value={application.clusterId.slice(0, 12)} mono /><KeyValue label="Poll interval" value={`${application.pollSeconds} seconds`} />{application.renderer === "kustomize" && <div className="space-y-3 border-t pt-4"><label className="flex items-start gap-2"><Checkbox checked={kustomizeHelmDraft} onCheckedChange={(checked) => setKustomizeHelmDraft(Boolean(checked))} disabled={!canApprove || busy || hasPendingOperation} /><span><span className="block font-medium">Enable Helm charts in Kustomize</span><span className="mt-1 block leading-5 text-muted-foreground">Permits helmCharts from this Git source. Helm may fetch pinned charts from public HTTPS repositories while building the plan.</span></span></label>{canApprove && <Button size="sm" variant="outline" disabled={busy || hasPendingOperation || kustomizeHelmDraft === application.kustomizeHelmEnabled} onClick={() => void saveRenderSettings()}>Save render setting</Button>}</div>}<Link href={`/projects/${application.projectId}`} className="mt-1 inline-block text-xs font-medium text-primary hover:underline">Open project →</Link></div></Panel>
         </Tabs.Panel>
       </Tabs.Root>
     </>}

@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,13 +34,14 @@ const (
 )
 
 type Options struct {
-	RepositoryRoot string
-	ManifestPath   string
-	Renderer       string
-	ApplicationID  string
-	ClusterID      string
-	Namespaces     []core.Binding
-	Mapper         meta.RESTMapper
+	RepositoryRoot       string
+	ManifestPath         string
+	Renderer             string
+	KustomizeHelmEnabled bool
+	ApplicationID        string
+	ClusterID            string
+	Namespaces           []core.Binding
+	Mapper               meta.RESTMapper
 }
 
 func Render(ctx context.Context, opts Options) ([]core.Resource, error) {
@@ -54,10 +57,10 @@ func Render(ctx context.Context, opts Options) ([]core.Resource, error) {
 	case "yaml":
 		output, err = readManifestFiles(manifestPath)
 	case "kustomize":
-		if err := validateKustomizeSources(manifestPath, opts.RepositoryRoot); err != nil {
+		if err := validateKustomizeSources(ctx, manifestPath, opts.RepositoryRoot, opts.KustomizeHelmEnabled); err != nil {
 			return nil, err
 		}
-		output, err = runRenderer(ctx, "kustomize", []string{"build", "--load-restrictor", "LoadRestrictionsRootOnly", manifestPath}, opts.RepositoryRoot)
+		output, err = runKustomizeRenderer(ctx, manifestPath, opts.RepositoryRoot, opts.KustomizeHelmEnabled)
 	case "helm":
 		if len(opts.Namespaces) != 1 {
 			return nil, errors.New("Helm applications require exactly one bound namespace")
@@ -72,10 +75,33 @@ func Render(ctx context.Context, opts Options) ([]core.Resource, error) {
 	return parseAndNormalize(output, opts)
 }
 
+func runKustomizeRenderer(ctx context.Context, manifestPath, repositoryRoot string, enableHelm bool) ([]byte, error) {
+	name := "kustomize"
+	args := []string{"build", "--load-restrictor", "LoadRestrictionsNone", manifestPath}
+	if _, err := exec.LookPath(name); err != nil {
+		if _, err := exec.LookPath("kubectl"); err != nil {
+			return nil, errors.New("kustomize or kubectl is required to render Kustomize applications")
+		}
+		name = "kubectl"
+		args = []string{"kustomize", "--load-restrictor", "LoadRestrictionsNone", manifestPath}
+	}
+	if enableHelm {
+		if _, err := exec.LookPath("helm"); err != nil {
+			return nil, errors.New("helm is required for Kustomize Helm charts")
+		}
+		args = append(args, "--enable-helm")
+	}
+	return runRenderer(ctx, name, args, repositoryRoot)
+}
+
 func safeRepositoryPath(root, relative string) (string, error) {
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
 		return "", err
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		return "", fmt.Errorf("repository root cannot be resolved: %w", err)
 	}
 	requested := filepath.Join(rootAbs, filepath.FromSlash(relative))
 	rel, err := filepath.Rel(rootAbs, requested)
@@ -90,7 +116,7 @@ func safeRepositoryPath(root, relative string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	resolvedRel, err := filepath.Rel(rootAbs, resolvedAbs)
+	resolvedRel, err := filepath.Rel(resolvedRoot, resolvedAbs)
 	if err != nil || resolvedRel == ".." || strings.HasPrefix(resolvedRel, ".."+string(filepath.Separator)) {
 		return "", errors.New("manifestPath resolves outside the repository")
 	}
@@ -208,14 +234,39 @@ func cleanEnvironment(in []string, home string) []string {
 	return append(out, "HOME="+home, "TMPDIR="+home, "XDG_CONFIG_HOME="+filepath.Join(home, ".config"), "XDG_CACHE_HOME="+filepath.Join(home, ".cache"), "HELM_CONFIG_HOME="+filepath.Join(home, ".config", "helm"), "HELM_CACHE_HOME="+filepath.Join(home, ".cache", "helm"), "HELM_DATA_HOME="+filepath.Join(home, ".local", "share", "helm"), "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0")
 }
 
-func validateKustomizeSources(root, repositoryRoot string) error {
-	return filepath.WalkDir(root, func(p string, d os.DirEntry, walkErr error) error {
+func validateKustomizeSources(ctx context.Context, root, repositoryRoot string, enableHelm bool) error {
+	repositoryRoot, err := filepath.EvalSymlinks(repositoryRoot)
+	if err != nil {
+		return fmt.Errorf("repository root cannot be resolved: %w", err)
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("kustomization root cannot be resolved: %w", err)
+	}
+	rootRelative, err := filepath.Rel(repositoryRoot, root)
+	if err != nil || rootRelative == ".." || strings.HasPrefix(rootRelative, ".."+string(filepath.Separator)) {
+		return errors.New("kustomization is outside repository root")
+	}
+	pending := []string{root}
+	visited := map[string]bool{}
+	for len(pending) > 0 {
+		current := pending[0]
+		pending = pending[1:]
+		if visited[current] {
+			continue
+		}
+		visited[current] = true
+		err := filepath.WalkDir(current, func(p string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
+		if d.IsDir() && d.Name() == ".git" {
+			return filepath.SkipDir
+		}
 		if d.Type()&os.ModeSymlink != 0 {
-			if d.IsDir() {
-				return filepath.SkipDir
+			resolved, err := filepath.EvalSymlinks(p)
+			if err != nil || !withinRepository(repositoryRoot, resolved) {
+				return errors.New("Kustomize symlink escapes the repository")
 			}
 			return nil
 		}
@@ -237,7 +288,17 @@ func validateKustomizeSources(root, repositoryRoot string) error {
 		if err := yaml.Unmarshal(content, &data); err != nil {
 			return errors.New("invalid kustomization file")
 		}
-		for _, field := range []string{"resources", "bases", "components"} {
+		base := filepath.Dir(p)
+		if globals, ok := data["helmGlobals"].(map[string]any); ok {
+			for _, field := range []string{"chartHome", "configHome"} {
+				if value, ok := globals[field].(string); ok && value != "" {
+					if err := validateKustomizePath(repositoryRoot, base, value); err != nil {
+						return fmt.Errorf("helmGlobals %s: %w", field, err)
+					}
+				}
+			}
+		}
+		for _, field := range []string{"resources", "bases", "components", "crds", "configurations", "transformers", "generators", "validators", "patchesStrategicMerge"} {
 			if raw, ok := data[field]; ok {
 				list, ok := raw.([]any)
 				if !ok {
@@ -245,30 +306,186 @@ func validateKustomizeSources(root, repositoryRoot string) error {
 				}
 				for _, item := range list {
 					value, ok := item.(string)
-					if !ok || !localKustomizePath(value) {
-						return errors.New("remote or absolute Kustomize bases/resources are not supported")
+					if !ok {
+						return fmt.Errorf("kustomize %s entries must be paths", field)
+					}
+					if err := validateKustomizePath(repositoryRoot, base, value); err != nil {
+						return fmt.Errorf("kustomize %s: %w", field, err)
+					}
+					if field == "resources" || field == "bases" || field == "components" || field == "transformers" || field == "generators" || field == "validators" {
+						candidate, err := filepath.EvalSymlinks(filepath.Join(base, value))
+						if err == nil {
+							if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+								pending = append(pending, candidate)
+							}
+						}
 					}
 				}
 			}
 		}
-		if _, ok := data["helmCharts"]; ok {
-			return errors.New("Kustomize Helm chart rendering is not supported; use the Helm renderer")
+		for _, field := range []string{"patches", "patchesJson6902"} {
+			if entries, ok := data[field].([]any); ok {
+				for _, raw := range entries {
+					if entry, ok := raw.(map[string]any); ok {
+						if value, ok := entry["path"].(string); ok && value != "" {
+							if err := validateKustomizePath(repositoryRoot, base, value); err != nil {
+								return fmt.Errorf("kustomize %s: %w", field, err)
+							}
+						}
+					}
+				}
+			}
+		}
+		if openAPI, ok := data["openapi"].(map[string]any); ok {
+			if value, ok := openAPI["path"].(string); ok && value != "" {
+				if err := validateKustomizePath(repositoryRoot, base, value); err != nil {
+					return fmt.Errorf("kustomize openapi: %w", err)
+				}
+			}
+		}
+		for _, field := range []string{"configMapGenerator", "secretGenerator"} {
+			if entries, ok := data[field].([]any); ok {
+				for _, raw := range entries {
+					entry, ok := raw.(map[string]any)
+					if !ok {
+						continue
+					}
+					for _, sourceField := range []string{"files", "envs"} {
+						if sources, ok := entry[sourceField].([]any); ok {
+							for _, source := range sources {
+								value, ok := source.(string)
+								if !ok {
+									return fmt.Errorf("kustomize %s %s entries must be paths", field, sourceField)
+								}
+								if sourceField == "files" {
+									if _, path, named := strings.Cut(value, "="); named {
+										value = path
+									}
+								}
+								if err := validateKustomizePath(repositoryRoot, base, value); err != nil {
+									return fmt.Errorf("kustomize %s: %w", field, err)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		if raw, ok := data["helmCharts"]; ok {
+			if !enableHelm {
+				return errors.New("Kustomize Helm charts are disabled for this application; enable them in Application source")
+			}
+			charts, ok := raw.([]any)
+			if !ok || len(charts) > 32 {
+				return errors.New("helmCharts must be a list of at most 32 charts")
+			}
+			for _, rawChart := range charts {
+				chart, ok := rawChart.(map[string]any)
+				if !ok {
+					return errors.New("helmCharts entries must be objects")
+				}
+				name, _ := chart["name"].(string)
+				if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\") {
+					return errors.New("helmCharts chart name must be a single directory name")
+				}
+				if repo, _ := chart["repo"].(string); repo != "" {
+					if version, _ := chart["version"].(string); strings.TrimSpace(version) == "" {
+						return errors.New("remote helmCharts require a pinned version")
+					}
+					if err := validateHelmRepository(ctx, repo); err != nil {
+						return err
+					}
+				}
+				for _, field := range []string{"valuesFile", "chartHome"} {
+					if value, ok := chart[field].(string); ok && value != "" {
+						if err := validateKustomizePath(repositoryRoot, base, value); err != nil {
+							return fmt.Errorf("helmCharts %s: %w", field, err)
+						}
+					}
+				}
+				if values, ok := chart["additionalValuesFiles"].([]any); ok {
+					for _, rawValue := range values {
+						value, ok := rawValue.(string)
+						if !ok {
+							return errors.New("helmCharts additionalValuesFiles entries must be paths")
+						}
+						if err := validateKustomizePath(repositoryRoot, base, value); err != nil {
+							return fmt.Errorf("helmCharts additionalValuesFiles: %w", err)
+						}
+					}
+				}
+			}
 		}
 		rel, err := filepath.Rel(repositoryRoot, p)
-		if err != nil || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return errors.New("kustomization is outside repository root")
 		}
 		return nil
-	})
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func localKustomizePath(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" || filepath.IsAbs(value) || strings.Contains(value, "://") || strings.HasPrefix(value, "git::") || strings.HasPrefix(value, "github.com/") {
-		return false
+func validateHelmRepository(parent context.Context, value string) error {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Port() != "" && parsed.Port() != "443") {
+		return errors.New("helmCharts repo must be a public HTTPS URL without credentials")
 	}
-	clean := filepath.Clean(value)
-	return clean != ".." && !strings.HasPrefix(clean, ".."+string(filepath.Separator))
+	host := strings.ToLower(parsed.Hostname())
+	if net.ParseIP(host) != nil || host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal") {
+		return errors.New("helmCharts repo must use a public DNS hostname")
+	}
+	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
+	defer cancel()
+	addresses, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil || len(addresses) == 0 {
+		return errors.New("helmCharts repo hostname could not be resolved")
+	}
+	for _, address := range addresses {
+		if !address.IsGlobalUnicast() || address.IsPrivate() {
+			return errors.New("helmCharts repo must resolve only to public addresses")
+		}
+	}
+	return nil
+}
+
+func validateKustomizePath(repositoryRoot, base, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" || filepath.IsAbs(value) || strings.Contains(value, "://") || strings.Contains(value, "\\") || strings.HasPrefix(value, "git::") || strings.HasPrefix(value, "github.com/") {
+		return errors.New("only local repository-relative paths are supported")
+	}
+	target := filepath.Join(base, filepath.FromSlash(value))
+	if !withinRepository(repositoryRoot, target) {
+		return errors.New("path escapes the repository")
+	}
+	// Helm can create chartHome during rendering, so check the nearest existing
+	// ancestor as well as the lexical path. This catches symlinked parents.
+	ancestor := target
+	for {
+		if _, err := os.Lstat(ancestor); err == nil {
+			resolved, err := filepath.EvalSymlinks(ancestor)
+			if err != nil || !withinRepository(repositoryRoot, resolved) {
+				return errors.New("path resolves outside the repository")
+			}
+			break
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return errors.New("path cannot be resolved")
+		}
+		ancestor = parent
+	}
+	return nil
+}
+
+func withinRepository(root, target string) bool {
+	rel, err := filepath.Rel(root, target)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func parseAndNormalize(output []byte, opts Options) ([]core.Resource, error) {

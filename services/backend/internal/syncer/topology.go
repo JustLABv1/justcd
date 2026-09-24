@@ -37,12 +37,20 @@ func (s *Service) ObserveTopology(ctx context.Context, app store.Application, ma
 	}
 	all := []store.ObservedResource{}
 	warnings := []string{}
+	projectCredentialID, err := s.Store.ProjectClusterCredential(ctx, app.ProjectID, app.ClusterID)
+	if err != nil {
+		return err
+	}
 	for _, binding := range app.Namespaces {
 		stored, err := s.Store.NamespaceBinding(ctx, app.ProjectID, app.ClusterID, binding.Namespace)
 		if err != nil {
 			return err
 		}
-		client, err := kube.ForBinding(ctx, s.Store, s.EncryptionKey, cluster, stored.CredentialID, false)
+		credentialID := stored.CredentialID
+		if credentialID == nil {
+			credentialID = projectCredentialID
+		}
+		client, err := kube.ForBinding(ctx, s.Store, s.EncryptionKey, cluster, credentialID, false)
 		if err != nil {
 			return err
 		}

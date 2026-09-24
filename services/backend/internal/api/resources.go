@@ -128,6 +128,17 @@ func (s *Server) listCredentials(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not load credentials")
 		return
 	}
+	for i := range items {
+		if items[i].Kind != "git-https" {
+			continue
+		}
+		items[i].Username, err = s.gitHTTPSUsername(items[i])
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not read Git credential username")
+			return
+		}
+		items[i].Cipher = nil
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
@@ -183,6 +194,12 @@ func (s *Server) createCredential(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not encrypt credential")
 		return
 	}
+	if credential.Kind == "git-https" {
+		credential.Username = strings.TrimSpace(input.Secret["username"])
+		if credential.Username == "" {
+			credential.Username = "justcd"
+		}
+	}
 	if err := s.Store.CreateCredential(r.Context(), credential); err != nil {
 		writeError(w, http.StatusConflict, "could not save credential")
 		return
@@ -229,6 +246,9 @@ func validateCredentialPayload(kind string, secret map[string]string) error {
 	case "git-https":
 		if err := allowOnly("token", "username"); err != nil {
 			return err
+		}
+		if len(secret["username"]) > 256 || strings.ContainsAny(secret["username"], "\r\n\x00") {
+			return fmtError("Git username is invalid")
 		}
 		if err := required("token"); err != nil {
 			return err
@@ -281,6 +301,8 @@ func (s *Server) createCluster(w http.ResponseWriter, r *http.Request) {
 		InsecureSkipVerify       bool    `json:"insecureSkipVerify"`
 		DefaultCredentialID      *string `json:"defaultCredentialId"`
 		ClusterScopeCredentialID *string `json:"clusterScopeCredentialId"`
+		ProjectID                string  `json:"projectId"`
+		ProjectCredentialID      *string `json:"projectCredentialId"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -314,8 +336,24 @@ func (s *Server) createCluster(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if input.ProjectCredentialID != nil {
+		if !s.requireProjectRole(w, r, input.ProjectID, "owner") {
+			return
+		}
+		c, err := s.Store.CredentialByID(r.Context(), *input.ProjectCredentialID)
+		if err != nil || (c.Kind != "kubernetes-token" && c.Kind != "kubeconfig") || c.ProjectID == nil || *c.ProjectID != input.ProjectID {
+			writeError(w, http.StatusBadRequest, "project credential must be a Kubernetes credential owned by the selected project")
+			return
+		}
+	}
 	cluster := store.Cluster{ID: store.NewID(), Name: input.Name, APIServer: endpoint.String(), CAData: caData, InsecureSkipVerify: input.InsecureSkipVerify, DefaultCredentialID: input.DefaultCredentialID, ClusterScopeCredential: input.ClusterScopeCredentialID}
-	if err := s.Store.CreateCluster(r.Context(), cluster); err != nil {
+	var createErr error
+	if input.ProjectCredentialID != nil {
+		createErr = s.Store.CreateClusterWithProjectCredential(r.Context(), cluster, input.ProjectID, *input.ProjectCredentialID)
+	} else {
+		createErr = s.Store.CreateCluster(r.Context(), cluster)
+	}
+	if createErr != nil {
 		writeError(w, http.StatusConflict, "could not create cluster")
 		return
 	}
@@ -354,7 +392,12 @@ func (s *Server) createNamespaceBinding(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	if input.CredentialID == nil && cluster.DefaultCredentialID == nil {
+	projectCredentialID, err := s.Store.ProjectClusterCredential(r.Context(), input.ProjectID, cluster.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load project cluster credential")
+		return
+	}
+	if input.CredentialID == nil && projectCredentialID == nil && cluster.DefaultCredentialID == nil {
 		writeError(w, http.StatusBadRequest, "a namespace credential or cluster default credential is required")
 		return
 	}
@@ -364,6 +407,54 @@ func (s *Server) createNamespaceBinding(w http.ResponseWriter, r *http.Request) 
 	}
 	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "namespace_binding.created", "cluster", cluster.ID, map[string]string{"projectId": input.ProjectID, "namespace": input.Namespace, "credentialId": valueOf(input.CredentialID)})
 	writeJSON(w, http.StatusCreated, store.NamespaceBinding{Namespace: input.Namespace, CredentialID: input.CredentialID})
+}
+
+func (s *Server) getProjectClusterCredential(w http.ResponseWriter, r *http.Request) {
+	projectID := r.URL.Query().Get("projectId")
+	if !s.requireProjectRole(w, r, projectID, "viewer") {
+		return
+	}
+	if _, err := s.Store.ClusterByID(r.Context(), r.PathValue("clusterID")); err != nil {
+		writeError(w, http.StatusNotFound, "cluster not found")
+		return
+	}
+	id, err := s.Store.ProjectClusterCredential(r.Context(), projectID, r.PathValue("clusterID"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load project cluster credential")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"credentialId": id})
+}
+
+func (s *Server) setProjectClusterCredential(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		ProjectID    string  `json:"projectId"`
+		CredentialID *string `json:"credentialId"`
+	}
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !s.requireProjectRole(w, r, input.ProjectID, "owner") {
+		return
+	}
+	if _, err := s.Store.ClusterByID(r.Context(), r.PathValue("clusterID")); err != nil {
+		writeError(w, http.StatusNotFound, "cluster not found")
+		return
+	}
+	if input.CredentialID != nil {
+		c, err := s.Store.CredentialByID(r.Context(), *input.CredentialID)
+		if err != nil || (c.Kind != "kubernetes-token" && c.Kind != "kubeconfig") || c.ProjectID == nil || *c.ProjectID != input.ProjectID {
+			writeError(w, http.StatusBadRequest, "credential must be a Kubernetes credential owned by this project")
+			return
+		}
+	}
+	if err := s.Store.SetProjectClusterCredential(r.Context(), input.ProjectID, r.PathValue("clusterID"), input.CredentialID); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not save project cluster credential")
+		return
+	}
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "project_cluster_credential.updated", "cluster", r.PathValue("clusterID"), map[string]string{"projectId": input.ProjectID, "credentialId": valueOf(input.CredentialID)})
+	writeJSON(w, http.StatusOK, map[string]any{"credentialId": input.CredentialID})
 }
 
 func (s *Server) listNamespaceBindings(w http.ResponseWriter, r *http.Request) {
@@ -484,18 +575,48 @@ func (s *Server) getApplication(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, app)
 }
 
+func (s *Server) updateApplicationRenderSettings(w http.ResponseWriter, r *http.Request) {
+	app, err := s.Store.ApplicationByID(r.Context(), r.PathValue("applicationID"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "application not found")
+		return
+	}
+	if !s.requireProjectRole(w, r, app.ProjectID, "owner") {
+		return
+	}
+	if app.Renderer != "kustomize" {
+		writeError(w, http.StatusBadRequest, "Kustomize Helm is only available for Kustomize applications")
+		return
+	}
+	var input struct {
+		KustomizeHelmEnabled bool `json:"kustomizeHelmEnabled"`
+	}
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.Store.SetApplicationKustomizeHelm(r.Context(), app.ID, input.KustomizeHelmEnabled); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not update render settings")
+		return
+	}
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "application.render_settings.updated", "application", app.ID, map[string]bool{"kustomizeHelmEnabled": input.KustomizeHelmEnabled})
+	app.KustomizeHelmEnabled = input.KustomizeHelmEnabled
+	writeJSON(w, http.StatusOK, app)
+}
+
 func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		ProjectID    string   `json:"projectId"`
-		Name         string   `json:"name"`
-		SourceID     string   `json:"sourceId"`
-		Revision     string   `json:"revision"`
-		ManifestPath string   `json:"manifestPath"`
-		Renderer     string   `json:"renderer"`
-		ClusterID    string   `json:"clusterId"`
-		Namespaces   []string `json:"namespaces"`
-		SyncPolicy   string   `json:"syncPolicy"`
-		PollSeconds  int      `json:"pollSeconds"`
+		ProjectID            string   `json:"projectId"`
+		Name                 string   `json:"name"`
+		SourceID             string   `json:"sourceId"`
+		Revision             string   `json:"revision"`
+		ManifestPath         string   `json:"manifestPath"`
+		Renderer             string   `json:"renderer"`
+		KustomizeHelmEnabled bool     `json:"kustomizeHelmEnabled"`
+		ClusterID            string   `json:"clusterId"`
+		Namespaces           []string `json:"namespaces"`
+		SyncPolicy           string   `json:"syncPolicy"`
+		PollSeconds          int      `json:"pollSeconds"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -520,6 +641,10 @@ func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.Renderer != "yaml" && input.Renderer != "kustomize" && input.Renderer != "helm" {
 		writeError(w, http.StatusBadRequest, "renderer must be yaml, kustomize, or helm")
+		return
+	}
+	if input.KustomizeHelmEnabled && input.Renderer != "kustomize" {
+		writeError(w, http.StatusBadRequest, "Kustomize Helm can only be enabled for Kustomize applications")
 		return
 	}
 	if input.SyncPolicy == "" {
@@ -569,7 +694,7 @@ func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 		}
 		bindings = append(bindings, binding)
 	}
-	app := store.Application{ID: store.NewID(), ProjectID: input.ProjectID, Name: input.Name, SourceID: input.SourceID, Revision: input.Revision, ManifestPath: input.ManifestPath, Renderer: input.Renderer, ClusterID: input.ClusterID, Namespaces: bindings, SyncPolicy: input.SyncPolicy, PollSeconds: input.PollSeconds, Health: "unknown"}
+	app := store.Application{ID: store.NewID(), ProjectID: input.ProjectID, Name: input.Name, SourceID: input.SourceID, Revision: input.Revision, ManifestPath: input.ManifestPath, Renderer: input.Renderer, KustomizeHelmEnabled: input.KustomizeHelmEnabled, ClusterID: input.ClusterID, Namespaces: bindings, SyncPolicy: input.SyncPolicy, PollSeconds: input.PollSeconds, Health: "unknown"}
 	if err := s.Store.CreateApplication(r.Context(), app); err != nil {
 		writeError(w, http.StatusConflict, "could not create application")
 		return

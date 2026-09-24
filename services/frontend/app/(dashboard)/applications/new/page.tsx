@@ -24,6 +24,7 @@ export default function NewApplicationPage() {
   const [revision, setRevision] = useState("main")
   const [manifestPath, setManifestPath] = useState("deploy/")
   const [renderer, setRenderer] = useState("yaml")
+  const [kustomizeHelmEnabled, setKustomizeHelmEnabled] = useState(false)
   const [syncPolicy, setSyncPolicy] = useState("manual")
   const [pollSeconds, setPollSeconds] = useState("300")
   const [error, setError] = useState("")
@@ -66,7 +67,7 @@ export default function NewApplicationPage() {
     event.preventDefault(); setBusy(true); setError("")
     if (!projectId || !sourceId || !clusterId || !namespaces.length) { setError("Choose a project, Git source, cluster, and at least one namespace."); setBusy(false); return }
     try {
-      const app = await apiPost<Application>("/api/v1/applications", { projectId, name, sourceId, revision, manifestPath, renderer, clusterId, namespaces, syncPolicy, pollSeconds: Number(pollSeconds) })
+      const app = await apiPost<Application>("/api/v1/applications", { projectId, name, sourceId, revision, manifestPath, renderer, kustomizeHelmEnabled: renderer === "kustomize" && kustomizeHelmEnabled, clusterId, namespaces, syncPolicy, pollSeconds: Number(pollSeconds) })
       router.push(`/applications/${app.id}`)
     } catch (cause) { setError(errorMessage(cause)) } finally { setBusy(false) }
   }
@@ -83,6 +84,7 @@ export default function NewApplicationPage() {
           <FormField label="Git revision" htmlFor="revision" hint="Branch, tag, or commit; JustCD pins the reviewed commit SHA."><Input id="revision" placeholder="main" value={revision} onChange={(event) => setRevision(event.target.value)} required /></FormField>
           <FormField label="Manifest path" htmlFor="path" hint="Repository-relative directory or file."><Input id="path" placeholder="deploy/" value={manifestPath} onChange={(event) => setManifestPath(event.target.value)} required /></FormField>
           <FormField label="Renderer" htmlFor="renderer"><FormSelect id="renderer" value={renderer} onValueChange={setRenderer} items={[{ value: "yaml", label: "Plain YAML / JSON" }, { value: "kustomize", label: "Kustomize build" }, { value: "helm", label: "Helm template" }]} /></FormField>
+          {renderer === "kustomize" && <label className="flex items-start gap-3 rounded-lg border p-3 text-xs sm:col-span-2"><Checkbox checked={kustomizeHelmEnabled} onCheckedChange={(checked) => setKustomizeHelmEnabled(Boolean(checked))} /><span><span className="block font-medium">Enable Helm charts in Kustomize</span><span className="mt-1 block text-muted-foreground">Allows helmCharts from the Git revision. Helm may download pinned charts from public HTTPS repositories during rendering.</span></span></label>}
         </div></Panel>
         <Panel title="Cluster target" description="Applications are restricted to the namespaces already bound to this project."><div className="space-y-5 p-5">
           <FormField label="Cluster" htmlFor="cluster"><FormSelect id="cluster" value={clusterId} onValueChange={(value) => { setClusterId(value); setNamespaces([]) }} placeholder="Select cluster" required items={clusters.map((cluster) => ({ value: cluster.id, label: `${cluster.name} · ${cluster.apiServer}` }))} /></FormField>

@@ -6,8 +6,9 @@ import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
-import { DataGridList } from "@/components/data-grid-table"
-import { EmptyState, FormField, PageHeading, Panel, StatusBadge } from "@/components/ui-kit"
+import { ApplicationCollection } from "@/components/application-collection"
+import { ActionLink, CollectionSkeleton } from "@/components/workspace-ui"
+import { FormField, PageHeading, Panel } from "@/components/ui-kit"
 import { api, apiPost } from "@/lib/api"
 import type { Application, ListResponse, Project } from "@/lib/types"
 
@@ -54,17 +55,13 @@ export default function ProjectDetailPage() {
   }
 
   return <>
-    <PageHeading title={project?.name ?? (loading ? "Loading project…" : "Project not found")} description={project?.description || "Manage Git-driven applications and access scoped to this project."} actions={project && <><Link href={`/settings?projectId=${project.id}`}><Button variant="outline">Project connections</Button></Link><Link href={`/applications/new?projectId=${project.id}`}><Button disabled={project.role === "viewer"}><span aria-hidden="true">＋</span> New application</Button></Link></>} />
+    <PageHeading title={project?.name ?? (loading ? "Loading project…" : "Project not found")} description={project?.description || "Manage Git-driven applications and access scoped to this project."} actions={project && <><ActionLink href={`/settings?projectId=${project.id}`} secondary>Project connections</ActionLink>{project.role !== "viewer" && <ActionLink href={`/applications/new?projectId=${project.id}`}><span aria-hidden="true">＋</span> New application</ActionLink>}</>} />
     {error && <div role="alert" className="mb-5 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</div>}
     {project && <div className="mb-6 flex flex-wrap gap-2 text-[11px]"><span className="rounded-full border bg-card px-3 py-1.5 capitalize text-muted-foreground">Your role: <strong className="font-medium text-foreground">{project.role}</strong></span><span className="rounded-full border bg-card px-3 py-1.5 text-muted-foreground">{applications.length} application{applications.length === 1 ? "" : "s"}</span><span className="rounded-full border bg-card px-3 py-1.5 text-muted-foreground">{members.length} member{members.length === 1 ? "" : "s"}</span></div>}
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_330px]">
       <Panel surface="flat" title="Applications" description="Deployments reconciled by this project" className="self-start">
-        {loading ? <div className="p-8 text-sm text-muted-foreground">Loading applications…</div> : applications.length ? <div className="min-w-0"><DataGridList rows={applications} columns={[
-          { id: "name", title: "Application", cell: (app) => <Link href={`/applications/${app.id}`} title={app.name} className="block min-w-0 font-medium hover:text-primary"><span className="block truncate">{app.name}</span><span className="mt-0.5 block truncate text-[10px] font-normal text-muted-foreground">{app.renderer} · {app.manifestPath}</span></Link> },
-          { id: "target", title: "Target namespaces", cell: (app) => <span className="text-xs text-muted-foreground">{app.namespaces.map((item) => item.namespace).join(", ")}</span> },
-          { id: "revision", title: "Revision", cell: (app) => <span title={app.revision} className="block max-w-32 truncate font-mono text-[11px] text-muted-foreground">{app.revision}</span> },
-          { id: "health", title: "Health", cell: (app) => <StatusBadge status={app.health} /> },
-        ]} empty="No applications." /></div> : <EmptyState title="No apps in this project" description="Connect a source and namespace credential, then create an application from a Git path." href={`/settings?projectId=${projectID}`} action="Configure project" />}
+        {loading ? <CollectionSkeleton /> : <ApplicationCollection applications={applications} createHref={`/applications/new?projectId=${projectID}`} canCreate={project?.role !== "viewer"} />}
+
       </Panel>
       <div className="space-y-5">
         <Panel title="Members" description="Users with access to this delivery scope">

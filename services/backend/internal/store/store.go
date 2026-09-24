@@ -425,6 +425,7 @@ type Credential struct {
 	ProjectID *string    `json:"projectId,omitempty"`
 	Name      string     `json:"name"`
 	Kind      string     `json:"kind"`
+	Username  string     `json:"username,omitempty"`
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 	CreatedAt time.Time  `json:"createdAt"`
 	Cipher    []byte     `json:"-"`
@@ -435,6 +436,25 @@ func (s *Store) CreateCredential(ctx context.Context, c Credential) error {
 	return err
 }
 
+func (s *Store) UpdateCredential(ctx context.Context, c Credential) error {
+	return s.updateConnectionAndInvalidate(ctx, `UPDATE credentials SET name=$2,secret_cipher=$3,expires_at=$4 WHERE id=$1`, c.ID, c.Name, c.Cipher, c.ExpiresAt)
+}
+
+func (s *Store) updateConnectionAndInvalidate(ctx context.Context, query string, args ...any) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE status='current'`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) CredentialByID(ctx context.Context, id string) (Credential, error) {
 	var c Credential
 	err := s.DB.QueryRowContext(ctx, `SELECT id,project_id,name,kind,secret_cipher,expires_at,created_at FROM credentials WHERE id=$1`, id).Scan(&c.ID, &c.ProjectID, &c.Name, &c.Kind, &c.Cipher, &c.ExpiresAt, &c.CreatedAt)
@@ -442,7 +462,7 @@ func (s *Store) CredentialByID(ctx context.Context, id string) (Credential, erro
 }
 
 func (s *Store) ListCredentials(ctx context.Context, projectID string) ([]Credential, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,project_id,name,kind,expires_at,created_at FROM credentials WHERE project_id=$1 OR project_id IS NULL ORDER BY name`, projectID)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,project_id,name,kind,secret_cipher,expires_at,created_at FROM credentials WHERE project_id=$1 OR project_id IS NULL ORDER BY name`, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -450,7 +470,7 @@ func (s *Store) ListCredentials(ctx context.Context, projectID string) ([]Creden
 	items := make([]Credential, 0)
 	for rows.Next() {
 		var c Credential
-		if err := rows.Scan(&c.ID, &c.ProjectID, &c.Name, &c.Kind, &c.ExpiresAt, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.ProjectID, &c.Name, &c.Kind, &c.Cipher, &c.ExpiresAt, &c.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, c)
@@ -471,6 +491,42 @@ type Cluster struct {
 
 func (s *Store) CreateCluster(ctx context.Context, c Cluster) error {
 	_, err := s.DB.ExecContext(ctx, `INSERT INTO clusters(id,name,api_server,ca_data,insecure_skip_verify,default_credential_id,cluster_scope_credential_id) VALUES($1,$2,$3,$4,$5,$6,$7)`, c.ID, c.Name, c.APIServer, c.CAData, c.InsecureSkipVerify, c.DefaultCredentialID, c.ClusterScopeCredential)
+	return err
+}
+
+func (s *Store) CreateClusterWithProjectCredential(ctx context.Context, c Cluster, projectID, credentialID string) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO clusters(id,name,api_server,ca_data,insecure_skip_verify,default_credential_id,cluster_scope_credential_id) VALUES($1,$2,$3,$4,$5,$6,$7)`, c.ID, c.Name, c.APIServer, c.CAData, c.InsecureSkipVerify, c.DefaultCredentialID, c.ClusterScopeCredential); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO project_cluster_credentials(project_id,cluster_id,credential_id) VALUES($1,$2,$3)`, projectID, c.ID, credentialID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) ProjectClusterCredential(ctx context.Context, projectID, clusterID string) (*string, error) {
+	var id string
+	err := s.DB.QueryRowContext(ctx, `SELECT credential_id FROM project_cluster_credentials WHERE project_id=$1 AND cluster_id=$2`, projectID, clusterID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
+}
+
+func (s *Store) SetProjectClusterCredential(ctx context.Context, projectID, clusterID string, credentialID *string) error {
+	if credentialID == nil {
+		_, err := s.DB.ExecContext(ctx, `DELETE FROM project_cluster_credentials WHERE project_id=$1 AND cluster_id=$2`, projectID, clusterID)
+		return err
+	}
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO project_cluster_credentials(project_id,cluster_id,credential_id) VALUES($1,$2,$3) ON CONFLICT (project_id,cluster_id) DO UPDATE SET credential_id=EXCLUDED.credential_id,updated_at=NOW()`, projectID, clusterID, *credentialID)
 	return err
 }
 func (s *Store) ClusterByID(ctx context.Context, id string) (Cluster, error) {
@@ -495,9 +551,17 @@ func (s *Store) ListClusters(ctx context.Context) ([]Cluster, error) {
 	return out, rows.Err()
 }
 
+func (s *Store) UpdateCluster(ctx context.Context, c Cluster) error {
+	return s.updateConnectionAndInvalidate(ctx, `UPDATE clusters SET name=$2,api_server=$3,ca_data=$4,insecure_skip_verify=$5,default_credential_id=$6,cluster_scope_credential_id=$7,updated_at=NOW() WHERE id=$1`, c.ID, c.Name, c.APIServer, c.CAData, c.InsecureSkipVerify, c.DefaultCredentialID, c.ClusterScopeCredential)
+}
+
 func (s *Store) CreateNamespaceBinding(ctx context.Context, projectID, clusterID, namespace string, credentialID *string) error {
 	_, err := s.DB.ExecContext(ctx, `INSERT INTO namespace_bindings(id,project_id,cluster_id,namespace,credential_id) VALUES($1,$2,$3,$4,$5)`, NewID(), projectID, clusterID, namespace, credentialID)
 	return err
+}
+
+func (s *Store) UpdateNamespaceBinding(ctx context.Context, projectID, clusterID, namespace string, credentialID *string) error {
+	return s.updateConnectionAndInvalidate(ctx, `UPDATE namespace_bindings SET credential_id=$4 WHERE project_id=$1 AND cluster_id=$2 AND namespace=$3`, projectID, clusterID, namespace, credentialID)
 }
 
 func (s *Store) NamespaceBinding(ctx context.Context, projectID, clusterID, namespace string) (NamespaceBinding, error) {
@@ -541,6 +605,9 @@ func (s *Store) CreateGitSource(ctx context.Context, v GitSource) error {
 	_, err := s.DB.ExecContext(ctx, `INSERT INTO git_sources(id,project_id,name,repository_url,credential_id) VALUES($1,$2,$3,$4,$5)`, v.ID, v.ProjectID, v.Name, v.RepositoryURL, v.CredentialID)
 	return err
 }
+func (s *Store) UpdateGitSource(ctx context.Context, v GitSource) error {
+	return s.updateConnectionAndInvalidate(ctx, `UPDATE git_sources SET name=$2,repository_url=$3,credential_id=$4,updated_at=NOW() WHERE id=$1`, v.ID, v.Name, v.RepositoryURL, v.CredentialID)
+}
 func (s *Store) GitSourceByID(ctx context.Context, id string) (GitSource, error) {
 	var v GitSource
 	err := s.DB.QueryRowContext(ctx, `SELECT id,project_id,name,repository_url,credential_id,created_at FROM git_sources WHERE id=$1`, id).Scan(&v.ID, &v.ProjectID, &v.Name, &v.RepositoryURL, &v.CredentialID, &v.CreatedAt)
@@ -564,21 +631,22 @@ func (s *Store) ListGitSources(ctx context.Context, projectID string) ([]GitSour
 }
 
 type Application struct {
-	ID                 string             `json:"id"`
-	ProjectID          string             `json:"projectId"`
-	Name               string             `json:"name"`
-	SourceID           string             `json:"sourceId"`
-	Revision           string             `json:"revision"`
-	ManifestPath       string             `json:"manifestPath"`
-	Renderer           string             `json:"renderer"`
-	ClusterID          string             `json:"clusterId"`
-	Namespaces         []NamespaceBinding `json:"namespaces"`
-	SyncPolicy         string             `json:"syncPolicy"`
-	PollSeconds        int                `json:"pollSeconds"`
-	LastCheckedAt      *time.Time         `json:"lastCheckedAt,omitempty"`
-	LastSyncedRevision string             `json:"lastSyncedRevision,omitempty"`
-	Health             string             `json:"health"`
-	CreatedAt          time.Time          `json:"createdAt"`
+	ID                   string             `json:"id"`
+	ProjectID            string             `json:"projectId"`
+	Name                 string             `json:"name"`
+	SourceID             string             `json:"sourceId"`
+	Revision             string             `json:"revision"`
+	ManifestPath         string             `json:"manifestPath"`
+	Renderer             string             `json:"renderer"`
+	KustomizeHelmEnabled bool               `json:"kustomizeHelmEnabled"`
+	ClusterID            string             `json:"clusterId"`
+	Namespaces           []NamespaceBinding `json:"namespaces"`
+	SyncPolicy           string             `json:"syncPolicy"`
+	PollSeconds          int                `json:"pollSeconds"`
+	LastCheckedAt        *time.Time         `json:"lastCheckedAt,omitempty"`
+	LastSyncedRevision   string             `json:"lastSyncedRevision,omitempty"`
+	Health               string             `json:"health"`
+	CreatedAt            time.Time          `json:"createdAt"`
 }
 
 func (s *Store) CreateApplication(ctx context.Context, a Application) error {
@@ -586,24 +654,39 @@ func (s *Store) CreateApplication(ctx context.Context, a Application) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.DB.ExecContext(ctx, `INSERT INTO applications(id,project_id,name,source_id,revision,manifest_path,renderer,cluster_id,namespaces,sync_policy,poll_seconds) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, a.ID, a.ProjectID, a.Name, a.SourceID, a.Revision, a.ManifestPath, a.Renderer, a.ClusterID, namespaces, a.SyncPolicy, a.PollSeconds)
+	_, err = s.DB.ExecContext(ctx, `INSERT INTO applications(id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,cluster_id,namespaces,sync_policy,poll_seconds) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, a.ID, a.ProjectID, a.Name, a.SourceID, a.Revision, a.ManifestPath, a.Renderer, a.KustomizeHelmEnabled, a.ClusterID, namespaces, a.SyncPolicy, a.PollSeconds)
 	return err
 }
 
 func scanApplication(row interface{ Scan(...any) error }) (Application, error) {
 	var a Application
 	var namespaces []byte
-	err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.SourceID, &a.Revision, &a.ManifestPath, &a.Renderer, &a.ClusterID, &namespaces, &a.SyncPolicy, &a.PollSeconds, &a.LastCheckedAt, &a.LastSyncedRevision, &a.Health, &a.CreatedAt)
+	err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.SourceID, &a.Revision, &a.ManifestPath, &a.Renderer, &a.KustomizeHelmEnabled, &a.ClusterID, &namespaces, &a.SyncPolicy, &a.PollSeconds, &a.LastCheckedAt, &a.LastSyncedRevision, &a.Health, &a.CreatedAt)
 	if err == nil {
 		err = json.Unmarshal(namespaces, &a.Namespaces)
 	}
 	return a, err
 }
 
-const applicationColumns = `id,project_id,name,source_id,revision,manifest_path,renderer,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,COALESCE(last_synced_revision,''),health,created_at`
+const applicationColumns = `id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,COALESCE(last_synced_revision,''),health,created_at`
 
 func (s *Store) ApplicationByID(ctx context.Context, id string) (Application, error) {
 	return scanApplication(s.DB.QueryRowContext(ctx, `SELECT `+applicationColumns+` FROM applications WHERE id=$1`, id))
+}
+
+func (s *Store) SetApplicationKustomizeHelm(ctx context.Context, id string, enabled bool) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET kustomize_helm_enabled=$2,updated_at=NOW() WHERE id=$1`, id, enabled); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Store) ListApplications(ctx context.Context, projectID string) ([]Application, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT `+applicationColumns+` FROM applications WHERE project_id=$1 ORDER BY name`, projectID)

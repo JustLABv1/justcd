@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { usePathname } from "next/navigation"
 import Link from "next/link"
+import { WorkspaceIcon } from "@/components/workspace-ui"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { FormSelect } from "@/components/ui/form-select"
@@ -94,20 +95,23 @@ export default function SettingsPage() {
   }
 
   return <>
-    <PageHeading title={current?.title ?? "Settings"} description={current?.description ?? "Manage your delivery connections and access in focused sections."} />
+    <PageHeading title={current?.title ?? "Settings"} description={current?.description ?? "The connections and people behind your deployments."} />
     {error && <div role="alert" className="mb-4 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</div>}
     {notice && <div role="status" className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">{notice}</div>}
     {loading ? <div role="status" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{Array.from({ length: section ? 1 : 6 }, (_, index) => <div key={index} className="h-28 animate-pulse rounded-xl border bg-muted/40" />)}</div> : <>
 
     {section && !current ? <EmptyState title="Section not found" description="Choose a settings section to continue." href="/settings" action="View settings" /> : <>
     {current && <nav aria-label="Settings sections" className="mb-5 flex flex-wrap gap-2"><Link href="/settings" className="rounded-lg border bg-card px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground">All settings</Link>{sections.filter((item) => !item.adminOnly || user?.isAdmin).map((item) => <Link key={item.id} href={`/settings/${item.id}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`} aria-current={section === item.id ? "page" : undefined} className={`rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${section === item.id ? "border-primary/30 bg-primary/8 text-primary" : "bg-card text-muted-foreground hover:bg-muted hover:text-foreground"}`}>{item.title}</Link>)}</nav>}
-    {(section === "git-sources" || section === "namespaces" || section === "credentials") && (projects.length > 0 ? <div className="mb-5 flex max-w-4xl flex-wrap items-end gap-3 rounded-xl border bg-card p-4">
+    {(section === "git-sources" || section === "clusters" || section === "namespaces" || section === "credentials") && (projects.length > 0 ? <div className="mb-5 flex max-w-4xl flex-wrap items-end gap-3 rounded-xl border bg-card p-4">
       <FormField label="Active project" htmlFor="active-project"><FormSelect id="active-project" className="min-w-[240px]" value={projectId} onValueChange={(value) => { setProjectId(value); router.replace(`${pathname}?projectId=${encodeURIComponent(value)}`) }} items={projects.map((item) => ({ value: item.id, label: `${item.name} · ${item.role}` }))} /></FormField>
       {section === "namespaces" && <FormField label="Active cluster" htmlFor="active-cluster"><FormSelect id="active-cluster" className="min-w-[240px]" value={clusterId} onValueChange={setClusterId} emptyOption="Select cluster" items={clusters.map((item) => ({ value: item.id, label: item.name }))} /></FormField>}
       <span className="pb-2 text-xs text-muted-foreground">Editing <strong className="font-medium text-foreground">{project?.name}</strong></span>
     </div> : <div className="mb-5 rounded-xl border bg-card"><EmptyState title="Create a project first" description="Project-scoped settings need a delivery scope." href="/projects/new" action="Create project" /></div>)}
 
-    {!section ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{sections.filter((item) => !item.adminOnly || user?.isAdmin).map((item) => <Link key={item.id} href={`/settings/${item.id}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`} className="group flex min-h-28 flex-col justify-between rounded-xl border bg-card p-5 transition-colors hover:border-primary/40 hover:bg-muted/30"><span className="text-sm font-semibold group-hover:text-primary">{item.title}</span><span className="mt-3 flex items-end justify-between gap-3 text-xs text-muted-foreground"><span>{item.description}</span><span aria-hidden="true" className="shrink-0 text-base">→</span></span></Link>)}</div> : <div className="max-w-4xl">
+    {!section ? <div className="space-y-8">
+      <div className="flex flex-col justify-between gap-4 rounded-2xl border bg-card p-6 sm:flex-row sm:items-center"><div className="flex items-start gap-4"><span className="grid size-11 shrink-0 place-items-center rounded-xl bg-primary/7 text-primary"><WorkspaceIcon name="settings" /></span><div><h2 className="text-sm font-semibold">Workspace configuration</h2><p className="mt-1 text-xs leading-5 text-muted-foreground">Choose a project to manage its repositories, targets, and credentials.</p></div></div>{projects.length > 0 && <div className="w-full sm:w-64"><FormSelect ariaLabel="Settings project" value={projectId} onValueChange={(value) => { setProjectId(value); router.replace(`/settings?projectId=${encodeURIComponent(value)}`) }} items={projects.map((item) => ({ value: item.id, label: item.name }))} /></div>}</div>
+      {[{ title: "Delivery connections", description: "From your source repository to your Kubernetes target.", ids: ["git-sources", "clusters", "namespaces"] }, { title: "Security & access", description: "Control how people and applications connect.", ids: ["credentials", "oidc", "users"] }].map((group) => <section key={group.title}><div className="mb-4"><h2 className="text-base font-semibold tracking-tight">{group.title}</h2><p className="mt-1 text-xs text-muted-foreground">{group.description}</p></div><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{sections.filter((item) => group.ids.includes(item.id) && (!item.adminOnly || user?.isAdmin)).map((item) => <Link key={item.id} href={`/settings/${item.id}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`} className="workspace-card group flex min-h-48 flex-col rounded-2xl border bg-card p-5"><div className="flex items-center justify-between"><span className="grid size-10 place-items-center rounded-xl border bg-muted/30 text-muted-foreground"><WorkspaceIcon name={item.id === "git-sources" ? "branch" : item.id === "clusters" || item.id === "namespaces" ? "server" : "shield"} /></span><span className="text-[10px] text-muted-foreground">{item.adminOnly ? "Instance admin" : item.id === "clusters" ? "Infrastructure" : "Project scope"}</span></div><h3 className="mt-5 text-sm font-semibold group-hover:text-primary">{item.title}</h3><p className="mt-1.5 text-xs leading-5 text-muted-foreground">{item.description}</p><div className="mt-5 flex items-center justify-between border-t pt-3 text-xs"><span className="text-muted-foreground">Configure</span><WorkspaceIcon name="arrow" className="size-4 text-muted-foreground group-hover:text-primary" /></div></Link>)}</div></section>)}
+    </div> : <div className="max-w-4xl">
       {section === "credentials" && <CredentialPanel
         project={project}
         user={user}
@@ -115,17 +119,22 @@ export default function SettingsPage() {
         busy={busy}
         action={action}
         onCreated={(credential) => setCredentials((items) => [credential, ...items])}
+        onUpdated={(credential) => setCredentials((items) => items.map((item) => item.id === credential.id ? credential : item))}
       />}
       {section === "clusters" && <ClusterPanel
+        key={project?.id}
         user={user}
+        project={project}
         clusters={clusters}
         globalCredentials={globalKubeCredentials}
+        projectCredentials={namespaceCredentials.filter((item) => item.projectId === projectId)}
         busy={busy}
         action={action}
         onCreated={(cluster) => { setClusters((items) => [...items, cluster]); setClusterId(cluster.id) }}
+        onUpdated={(cluster) => setClusters((items) => items.map((item) => item.id === cluster.id ? cluster : item))}
       />}
-      {section === "git-sources" && <GitSourcePanel project={project} credentials={gitCredentials} sources={sources} busy={busy} action={action} onCreated={(source) => setSources((items) => [source, ...items])} />}
-      {section === "namespaces" && <NamespacePanel project={project} cluster={clusters.find((item) => item.id === clusterId)} credentials={namespaceCredentials} bindings={bindings} busy={busy} action={action} onCreated={(binding) => setBindings((items) => [...items, binding].sort((a, b) => a.namespace.localeCompare(b.namespace)))} />}
+      {section === "git-sources" && <GitSourcePanel project={project} credentials={gitCredentials} sources={sources} busy={busy} action={action} onCreated={(source) => setSources((items) => [source, ...items])} onUpdated={(source) => setSources((items) => items.map((item) => item.id === source.id ? source : item))} />}
+      {section === "namespaces" && <NamespacePanel key={`${projectId}:${clusterId}`} project={project} cluster={clusters.find((item) => item.id === clusterId)} credentials={namespaceCredentials} bindings={bindings} busy={busy} action={action} onCreated={(binding) => setBindings((items) => [...items, binding].sort((a, b) => a.namespace.localeCompare(b.namespace)))} onUpdated={(binding) => setBindings((items) => items.map((item) => item.namespace === binding.namespace ? binding : item))} />}
       {section === "oidc" && user?.isAdmin && <OIDCPanel providers={providers} projects={projects} busy={busy} action={action} onCreated={(provider) => setProviders((items) => [...items, provider])} />}
       {section === "users" && user?.isAdmin && <LocalUsersPanel busy={busy} action={action} />}
     </div>}
@@ -136,114 +145,167 @@ export default function SettingsPage() {
   </>
 }
 
-function CredentialPanel({ project, user, credentials, busy, action, onCreated }: {
+function CredentialPanel({ project, user, credentials, busy, action, onCreated, onUpdated }: {
   project?: Project
   user: User | null
   credentials: Credential[]
   busy: boolean
   action: <T>(work: () => Promise<T>, success: string, after?: (value: T) => void) => Promise<void>
   onCreated: (value: Credential) => void
+  onUpdated: (value: Credential) => void
 }) {
   const [name, setName] = useState("")
   const [kind, setKind] = useState<Credential["kind"]>("kubernetes-token")
   const [secretOne, setSecretOne] = useState("")
   const [secretTwo, setSecretTwo] = useState("")
   const [global, setGlobal] = useState(false)
+  const [username, setUsername] = useState("")
+  const [editing, setEditing] = useState<Credential | null>(null)
   const isAdmin = user?.isAdmin ?? false
   const fields = kind === "git-ssh" ? { first: "Private key", second: "Pinned known_hosts", firstKey: "privateKey", secondKey: "knownHosts" } : kind === "git-https" ? { first: "Access token", second: "", firstKey: "token", secondKey: "" } : kind === "kubeconfig" ? { first: "Static kubeconfig content", second: "", firstKey: "content", secondKey: "" } : { first: "Bearer token", second: "", firstKey: "token", secondKey: "" }
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const projectId = global ? undefined : project?.id
     await action(async () => {
-      const result = await apiPost<Credential>("/api/v1/credentials", { projectId, name, kind, secret: { [fields.firstKey]: secretOne, ...(fields.secondKey ? { [fields.secondKey]: secretTwo } : {}) } })
-      setName(""); setSecretOne(""); setSecretTwo("")
+      const secret = { [fields.firstKey]: secretOne, ...(fields.secondKey ? { [fields.secondKey]: secretTwo } : {}), ...(kind === "git-https" ? { username } : {}) }
+      const result = editing
+        ? await api<Credential>(`/api/v1/credentials/${encodeURIComponent(editing.id)}`, { method: "PUT", body: JSON.stringify({ name, ...(kind === "git-https" ? { username } : {}), ...(secretOne ? { secret } : {}) }) })
+        : await apiPost<Credential>("/api/v1/credentials", { projectId, name, kind, secret })
+      setName(""); setSecretOne(""); setSecretTwo(""); setUsername(""); setEditing(null)
       return result
-    }, "Encrypted credential added.", onCreated)
+    }, editing ? "Credential updated. Existing token was kept unless you entered a replacement." : "Encrypted credential added.", editing ? onUpdated : onCreated)
+  }
+  function edit(credential: Credential) {
+    setEditing(credential); setName(credential.name); setKind(credential.kind); setGlobal(!credential.projectId); setSecretOne(""); setSecretTwo(""); setUsername(credential.username ?? "")
   }
   return <Panel title="Credentials" description="Add Kubernetes tokens or static kubeconfigs per namespace, and Git deploy credentials." className="self-start">
     <div className="divide-y">
       <form className="space-y-4 p-5" onSubmit={submit}>
         <div className="grid gap-3 sm:grid-cols-2">
           <FormField label="Name" htmlFor="credential-name"><Input id="credential-name" placeholder="production deploy token" value={name} onChange={(event) => setName(event.target.value)} required maxLength={100} /></FormField>
-          <FormField label="Credential type" htmlFor="credential-kind"><FormSelect id="credential-kind" value={kind} onValueChange={(value) => setKind(value as Credential["kind"])} items={[{ value: "kubernetes-token", label: "Kubernetes bearer token" }, { value: "kubeconfig", label: "Static kubeconfig" }, { value: "git-https", label: "Git over HTTPS" }, { value: "git-ssh", label: "Git over SSH" }]} /></FormField>
+          <FormField label="Credential type" htmlFor="credential-kind"><FormSelect id="credential-kind" value={kind} onValueChange={(value) => setKind(value as Credential["kind"])} disabled={!!editing} items={[{ value: "kubernetes-token", label: "Kubernetes bearer token" }, { value: "kubeconfig", label: "Static kubeconfig" }, { value: "git-https", label: "Git over HTTPS" }, { value: "git-ssh", label: "Git over SSH" }]} /></FormField>
         </div>
-        <FormField label={fields.first} htmlFor="credential-secret" hint={kind === "kubeconfig" ? "Exec plugins, auth-provider plugins, and token files are rejected." : undefined}><Textarea id="credential-secret" className={inputClass} value={secretOne} onChange={(event) => setSecretOne(event.target.value)} required /></FormField>
-        {fields.second && <FormField label={fields.second} htmlFor="credential-secret-two" hint="Host keys must be explicitly pinned; unknown hosts are not accepted."><Textarea id="credential-secret-two" className={inputClass} value={secretTwo} onChange={(event) => setSecretTwo(event.target.value)} required /></FormField>}
-        {isAdmin && <label className="flex items-center gap-2 text-[11px] text-muted-foreground"><Checkbox checked={global} onCheckedChange={(checked) => setGlobal(Boolean(checked))} />Store as an instance-wide credential (admin only)</label>}
+        {kind === "git-https" && <FormField label="Git username" htmlFor="git-username" hint="Use the username required by your Git provider; the token is sent as the password."><Input id="git-username" value={username} onChange={(event) => setUsername(event.target.value)} required /></FormField>}
+        <FormField label={fields.first} htmlFor="credential-secret" hint={editing ? "Leave blank to keep the encrypted secret. To rotate it, enter all secret fields again." : kind === "kubeconfig" ? "Exec plugins, auth-provider plugins, and token files are rejected." : undefined}><Textarea id="credential-secret" className={inputClass} value={secretOne} onChange={(event) => setSecretOne(event.target.value)} required={!editing} /></FormField>
+        {fields.second && <FormField label={fields.second} htmlFor="credential-secret-two" hint="Host keys must be explicitly pinned; unknown hosts are not accepted."><Textarea id="credential-secret-two" className={inputClass} value={secretTwo} onChange={(event) => setSecretTwo(event.target.value)} required={!editing || !!secretOne} /></FormField>}
+        {isAdmin && !editing && <label className="flex items-center gap-2 text-[11px] text-muted-foreground"><Checkbox checked={global} onCheckedChange={(checked) => setGlobal(Boolean(checked))} />Store as an instance-wide credential (admin only)</label>}
         {!global && !project && <p className="text-[11px] text-amber-700">Select a project to add a scoped credential.</p>}
-        <Button size="sm" type="submit" disabled={busy || (!global && !project) || (global && !isAdmin)}>Add credential</Button>
+        <div className="flex gap-2"><Button size="sm" type="submit" disabled={busy || (!global && !project) || (global && !isAdmin)}>{editing ? "Save credential" : "Add credential"}</Button>{editing && <Button size="sm" type="button" variant="outline" onClick={() => { setEditing(null); setName(""); setSecretOne(""); setSecretTwo(""); setUsername("") }}>Cancel</Button>}</div>
       </form>
-      <div className="p-5"><div className="mb-3 flex items-center justify-between"><p className="text-[11px] font-medium">Available credentials</p><span className="text-[10px] text-muted-foreground">{credentials.length} total</span></div>{credentials.length ? <div className="space-y-2">{credentials.map((credential) => <div key={credential.id} className="flex items-center gap-3 rounded-lg border px-3 py-2"><span className="grid size-7 place-items-center rounded-md bg-muted text-[10px]">{credential.kind.startsWith("git") ? "G" : "K"}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{credential.name}</span><span className="block text-[9px] capitalize text-muted-foreground">{credential.kind.replaceAll("-", " ")} · {credential.projectId ? "project scoped" : "instance wide"}</span></span>{credential.expiresAt && <span className="text-[9px] text-muted-foreground">expires {new Date(credential.expiresAt).toLocaleDateString()}</span>}</div>)}</div> : <p className="text-[11px] text-muted-foreground">Credentials will be listed here by name only.</p>}</div>
+      <div className="p-5"><div className="mb-3 flex items-center justify-between"><p className="text-[11px] font-medium">Available credentials</p><span className="text-[10px] text-muted-foreground">{credentials.length} total</span></div>{credentials.length ? <div className="space-y-2">{credentials.map((credential) => <div key={credential.id} className="flex items-center gap-3 rounded-lg border px-3 py-2"><span className="grid size-7 place-items-center rounded-md bg-muted text-[10px]">{credential.kind.startsWith("git") ? "G" : "K"}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{credential.name}</span><span className="block text-[9px] capitalize text-muted-foreground">{credential.kind.replaceAll("-", " ")} · {credential.projectId ? "project scoped" : "instance wide"}</span></span>{credential.expiresAt && <span className="text-[9px] text-muted-foreground">expires {new Date(credential.expiresAt).toLocaleDateString()}</span>}<Button size="sm" variant="outline" type="button" disabled={busy || (!!credential.projectId && project?.role !== "owner") || (!credential.projectId && !isAdmin)} onClick={() => edit(credential)}>Edit</Button></div>)}</div> : <p className="text-[11px] text-muted-foreground">Credentials will be listed here by name only.</p>}</div>
     </div>
   </Panel>
 }
 
-function ClusterPanel({ user, clusters, globalCredentials, busy, action, onCreated }: {
+function ClusterPanel({ user, project, clusters, globalCredentials, projectCredentials, busy, action, onCreated, onUpdated }: {
   user: User | null
+  project?: Project
   clusters: Cluster[]
   globalCredentials: Credential[]
+  projectCredentials: Credential[]
   busy: boolean
   action: <T>(work: () => Promise<T>, success: string, after?: (value: T) => void) => Promise<void>
   onCreated: (value: Cluster) => void
+  onUpdated: (value: Cluster) => void
 }) {
   const [name, setName] = useState("")
   const [apiServer, setApiServer] = useState("")
   const [caDataBase64, setCaDataBase64] = useState("")
   const [defaultCredentialId, setDefaultCredentialId] = useState("")
   const [clusterScopeCredentialId, setClusterScopeCredentialId] = useState("")
+  const [projectCredentialId, setProjectCredentialId] = useState("")
+  const [newProjectCredentialId, setNewProjectCredentialId] = useState("")
+  const [selectedClusterId, setSelectedClusterId] = useState("")
   const [insecure, setInsecure] = useState(false)
+  const [editing, setEditing] = useState<Cluster | null>(null)
+  const [testResult, setTestResult] = useState("")
+  useEffect(() => {
+    if (!project || !selectedClusterId) return
+    api<{ credentialId: string | null }>(`/api/v1/clusters/${encodeURIComponent(selectedClusterId)}/project-credential?projectId=${encodeURIComponent(project.id)}`)
+      .then((result) => setProjectCredentialId(result.credentialId ?? ""))
+      .catch(() => setProjectCredentialId(""))
+  }, [project, selectedClusterId])
+  async function saveProjectCredential() {
+    if (!project || !selectedClusterId) return
+    await action(() => api<{ credentialId: string | null }>(`/api/v1/clusters/${encodeURIComponent(selectedClusterId)}/project-credential`, { method: "PUT", body: JSON.stringify({ projectId: project.id, credentialId: projectCredentialId || null }) }), "Project credential saved for this cluster.")
+  }
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     await action(async () => {
-      const result = await apiPost<Cluster>("/api/v1/clusters", { name, apiServer, caDataBase64, insecureSkipVerify: insecure, defaultCredentialId: defaultCredentialId || undefined, clusterScopeCredentialId: clusterScopeCredentialId || undefined })
-      setName(""); setApiServer(""); setCaDataBase64("")
+      const result = editing
+        ? await api<Cluster>(`/api/v1/clusters/${encodeURIComponent(editing.id)}`, { method: "PUT", body: JSON.stringify({ name, apiServer, ...(caDataBase64 ? { caDataBase64 } : {}), insecureSkipVerify: insecure, defaultCredentialId: defaultCredentialId || null, clusterScopeCredentialId: clusterScopeCredentialId || null }) })
+        : await apiPost<Cluster>("/api/v1/clusters", { name, apiServer, caDataBase64, insecureSkipVerify: insecure, defaultCredentialId: defaultCredentialId || undefined, clusterScopeCredentialId: clusterScopeCredentialId || undefined, projectId: project?.id, projectCredentialId: newProjectCredentialId || undefined })
+      setName(""); setApiServer(""); setCaDataBase64(""); setNewProjectCredentialId(""); setEditing(null)
       return result
-    }, "Cluster connected. Add a namespace binding to a project before creating applications.", onCreated)
+    }, editing ? "Cluster updated. Existing CA certificate was kept unless replaced." : "Cluster connected. Add a namespace binding to a project before creating applications.", editing ? onUpdated : onCreated)
+  }
+  function edit(cluster: Cluster) {
+    setEditing(cluster); setName(cluster.name); setApiServer(cluster.apiServer); setCaDataBase64(""); setInsecure(cluster.insecureSkipVerify); setDefaultCredentialId(cluster.defaultCredentialId ?? ""); setClusterScopeCredentialId(cluster.clusterScopeCredentialId ?? "")
+  }
+  async function test(cluster: Cluster) {
+    if (!project) return
+    setTestResult("")
+    await action(() => apiPost<{ status: string; serverVersion: string; namespace: string; canReadPods: boolean }>(`/api/v1/clusters/${encodeURIComponent(cluster.id)}/test`, { projectId: project.id }).then((result) => { setTestResult(`${cluster.name}: Kubernetes ${result.serverVersion} authenticated; ${result.canReadPods ? "can" : "cannot"} read Pods in ${result.namespace}`); return result }), "Cluster authentication verified.")
   }
   return <Panel title="Kubernetes clusters" description="Clusters are direct API connections. JustCD runs its reconciler outside the cluster." className="self-start">
-    {clusters.length ? <div className="divide-y border-b">{clusters.map((cluster) => <div key={cluster.id} className="flex items-center gap-3 px-5 py-3"><span className="grid size-8 place-items-center rounded-lg bg-violet-500/10 text-xs text-violet-700">K8s</span><span className="min-w-0 flex-1"><span className="block text-xs font-medium">{cluster.name}</span><span className="block truncate font-mono text-[9px] text-muted-foreground">{cluster.apiServer}</span></span><span className="text-[9px] text-muted-foreground">{cluster.defaultCredentialId ? "default credential set" : "no default credential"}</span></div>)}</div> : null}
+    {clusters.length ? <div className="divide-y border-b">{clusters.map((cluster) => <div key={cluster.id} className="flex flex-wrap items-center gap-3 px-5 py-3"><span className="grid size-8 place-items-center rounded-lg bg-violet-500/10 text-xs text-violet-700">K8s</span><span className="min-w-0 flex-1"><span className="block text-xs font-medium">{cluster.name}</span><span className="block truncate font-mono text-[9px] text-muted-foreground">{cluster.apiServer}</span></span><Button size="sm" variant="outline" type="button" disabled={busy || !project} onClick={() => test(cluster)}>Test</Button>{user?.isAdmin && <Button size="sm" variant="outline" type="button" disabled={busy} onClick={() => edit(cluster)}>Edit</Button>}</div>)}</div> : null}
+    {testResult && <p role="status" className="px-5 py-2 text-xs text-emerald-700">{testResult}</p>}
+    {project && clusters.length > 0 && <div className="space-y-3 border-b p-5"><p className="text-xs font-semibold">Credential for {project.name}</p><p className="text-[11px] text-muted-foreground">This project credential is used for its namespace bindings on the selected cluster. It is never shared with other projects.</p><div className="grid gap-3 sm:grid-cols-2"><FormField label="Cluster" htmlFor="project-cluster"><FormSelect id="project-cluster" value={selectedClusterId} onValueChange={setSelectedClusterId} emptyOption="Select cluster" items={clusters.map((cluster) => ({ value: cluster.id, label: cluster.name }))} /></FormField><FormField label="Project Kubernetes credential" htmlFor="project-cluster-credential"><FormSelect id="project-cluster-credential" value={projectCredentialId} onValueChange={setProjectCredentialId} emptyOption="Use global default" items={projectCredentials.map((credential) => ({ value: credential.id, label: credential.name }))} /></FormField></div><Button size="sm" type="button" disabled={busy || !selectedClusterId || project.role !== "owner"} onClick={saveProjectCredential}>Save project credential</Button></div>}
     {user?.isAdmin ? <form className="space-y-4 p-5" onSubmit={submit}>
       <div className="grid gap-3 sm:grid-cols-2"><FormField label="Cluster name" htmlFor="cluster-name"><Input id="cluster-name" placeholder="prod-eu-1" value={name} onChange={(event) => setName(event.target.value)} required /></FormField><FormField label="Kubernetes API URL" htmlFor="cluster-api"><Input id="cluster-api" type="url" placeholder="https://api.example.com:6443" value={apiServer} onChange={(event) => setApiServer(event.target.value)} required /></FormField></div>
-      <FormField label="CA certificate (base64)" htmlFor="cluster-ca" hint="Optional when the system trust store is sufficient."><Textarea id="cluster-ca" className={inputClass} value={caDataBase64} onChange={(event) => setCaDataBase64(event.target.value)} /></FormField>
+      <FormField label="CA certificate (base64)" htmlFor="cluster-ca" hint={editing ? "Leave blank to keep the current CA certificate." : "Optional when the system trust store is sufficient."}><Textarea id="cluster-ca" className={inputClass} value={caDataBase64} onChange={(event) => setCaDataBase64(event.target.value)} /></FormField>
       <div className="grid gap-3 sm:grid-cols-2"><FormField label="Default cluster credential" htmlFor="cluster-default"><FormSelect id="cluster-default" value={defaultCredentialId} onValueChange={setDefaultCredentialId} emptyOption="None yet" items={globalCredentials.map((credential) => ({ value: credential.id, label: credential.name }))} /></FormField><FormField label="Cluster-scope credential" htmlFor="cluster-scope"><FormSelect id="cluster-scope" value={clusterScopeCredentialId} onValueChange={setClusterScopeCredentialId} emptyOption="Disabled (recommended)" items={globalCredentials.map((credential) => ({ value: credential.id, label: credential.name }))} /></FormField></div>
+      {project && !editing && <FormField label={`Credential for ${project.name}`} htmlFor="new-project-cluster-credential" hint="Only this project can use this token. Namespace credentials override it."><FormSelect id="new-project-cluster-credential" value={newProjectCredentialId} onValueChange={setNewProjectCredentialId} emptyOption="None yet" items={projectCredentials.map((credential) => ({ value: credential.id, label: credential.name }))} /></FormField>}
+      <p className="text-[11px] text-muted-foreground">Instance-wide credentials are optional. Project credentials are kept separate and are never shared across projects.</p>
       <label className="flex items-start gap-2 text-[11px] leading-4 text-muted-foreground"><Checkbox checked={insecure} onCheckedChange={(checked) => setInsecure(Boolean(checked))} className="mt-0.5" />Skip TLS certificate verification <span className="text-amber-700">— only for temporary development clusters.</span></label>
-      <Button size="sm" type="submit" disabled={busy}>Add cluster</Button>
+      <div className="flex gap-2"><Button size="sm" type="submit" disabled={busy}>{editing ? "Save cluster" : "Add cluster"}</Button>{editing && <Button size="sm" variant="outline" type="button" onClick={() => { setEditing(null); setName(""); setApiServer(""); setCaDataBase64("") }}>Cancel</Button>}</div>
     </form> : <div className="px-5 py-4 text-[11px] leading-5 text-muted-foreground">Only instance administrators can add cluster API endpoints and global credentials.</div>}
   </Panel>
 }
 
-function GitSourcePanel({ project, credentials, sources, busy, action, onCreated }: {
+function GitSourcePanel({ project, credentials, sources, busy, action, onCreated, onUpdated }: {
   project?: Project
   credentials: Credential[]
   sources: GitSource[]
   busy: boolean
   action: <T>(work: () => Promise<T>, success: string, after?: (value: T) => void) => Promise<void>
   onCreated: (value: GitSource) => void
+  onUpdated: (value: GitSource) => void
 }) {
   const [name, setName] = useState("")
   const [repositoryUrl, setRepositoryUrl] = useState("")
   const [credentialId, setCredentialId] = useState("")
+  const [editing, setEditing] = useState<GitSource | null>(null)
+  const [testResult, setTestResult] = useState("")
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     await action(async () => {
-      const source = await apiPost<GitSource>("/api/v1/git-sources", { projectId: project?.id, name, repositoryUrl, credentialId: credentialId || undefined })
-      setName(""); setRepositoryUrl("")
+      const source = editing
+        ? await api<GitSource>(`/api/v1/git-sources/${encodeURIComponent(editing.id)}`, { method: "PUT", body: JSON.stringify({ name, repositoryUrl, credentialId: credentialId || null }) })
+        : await apiPost<GitSource>("/api/v1/git-sources", { projectId: project?.id, name, repositoryUrl, credentialId: credentialId || undefined })
+      setName(""); setRepositoryUrl(""); setCredentialId(""); setEditing(null)
       return source
-    }, "Git source connected.", onCreated)
+    }, editing ? "Git source updated." : "Git source connected.", editing ? onUpdated : onCreated)
+  }
+  function edit(source: GitSource) { setEditing(source); setName(source.name); setRepositoryUrl(source.repositoryUrl); setCredentialId(source.credentialId ?? "") }
+  async function test(source: GitSource) {
+    setTestResult("")
+    await action(() => apiPost<{ status: string; commit: string }>(`/api/v1/git-sources/${encodeURIComponent(source.id)}/test`).then((result) => { setTestResult(`${source.name}: HEAD ${result.commit.slice(0, 12)} reachable`); return result }), "Git source connection verified.")
   }
   return <Panel title="Git sources" description="Configure repositories used by applications in the selected project." className="self-start">
-    {sources.length ? <div className="divide-y border-b">{sources.map((source) => <div key={source.id} className="px-5 py-3"><p className="text-xs font-medium">{source.name}</p><p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">{source.repositoryUrl}</p></div>)}</div> : null}
+    {sources.length ? <div className="divide-y border-b">{sources.map((source) => <div key={source.id} className="flex items-center gap-3 px-5 py-3"><div className="min-w-0 flex-1"><p className="text-xs font-medium">{source.name}</p><p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">{source.repositoryUrl}</p></div><Button size="sm" variant="outline" type="button" disabled={busy} onClick={() => test(source)}>Test</Button><Button size="sm" variant="outline" type="button" disabled={busy || project?.role !== "owner"} onClick={() => edit(source)}>Edit</Button></div>)}</div> : null}
+    {testResult && <p role="status" className="px-5 py-2 text-xs text-emerald-700">{testResult}</p>}
     <form className="space-y-4 p-5" onSubmit={submit}>
       <div className="grid gap-3 sm:grid-cols-2"><FormField label="Source name" htmlFor="source-name"><Input id="source-name" placeholder="platform-config" value={name} onChange={(event) => setName(event.target.value)} required /></FormField><FormField label="Repository URL" htmlFor="source-url"><Input id="source-url" placeholder="https://github.com/org/repo.git" value={repositoryUrl} onChange={(event) => setRepositoryUrl(event.target.value)} required /></FormField></div>
       <FormField label="Git credential" htmlFor="source-credential"><FormSelect id="source-credential" value={credentialId} onValueChange={setCredentialId} emptyOption="Public repository" items={credentials.map((credential) => ({ value: credential.id, label: `${credential.name} · ${credential.kind}` }))} /></FormField>
       {!project && <p className="text-[11px] text-amber-700">Select a project to configure Git sources.</p>}
       {!credentials.length && <p className="text-[10px] text-muted-foreground">For private repositories, add a Git HTTPS token or pinned SSH key in the Credentials panel.</p>}
-      <Button size="sm" type="submit" disabled={busy || !project || project.role !== "owner"}>Add Git source</Button>
+      <div className="flex gap-2"><Button size="sm" type="submit" disabled={busy || !project || project.role !== "owner"}>{editing ? "Save Git source" : "Add Git source"}</Button>{editing && <Button size="sm" variant="outline" type="button" onClick={() => { setEditing(null); setName(""); setRepositoryUrl(""); setCredentialId("") }}>Cancel</Button>}</div>
     </form>
   </Panel>
 }
 
-function NamespacePanel({ project, cluster, credentials, bindings, busy, action, onCreated }: {
+function NamespacePanel({ project, cluster, credentials, bindings, busy, action, onCreated, onUpdated }: {
   project?: Project
   cluster?: Cluster
   credentials: Credential[]
@@ -251,24 +313,35 @@ function NamespacePanel({ project, cluster, credentials, bindings, busy, action,
   busy: boolean
   action: <T>(work: () => Promise<T>, success: string, after?: (value: T) => void) => Promise<void>
   onCreated: (value: NamespaceBinding) => void
+  onUpdated: (value: NamespaceBinding) => void
 }) {
   const [namespace, setNamespace] = useState("")
   const [credentialId, setCredentialId] = useState("")
+  const [editing, setEditing] = useState<NamespaceBinding | null>(null)
+  const [projectDefault, setProjectDefault] = useState(false)
+  useEffect(() => {
+    if (!project || !cluster) return
+    api<{ credentialId: string | null }>(`/api/v1/clusters/${encodeURIComponent(cluster.id)}/project-credential?projectId=${encodeURIComponent(project.id)}`)
+      .then((result) => setProjectDefault(!!result.credentialId))
+      .catch(() => setProjectDefault(false))
+  }, [project, cluster])
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!project || !cluster) return
     await action(async () => {
-      const binding = await apiPost<NamespaceBinding>(`/api/v1/clusters/${encodeURIComponent(cluster.id)}/bindings`, { projectId: project.id, namespace, credentialId: credentialId || undefined })
-      setNamespace("")
+      const binding = editing
+        ? await api<NamespaceBinding>(`/api/v1/clusters/${encodeURIComponent(cluster.id)}/bindings/${encodeURIComponent(editing.namespace)}`, { method: "PUT", body: JSON.stringify({ projectId: project.id, credentialId: credentialId || null }) })
+        : await apiPost<NamespaceBinding>(`/api/v1/clusters/${encodeURIComponent(cluster.id)}/bindings`, { projectId: project.id, namespace, credentialId: credentialId || undefined })
+      setNamespace(""); setCredentialId(""); setEditing(null)
       return binding
-    }, "Namespace access binding added.", onCreated)
+    }, editing ? "Namespace credential updated." : "Namespace access binding added.", editing ? onUpdated : onCreated)
   }
   return <Panel title="Namespace bindings" description="Bind a project to specific namespaces and choose credentials per target." className="self-start">
-    {bindings.length ? <div className="divide-y border-b">{bindings.map((binding) => <div key={binding.namespace} className="flex items-center justify-between gap-3 px-5 py-2.5"><span className="font-mono text-xs">{binding.namespace}</span><span className="text-[10px] text-muted-foreground">{binding.credentialId ? credentials.find((item) => item.id === binding.credentialId)?.name || "namespace credential" : "cluster default"}</span></div>)}</div> : <div className="px-5 pt-4 text-[11px] text-muted-foreground">{cluster ? "No namespace bindings on this cluster." : "Select a cluster."}</div>}
+    {bindings.length ? <div className="divide-y border-b">{bindings.map((binding) => <div key={binding.namespace} className="flex items-center justify-between gap-3 px-5 py-2.5"><span className="font-mono text-xs">{binding.namespace}</span><span className="text-[10px] text-muted-foreground">{binding.credentialId ? credentials.find((item) => item.id === binding.credentialId)?.name || "namespace credential" : "cluster default"}</span><Button size="sm" variant="outline" type="button" disabled={busy || project?.role !== "owner"} onClick={() => { setEditing(binding); setNamespace(binding.namespace); setCredentialId(binding.credentialId ?? "") }}>Edit</Button></div>)}</div> : <div className="px-5 pt-4 text-[11px] text-muted-foreground">{cluster ? "No namespace bindings on this cluster." : "Select a cluster."}</div>}
     <form className="space-y-4 p-5" onSubmit={submit}>
-      <div className="grid gap-3 sm:grid-cols-2"><FormField label="Namespace" htmlFor="namespace-name" hint="Kubernetes namespace, up to 63 characters."><Input id="namespace-name" placeholder="payments" value={namespace} onChange={(event) => setNamespace(event.target.value)} required maxLength={63} /></FormField><FormField label="Credential for this namespace" htmlFor="namespace-credential"><FormSelect id="namespace-credential" value={credentialId} onValueChange={setCredentialId} emptyOption="Use cluster default" items={credentials.map((credential) => ({ value: credential.id, label: credential.name }))} /></FormField></div>
-      {!cluster?.defaultCredentialId && !credentialId && <p className="text-[10px] text-amber-700">Choose a namespace credential or configure a cluster default credential.</p>}
-      <Button size="sm" type="submit" disabled={busy || !project || project.role !== "owner" || !cluster}>Bind namespace</Button>
+      <div className="grid gap-3 sm:grid-cols-2"><FormField label="Namespace" htmlFor="namespace-name" hint="Kubernetes namespace, up to 63 characters."><Input id="namespace-name" placeholder="payments" value={namespace} onChange={(event) => setNamespace(event.target.value)} required maxLength={63} readOnly={!!editing} /></FormField><FormField label="Credential for this namespace" htmlFor="namespace-credential"><FormSelect id="namespace-credential" value={credentialId} onValueChange={setCredentialId} emptyOption="Use cluster default" items={credentials.map((credential) => ({ value: credential.id, label: credential.name }))} /></FormField></div>
+      {!cluster?.defaultCredentialId && !projectDefault && !credentialId && <p className="text-[10px] text-amber-700">Choose a namespace credential or configure a cluster default credential.</p>}
+      <div className="flex gap-2"><Button size="sm" type="submit" disabled={busy || !project || project.role !== "owner" || !cluster}>{editing ? "Save binding" : "Bind namespace"}</Button>{editing && <Button size="sm" variant="outline" type="button" onClick={() => { setEditing(null); setNamespace(""); setCredentialId("") }}>Cancel</Button>}</div>
     </form>
   </Panel>
 }

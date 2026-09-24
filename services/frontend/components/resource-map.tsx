@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
+import { Input } from "@/components/ui/input"
 import type { Application, Identity, ManagedResource, Operation, PlanRecord, ResourceTopology, TopologyNode } from "@/lib/types"
 
 type Status = "syncing" | "applied" | "failed" | "create" | "update" | "delete" | "synced" | "unknown"
@@ -39,7 +40,7 @@ export function ResourceMap({ application, plan, inventory, operations, topology
   const viewport = useRef<HTMLDivElement>(null)
   const graph = topology ?? fallback(plan, inventory)
   const latestOperation = operations.find((item) => item.planId === plan?.id)
-  const running = latestOperation?.status === "running" ? latestOperation : null
+  const running = latestOperation?.status === "running" || latestOperation?.status === "queued" ? latestOperation : null
   const completed = new Set(running?.progress?.completed?.map(identityKey) ?? [])
   const current = running?.progress?.current ? identityKey(running.progress.current) : null
   const failed = latestOperation?.status === "failed" && latestOperation.progress?.current ? identityKey(latestOperation.progress.current) : null
@@ -98,7 +99,7 @@ export function ResourceMap({ application, plan, inventory, operations, topology
       <div className="flex flex-wrap items-center gap-2 text-[11px]"><span className="rounded-full border px-2.5 py-1 tabular-nums">{graph.nodes.length} resources</span><span className="rounded-full border px-2.5 py-1 tabular-nums">{graph.edges.length} links</span><span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">{changedCount} changes</span><span className="rounded-full border px-2.5 py-1 tabular-nums">{sampleCount ? `${sampleCount} sample Pods/replicas` : `${observedCount} observed`}</span><button type="button" onClick={onRefresh} disabled={refreshing} className="rounded-md border px-2.5 py-1 font-medium hover:bg-muted/50 disabled:opacity-50">{refreshing ? "Refreshing…" : sampleCount ? "Refresh map" : "Refresh cluster"}</button></div>
     </div>
     <div className="flex flex-wrap items-center gap-2 border-b px-5 py-3">
-      <input aria-label="Search resources" value={query} onChange={(event) => { setQuery(event.target.value); if (event.target.value.trim()) { setMode("all"); setFocus(false) } }} placeholder="Find a resource…" className="h-8 min-w-0 flex-1 rounded-md border bg-background px-3 text-xs outline-none focus-visible:ring-2 focus-visible:ring-primary sm:max-w-60" />
+      <Input aria-label="Search resources" value={query} onChange={(event) => { setQuery(event.target.value); if (event.target.value.trim()) { setMode("all"); setFocus(false) } }} placeholder="Find a resource…" className="h-8 min-w-0 flex-1 text-xs sm:max-w-60" />
       {query.trim() && <span role="status" className="text-[11px] text-muted-foreground">{matches.size} {matches.size === 1 ? "match" : "matches"}</span>}
       <div role="group" aria-label="Topology view" className="flex rounded-md border p-0.5">{(["all", "changes", "observed"] as const).map((item) => <button type="button" key={item} aria-pressed={mode === item} onClick={() => setMode(item)} className={`rounded px-2.5 py-1.5 text-[11px] capitalize focus-visible:outline-2 focus-visible:outline-primary ${mode === item ? "bg-muted font-semibold" : "text-muted-foreground hover:text-foreground"}`}>{item}</button>)}</div>
       <button type="button" aria-pressed={focus} disabled={!selected} onClick={() => setFocus(!focus)} className="h-8 rounded-md border px-2.5 text-[11px] disabled:opacity-40">{focus ? "Show all links" : "Focus links"}</button>

@@ -70,15 +70,38 @@ type Change struct {
 	LiveFingerprint     string          `json:"liveFingerprint,omitempty"`
 	Before              json.RawMessage `json:"before,omitempty"`
 	After               json.RawMessage `json:"after,omitempty"`
+	ChangedPaths        []string        `json:"changedPaths,omitempty"`
+	IgnoredPaths        []string        `json:"ignoredPaths,omitempty"`
+	IgnoreReason        string          `json:"ignoreReason,omitempty"`
+}
+
+type FieldExclusion struct {
+	Identity Identity `json:"identity"`
+	Path     string   `json:"path"`
+}
+
+type PlanSelection struct {
+	Resources []Identity       `json:"resources,omitempty"`
+	Fields    []FieldExclusion `json:"fields,omitempty"`
+}
+
+type IgnoreRule struct {
+	ID       string   `json:"id"`
+	Identity Identity `json:"identity"`
+	Path     string   `json:"path,omitempty"`
+	Reason   string   `json:"reason"`
 }
 
 type Plan struct {
-	ApplicationID    string    `json:"applicationId"`
-	Revision         string    `json:"revision"`
-	Bindings         []Binding `json:"bindings"`
-	Changes          []Change  `json:"changes"`
-	RequiresApproval bool      `json:"requiresApproval"`
-	Digest           string    `json:"digest"`
+	ApplicationID     string        `json:"applicationId"`
+	Revision          string        `json:"revision"`
+	Bindings          []Binding     `json:"bindings"`
+	Changes           []Change      `json:"changes"`
+	Ignored           []Change      `json:"ignored,omitempty"`
+	Selection         PlanSelection `json:"selection,omitempty"`
+	IgnoreRulesDigest string        `json:"ignoreRulesDigest,omitempty"`
+	RequiresApproval  bool          `json:"requiresApproval"`
+	Digest            string        `json:"digest"`
 }
 
 // BuildPlan is pure: callers must provide a complete, authorized live snapshot
@@ -191,13 +214,21 @@ func BuildPlan(applicationID, revision string, bindings []Binding, desired, live
 		}
 	}
 	plan := Plan{ApplicationID: applicationID, Revision: revision, Bindings: bindings, Changes: changes, RequiresApproval: requiresApproval}
+	if err := RefreshDigest(&plan); err != nil {
+		return Plan{}, err
+	}
+	return plan, nil
+}
+
+func RefreshDigest(plan *Plan) error {
+	plan.Digest = ""
 	encoded, err := json.Marshal(plan)
 	if err != nil {
-		return Plan{}, err
+		return err
 	}
 	sum := sha256.Sum256(encoded)
 	plan.Digest = hex.EncodeToString(sum[:])
-	return plan, nil
+	return nil
 }
 
 func resourceInBindings(identity Identity, allowed map[string]struct{}) bool {

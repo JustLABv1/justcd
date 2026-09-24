@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
 import { FormField, PageHeading, Panel } from "@/components/ui-kit"
 import { api, apiPost, errorMessage } from "@/lib/api"
@@ -62,6 +64,7 @@ export default function NewApplicationPage() {
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError("")
+    if (!projectId || !sourceId || !clusterId || !namespaces.length) { setError("Choose a project, Git source, cluster, and at least one namespace."); setBusy(false); return }
     try {
       const app = await apiPost<Application>("/api/v1/applications", { projectId, name, sourceId, revision, manifestPath, renderer, clusterId, namespaces, syncPolicy, pollSeconds: Number(pollSeconds) })
       router.push(`/applications/${app.id}`)
@@ -74,21 +77,21 @@ export default function NewApplicationPage() {
     <form className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]" onSubmit={submit}>
       <div className="space-y-5">
         <Panel title="Source" description="Select the project repository and the exact Git path to render."><div className="grid gap-4 p-5 sm:grid-cols-2">
-          <FormField label="Project" htmlFor="project"><select id="project" className="h-9 w-full rounded-lg border bg-background px-3 text-sm" value={projectId} onChange={(event) => setProjectId(event.target.value)} required><option value="">Select project</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></FormField>
-          <FormField label="Git source" htmlFor="source"><select id="source" className="h-9 w-full rounded-lg border bg-background px-3 text-sm" value={sourceId} onChange={(event) => setSourceId(event.target.value)} required><option value="">Select source</option>{sources.map((source) => <option key={source.id} value={source.id}>{source.name} · {source.repositoryUrl}</option>)}</select></FormField>
+          <FormField label="Project" htmlFor="project"><FormSelect id="project" value={projectId} onValueChange={setProjectId} placeholder="Select project" required items={projects.map((project) => ({ value: project.id, label: project.name }))} /></FormField>
+          <FormField label="Git source" htmlFor="source"><FormSelect id="source" value={sourceId} onValueChange={setSourceId} placeholder="Select source" required items={sources.map((source) => ({ value: source.id, label: `${source.name} · ${source.repositoryUrl}` }))} /></FormField>
           <FormField label="Application name" htmlFor="name" hint="Lowercase letters, numbers, dots, and dashes."><Input id="name" placeholder="billing-api" value={name} onChange={(event) => setName(event.target.value)} required pattern="[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?" /></FormField>
           <FormField label="Git revision" htmlFor="revision" hint="Branch, tag, or commit; JustCD pins the reviewed commit SHA."><Input id="revision" placeholder="main" value={revision} onChange={(event) => setRevision(event.target.value)} required /></FormField>
           <FormField label="Manifest path" htmlFor="path" hint="Repository-relative directory or file."><Input id="path" placeholder="deploy/" value={manifestPath} onChange={(event) => setManifestPath(event.target.value)} required /></FormField>
-          <FormField label="Renderer" htmlFor="renderer"><select id="renderer" className="h-9 w-full rounded-lg border bg-background px-3 text-sm" value={renderer} onChange={(event) => setRenderer(event.target.value)}><option value="yaml">Plain YAML / JSON</option><option value="kustomize">Kustomize build</option><option value="helm">Helm template</option></select></FormField>
+          <FormField label="Renderer" htmlFor="renderer"><FormSelect id="renderer" value={renderer} onValueChange={setRenderer} items={[{ value: "yaml", label: "Plain YAML / JSON" }, { value: "kustomize", label: "Kustomize build" }, { value: "helm", label: "Helm template" }]} /></FormField>
         </div></Panel>
         <Panel title="Cluster target" description="Applications are restricted to the namespaces already bound to this project."><div className="space-y-5 p-5">
-          <FormField label="Cluster" htmlFor="cluster"><select id="cluster" className="h-9 w-full rounded-lg border bg-background px-3 text-sm" value={clusterId} onChange={(event) => { setClusterId(event.target.value); setNamespaces([]) }} required><option value="">Select cluster</option>{clusters.map((cluster) => <option key={cluster.id} value={cluster.id}>{cluster.name} · {cluster.apiServer}</option>)}</select></FormField>
-          <div><p className="mb-2 text-xs font-medium">Namespace bindings</p>{bindings.length ? <div className="grid gap-2 sm:grid-cols-2">{bindings.map((binding) => <label key={binding.namespace} className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-xs transition-colors ${namespaces.includes(binding.namespace) ? "border-primary/40 bg-primary/5" : "hover:bg-muted/40"}`}><input type="checkbox" className="accent-primary" checked={namespaces.includes(binding.namespace)} onChange={(event) => setNamespaces((current) => event.target.checked ? [...current, binding.namespace] : current.filter((namespace) => namespace !== binding.namespace))} /><span className="flex-1 font-medium">{binding.namespace}</span><span className="text-[10px] text-muted-foreground">{binding.credentialId ? "namespace credential" : "cluster default"}</span></label>)}</div> : <div className="rounded-lg border border-dashed px-4 py-5 text-xs text-muted-foreground">No namespaces are bound to this project on this cluster. <a href={`/settings?projectId=${projectId}`} className="font-medium text-primary hover:underline">Configure a binding</a></div>}</div>
+          <FormField label="Cluster" htmlFor="cluster"><FormSelect id="cluster" value={clusterId} onValueChange={(value) => { setClusterId(value); setNamespaces([]) }} placeholder="Select cluster" required items={clusters.map((cluster) => ({ value: cluster.id, label: `${cluster.name} · ${cluster.apiServer}` }))} /></FormField>
+          <div><p className="mb-2 text-xs font-medium">Namespace bindings</p>{bindings.length ? <div className="grid gap-2 sm:grid-cols-2">{bindings.map((binding) => <label key={binding.namespace} className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-xs transition-colors ${namespaces.includes(binding.namespace) ? "border-primary/40 bg-primary/5" : "hover:bg-muted/40"}`}><Checkbox checked={namespaces.includes(binding.namespace)} onCheckedChange={(checked) => setNamespaces((current) => checked ? [...current, binding.namespace] : current.filter((namespace) => namespace !== binding.namespace))} /><span className="flex-1 font-medium">{binding.namespace}</span><span className="text-[10px] text-muted-foreground">{binding.credentialId ? "namespace credential" : "cluster default"}</span></label>)}</div> : <div className="rounded-lg border border-dashed px-4 py-5 text-xs text-muted-foreground">No namespaces are bound to this project on this cluster. <a href={`/settings?projectId=${projectId}`} className="font-medium text-primary hover:underline">Configure a binding</a></div>}</div>
         </div></Panel>
       </div>
       <div className="space-y-5">
         <Panel title="Reconciliation" description="Choose how often to check Git for changes."><div className="space-y-4 p-5">
-          <FormField label="Sync policy" htmlFor="policy"><select id="policy" className="h-9 w-full rounded-lg border bg-background px-3 text-sm" value={syncPolicy} onChange={(event) => setSyncPolicy(event.target.value)}><option value="manual">Manual · review each sync</option><option value="auto-safe">Auto-safe · apply non-destructive changes</option></select></FormField>
+          <FormField label="Sync policy" htmlFor="policy"><FormSelect id="policy" value={syncPolicy} onValueChange={setSyncPolicy} items={[{ value: "manual", label: "Manual · review each sync" }, { value: "auto-safe", label: "Auto-safe · apply non-destructive changes" }]} /></FormField>
           <FormField label="Poll interval (seconds)" htmlFor="poll" hint="Auto-safe still pauses for every deletion and cluster-wide change."><Input id="poll" type="number" min={30} max={86400} value={pollSeconds} onChange={(event) => setPollSeconds(event.target.value)} /></FormField>
           <div className="rounded-lg bg-muted/50 p-3 text-[11px] leading-5 text-muted-foreground"><span className="font-medium text-foreground">Safe by default.</span> A plan is required before any sync. Deletions and cluster-scoped changes require owner approval.</div>
         </div></Panel>

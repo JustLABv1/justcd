@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -376,24 +377,63 @@ func CanonicalLive(object *unstructured.Unstructured, clusterID, applicationID s
 // therefore do not create permanent drift, while fields removed from Git stay
 // in the comparison set until JustCD has pruned them.
 func CanonicalLiveAgainst(object *unstructured.Unstructured, clusterID, applicationID string, clusterScoped bool, desiredManifest, previousManifest []byte) (core.Resource, string, error) {
+	resource, desiredFingerprint, _, err := CanonicalLiveAgainstIgnoring(object, clusterID, applicationID, clusterScoped, desiredManifest, previousManifest, nil)
+	return resource, desiredFingerprint, err
+}
+
+func CanonicalLiveAgainstIgnoring(object *unstructured.Unstructured, clusterID, applicationID string, clusterScoped bool, desiredManifest, previousManifest []byte, ignoredPaths []string, reportPathSets ...[]string) (core.Resource, string, []string, error) {
 	live := object.DeepCopy()
 	metadata, found, err := unstructured.NestedMap(live.Object, "metadata")
 	if err != nil || !found {
-		return core.Resource{}, "", errors.New("live object has invalid metadata")
+		return core.Resource{}, "", nil, errors.New("live object has invalid metadata")
 	}
 	stripServerMetadata(metadata)
 	if err := unstructured.SetNestedMap(live.Object, metadata, "metadata"); err != nil {
-		return core.Resource{}, "", err
+		return core.Resource{}, "", nil, err
 	}
 	delete(live.Object, "status")
 	var desired map[string]interface{}
 	if err := json.Unmarshal(desiredManifest, &desired); err != nil {
-		return core.Resource{}, "", fmt.Errorf("decode desired manifest for comparison: %w", err)
+		return core.Resource{}, "", nil, fmt.Errorf("decode desired manifest for comparison: %w", err)
 	}
 	var previous map[string]interface{}
 	if len(previousManifest) > 0 {
 		if err := json.Unmarshal(previousManifest, &previous); err != nil {
-			return core.Resource{}, "", fmt.Errorf("decode stored manifest for comparison: %w", err)
+			return core.Resource{}, "", nil, fmt.Errorf("decode stored manifest for comparison: %w", err)
+		}
+	}
+	ignoredSegments := make([][]string, 0, len(ignoredPaths))
+	reportPaths := ignoredPaths
+	if len(reportPathSets) > 0 {
+		reportPaths = reportPathSets[0]
+	}
+	reportSet := make(map[string]bool, len(reportPaths))
+	for _, pointer := range reportPaths {
+		reportSet[pointer] = true
+	}
+	changedIgnored := make([]string, 0, len(reportPaths))
+	for _, pointer := range ignoredPaths {
+		segments, err := ParseJSONPointer(pointer)
+		if err != nil {
+			return core.Resource{}, "", nil, err
+		}
+		ignoredSegments = append(ignoredSegments, segments)
+		if !reportSet[pointer] {
+			continue
+		}
+		actual, actualExists := lookupPath(live.Object, segments)
+		want, wantExists := lookupPath(desired, segments)
+		if !wantExists {
+			// A selected path may be a Git deletion. Keep that desired-vs-live
+			// difference visible as excluded instead of comparing only against
+			// the last applied value and accidentally hiding the change.
+			if actualExists {
+				changedIgnored = append(changedIgnored, pointer)
+			}
+			continue
+		}
+		if wantExists && (!actualExists || !reflect.DeepEqual(want, actual)) {
+			changedIgnored = append(changedIgnored, pointer)
 		}
 	}
 	paths := make([][]string, 0, 64)
@@ -402,6 +442,16 @@ func CanonicalLiveAgainst(object *unstructured.Unstructured, clusterID, applicat
 	seen := map[string]bool{}
 	unique := make([][]string, 0, len(paths))
 	for _, path := range paths {
+		ignored := false
+		for _, excluded := range ignoredSegments {
+			if hasPathPrefix(path, excluded) {
+				ignored = true
+				break
+			}
+		}
+		if ignored {
+			continue
+		}
 		key := strings.Join(path, "\x00")
 		if !seen[key] {
 			seen[key] = true
@@ -412,19 +462,300 @@ func CanonicalLiveAgainst(object *unstructured.Unstructured, clusterID, applicat
 	projectedLive := projectFields(live.Object, unique)
 	desiredJSON, err := json.Marshal(projectedDesired)
 	if err != nil {
-		return core.Resource{}, "", err
+		return core.Resource{}, "", nil, err
 	}
 	liveProjectionJSON, err := json.Marshal(projectedLive)
 	if err != nil {
-		return core.Resource{}, "", err
+		return core.Resource{}, "", nil, err
 	}
 	canonical, err := json.Marshal(live.Object)
 	if err != nil {
-		return core.Resource{}, "", err
+		return core.Resource{}, "", nil, err
 	}
 	identity := core.Identity{ClusterID: clusterID, APIVersion: live.GetAPIVersion(), Kind: live.GetKind(), Namespace: live.GetNamespace(), Name: live.GetName(), ClusterScoped: clusterScoped}
 	resource := core.Resource{Identity: identity, Fingerprint: fingerprint(liveProjectionJSON), UID: string(object.GetUID()), ResourceVersion: object.GetResourceVersion(), Owner: object.GetLabels()["justcd.io/application-id"], Manifest: canonical}
-	return resource, fingerprint(desiredJSON), nil
+	return resource, fingerprint(desiredJSON), changedIgnored, nil
+}
+
+func ParseJSONPointer(pointer string) ([]string, error) {
+	if !strings.HasPrefix(pointer, "/") || len(pointer) > 1024 {
+		return nil, errors.New("field path must be a JSON Pointer beginning with /")
+	}
+	raw := strings.Split(pointer[1:], "/")
+	segments := make([]string, len(raw))
+	for i, segment := range raw {
+		var decoded strings.Builder
+		for j := 0; j < len(segment); j++ {
+			if segment[j] != '~' {
+				decoded.WriteByte(segment[j])
+				continue
+			}
+			if j+1 >= len(segment) || (segment[j+1] != '0' && segment[j+1] != '1') {
+				return nil, errors.New("field path contains an invalid JSON Pointer escape")
+			}
+			j++
+			if segment[j] == '0' {
+				decoded.WriteByte('~')
+			} else {
+				decoded.WriteByte('/')
+			}
+		}
+		segments[i] = decoded.String()
+		if segments[i] == "" || isArrayIndex(segments[i]) {
+			return nil, errors.New("field paths must name object fields; array indexes are not supported")
+		}
+	}
+	if len(segments) == 0 || segments[0] == "apiVersion" || segments[0] == "kind" {
+		return nil, errors.New("API version and kind cannot be ignored")
+	}
+	if segments[0] == "metadata" {
+		if len(segments) == 1 || (len(segments) > 1 && (segments[1] == "name" || segments[1] == "namespace" || segments[1] == "uid" || segments[1] == "managedFields")) {
+			return nil, errors.New("resource identity metadata cannot be ignored")
+		}
+		if len(segments) <= 3 && (segments[1] == "labels" || segments[1] == "annotations") {
+			return nil, errors.New("metadata maps cannot be ignored as a whole")
+		}
+		if len(segments) >= 3 && segments[1] == "labels" && segments[2] == "justcd.io/application-id" {
+			return nil, errors.New("the JustCD ownership label cannot be ignored")
+		}
+	}
+	return segments, nil
+}
+
+func RemoveJSONPointer(manifest []byte, pointer string) ([]byte, error) {
+	segments, err := ParseJSONPointer(pointer)
+	if err != nil {
+		return nil, err
+	}
+	var object map[string]interface{}
+	if err := json.Unmarshal(manifest, &object); err != nil {
+		return nil, err
+	}
+	current := object
+	for _, segment := range segments[:len(segments)-1] {
+		next, ok := current[segment].(map[string]interface{})
+		if !ok {
+			return manifest, nil
+		}
+		current = next
+	}
+	delete(current, segments[len(segments)-1])
+	return json.Marshal(object)
+}
+
+func JSONPointerExists(manifest []byte, pointer string) bool {
+	segments, err := ParseJSONPointer(pointer)
+	if err != nil {
+		return false
+	}
+	var object map[string]interface{}
+	if json.Unmarshal(manifest, &object) != nil {
+		return false
+	}
+	_, exists := lookupPath(object, segments)
+	return exists
+}
+
+func CanonicalJSONPointer(pointer string) (string, error) {
+	segments, err := ParseJSONPointer(pointer)
+	if err != nil {
+		return "", err
+	}
+	for i, segment := range segments {
+		segment = strings.ReplaceAll(segment, "~", "~0")
+		segments[i] = strings.ReplaceAll(segment, "/", "~1")
+	}
+	return "/" + strings.Join(segments, "/"), nil
+}
+
+// ChangedJSONPointers returns the leaf paths whose values differ. Arrays are
+// represented by their containing field so callers cannot target list indexes.
+func ChangedJSONPointers(before, after []byte) ([]string, error) {
+	var left, right map[string]interface{}
+	if len(before) > 0 {
+		if err := json.Unmarshal(before, &left); err != nil {
+			return nil, err
+		}
+	}
+	if len(after) > 0 {
+		if err := json.Unmarshal(after, &right); err != nil {
+			return nil, err
+		}
+	}
+	if left == nil {
+		left = map[string]interface{}{}
+	}
+	if right == nil {
+		right = map[string]interface{}{}
+	}
+	paths := make([]string, 0)
+	var visit func(any, any, []string)
+	visit = func(a, b any, prefix []string) {
+		am, aMap := a.(map[string]interface{})
+		bm, bMap := b.(map[string]interface{})
+		if aMap && bMap {
+			keys := map[string]bool{}
+			for key := range am {
+				keys[key] = true
+			}
+			for key := range bm {
+				keys[key] = true
+			}
+			ordered := make([]string, 0, len(keys))
+			for key := range keys {
+				ordered = append(ordered, key)
+			}
+			sort.Strings(ordered)
+			if len(ordered) == 0 && !reflect.DeepEqual(a, b) && len(prefix) > 0 {
+				paths = append(paths, pointerFor(prefix))
+				return
+			}
+			for _, key := range ordered {
+				av, aok := am[key]
+				bv, bok := bm[key]
+				if !aok {
+					visit(nil, bv, append(append([]string(nil), prefix...), key))
+					continue
+				}
+				if !bok {
+					visit(av, nil, append(append([]string(nil), prefix...), key))
+					continue
+				}
+				visit(av, bv, append(append([]string(nil), prefix...), key))
+			}
+			return
+		}
+		if !reflect.DeepEqual(a, b) && len(prefix) > 0 {
+			paths = append(paths, pointerFor(prefix))
+		}
+	}
+	visit(left, right, nil)
+	sort.Strings(paths)
+	return paths, nil
+}
+
+func pointerFor(segments []string) string {
+	encoded := make([]string, len(segments))
+	for i, segment := range segments {
+		segment = strings.ReplaceAll(segment, "~", "~0")
+		encoded[i] = strings.ReplaceAll(segment, "/", "~1")
+	}
+	return "/" + strings.Join(encoded, "/")
+}
+
+func HasOtherManagerFieldOwnership(object *unstructured.Unstructured, applicationID, pointer string) bool {
+	segments, err := ParseJSONPointer(pointer)
+	if err != nil {
+		return false
+	}
+	value, exists := lookupPath(object.Object, segments)
+	if !exists {
+		return false
+	}
+	paths := make([][]string, 0)
+	if mapping, ok := value.(map[string]interface{}); ok {
+		collectObjectLeafPaths(mapping, segments, &paths)
+	} else {
+		// Lists are selectable only as whole fields. A structured-list owner
+		// for one item is not enough to safely hand off the list as a whole.
+		paths = append(paths, segments)
+	}
+	if len(paths) == 0 {
+		paths = append(paths, segments)
+	}
+	justCDManager := "justcd/" + applicationID
+	otherManagers := make([]map[string]json.RawMessage, 0)
+	for _, entry := range object.GetManagedFields() {
+		if entry.Manager == justCDManager || entry.FieldsV1 == nil {
+			continue
+		}
+		var tree map[string]json.RawMessage
+		if json.Unmarshal(entry.FieldsV1.Raw, &tree) != nil {
+			continue
+		}
+		otherManagers = append(otherManagers, tree)
+	}
+	for _, path := range paths {
+		owned := false
+		for _, tree := range otherManagers {
+			if ownsWholePath(tree, path) {
+				owned = true
+				break
+			}
+		}
+		if !owned {
+			return false
+		}
+	}
+	return true
+}
+
+func collectObjectLeafPaths(value map[string]interface{}, prefix []string, paths *[][]string) {
+	if len(value) == 0 {
+		*paths = append(*paths, append([]string(nil), prefix...))
+		return
+	}
+	keys := make([]string, 0, len(value))
+	for key := range value {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		next := append(append([]string(nil), prefix...), key)
+		if nested, ok := value[key].(map[string]interface{}); ok {
+			collectObjectLeafPaths(nested, next, paths)
+			continue
+		}
+		*paths = append(*paths, next)
+	}
+}
+
+func ownsWholePath(tree map[string]json.RawMessage, segments []string) bool {
+	for _, segment := range segments {
+		if len(tree) == 0 {
+			return true
+		}
+		if _, whole := tree["."]; whole {
+			return true
+		}
+		raw, ok := tree["f:"+segment]
+		if !ok {
+			return false
+		}
+		tree = nil
+		if json.Unmarshal(raw, &tree) != nil {
+			return false
+		}
+	}
+	// A non-empty child tree records ownership of only some descendants, not the
+	// whole selected field. Treating that as a handoff could relinquish fields
+	// that are still exclusively managed by JustCD.
+	_, atomic := tree["."]
+	return len(tree) == 0 || atomic
+}
+
+func isArrayIndex(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func hasPathPrefix(path, prefix []string) bool {
+	if len(path) < len(prefix) {
+		return false
+	}
+	for i := range prefix {
+		if path[i] != prefix[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func stripServerMetadata(metadata map[string]interface{}) {

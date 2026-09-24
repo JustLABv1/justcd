@@ -30,12 +30,12 @@ func (s *Service) Apply(ctx context.Context, planID, actorID, approvalID string)
 	if err != nil {
 		return store.Operation{}, err
 	}
-	fresh, _, err := s.CalculatePlan(ctx, app)
+	fresh, _, err := s.CalculatePlanWithSelection(ctx, app, record.Plan.Selection)
 	if err != nil {
 		return store.Operation{}, err
 	}
-	if record.Status != "current" || time.Now().After(record.ExpiresAt) || fresh.Digest != record.Plan.Digest {
-		newRecord, err := s.BuildPlan(ctx, app.ID, actorID)
+	if record.Status != "current" || !time.Now().Before(record.ExpiresAt) || fresh.Digest != record.Plan.Digest {
+		newRecord, err := s.BuildPlanWithSelection(ctx, app, actorID, record.Plan.Selection)
 		if err != nil {
 			return store.Operation{}, err
 		}
@@ -47,7 +47,7 @@ func (s *Service) Apply(ctx context.Context, planID, actorID, approvalID string)
 			return store.Operation{}, errors.New("plan requires an owner approval")
 		}
 		stored, err := s.Store.ApprovalByID(ctx, approvalID)
-		if err != nil {
+		if err != nil || stored.UsedAt != nil {
 			return store.Operation{}, errors.New("approval is expired, already used, or unavailable")
 		}
 		if stored.PlanID != record.ID {
@@ -60,39 +60,85 @@ func (s *Service) Apply(ctx context.Context, planID, actorID, approvalID string)
 	} else if approvalID != "" {
 		return store.Operation{}, errors.New("this plan does not require an approval")
 	}
-	operationID, err := s.Store.AcquireOperation(ctx, app.ID, record.ID, actorID, 10*time.Minute)
-	if err != nil {
-		return store.Operation{}, err
+	progress := store.OperationProgress{Phase: "queued", Total: len(record.Plan.Changes), Completed: []core.Identity{}}
+	return s.Store.QueueOperation(ctx, app.ID, record.ID, actorID, approvalID, record.Plan.Digest, 90*time.Second, progress)
+}
+
+func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Operation) (store.Operation, error) {
+	if operation.PlanID == nil {
+		return operation, errors.New("queued operation has no plan")
 	}
-	operation := store.Operation{ID: operationID, ApplicationID: app.ID, PlanID: &record.ID, ActorID: &actorID, Status: "running", StartedAt: time.Now().UTC()}
-	operation.Progress = store.OperationProgress{Total: len(record.Plan.Changes), Completed: []core.Identity{}}
-	finishFailure := func(cause error) (store.Operation, error) {
-		message := safeApplyFailure(cause)
+	operationID, planID := operation.ID, *operation.PlanID
+	record, err := s.Store.PlanByID(ctx, planID)
+	if err != nil {
+		return operation, err
+	}
+	app, err := s.Store.ApplicationByID(ctx, record.Plan.ApplicationID)
+	if err != nil {
+		return operation, err
+	}
+	actorID := ""
+	if operation.ActorID != nil {
+		actorID = *operation.ActorID
+	}
+	finishFailure := func(cause error, planStatus string) (store.Operation, error) {
+		message := safeApplyFailure(cause, operation.Progress)
 		_ = s.Store.FinishOperation(context.Background(), operationID, "failed", message)
-		_ = s.Store.SetPlanStatus(context.Background(), record.ID, "failed")
+		if planStatus != "" {
+			_ = s.Store.SetPlanStatus(context.Background(), planID, planStatus)
+		}
 		_, _ = s.Store.DB.ExecContext(context.Background(), `UPDATE applications SET health='degraded',last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, app.ID)
-		_ = s.Store.Audit(context.Background(), actorID, "sync.failed", "application", app.ID, map[string]any{"operationId": operationID, "planId": record.ID, "message": message})
-		operation.Status = "failed"
-		operation.Message = message
+		_ = s.Store.Audit(context.Background(), actorID, "sync.failed", "application", app.ID, map[string]any{"operationId": operationID, "planId": planID, "message": message, "completed": len(operation.Progress.Completed), "total": operation.Progress.Total})
+		operation.Status, operation.Message = "failed", message
 		now := time.Now().UTC()
 		operation.FinishedAt = &now
 		return operation, cause
 	}
-	if err := s.Store.SetOperationProgress(ctx, operationID, operation.Progress); err != nil {
-		return finishFailure(err)
+	if actorID != systemActorID {
+		actor, err := s.Store.UserByID(ctx, actorID)
+		if err != nil {
+			return finishFailure(errors.New("sync actor is no longer available"), "failed")
+		}
+		role, err := s.Store.ProjectRole(ctx, actor, app.ProjectID)
+		if err != nil || (role != "owner" && role != "deployer") {
+			return finishFailure(errors.New("sync actor no longer has deploy permission"), "failed")
+		}
 	}
 	if record.Plan.RequiresApproval {
-		used, err := s.Store.ConsumeApproval(ctx, approvalID, record.ID, record.Plan.Digest)
-		if err != nil {
-			return finishFailure(err)
+		stored, err := s.Store.ApprovalByID(ctx, operation.ApprovalID)
+		if err != nil || stored.PlanID != record.ID || stored.UsedAt == nil {
+			return finishFailure(errors.New("queued approval is unavailable"), "failed")
 		}
-		if !used {
-			return finishFailure(errors.New("approval has already been used or expired"))
+		approver, err := s.Store.UserByID(ctx, stored.Approval.ActorID)
+		role := ""
+		if err == nil {
+			role, err = s.Store.ProjectRole(ctx, approver, app.ProjectID)
 		}
+		if err != nil || role != "owner" {
+			return finishFailure(errors.New("approval is invalid because its owner is no longer a project owner"), "failed")
+		}
+		if err := core.AuthorizeApply(record.Plan, &stored.Approval, time.Now()); err != nil {
+			return finishFailure(err, "failed")
+		}
+	}
+	operation.Progress.Phase = "validating"
+	if err := s.Store.SetOperationProgress(ctx, operationID, operation.Progress); err != nil {
+		return finishFailure(err, "failed")
+	}
+	fresh, _, err := s.CalculatePlanWithSelection(ctx, app, record.Plan.Selection)
+	if err != nil {
+		return finishFailure(err, "failed")
+	}
+	if record.Status != "current" || !time.Now().Before(record.ExpiresAt) || fresh.Digest != record.Plan.Digest {
+		return finishFailure(errors.New("plan changed after approval while sync was queued"), "stale")
 	}
 	input, err := s.loadPlanInput(ctx, app)
 	if err != nil {
-		return finishFailure(err)
+		return finishFailure(err, "failed")
+	}
+	operation.Progress.Phase = "applying"
+	if err := s.Store.SetOperationProgress(ctx, operationID, operation.Progress); err != nil {
+		return finishFailure(err, "failed")
 	}
 	beginResource := func(identity core.Identity) error {
 		operation.Progress.Current = &identity
@@ -110,34 +156,38 @@ func (s *Service) Apply(ctx context.Context, planID, actorID, approvalID string)
 		if !exists || change.Kind == core.Delete {
 			continue
 		}
-		if err := s.Store.RenewOperationLease(ctx, operationID, 10*time.Minute); err != nil {
-			return finishFailure(err)
+		if err := s.Store.RenewOperationLease(ctx, operationID, 90*time.Second); err != nil {
+			return finishFailure(err, "failed")
 		}
 		if err := beginResource(resource.Identity); err != nil {
-			return finishFailure(err)
+			return finishFailure(err, "failed")
 		}
 		if err := s.applyResource(ctx, input, app.ID, resource, change); err != nil {
-			return finishFailure(err)
+			return finishFailure(err, "failed")
 		}
 		if err := completeResource(resource.Identity); err != nil {
-			return finishFailure(err)
+			return finishFailure(err, "failed")
 		}
 	}
 	for _, change := range record.Plan.Changes {
 		if change.Kind != core.Delete {
 			continue
 		}
-		if err := s.Store.RenewOperationLease(ctx, operationID, 10*time.Minute); err != nil {
-			return finishFailure(err)
+		operation.Progress.Phase = "deleting"
+		if err := s.Store.SetOperationProgress(ctx, operationID, operation.Progress); err != nil {
+			return finishFailure(err, "failed")
+		}
+		if err := s.Store.RenewOperationLease(ctx, operationID, 90*time.Second); err != nil {
+			return finishFailure(err, "failed")
 		}
 		if err := beginResource(change.Identity); err != nil {
-			return finishFailure(err)
+			return finishFailure(err, "failed")
 		}
 		if err := s.deleteResource(ctx, input, app.ID, change); err != nil {
-			return finishFailure(err)
+			return finishFailure(err, "failed")
 		}
 		if err := completeResource(change.Identity); err != nil {
-			return finishFailure(err)
+			return finishFailure(err, "failed")
 		}
 	}
 	if err := s.Store.FinishOperation(ctx, operationID, "succeeded", "Sync completed successfully"); err != nil {
@@ -149,6 +199,8 @@ func (s *Service) Apply(ctx context.Context, planID, actorID, approvalID string)
 	if err := s.Store.MarkApplicationSynced(ctx, app.ID, record.Plan.Revision, "synced"); err != nil {
 		return operation, err
 	}
+	operation.Progress.Phase = "complete"
+	_ = s.Store.SetOperationProgress(ctx, operationID, operation.Progress)
 	_ = s.Store.Audit(ctx, actorID, "sync.succeeded", "application", app.ID, map[string]any{"operationId": operationID, "planId": record.ID, "revision": record.Plan.Revision, "digest": record.Plan.Digest})
 	operation.Status = "succeeded"
 	operation.Message = "Sync completed successfully"
@@ -157,11 +209,14 @@ func (s *Service) Apply(ctx context.Context, planID, actorID, approvalID string)
 	return operation, nil
 }
 
-func safeApplyFailure(cause error) string {
-	if cause != nil && (strings.Contains(cause.Error(), "changed after") || strings.Contains(cause.Error(), "recheck")) {
-		return "Sync stopped because live state changed after review. Rebuild and review the plan."
+func safeApplyFailure(cause error, progress store.OperationProgress) string {
+	if len(progress.Completed) > 0 {
+		return fmt.Sprintf("Sync stopped after %d of %d resources; completed resources remain applied and were not rolled back. Review cluster state and rebuild the plan before retrying.", len(progress.Completed), progress.Total)
 	}
-	return "Sync failed before completion. Review server logs for diagnostic details."
+	if cause != nil && (strings.Contains(cause.Error(), "changed after") || strings.Contains(cause.Error(), "recheck")) {
+		return "Sync stopped because live state changed after review. No automatic rollback was attempted. Rebuild and review the plan."
+	}
+	return "Sync did not complete. No automatic rollback was attempted; review cluster state and server logs before retrying."
 }
 
 func changeFor(changes []core.Change, identity core.Identity) (core.Change, bool) {
@@ -200,8 +255,8 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 		if err != nil {
 			return fmt.Errorf("recheck update target %s %s/%s: %w", resource.Identity.Kind, resource.Identity.Namespace, resource.Identity.Name, err)
 		}
-		if string(current.GetUID()) != change.LiveUID || current.GetResourceVersion() != change.LiveResourceVersion || current.GetLabels()["justcd.io/application-id"] != applicationID {
-			return fmt.Errorf("update target %s %s/%s changed after plan review; create a new plan", resource.Identity.Kind, resource.Identity.Namespace, resource.Identity.Name)
+		if err := validateUpdatePreconditions(resource.Identity, change.LiveUID, change.LiveResourceVersion, applicationID, string(current.GetUID()), current.GetResourceVersion(), current.GetLabels()["justcd.io/application-id"]); err != nil {
+			return err
 		}
 		existingUID = current.GetUID()
 	}
@@ -246,6 +301,13 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 	current.Manifest = resource.Manifest
 	if err := s.Store.UpsertManagedResource(ctx, applicationID, current); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateUpdatePreconditions(identity core.Identity, expectedUID, expectedResourceVersion, applicationID, actualUID, actualResourceVersion, actualOwner string) error {
+	if actualUID != expectedUID || actualResourceVersion != expectedResourceVersion || actualOwner != applicationID {
+		return fmt.Errorf("update target %s %s/%s changed after plan review; create a new plan", identity.Kind, identity.Namespace, identity.Name)
 	}
 	return nil
 }

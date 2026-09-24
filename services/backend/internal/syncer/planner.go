@@ -2,6 +2,9 @@ package syncer
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -32,6 +35,8 @@ type planInput struct {
 	NamespaceClients   map[string]*kube.Clients
 	ClusterScopeClient *kube.Clients
 	Mapper             *kube.Clients
+	IgnoreRules        []store.ApplicationIgnoreRule
+	Selection          core.PlanSelection
 }
 
 func (s *Service) BuildPlan(ctx context.Context, applicationID, actorID string) (store.PlanRecord, error) {
@@ -39,7 +44,11 @@ func (s *Service) BuildPlan(ctx context.Context, applicationID, actorID string) 
 	if err != nil {
 		return store.PlanRecord{}, err
 	}
-	plan, desired, err := s.CalculatePlan(ctx, app)
+	return s.BuildPlanWithSelection(ctx, app, actorID, core.PlanSelection{})
+}
+
+func (s *Service) BuildPlanWithSelection(ctx context.Context, app store.Application, actorID string, selection core.PlanSelection) (store.PlanRecord, error) {
+	plan, desired, err := s.CalculatePlanWithSelection(ctx, app, selection)
 	if err != nil {
 		return store.PlanRecord{}, err
 	}
@@ -56,6 +65,15 @@ func (s *Service) BuildPlan(ctx context.Context, applicationID, actorID string) 
 }
 
 func (s *Service) CalculatePlan(ctx context.Context, app store.Application) (core.Plan, []core.Resource, error) {
+	return s.CalculatePlanWithSelection(ctx, app, core.PlanSelection{})
+}
+
+func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Application, selection core.PlanSelection) (core.Plan, []core.Resource, error) {
+	rules, err := s.Store.IgnoreRules(ctx, app.ID)
+	if err != nil {
+		return core.Plan{}, nil, err
+	}
+	selection = normalizeSelection(selection)
 	source, err := s.Store.GitSourceByID(ctx, app.SourceID)
 	if err != nil {
 		return core.Plan{}, nil, errors.New("application Git source is unavailable")
@@ -69,6 +87,8 @@ func (s *Service) CalculatePlan(ctx context.Context, app store.Application) (cor
 	if err != nil {
 		return core.Plan{}, nil, err
 	}
+	input.IgnoreRules = rules
+	input.Selection = selection
 	namespaceBindings := make([]core.Binding, 0, len(input.Bindings))
 	for _, binding := range input.Bindings {
 		if !binding.ClusterScope {
@@ -84,7 +104,7 @@ func (s *Service) CalculatePlan(ctx context.Context, app store.Application) (cor
 			return core.Plan{}, nil, fmt.Errorf("cluster-scoped resource %s/%s requires a privileged cluster-scope credential", resource.Identity.Kind, resource.Identity.Name)
 		}
 	}
-	live, err := s.liveSnapshot(ctx, input, desired)
+	live, changedIgnoredFields, err := s.liveSnapshot(ctx, input, desired)
 	if err != nil {
 		return core.Plan{}, nil, err
 	}
@@ -92,7 +112,368 @@ func (s *Service) CalculatePlan(ctx context.Context, app store.Application) (cor
 	if err != nil {
 		return core.Plan{}, nil, err
 	}
+	for index := range plan.Changes {
+		for _, path := range persistentPathsFor(input, plan.Changes[index].Identity) {
+			if len(plan.Changes[index].Before) > 0 {
+				plan.Changes[index].Before, err = render.RemoveJSONPointer(plan.Changes[index].Before, path)
+				if err != nil {
+					return core.Plan{}, nil, err
+				}
+			}
+			if len(plan.Changes[index].After) > 0 {
+				plan.Changes[index].After, err = render.RemoveJSONPointer(plan.Changes[index].After, path)
+				if err != nil {
+					return core.Plan{}, nil, err
+				}
+			}
+		}
+		plan.Changes[index].ChangedPaths, err = render.ChangedJSONPointers(plan.Changes[index].Before, plan.Changes[index].After)
+		if err != nil {
+			return core.Plan{}, nil, err
+		}
+	}
+	plan.Selection = selection
+	plan.IgnoreRulesDigest = ignoreRulesDigest(rules)
+	plan.Ignored = append(plan.Ignored, applyResourceExclusions(&plan, rules, selection)...)
+	ignoredKeys := make([]string, 0, len(changedIgnoredFields))
+	for key := range changedIgnoredFields {
+		ignoredKeys = append(ignoredKeys, key)
+	}
+	sort.Strings(ignoredKeys)
+	for _, key := range ignoredKeys {
+		paths := changedIgnoredFields[key]
+		if len(paths) == 0 {
+			continue
+		}
+		identity := identityForKey(desired, key)
+		var changeIndex = -1
+		for index := range plan.Changes {
+			if plan.Changes[index].Identity.Key() == key {
+				changeIndex = index
+				break
+			}
+		}
+		if changeIndex >= 0 {
+			activeChange := &plan.Changes[changeIndex]
+			ignoredBefore := append(json.RawMessage(nil), activeChange.Before...)
+			ignoredAfter := append(json.RawMessage(nil), activeChange.After...)
+			for _, path := range paths {
+				if len(activeChange.Before) > 0 {
+					activeChange.Before, err = render.RemoveJSONPointer(activeChange.Before, path)
+					if err != nil {
+						return core.Plan{}, nil, err
+					}
+				}
+				if len(activeChange.After) > 0 {
+					activeChange.After, err = render.RemoveJSONPointer(activeChange.After, path)
+					if err != nil {
+						return core.Plan{}, nil, err
+					}
+				}
+			}
+			activeChange.ChangedPaths, err = render.ChangedJSONPointers(activeChange.Before, activeChange.After)
+			if err != nil {
+				return core.Plan{}, nil, err
+			}
+			plan.Ignored = append(plan.Ignored, core.Change{Kind: core.Update, Identity: activeChange.Identity, Before: ignoredBefore, After: ignoredAfter, ChangedPaths: paths, IgnoredPaths: paths, IgnoreReason: "Fields are excluded from this plan's selection"})
+			continue
+		}
+		var after json.RawMessage
+		for _, resource := range desired {
+			if resource.Identity.Key() == key {
+				after = resource.Manifest
+				identity = resource.Identity
+				break
+			}
+		}
+		var before json.RawMessage
+		for _, resource := range live {
+			if resource.Identity.Key() == key {
+				before = resource.Manifest
+				identity = resource.Identity
+				break
+			}
+		}
+		for _, path := range persistentPathsFor(input, identity) {
+			if len(before) > 0 {
+				before, err = render.RemoveJSONPointer(before, path)
+				if err != nil {
+					return core.Plan{}, nil, err
+				}
+			}
+			if len(after) > 0 {
+				after, err = render.RemoveJSONPointer(after, path)
+				if err != nil {
+					return core.Plan{}, nil, err
+				}
+			}
+		}
+		plan.Ignored = append(plan.Ignored, core.Change{Kind: core.Update, Identity: identity, Before: before, After: after, ChangedPaths: paths, IgnoredPaths: paths, IgnoreReason: "Fields are excluded by this plan's selection"})
+	}
+	for index := range plan.Changes {
+		paths := ignoredPathsFor(input, plan.Changes[index].Identity)
+		for _, path := range paths {
+			for desiredIndex := range desired {
+				if desired[desiredIndex].Identity.Key() == plan.Changes[index].Identity.Key() {
+					clean, removeErr := render.RemoveJSONPointer(desired[desiredIndex].Manifest, path)
+					if removeErr != nil {
+						return core.Plan{}, nil, removeErr
+					}
+					desired[desiredIndex].Manifest = clean
+				}
+			}
+		}
+	}
+	plan.RequiresApproval = false
+	for _, change := range plan.Changes {
+		if change.Kind == core.Delete || change.Identity.ClusterScoped {
+			plan.RequiresApproval = true
+			break
+		}
+	}
+	if err := core.RefreshDigest(&plan); err != nil {
+		return core.Plan{}, nil, err
+	}
 	return plan, desired, nil
+}
+
+func normalizeSelection(selection core.PlanSelection) core.PlanSelection {
+	sort.Slice(selection.Resources, func(i, j int) bool { return selection.Resources[i].Key() < selection.Resources[j].Key() })
+	resources := selection.Resources[:0]
+	for _, identity := range selection.Resources {
+		if len(resources) == 0 || resources[len(resources)-1].Key() != identity.Key() {
+			resources = append(resources, identity)
+		}
+	}
+	selection.Resources = resources
+	sort.Slice(selection.Fields, func(i, j int) bool {
+		a, b := selection.Fields[i].Identity.Key()+"\x00"+selection.Fields[i].Path, selection.Fields[j].Identity.Key()+"\x00"+selection.Fields[j].Path
+		return a < b
+	})
+	fields := selection.Fields[:0]
+	for _, field := range selection.Fields {
+		if len(fields) == 0 || fields[len(fields)-1].Identity.Key()+"\x00"+fields[len(fields)-1].Path != field.Identity.Key()+"\x00"+field.Path {
+			fields = append(fields, field)
+		}
+	}
+	selection.Fields = fields
+	return selection
+}
+
+func ignoreRulesDigest(rules []store.ApplicationIgnoreRule) string {
+	canonical := make([]core.IgnoreRule, 0, len(rules))
+	for _, rule := range rules {
+		canonical = append(canonical, rule.IgnoreRule)
+	}
+	sort.Slice(canonical, func(i, j int) bool {
+		a, b := canonical[i].Identity.Key()+"\x00"+canonical[i].Path+"\x00"+canonical[i].ID, canonical[j].Identity.Key()+"\x00"+canonical[j].Path+"\x00"+canonical[j].ID
+		return a < b
+	})
+	encoded, _ := json.Marshal(canonical)
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:])
+}
+
+func applyResourceExclusions(plan *core.Plan, rules []store.ApplicationIgnoreRule, selection core.PlanSelection) []core.Change {
+	selected := map[string]bool{}
+	for _, identity := range selection.Resources {
+		selected[identity.Key()] = true
+	}
+	ruleByIdentity := map[string]string{}
+	for _, rule := range rules {
+		if rule.Path == "" {
+			ruleByIdentity[rule.Identity.Key()] = rule.Reason
+		}
+	}
+	active := plan.Changes[:0]
+	ignored := make([]core.Change, 0)
+	for _, change := range plan.Changes {
+		reason, ruleIgnored := ruleByIdentity[change.Identity.Key()]
+		if ruleIgnored || selected[change.Identity.Key()] {
+			if !ruleIgnored {
+				reason = "Excluded from this plan's selection"
+			}
+			change.IgnoreReason = reason
+			ignored = append(ignored, change)
+			continue
+		}
+		active = append(active, change)
+	}
+	plan.Changes = active
+	sort.Slice(ignored, func(i, j int) bool { return ignored[i].Identity.Key() < ignored[j].Identity.Key() })
+	return ignored
+}
+
+func identityForKey(resources []core.Resource, key string) core.Identity {
+	for _, resource := range resources {
+		if resource.Identity.Key() == key {
+			return resource.Identity
+		}
+	}
+	return core.Identity{}
+}
+
+func ignoredPathsFor(input planInput, identity core.Identity) []string {
+	if resourceExcluded(input, identity) {
+		return nil
+	}
+	seen := map[string]bool{}
+	paths := make([]string, 0)
+	for _, rule := range input.IgnoreRules {
+		if rule.Identity.Key() == identity.Key() && rule.Path != "" && !seen[rule.Path] {
+			seen[rule.Path] = true
+			paths = append(paths, rule.Path)
+		}
+	}
+	for _, field := range input.Selection.Fields {
+		if field.Identity.Key() == identity.Key() && !seen[field.Path] {
+			seen[field.Path] = true
+			paths = append(paths, field.Path)
+		}
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func persistentPathsFor(input planInput, identity core.Identity) []string {
+	paths := make([]string, 0)
+	for _, rule := range input.IgnoreRules {
+		if rule.Identity.Key() == identity.Key() && rule.Path != "" {
+			paths = append(paths, rule.Path)
+		}
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func selectedPathsFor(input planInput, identity core.Identity) []string {
+	paths := make([]string, 0)
+	for _, field := range input.Selection.Fields {
+		if field.Identity.Key() == identity.Key() {
+			paths = append(paths, field.Path)
+		}
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func resourceExcluded(input planInput, identity core.Identity) bool {
+	for _, rule := range input.IgnoreRules {
+		if rule.Identity.Key() == identity.Key() && rule.Path == "" {
+			return true
+		}
+	}
+	for _, selected := range input.Selection.Resources {
+		if selected.Key() == identity.Key() {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) ValidateIgnoreRule(ctx context.Context, app store.Application, identity core.Identity, path string) error {
+	if identity.ClusterID == "" {
+		identity.ClusterID = app.ClusterID
+	}
+	identity.ClusterScoped = identity.Namespace == ""
+	if identity.ClusterID != app.ClusterID || identity.APIVersion == "" || identity.Kind == "" || identity.Name == "" {
+		return errors.New("ignore rule must identify an exact resource in this application's cluster")
+	}
+	if identity.ClusterScoped {
+		if app.ClusterID == "" {
+			return errors.New("application cluster is unavailable")
+		}
+	} else {
+		bound := false
+		for _, binding := range app.Namespaces {
+			if binding.Namespace == identity.Namespace {
+				bound = true
+				break
+			}
+		}
+		if !bound {
+			return errors.New("ignore rule namespace is not bound to this application")
+		}
+	}
+	if path != "" {
+		if _, err := render.ParseJSONPointer(path); err != nil {
+			return err
+		}
+	}
+	_, desired, err := s.CalculatePlan(ctx, app)
+	if err != nil {
+		return err
+	}
+	var desiredManifest []byte
+	known := false
+	for _, resource := range desired {
+		if resource.Identity.Key() == identity.Key() {
+			desiredManifest = resource.Manifest
+			known = true
+			break
+		}
+	}
+	managed, err := s.Store.ManagedResources(ctx, app.ID)
+	if err != nil {
+		return err
+	}
+	var tracked *store.ManagedResource
+	for index := range managed {
+		managed[index].Identity.ClusterScoped = managed[index].Identity.Namespace == ""
+		if managed[index].Identity.Key() == identity.Key() {
+			tracked = &managed[index]
+			known = true
+			break
+		}
+	}
+	if !known {
+		return errors.New("ignore rule must target a resource rendered by this application or already tracked on the cluster")
+	}
+	if path == "" {
+		return nil
+	}
+	previous := []byte(nil)
+	if tracked != nil {
+		previous = tracked.Manifest
+	}
+	if !render.JSONPointerExists(desiredManifest, path) && !render.JSONPointerExists(previous, path) {
+		return errors.New("field path must exist in the desired or previously managed resource")
+	}
+	if tracked == nil {
+		return nil
+	}
+	input, err := s.loadPlanInput(ctx, app)
+	if err != nil {
+		return err
+	}
+	mapping, err := input.Mapper.Mapper.RESTMapping(groupKind(identity), groupVersion(identity))
+	if err != nil {
+		return err
+	}
+	client, err := clientFor(input, identity)
+	if err != nil {
+		return err
+	}
+	var resourceInterface dynamic.ResourceInterface
+	if mapping.Scope.Name() == "namespace" {
+		resourceInterface = client.Dynamic.Resource(mapping.Resource).Namespace(identity.Namespace)
+	} else {
+		resourceInterface = client.Dynamic.Resource(mapping.Resource)
+	}
+	object, err := resourceInterface.Get(ctx, identity.Name, v1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("cannot verify field ownership: %w", err)
+	}
+	if object.GetLabels()["justcd.io/application-id"] != app.ID || string(object.GetUID()) != tracked.UID {
+		return errors.New("resource ownership changed; refusing to configure an ignore rule")
+	}
+	if !render.HasOtherManagerFieldOwnership(object, app.ID, path) {
+		return fmt.Errorf("cannot ignore %s: the field is owned only by JustCD; transfer ownership to another Kubernetes field manager first", path)
+	}
+	return nil
 }
 
 func healthForPlan(plan core.Plan) string {
@@ -162,10 +543,10 @@ func (s *Service) loadPlanInput(ctx context.Context, app store.Application) (pla
 	return input, nil
 }
 
-func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []core.Resource) ([]core.Resource, error) {
+func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []core.Resource) ([]core.Resource, map[string][]string, error) {
 	managed, err := s.Store.ManagedResources(ctx, input.Application.ID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	identities := map[string]core.Identity{}
 	desiredIndex := map[string]int{}
@@ -188,21 +569,22 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 	}
 	sort.Strings(keys)
 	liveByKey := map[string]core.Resource{}
+	changedIgnoredFields := map[string][]string{}
 	for _, key := range keys {
 		identity := identities[key]
 		mapping, err := input.Mapper.Mapper.RESTMapping(groupKind(identity), groupVersion(identity))
 		if err != nil {
-			return nil, fmt.Errorf("resource kind %s %s is not discoverable: %w", identity.APIVersion, identity.Kind, err)
+			return nil, nil, fmt.Errorf("resource kind %s %s is not discoverable: %w", identity.APIVersion, identity.Kind, err)
 		}
 		if mapping.Scope.Name() == "namespace" && identity.ClusterScoped {
-			return nil, errors.New("Kubernetes discovery scope changed for a managed resource")
+			return nil, nil, errors.New("Kubernetes discovery scope changed for a managed resource")
 		}
 		if mapping.Scope.Name() != "namespace" && !identity.ClusterScoped {
-			return nil, errors.New("Kubernetes discovery scope changed for a managed resource")
+			return nil, nil, errors.New("Kubernetes discovery scope changed for a managed resource")
 		}
 		client, err := clientFor(input, identity)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		var resourceInterface dynamic.ResourceInterface
 		if mapping.Scope.Name() == "namespace" {
@@ -214,34 +596,47 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 		if apierrors.IsNotFound(err) {
 			if _, tracked := managedByKey[identity.Key()]; tracked {
 				if err := s.Store.DeleteManagedResource(ctx, input.Application.ID, identity); err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 				delete(managedByKey, identity.Key())
 			}
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("cannot read %s %s/%s: %w", identity.Kind, identity.Namespace, identity.Name, err)
+			return nil, nil, fmt.Errorf("cannot read %s %s/%s: %w", identity.Kind, identity.Namespace, identity.Name, err)
 		}
 		tracked, owned := managedByKey[identity.Key()]
 		if !owned {
-			return nil, fmt.Errorf("%s %s/%s exists but is not recorded as managed by this application", identity.Kind, identity.Namespace, identity.Name)
+			return nil, nil, fmt.Errorf("%s %s/%s exists but is not recorded as managed by this application", identity.Kind, identity.Namespace, identity.Name)
 		}
 		if object.GetLabels()["justcd.io/application-id"] != input.Application.ID || string(object.GetUID()) != tracked.UID {
-			return nil, fmt.Errorf("%s %s/%s ownership changed; refusing to adopt or mutate it", identity.Kind, identity.Namespace, identity.Name)
+			return nil, nil, fmt.Errorf("%s %s/%s ownership changed; refusing to adopt or mutate it", identity.Kind, identity.Namespace, identity.Name)
 		}
 		var resource core.Resource
 		if index, exists := desiredIndex[identity.Key()]; exists {
+			paths := ignoredPathsFor(input, identity)
+			for _, path := range paths {
+				if !render.JSONPointerExists(desired[index].Manifest, path) && !render.JSONPointerExists(previousManifests[identity.Key()], path) {
+					return nil, nil, fmt.Errorf("ignored field %s is not present in the desired or previously managed manifest", path)
+				}
+				if !render.HasOtherManagerFieldOwnership(object, input.Application.ID, path) {
+					return nil, nil, fmt.Errorf("cannot ignore %s: another Kubernetes field manager must own this field before JustCD hands it off", path)
+				}
+			}
 			var desiredFingerprint string
-			resource, desiredFingerprint, err = render.CanonicalLiveAgainst(object, input.Cluster.ID, input.Application.ID, identity.ClusterScoped, desired[index].Manifest, previousManifests[identity.Key()])
+			var changed []string
+			resource, desiredFingerprint, changed, err = render.CanonicalLiveAgainstIgnoring(object, input.Cluster.ID, input.Application.ID, identity.ClusterScoped, desired[index].Manifest, previousManifests[identity.Key()], paths, selectedPathsFor(input, identity))
 			if err == nil {
 				desired[index].Fingerprint = desiredFingerprint
+				if len(changed) > 0 {
+					changedIgnoredFields[identity.Key()] = changed
+				}
 			}
 		} else {
 			resource, err = render.CanonicalLive(object, input.Cluster.ID, input.Application.ID, identity.ClusterScoped)
 		}
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		liveByKey[identity.Key()] = resource
 	}
@@ -258,7 +653,7 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 		identity := kinds[key]
 		mapping, err := input.Mapper.Mapper.RESTMapping(groupKind(identity), groupVersion(identity))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		namespaces := []string{identity.Namespace}
 		if mapping.Scope.Name() == "namespace" {
@@ -269,7 +664,7 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 			sort.Strings(namespaces)
 		} else {
 			if input.ClusterScopeClient == nil {
-				return nil, errors.New("cluster-scoped live discovery requires a privileged cluster-scope credential")
+				return nil, nil, errors.New("cluster-scoped live discovery requires a privileged cluster-scope credential")
 			}
 			namespaces = []string{""}
 		}
@@ -279,7 +674,7 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 			id.ClusterScoped = mapping.Scope.Name() != "namespace"
 			client, err := clientFor(input, id)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			var resourceInterface dynamic.ResourceInterface
 			if mapping.Scope.Name() == "namespace" {
@@ -291,7 +686,7 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 			for page := 0; page < 100; page++ {
 				list, err := resourceInterface.List(ctx, v1.ListOptions{LabelSelector: "justcd.io/application-id=" + input.Application.ID, Limit: 500, Continue: continueToken})
 				if err != nil {
-					return nil, fmt.Errorf("cannot fully list owned %s resources: %w", identity.Kind, err)
+					return nil, nil, fmt.Errorf("cannot fully list owned %s resources: %w", identity.Kind, err)
 				}
 				for i := range list.Items {
 					object := &list.Items[i]
@@ -301,24 +696,40 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 						continue
 					}
 					if string(object.GetUID()) != tracked.UID {
-						return nil, fmt.Errorf("%s %s/%s ownership changed; refusing to adopt or mutate it", objectIdentity.Kind, objectIdentity.Namespace, objectIdentity.Name)
+						return nil, nil, fmt.Errorf("%s %s/%s ownership changed; refusing to adopt or mutate it", objectIdentity.Kind, objectIdentity.Namespace, objectIdentity.Name)
+					}
+					if _, alreadyFetched := liveByKey[objectIdentity.Key()]; alreadyFetched {
+						continue
 					}
 					var resource core.Resource
 					if desiredIndexFor, exists := desiredIndex[objectIdentity.Key()]; exists {
+						paths := ignoredPathsFor(input, objectIdentity)
+						for _, path := range paths {
+							if !render.JSONPointerExists(desired[desiredIndexFor].Manifest, path) && !render.JSONPointerExists(previousManifests[objectIdentity.Key()], path) {
+								return nil, nil, fmt.Errorf("ignored field %s is not present in the desired or previously managed manifest", path)
+							}
+							if !render.HasOtherManagerFieldOwnership(object, input.Application.ID, path) {
+								return nil, nil, fmt.Errorf("cannot ignore %s: another Kubernetes field manager must own this field before JustCD hands it off", path)
+							}
+						}
 						var desiredFingerprint string
-						resource, desiredFingerprint, err = render.CanonicalLiveAgainst(object, input.Cluster.ID, input.Application.ID, id.ClusterScoped, desired[desiredIndexFor].Manifest, previousManifests[desired[desiredIndexFor].Identity.Key()])
+						var changed []string
+						resource, desiredFingerprint, changed, err = render.CanonicalLiveAgainstIgnoring(object, input.Cluster.ID, input.Application.ID, id.ClusterScoped, desired[desiredIndexFor].Manifest, previousManifests[objectIdentity.Key()], paths, selectedPathsFor(input, objectIdentity))
 						if err == nil {
 							desired[desiredIndexFor].Fingerprint = desiredFingerprint
+							if len(changed) > 0 {
+								changedIgnoredFields[objectIdentity.Key()] = changed
+							}
 						}
 					} else {
 						resource, err = render.CanonicalLive(object, input.Cluster.ID, input.Application.ID, id.ClusterScoped)
 					}
 					if err != nil {
-						return nil, err
+						return nil, nil, err
 					}
 					liveByKey[resource.Identity.Key()] = resource
 					if len(liveByKey) > maxSnapshotResources {
-						return nil, errors.New("application resource snapshot exceeds 10000 resources")
+						return nil, nil, errors.New("application resource snapshot exceeds 10000 resources")
 					}
 				}
 				continueToken = list.GetContinue()
@@ -326,7 +737,7 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 					break
 				}
 				if page == 99 {
-					return nil, errors.New("resource listing exceeded page limit")
+					return nil, nil, errors.New("resource listing exceeded page limit")
 				}
 			}
 		}
@@ -335,7 +746,7 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 	for _, resource := range liveByKey {
 		result = append(result, resource)
 	}
-	return result, nil
+	return result, changedIgnoredFields, nil
 }
 
 const maxSnapshotResources = 10000

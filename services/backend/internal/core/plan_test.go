@@ -102,3 +102,40 @@ func TestClusterScopedChangesRequireExactApproval(t *testing.T) {
 		t.Fatal("approval for a different cluster-scoped resource was accepted")
 	}
 }
+
+func TestApprovalDoesNotCarryAcrossPlanSelection(t *testing.T) {
+	binding := []Binding{{ClusterID: "cluster-a", Namespace: "team-a", CredentialRef: "secret/team-a"}}
+	identity := Identity{ClusterID: "cluster-a", APIVersion: "v1", Kind: "ConfigMap", Namespace: "team-a", Name: "settings"}
+	plan, err := BuildPlan("app-a", "commit-1", binding, nil, []Resource{{Identity: identity, Fingerprint: "old", UID: "uid-1", Owner: "app-a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	approval := &DeletionApproval{PlanDigest: plan.Digest, ActorID: "owner-a", Deletes: []Change{plan.Changes[0]}, ExpiresAt: now.Add(time.Minute)}
+	if err := AuthorizeApply(plan, approval, now); err != nil {
+		t.Fatal(err)
+	}
+	plan.Selection.Resources = []Identity{identity}
+	if err := RefreshDigest(&plan); err != nil {
+		t.Fatal(err)
+	}
+	if err := AuthorizeApply(plan, approval, now); err == nil {
+		t.Fatal("approval from the unselected plan carried over")
+	}
+}
+
+func TestSelectedPlanApprovesOnlyItsExecutableChanges(t *testing.T) {
+	binding := []Binding{{ClusterID: "cluster-a", Namespace: "team-a", CredentialRef: "secret/team-a"}}
+	delete := Change{Kind: Delete, Identity: Identity{ClusterID: "cluster-a", APIVersion: "v1", Kind: "ConfigMap", Namespace: "team-a", Name: "old"}, LiveUID: "uid-old"}
+	update := Change{Kind: Update, Identity: Identity{ClusterID: "cluster-a", APIVersion: "v1", Kind: "ConfigMap", Namespace: "team-a", Name: "current"}, LiveUID: "uid-current"}
+	plan := Plan{ApplicationID: "app-a", Revision: "commit-1", Bindings: binding, Changes: []Change{update}, Ignored: []Change{delete}, Selection: PlanSelection{Resources: []Identity{delete.Identity}}}
+	if err := RefreshDigest(&plan); err != nil {
+		t.Fatal(err)
+	}
+	if err := AuthorizeApply(plan, nil, time.Now()); err != nil {
+		t.Fatalf("a selected plan without executable deletions should not need deletion approval: %v", err)
+	}
+	if plan.RequiresApproval {
+		t.Fatal("ignored deletion should not require approval")
+	}
+}

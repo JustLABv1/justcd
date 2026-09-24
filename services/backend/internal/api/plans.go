@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/justlab/justcd/services/backend/internal/core"
+	"github.com/justlab/justcd/services/backend/internal/render"
 	"github.com/justlab/justcd/services/backend/internal/store"
 	"github.com/justlab/justcd/services/backend/internal/syncer"
 )
@@ -31,6 +33,10 @@ func toPlanView(record store.PlanRecord) planView {
 	for index := range plan.Changes {
 		plan.Changes[index].Before = redactManifest(plan.Changes[index].Before)
 		plan.Changes[index].After = redactManifest(plan.Changes[index].After)
+	}
+	for index := range plan.Ignored {
+		plan.Ignored[index].Before = redactManifest(plan.Ignored[index].Before)
+		plan.Ignored[index].After = redactManifest(plan.Ignored[index].After)
 	}
 	return planView{ID: record.ID, Plan: plan, Resources: resources, CreatedBy: record.CreatedBy, CreatedAt: record.CreatedAt, ExpiresAt: record.ExpiresAt, Status: record.Status}
 }
@@ -149,8 +155,18 @@ func (s *Server) approvePlan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if record.Status != "current" || !time.Now().Before(record.ExpiresAt) {
-		writeError(w, http.StatusConflict, "plan is no longer current; create a new plan")
+	fresh, _, err := s.Syncer.CalculatePlanWithSelection(r.Context(), app, record.Plan.Selection)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "could not safely recheck the plan")
+		return
+	}
+	if record.Status != "current" || !time.Now().Before(record.ExpiresAt) || fresh.Digest != record.Plan.Digest {
+		refreshed, err := s.Syncer.BuildPlanWithSelection(r.Context(), app, currentUser(r).ID, record.Plan.Selection)
+		if err != nil {
+			writeError(w, http.StatusConflict, "plan is no longer current; refresh it before approval")
+			return
+		}
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "plan is stale; review the refreshed plan", "plan": toPlanView(refreshed)})
 		return
 	}
 	deletes := make([]core.Change, 0)
@@ -195,7 +211,7 @@ func (s *Server) applyPlan(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.ApprovalID != "" {
 		approval, err := s.Store.ApprovalByID(r.Context(), input.ApprovalID)
-		if err != nil || approval.PlanID != record.ID {
+		if err != nil || approval.UsedAt != nil || approval.PlanID != record.ID {
 			writeError(w, http.StatusForbidden, "approval is unavailable or belongs to a different plan")
 			return
 		}
@@ -224,7 +240,191 @@ func (s *Server) applyPlan(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "sync failed", "operation": operation})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"operation": operation})
+	writeJSON(w, http.StatusAccepted, map[string]any{"operation": operation})
+}
+
+func (s *Server) createPlanSelection(w http.ResponseWriter, r *http.Request) {
+	record, app, ok := s.authorizedPlan(w, r, "deployer")
+	if !ok {
+		return
+	}
+	var input core.PlanSelection
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(input.Resources) > 10000 || len(input.Fields) > 10000 {
+		writeError(w, http.StatusBadRequest, "plan selection contains too many exclusions")
+		return
+	}
+	freshSource, _, err := s.Syncer.CalculatePlanWithSelection(r.Context(), app, record.Plan.Selection)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "could not safely recheck the plan")
+		return
+	}
+	if record.Status != "current" || !time.Now().Before(record.ExpiresAt) || freshSource.Digest != record.Plan.Digest {
+		refreshed, buildErr := s.Syncer.BuildPlanWithSelection(r.Context(), app, currentUser(r).ID, record.Plan.Selection)
+		if buildErr != nil {
+			writeError(w, http.StatusConflict, "plan is stale; refresh it before changing the selection")
+			return
+		}
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "plan is stale; review the refreshed plan", "plan": toPlanView(refreshed)})
+		return
+	}
+	baseline, _, err := s.Syncer.CalculatePlan(r.Context(), app)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "could not safely validate the selected changes")
+		return
+	}
+	availableResources := map[string]bool{}
+	availableFields := map[string]map[string]bool{}
+	for _, change := range baseline.Changes {
+		key := change.Identity.Key()
+		availableResources[key] = true
+		availableFields[key] = map[string]bool{}
+		alreadyIgnored := map[string]bool{}
+		for _, path := range change.IgnoredPaths {
+			alreadyIgnored[path] = true
+		}
+		for _, path := range change.ChangedPaths {
+			canonical, canonicalErr := render.CanonicalJSONPointer(path)
+			if canonicalErr == nil && !alreadyIgnored[canonical] {
+				availableFields[key][canonical] = true
+			}
+		}
+	}
+	for i := range input.Resources {
+		identity := &input.Resources[i]
+		if identity.ClusterID == "" {
+			identity.ClusterID = app.ClusterID
+		}
+		identity.ClusterScoped = identity.Namespace == ""
+		if !availableResources[identity.Key()] {
+			writeError(w, http.StatusBadRequest, "resource exclusion must target an exact resource with a change in this plan")
+			return
+		}
+	}
+	for i := range input.Fields {
+		field := &input.Fields[i]
+		if field.Identity.ClusterID == "" {
+			field.Identity.ClusterID = app.ClusterID
+		}
+		field.Identity.ClusterScoped = field.Identity.Namespace == ""
+		canonical, pathErr := render.CanonicalJSONPointer(field.Path)
+		if pathErr != nil {
+			writeError(w, http.StatusBadRequest, pathErr.Error())
+			return
+		}
+		field.Path = canonical
+		if !availableFields[field.Identity.Key()][field.Path] {
+			writeError(w, http.StatusBadRequest, "field exclusion must target a changed field in this plan; arrays can only be excluded as a whole")
+			return
+		}
+	}
+	newRecord, err := s.Syncer.BuildPlanWithSelection(r.Context(), app, currentUser(r).ID, input)
+	if err != nil {
+		s.Logger.Warn("selected plan calculation failed", "applicationId", app.ID, "error", err)
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "could not safely create a selected plan"})
+		return
+	}
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "plan.selection_created", "application", app.ID, map[string]any{"sourcePlanId": record.ID, "planId": newRecord.ID, "digest": newRecord.Plan.Digest, "excludedResources": len(input.Resources), "excludedFields": len(input.Fields)})
+	writeJSON(w, http.StatusCreated, toPlanView(newRecord))
+}
+
+func (s *Server) listIgnoreRules(w http.ResponseWriter, r *http.Request) {
+	app, err := s.Store.ApplicationByID(r.Context(), r.PathValue("applicationID"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "application not found")
+		return
+	}
+	if !s.requireProjectRole(w, r, app.ProjectID, "viewer") {
+		return
+	}
+	items, err := s.Store.IgnoreRules(r.Context(), app.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load ignore rules")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) createIgnoreRule(w http.ResponseWriter, r *http.Request) {
+	app, err := s.Store.ApplicationByID(r.Context(), r.PathValue("applicationID"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "application not found")
+		return
+	}
+	if !s.requireProjectRole(w, r, app.ProjectID, "owner") {
+		return
+	}
+	var input struct {
+		Identity core.Identity `json:"identity"`
+		Path     string        `json:"path"`
+		Reason   string        `json:"reason"`
+	}
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	input.Reason = strings.TrimSpace(input.Reason)
+	input.Path = strings.TrimSpace(input.Path)
+	if len(input.Reason) < 5 || len(input.Reason) > 500 {
+		writeError(w, http.StatusBadRequest, "an ignore reason between 5 and 500 characters is required")
+		return
+	}
+	if input.Identity.ClusterID == "" {
+		input.Identity.ClusterID = app.ClusterID
+	}
+	input.Identity.ClusterScoped = input.Identity.Namespace == ""
+	if input.Path != "" {
+		canonical, pathErr := render.CanonicalJSONPointer(input.Path)
+		if pathErr != nil {
+			writeError(w, http.StatusBadRequest, pathErr.Error())
+			return
+		}
+		input.Path = canonical
+	}
+	if err := s.Syncer.ValidateIgnoreRule(r.Context(), app, input.Identity, input.Path); err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
+		return
+	}
+	rule := core.IgnoreRule{ID: store.NewID(), Identity: input.Identity, Path: input.Path, Reason: input.Reason}
+	if err := s.Store.CreateIgnoreRule(r.Context(), app.ID, currentUser(r).ID, rule); err != nil {
+		if strings.Contains(err.Error(), "currently syncing") {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeError(w, http.StatusConflict, "an identical ignore rule already exists or could not be saved")
+		return
+	}
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "application.ignore_rule_created", "application", app.ID, map[string]any{"ruleId": rule.ID, "identity": rule.Identity, "path": rule.Path, "reason": rule.Reason})
+	writeJSON(w, http.StatusCreated, rule)
+}
+
+func (s *Server) deleteIgnoreRule(w http.ResponseWriter, r *http.Request) {
+	app, err := s.Store.ApplicationByID(r.Context(), r.PathValue("applicationID"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "application not found")
+		return
+	}
+	if !s.requireProjectRole(w, r, app.ProjectID, "owner") {
+		return
+	}
+	rule, err := s.Store.DeleteIgnoreRule(r.Context(), app.ID, r.PathValue("ruleID"))
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "ignore rule not found")
+		return
+	}
+	if err != nil {
+		if strings.Contains(err.Error(), "currently syncing") {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not delete ignore rule")
+		return
+	}
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "application.ignore_rule_deleted", "application", app.ID, map[string]any{"ruleId": rule.ID, "identity": rule.Identity, "path": rule.Path, "reason": rule.Reason})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) authorizedPlan(w http.ResponseWriter, r *http.Request, minimum string) (store.PlanRecord, store.Application, bool) {

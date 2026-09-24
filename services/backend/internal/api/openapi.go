@@ -168,6 +168,27 @@ paths:
       responses:
         '201': { description: Immutable review plan }
         '422': { description: Could not create a safe plan }
+  /applications/{applicationID}/ignore-rules:
+    get:
+      summary: List exact-resource and field-level ignore rules
+      responses:
+        '200': { description: Persistent ignore rules }
+    post:
+      summary: Add an audited ignore rule (project owner only)
+      responses:
+        '201': { description: Created ignore rule }
+        '422': { description: Invalid path or unsafe field ownership handoff }
+  /applications/{applicationID}/ignore-rules/{ruleID}:
+    delete:
+      summary: Remove an audited ignore rule (project owner only)
+      responses:
+        '204': { description: Rule deleted }
+  /plans/{planID}/selections:
+    post:
+      summary: Create a new immutable plan excluding selected resources or changed fields
+      responses:
+        '201': { description: Selected plan snapshot }
+        '409': { description: Source plan is stale; includes refreshed plan }
   /applications/{applicationID}/resources:
     get:
       summary: List resources managed by the application
@@ -196,9 +217,9 @@ paths:
         '409': { description: Plan is stale or does not need owner approval }
   /plans/{planID}/apply:
     post:
-      summary: Recalculate plan freshness and apply approved changes
+      summary: Recheck plan freshness and enqueue approved changes for background sync
       responses:
-        '200': { description: Sync operation }
+        '202': { description: Sync operation queued with durable progress tracking }
         '409': { description: Plan or live state changed after review }
   /audit:
     get:

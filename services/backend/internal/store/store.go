@@ -650,8 +650,18 @@ func (s *Store) MarkApplicationSynced(ctx context.Context, id, revision, health 
 	return err
 }
 func (s *Store) RenewOperationLease(ctx context.Context, operationID string, lease time.Duration) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE operation_leases SET expires_at=NOW()+($2 * INTERVAL '1 second') WHERE operation_id=$1`, operationID, int64(lease.Seconds()))
-	return err
+	result, err := s.DB.ExecContext(ctx, `UPDATE operation_leases SET expires_at=NOW()+($2 * INTERVAL '1 second') WHERE operation_id=$1`, operationID, int64(lease.Seconds()))
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return errors.New("sync operation lost its database lease")
+	}
+	return nil
 }
 
 func (s *Store) Audit(ctx context.Context, actorID, action, resourceType, resourceID string, details any) error {
@@ -682,6 +692,14 @@ func (s *Store) SavePlan(ctx context.Context, record PlanRecord) error {
 	if err != nil {
 		return err
 	}
+	ignored, err := json.Marshal(record.Plan.Ignored)
+	if err != nil {
+		return err
+	}
+	selection, err := json.Marshal(record.Plan.Selection)
+	if err != nil {
+		return err
+	}
 	desired, err := json.Marshal(record.Desired)
 	if err != nil {
 		return err
@@ -705,7 +723,7 @@ func (s *Store) SavePlan(ctx context.Context, record PlanRecord) error {
 	if _, err = tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, record.Plan.ApplicationID); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO plans(id,application_id,revision,digest,bindings,changes,desired,created_by,expires_at,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, record.ID, record.Plan.ApplicationID, record.Plan.Revision, record.Plan.Digest, bindings, changes, desired, record.CreatedBy, record.ExpiresAt, record.Status)
+	_, err = tx.ExecContext(ctx, `INSERT INTO plans(id,application_id,revision,digest,bindings,changes,desired,created_by,expires_at,status,ignored_changes,selection,ignore_rules_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, record.ID, record.Plan.ApplicationID, record.Plan.Revision, record.Plan.Digest, bindings, changes, desired, record.CreatedBy, record.ExpiresAt, record.Status, ignored, selection, record.Plan.IgnoreRulesDigest)
 	if err != nil {
 		return err
 	}
@@ -714,8 +732,8 @@ func (s *Store) SavePlan(ctx context.Context, record PlanRecord) error {
 
 func (s *Store) PlanByID(ctx context.Context, id string) (PlanRecord, error) {
 	var out PlanRecord
-	var bindings, changes, desired []byte
-	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status FROM plans WHERE id=$1`, id).Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status)
+	var bindings, changes, desired, ignored, selection []byte
+	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest FROM plans WHERE id=$1`, id).Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest)
 	if err != nil {
 		return PlanRecord{}, err
 	}
@@ -723,6 +741,12 @@ func (s *Store) PlanByID(ctx context.Context, id string) (PlanRecord, error) {
 		return PlanRecord{}, err
 	}
 	if err = json.Unmarshal(changes, &out.Plan.Changes); err != nil {
+		return PlanRecord{}, err
+	}
+	if err = json.Unmarshal(ignored, &out.Plan.Ignored); err != nil {
+		return PlanRecord{}, err
+	}
+	if err = json.Unmarshal(selection, &out.Plan.Selection); err != nil {
 		return PlanRecord{}, err
 	}
 	if err = json.Unmarshal(desired, &out.Desired); err != nil {
@@ -749,14 +773,20 @@ func (s *Store) ListPlans(ctx context.Context, applicationID string, limit int) 
 	items := make([]PlanRecord, 0)
 	for rows.Next() {
 		var out PlanRecord
-		var bindings, changes, desired []byte
-		if err := rows.Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status); err != nil {
+		var bindings, changes, desired, ignored, selection []byte
+		if err := rows.Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(bindings, &out.Plan.Bindings); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(changes, &out.Plan.Changes); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(ignored, &out.Plan.Ignored); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(selection, &out.Plan.Selection); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(desired, &out.Desired); err != nil {
@@ -771,6 +801,86 @@ func (s *Store) ListPlans(ctx context.Context, applicationID string, limit int) 
 		items = append(items, out)
 	}
 	return items, rows.Err()
+}
+
+type ApplicationIgnoreRule struct {
+	core.IgnoreRule
+	ApplicationID string    `json:"applicationId"`
+	CreatedBy     string    `json:"createdBy"`
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
+func (s *Store) IgnoreRules(ctx context.Context, applicationID string) ([]ApplicationIgnoreRule, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,cluster_id,api_version,kind,namespace,name,path,reason,application_id,created_by,created_at FROM application_ignore_rules WHERE application_id=$1 ORDER BY created_at,id`, applicationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]ApplicationIgnoreRule, 0)
+	for rows.Next() {
+		var item ApplicationIgnoreRule
+		if err := rows.Scan(&item.ID, &item.Identity.ClusterID, &item.Identity.APIVersion, &item.Identity.Kind, &item.Identity.Namespace, &item.Identity.Name, &item.Path, &item.Reason, &item.ApplicationID, &item.CreatedBy, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		item.Identity.ClusterScoped = item.Identity.Namespace == ""
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) CreateIgnoreRule(ctx context.Context, applicationID, actorID string, rule core.IgnoreRule) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var locked string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE id=$1 FOR UPDATE`, applicationID).Scan(&locked); err != nil {
+		return err
+	}
+	var active bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM operation_leases WHERE application_id=$1 AND expires_at>NOW())`, applicationID).Scan(&active); err != nil {
+		return err
+	}
+	if active {
+		return errors.New("application is currently syncing; ignore rules cannot change")
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO application_ignore_rules(id,application_id,cluster_id,api_version,kind,namespace,name,path,reason,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, rule.ID, applicationID, rule.Identity.ClusterID, rule.Identity.APIVersion, rule.Identity.Kind, rule.Identity.Namespace, rule.Identity.Name, rule.Path, rule.Reason, actorID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, applicationID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) DeleteIgnoreRule(ctx context.Context, applicationID, id string) (ApplicationIgnoreRule, error) {
+	var item ApplicationIgnoreRule
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return item, err
+	}
+	defer tx.Rollback()
+	var locked string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE id=$1 FOR UPDATE`, applicationID).Scan(&locked); err != nil {
+		return item, err
+	}
+	var active bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM operation_leases WHERE application_id=$1 AND expires_at>NOW())`, applicationID).Scan(&active); err != nil {
+		return item, err
+	}
+	if active {
+		return item, errors.New("application is currently syncing; ignore rules cannot change")
+	}
+	err = tx.QueryRowContext(ctx, `DELETE FROM application_ignore_rules WHERE application_id=$1 AND id=$2 RETURNING id,cluster_id,api_version,kind,namespace,name,path,reason,application_id,created_by,created_at`, applicationID, id).Scan(&item.ID, &item.Identity.ClusterID, &item.Identity.APIVersion, &item.Identity.Kind, &item.Identity.Namespace, &item.Identity.Name, &item.Path, &item.Reason, &item.ApplicationID, &item.CreatedBy, &item.CreatedAt)
+	if err != nil {
+		return item, err
+	}
+	item.Identity.ClusterScoped = item.Identity.Namespace == ""
+	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, applicationID); err != nil {
+		return item, err
+	}
+	return item, tx.Commit()
 }
 
 func (s *Store) SetPlanStatus(ctx context.Context, id, status string) error {
@@ -802,12 +912,13 @@ type ApprovalRecord struct {
 	ID       string
 	PlanID   string
 	Approval core.DeletionApproval
+	UsedAt   *time.Time
 }
 
 func (s *Store) ApprovalByID(ctx context.Context, id string) (ApprovalRecord, error) {
 	var out ApprovalRecord
 	var payload []byte
-	err := s.DB.QueryRowContext(ctx, `SELECT id,plan_id,actor_id,plan_digest,deletes,expires_at FROM deletion_approvals WHERE id=$1 AND used_at IS NULL`, id).Scan(&out.ID, &out.PlanID, &out.Approval.ActorID, &out.Approval.PlanDigest, &payload, &out.Approval.ExpiresAt)
+	err := s.DB.QueryRowContext(ctx, `SELECT id,plan_id,actor_id,plan_digest,deletes,expires_at,used_at FROM deletion_approvals WHERE id=$1`, id).Scan(&out.ID, &out.PlanID, &out.Approval.ActorID, &out.Approval.PlanDigest, &payload, &out.Approval.ExpiresAt, &out.UsedAt)
 	if err != nil {
 		return ApprovalRecord{}, err
 	}
@@ -931,6 +1042,7 @@ type Operation struct {
 	ApplicationID string            `json:"applicationId"`
 	PlanID        *string           `json:"planId,omitempty"`
 	ActorID       *string           `json:"actorId,omitempty"`
+	ApprovalID    string            `json:"-"`
 	Status        string            `json:"status"`
 	Message       string            `json:"message"`
 	Progress      OperationProgress `json:"progress"`
@@ -939,9 +1051,124 @@ type Operation struct {
 }
 
 type OperationProgress struct {
+	Phase     string          `json:"phase,omitempty"`
 	Total     int             `json:"total"`
 	Completed []core.Identity `json:"completed"`
 	Current   *core.Identity  `json:"current,omitempty"`
+}
+
+func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actorID, approvalID, planDigest string, lease time.Duration, progress OperationProgress) (Operation, error) {
+	encoded, err := json.Marshal(progress)
+	if err != nil {
+		return Operation{}, err
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Operation{}, err
+	}
+	defer tx.Rollback()
+	var lockedApplicationID string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE id=$1 FOR UPDATE`, applicationID).Scan(&lockedApplicationID); err != nil {
+		return Operation{}, err
+	}
+	var status string
+	var expires time.Time
+	if err := tx.QueryRowContext(ctx, `SELECT status,expires_at FROM plans WHERE id=$1 AND application_id=$2 FOR UPDATE`, planID, applicationID).Scan(&status, &expires); err != nil {
+		return Operation{}, err
+	}
+	if status != "current" || !time.Now().Before(expires) {
+		return Operation{}, errors.New("plan is no longer current or has expired")
+	}
+	var active bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM operation_leases WHERE application_id=$1)`, applicationID).Scan(&active); err != nil {
+		return Operation{}, err
+	}
+	if active {
+		return Operation{}, errors.New("application already has an active operation")
+	}
+	if approvalID != "" {
+		result, err := tx.ExecContext(ctx, `UPDATE deletion_approvals SET used_at=NOW() WHERE id=$1 AND plan_id=$2 AND plan_digest=$3 AND used_at IS NULL AND expires_at>NOW()`, approvalID, planID, planDigest)
+		if err != nil {
+			return Operation{}, err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return Operation{}, err
+		}
+		if count != 1 {
+			return Operation{}, errors.New("approval has already been used or expired")
+		}
+	}
+	id := NewID()
+	var approval any
+	if approvalID != "" {
+		approval = approvalID
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO operations(id,application_id,plan_id,actor_id,approval_id,status,message,progress) VALUES($1,$2,$3,NULLIF($4,''),$5,'queued','Sync queued',$6)`, id, applicationID, planID, actorID, approval, encoded)
+	if err != nil {
+		return Operation{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO operation_leases(application_id,operation_id,expires_at) VALUES($1,$2,NOW()+($3 * INTERVAL '1 second'))`, applicationID, id, int64(lease.Seconds())); err != nil {
+		return Operation{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Operation{}, err
+	}
+	plan, actor := planID, actorID
+	return Operation{ID: id, ApplicationID: applicationID, PlanID: &plan, ActorID: &actor, ApprovalID: approvalID, Status: "queued", Progress: progress, StartedAt: time.Now().UTC(), Message: "Sync queued"}, nil
+}
+
+// ClaimQueuedOperation atomically claims one durable queue entry. It never
+// resumes a running entry: only queued operations may transition to running.
+func (s *Store) ClaimQueuedOperation(ctx context.Context, lease time.Duration) (Operation, bool, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Operation{}, false, err
+	}
+	defer tx.Rollback()
+	var operation Operation
+	var progress []byte
+	err = tx.QueryRowContext(ctx, `SELECT id,application_id,plan_id,actor_id,approval_id,status,message,progress,started_at,finished_at FROM operations WHERE status='queued' ORDER BY started_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`).Scan(&operation.ID, &operation.ApplicationID, &operation.PlanID, &operation.ActorID, &operation.ApprovalID, &operation.Status, &operation.Message, &progress, &operation.StartedAt, &operation.FinishedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Operation{}, false, nil
+	}
+	if err != nil {
+		return Operation{}, false, err
+	}
+	if err := json.Unmarshal(progress, &operation.Progress); err != nil {
+		return Operation{}, false, err
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO operation_leases(application_id,operation_id,expires_at) VALUES($1,$2,NOW()+($3 * INTERVAL '1 second')) ON CONFLICT(application_id) DO UPDATE SET operation_id=EXCLUDED.operation_id,expires_at=EXCLUDED.expires_at WHERE operation_leases.expires_at<=NOW() OR operation_leases.operation_id=EXCLUDED.operation_id`, operation.ApplicationID, operation.ID, int64(lease.Seconds()))
+	if err != nil {
+		return Operation{}, false, err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return Operation{}, false, err
+	}
+	if count != 1 {
+		return Operation{}, false, nil
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE operations SET status='running',message='Sync in progress' WHERE id=$1 AND status='queued'`, operation.ID); err != nil {
+		return Operation{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Operation{}, false, err
+	}
+	operation.Status = "running"
+	operation.Message = "Sync in progress"
+	return operation, true, nil
+}
+
+// RecoverInterruptedOperations makes expired running jobs visible as failed;
+// queued jobs remain eligible for normal processing after a restart.
+func (s *Store) RecoverInterruptedOperations(ctx context.Context) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE operations o SET status='failed',message='Sync interrupted by backend restart or worker loss; review the plan before retrying',finished_at=NOW() WHERE o.status='running' AND NOT EXISTS (SELECT 1 FROM operation_leases l WHERE l.operation_id=o.id AND l.expires_at>NOW())`)
+	if err != nil {
+		return err
+	}
+	_, err = s.DB.ExecContext(ctx, `DELETE FROM operation_leases l USING operations o WHERE l.operation_id=o.id AND l.expires_at<=NOW() AND o.status<>'queued'`)
+	return err
 }
 
 func (s *Store) SetOperationProgress(ctx context.Context, id string, progress OperationProgress) error {

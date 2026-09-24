@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useParams } from "next/navigation"
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
+import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
 import { DataGridList } from "@/components/data-grid-table"
 import { EmptyState, FormField, PageHeading, Panel, StatusBadge } from "@/components/ui-kit"
@@ -69,7 +70,7 @@ export default function ProjectDetailPage() {
         <Panel title="Members" description="Users with access to this delivery scope">
           {project?.role === "owner" && <form className="grid gap-3 border-b p-4" onSubmit={addMember}>
             <FormField label="User email" htmlFor="member-email" hint="They must have signed in to JustCD at least once."><Input id="member-email" type="email" placeholder="teammate@example.com" value={memberEmail} onChange={(event) => setMemberEmail(event.target.value)} required /></FormField>
-            <FormField label="Project role" htmlFor="member-role"><select id="member-role" className="h-8 w-full rounded-lg border bg-background px-2 text-xs" value={memberRole} onChange={(event) => setMemberRole(event.target.value)}><option value="viewer">Viewer</option><option value="deployer">Deployer</option><option value="owner">Owner</option></select></FormField>
+            <FormField label="Project role" htmlFor="member-role"><FormSelect id="member-role" size="sm" value={memberRole} onValueChange={setMemberRole} items={[{ value: "viewer", label: "Viewer" }, { value: "deployer", label: "Deployer" }, { value: "owner", label: "Owner" }]} /></FormField>
             <Button size="sm" type="submit" className="w-fit" disabled={memberBusy}>{memberBusy ? "Saving…" : "Add member"}</Button>
           </form>}
           {members.length ? <div className="divide-y">{members.map((member) => <div key={member.id} className="flex items-center gap-3 px-5 py-3"><span className="grid size-8 place-items-center rounded-full bg-muted text-[10px] font-semibold uppercase">{(member.displayName || member.email).slice(0, 2)}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{member.displayName || member.email}</span><span className="block truncate text-[10px] text-muted-foreground">{member.email}</span></span><span className="text-[10px] capitalize text-muted-foreground">{member.role}</span></div>)}</div> : <p className="px-5 py-6 text-xs text-muted-foreground">Project owner is the only member so far.</p>}

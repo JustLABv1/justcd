@@ -80,6 +80,21 @@ export type Change = {
   liveFingerprint?: string
   before?: unknown
   after?: unknown
+  changedPaths?: string[]
+  ignoredPaths?: string[]
+  ignoreReason?: string
+}
+
+export type FieldExclusion = { identity: Identity; path: string }
+export type PlanSelection = { resources?: Identity[]; fields?: FieldExclusion[] }
+export type IgnoreRule = {
+  id: string
+  applicationId: string
+  identity: Identity
+  path?: string
+  reason: string
+  createdBy: string
+  createdAt: string
 }
 
 export type Plan = {
@@ -87,6 +102,9 @@ export type Plan = {
   revision: string
   bindings: { clusterId: string; namespace: string; credentialRef: string; clusterScope?: boolean }[]
   changes: Change[]
+  ignored?: Change[]
+  selection?: PlanSelection
+  ignoreRulesDigest?: string
   requiresApproval: boolean
   digest: string
 }
@@ -124,7 +142,7 @@ export type Operation = {
   actorId?: string
   status: string
   message: string
-  progress?: { total: number; completed: Identity[]; current?: Identity }
+  progress?: { phase?: string; total: number; completed: Identity[]; current?: Identity }
   startedAt: string
   finishedAt?: string
 }

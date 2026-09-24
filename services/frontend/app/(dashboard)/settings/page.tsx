@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
+import { usePathname } from "next/navigation"
+import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { EmptyState, FormField, PageHeading, Panel } from "@/components/ui-kit"
@@ -13,6 +15,17 @@ const selectClass = "h-9 w-full rounded-lg border bg-background px-3 text-sm"
 
 export default function SettingsPage() {
   const router = useRouter()
+  const pathname = usePathname()
+  const section = pathname.split("/")[2] ?? ""
+  const sections = [
+    { id: "git-sources", title: "Git sources", description: "Repositories tracked by your projects" },
+    { id: "clusters", title: "Kubernetes clusters", description: "Direct API endpoints and cluster credentials" },
+    { id: "namespaces", title: "Namespace bindings", description: "Project targets and per-namespace access" },
+    { id: "credentials", title: "Credentials", description: "Encrypted Git and Kubernetes secrets" },
+    { id: "oidc", title: "OIDC providers", description: "Organization sign-in and group mapping", adminOnly: true },
+    { id: "users", title: "Local users", description: "Accounts managed by JustCD", adminOnly: true },
+  ]
+  const current = sections.find((item) => item.id === section)
   const [user, setUser] = useState<User | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
   const [projectId, setProjectId] = useState("")
@@ -25,6 +38,7 @@ export default function SettingsPage() {
   const [error, setError] = useState("")
   const [notice, setNotice] = useState("")
   const [busy, setBusy] = useState(false)
+  const [loading, setLoading] = useState(true)
 
   async function loadBase() {
     const [session, projectList, clusterList] = await Promise.all([
@@ -44,7 +58,7 @@ export default function SettingsPage() {
   }
 
   useEffect(() => {
-    Promise.resolve().then(loadBase).catch((cause) => setError(errorMessage(cause)))
+    Promise.resolve().then(loadBase).catch((cause) => setError(errorMessage(cause))).finally(() => setLoading(false))
   }, [])
 
   useEffect(() => {
@@ -78,40 +92,45 @@ export default function SettingsPage() {
   }
 
   return <>
-    <PageHeading eyebrow="Administration" title="Connections & access" description="Configure encrypted Git and Kubernetes credentials, projects, cluster targets, OIDC providers, and local users." />
+    <PageHeading title={current?.title ?? "Settings"} description={current?.description ?? "Manage your delivery connections and access in focused sections."} />
     {error && <div role="alert" className="mb-4 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</div>}
     {notice && <div role="status" className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">{notice}</div>}
+    {loading ? <div role="status" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{Array.from({ length: section ? 1 : 6 }, (_, index) => <div key={index} className="h-28 animate-pulse rounded-xl border bg-muted/40" />)}</div> : <>
 
-    {projects.length > 0 ? <div className="mb-5 flex flex-wrap items-end gap-3 rounded-xl border bg-card p-4">
-      <FormField label="Active project" htmlFor="active-project"><select id="active-project" className={`${selectClass} min-w-[240px]`} value={projectId} onChange={(event) => { setProjectId(event.target.value); router.replace(`/settings?projectId=${encodeURIComponent(event.target.value)}`) }}>{projects.map((item) => <option value={item.id} key={item.id}>{item.name} · {item.role}</option>)}</select></FormField>
-      <FormField label="Active cluster" htmlFor="active-cluster"><select id="active-cluster" className={`${selectClass} min-w-[240px]`} value={clusterId} onChange={(event) => setClusterId(event.target.value)}><option value="">Select cluster</option>{clusters.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></FormField>
-      <span className="pb-2 text-[10px] text-muted-foreground">Editing access for <strong className="font-medium text-foreground">{project?.name}</strong></span>
-    </div> : <div className="mb-5 rounded-xl border bg-card"><EmptyState title="Create a project first" description="Project-scoped credentials and namespace bindings need a delivery scope." href="/projects/new" action="Create project" /></div>}
+    {section && !current ? <EmptyState title="Section not found" description="Choose a settings section to continue." href="/settings" action="View settings" /> : <>
+    {current && <nav aria-label="Settings sections" className="mb-5 flex flex-wrap gap-2"><Link href="/settings" className="rounded-lg border bg-card px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground">All settings</Link>{sections.filter((item) => !item.adminOnly || user?.isAdmin).map((item) => <Link key={item.id} href={`/settings/${item.id}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`} aria-current={section === item.id ? "page" : undefined} className={`rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${section === item.id ? "border-primary/30 bg-primary/8 text-primary" : "bg-card text-muted-foreground hover:bg-muted hover:text-foreground"}`}>{item.title}</Link>)}</nav>}
+    {(section === "git-sources" || section === "namespaces" || section === "credentials") && (projects.length > 0 ? <div className="mb-5 flex max-w-4xl flex-wrap items-end gap-3 rounded-xl border bg-card p-4">
+      <FormField label="Active project" htmlFor="active-project"><select id="active-project" className={`${selectClass} min-w-[240px]`} value={projectId} onChange={(event) => { setProjectId(event.target.value); router.replace(`${pathname}?projectId=${encodeURIComponent(event.target.value)}`) }}>{projects.map((item) => <option value={item.id} key={item.id}>{item.name} · {item.role}</option>)}</select></FormField>
+      {section === "namespaces" && <FormField label="Active cluster" htmlFor="active-cluster"><select id="active-cluster" className={`${selectClass} min-w-[240px]`} value={clusterId} onChange={(event) => setClusterId(event.target.value)}><option value="">Select cluster</option>{clusters.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></FormField>}
+      <span className="pb-2 text-xs text-muted-foreground">Editing <strong className="font-medium text-foreground">{project?.name}</strong></span>
+    </div> : <div className="mb-5 rounded-xl border bg-card"><EmptyState title="Create a project first" description="Project-scoped settings need a delivery scope." href="/projects/new" action="Create project" /></div>)}
 
-    <div className="grid gap-5 xl:grid-cols-2">
-      <CredentialPanel
+    {!section ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{sections.filter((item) => !item.adminOnly || user?.isAdmin).map((item) => <Link key={item.id} href={`/settings/${item.id}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`} className="group flex min-h-28 flex-col justify-between rounded-xl border bg-card p-5 transition-colors hover:border-primary/40 hover:bg-muted/30"><span className="text-sm font-semibold group-hover:text-primary">{item.title}</span><span className="mt-3 flex items-end justify-between gap-3 text-xs text-muted-foreground"><span>{item.description}</span><span aria-hidden="true" className="shrink-0 text-base">→</span></span></Link>)}</div> : <div className="max-w-4xl">
+      {section === "credentials" && <CredentialPanel
         project={project}
         user={user}
         credentials={credentials}
         busy={busy}
         action={action}
         onCreated={(credential) => setCredentials((items) => [credential, ...items])}
-      />
-      <ClusterPanel
+      />}
+      {section === "clusters" && <ClusterPanel
         user={user}
         clusters={clusters}
         globalCredentials={globalKubeCredentials}
         busy={busy}
         action={action}
         onCreated={(cluster) => { setClusters((items) => [...items, cluster]); setClusterId(cluster.id) }}
-      />
-      <GitSourcePanel project={project} credentials={gitCredentials} sources={sources} busy={busy} action={action} onCreated={(source) => setSources((items) => [source, ...items])} />
-      <NamespacePanel project={project} cluster={clusters.find((item) => item.id === clusterId)} credentials={namespaceCredentials} bindings={bindings} busy={busy} action={action} onCreated={(binding) => setBindings((items) => [...items, binding].sort((a, b) => a.namespace.localeCompare(b.namespace)))} />
-      {user?.isAdmin && <OIDCPanel providers={providers} projects={projects} busy={busy} action={action} onCreated={(provider) => setProviders((items) => [...items, provider])} />}
-      {user?.isAdmin && <LocalUsersPanel busy={busy} action={action} />}
-    </div>
+      />}
+      {section === "git-sources" && <GitSourcePanel project={project} credentials={gitCredentials} sources={sources} busy={busy} action={action} onCreated={(source) => setSources((items) => [source, ...items])} />}
+      {section === "namespaces" && <NamespacePanel project={project} cluster={clusters.find((item) => item.id === clusterId)} credentials={namespaceCredentials} bindings={bindings} busy={busy} action={action} onCreated={(binding) => setBindings((items) => [...items, binding].sort((a, b) => a.namespace.localeCompare(b.namespace)))} />}
+      {section === "oidc" && user?.isAdmin && <OIDCPanel providers={providers} projects={projects} busy={busy} action={action} onCreated={(provider) => setProviders((items) => [...items, provider])} />}
+      {section === "users" && user?.isAdmin && <LocalUsersPanel busy={busy} action={action} />}
+    </div>}
 
-    <div className="mt-5 rounded-xl border bg-card px-5 py-4"><div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center"><div><p className="text-xs font-semibold">Credentials never leave the server</p><p className="mt-1 max-w-3xl text-[11px] leading-5 text-muted-foreground">Secrets are encrypted at rest using JUSTCD_ENCRYPTION_KEY and are not returned to the browser. Git deploy keys require pinned known_hosts; kubeconfig exec plugins and token files are disabled.</p></div><span className="w-fit rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[9px] font-medium uppercase tracking-wide text-emerald-700">Encrypted</span></div></div>
+    {section === "credentials" && <div className="mt-5 max-w-4xl rounded-xl border bg-card px-5 py-4"><div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center"><div><p className="text-xs font-semibold">Credentials never leave the server</p><p className="mt-1 max-w-3xl text-[11px] leading-5 text-muted-foreground">Secrets are encrypted at rest using JUSTCD_ENCRYPTION_KEY and are not returned to the browser. Git deploy keys require pinned known_hosts; kubeconfig exec plugins and token files are disabled.</p></div><span className="w-fit rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[9px] font-medium uppercase tracking-wide text-emerald-700">Encrypted</span></div></div>}
+    </>}
+    </>}
   </>
 }
 

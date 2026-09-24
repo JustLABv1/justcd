@@ -4,7 +4,28 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/justlab/justcd/services/backend/internal/core"
+	"github.com/justlab/justcd/services/backend/internal/store"
 )
+
+func TestPlanViewExposesDesiredIdentitiesWithoutManifest(t *testing.T) {
+	identity := core.Identity{APIVersion: "v1", Kind: "Secret", Namespace: "demo", Name: "credentials"}
+	record := store.PlanRecord{
+		Desired: []core.Resource{{Identity: identity, Manifest: json.RawMessage(`{"kind":"Secret","stringData":{"password":"do-not-expose"}}`)}},
+	}
+	view := toPlanView(record)
+	if len(view.Resources) != 1 || view.Resources[0] != identity {
+		t.Fatalf("desired resource identity missing from plan view: %+v", view.Resources)
+	}
+	encoded, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "do-not-expose") || strings.Contains(string(encoded), "stringData") {
+		t.Fatalf("desired manifest leaked through resource overview: %s", encoded)
+	}
+}
 
 func TestRedactManifestMasksSecretMaterial(t *testing.T) {
 	manifest := json.RawMessage(`{"apiVersion":"v1","kind":"Secret","data":{"password":"c2VjcmV0","config":"dG9rZW4="},"stringData":{"api-key":"plaintext"},"metadata":{"name":"example"}}`)

@@ -11,15 +11,13 @@ import (
 )
 
 type Config struct {
-	ListenAddress          string
-	DatabaseURL            string
-	EncryptionKey          []byte
-	BootstrapAdminEmail    string
-	BootstrapAdminPassword string
-	PublicURL              string
-	SessionCookieSecure    bool
-	SessionLifetime        time.Duration
-	FrontendURL            string
+	ListenAddress       string
+	DatabaseURL         string
+	EncryptionKey       []byte
+	PublicURL           string
+	SessionCookieSecure bool
+	SessionLifetime     time.Duration
+	FrontendURL         string
 }
 
 func Load() (Config, error) {
@@ -34,8 +32,6 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	cfg.BootstrapAdminEmail = strings.TrimSpace(os.Getenv("JUSTCD_BOOTSTRAP_ADMIN_EMAIL"))
-	cfg.BootstrapAdminPassword = os.Getenv("JUSTCD_BOOTSTRAP_ADMIN_PASSWORD")
 	cfg.PublicURL = strings.TrimRight(value("JUSTCD_PUBLIC_URL", "http://localhost:8080"), "/")
 	cfg.FrontendURL = strings.TrimRight(value("JUSTCD_FRONTEND_URL", "http://localhost:3000"), "/")
 	secure := value("JUSTCD_COOKIE_SECURE", "true")

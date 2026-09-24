@@ -95,15 +95,36 @@ type Session struct {
 	Expires  time.Time
 }
 
-func (s *Store) CreateBootstrapAdmin(ctx context.Context, id, email, passwordHash string) error {
-	if id == "" || email == "" || passwordHash == "" {
-		return errors.New("bootstrap admin fields are required")
-	}
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO users(id,email,display_name,password_hash,is_admin) SELECT $1,LOWER($2),$3,$4,TRUE WHERE NOT EXISTS (SELECT 1 FROM users) ON CONFLICT (email) DO NOTHING`, id, email, email, passwordHash)
+var ErrAlreadyInitialized = errors.New("instance already has a user")
+
+func (s *Store) SignupAvailable(ctx context.Context) (bool, error) {
+	var exists bool
+	err := s.DB.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE id <> 'justcd-system')`).Scan(&exists)
+	return !exists, err
+}
+
+func (s *Store) CreateInitialAdmin(ctx context.Context, user *User, passwordHash string) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("create bootstrap admin: %w", err)
+		return err
 	}
-	return nil
+	defer tx.Rollback()
+	// Serialize competing first-user signups, including requests to different API replicas.
+	if _, err = tx.ExecContext(ctx, `LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		return err
+	}
+	var exists bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE id <> 'justcd-system')`).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return ErrAlreadyInitialized
+	}
+	err = tx.QueryRowContext(ctx, `INSERT INTO users(id,email,display_name,password_hash,is_admin) VALUES($1,LOWER($2),$3,$4,TRUE) RETURNING created_at`, user.ID, user.Email, user.DisplayName, passwordHash).Scan(&user.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("create initial administrator: %w", err)
+	}
+	return tx.Commit()
 }
 
 func (s *Store) EnsureSystemActor(ctx context.Context) error {
@@ -834,6 +855,68 @@ func (s *Store) ManagedResources(ctx context.Context, applicationID string) ([]M
 	}
 	return out, rows.Err()
 }
+
+type ObservedResource struct {
+	Identity        core.Identity     `json:"identity"`
+	UID             string            `json:"uid"`
+	ResourceVersion string            `json:"resourceVersion"`
+	Labels          map[string]string `json:"labels"`
+	OwnerUIDs       []string          `json:"ownerUids"`
+	Phase           string            `json:"phase,omitempty"`
+	Readiness       string            `json:"readiness,omitempty"`
+	Source          string            `json:"source"`
+	ObservedAt      time.Time         `json:"observedAt"`
+}
+
+func (s *Store) ObservedResources(ctx context.Context, applicationID string) ([]ObservedResource, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT cluster_id,api_version,kind,namespace,name,uid,resource_version,labels,owner_uids,phase,readiness,source,observed_at FROM application_resource_observations WHERE application_id=$1 ORDER BY kind,namespace,name`, applicationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObservedResource{}
+	for rows.Next() {
+		var item ObservedResource
+		var labels, owners []byte
+		if err := rows.Scan(&item.Identity.ClusterID, &item.Identity.APIVersion, &item.Identity.Kind, &item.Identity.Namespace, &item.Identity.Name, &item.UID, &item.ResourceVersion, &labels, &owners, &item.Phase, &item.Readiness, &item.Source, &item.ObservedAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(labels, &item.Labels); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(owners, &item.OwnerUIDs); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) ReplaceObservedResources(ctx context.Context, applicationID string, items []ObservedResource) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM application_resource_observations WHERE application_id=$1 AND source='kubernetes'`, applicationID); err != nil {
+		return err
+	}
+	for _, item := range items {
+		labels, err := json.Marshal(item.Labels)
+		if err != nil {
+			return err
+		}
+		owners, err := json.Marshal(item.OwnerUIDs)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO application_resource_observations(application_id,cluster_id,api_version,kind,namespace,name,uid,resource_version,labels,owner_uids,phase,readiness,source,observed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'kubernetes',NOW()) ON CONFLICT(application_id,cluster_id,api_version,kind,namespace,name) DO UPDATE SET uid=EXCLUDED.uid,resource_version=EXCLUDED.resource_version,labels=EXCLUDED.labels,owner_uids=EXCLUDED.owner_uids,phase=EXCLUDED.phase,readiness=EXCLUDED.readiness,source='kubernetes',observed_at=NOW()`, applicationID, item.Identity.ClusterID, item.Identity.APIVersion, item.Identity.Kind, item.Identity.Namespace, item.Identity.Name, item.UID, item.ResourceVersion, labels, owners, item.Phase, item.Readiness); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *Store) UpsertManagedResource(ctx context.Context, applicationID string, resource core.Resource) error {
 	_, err := s.DB.ExecContext(ctx, `INSERT INTO managed_resources(application_id,cluster_id,api_version,kind,namespace,name,uid,resource_version,manifest) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(application_id,cluster_id,api_version,kind,namespace,name) DO UPDATE SET uid=EXCLUDED.uid,resource_version=EXCLUDED.resource_version,manifest=EXCLUDED.manifest,last_seen_at=NOW()`, applicationID, resource.Identity.ClusterID, resource.Identity.APIVersion, resource.Identity.Kind, resource.Identity.Namespace, resource.Identity.Name, resource.UID, resource.ResourceVersion, resource.Manifest)
 	return err
@@ -844,14 +927,30 @@ func (s *Store) DeleteManagedResource(ctx context.Context, applicationID string,
 }
 
 type Operation struct {
-	ID            string     `json:"id"`
-	ApplicationID string     `json:"applicationId"`
-	PlanID        *string    `json:"planId,omitempty"`
-	ActorID       *string    `json:"actorId,omitempty"`
-	Status        string     `json:"status"`
-	Message       string     `json:"message"`
-	StartedAt     time.Time  `json:"startedAt"`
-	FinishedAt    *time.Time `json:"finishedAt,omitempty"`
+	ID            string            `json:"id"`
+	ApplicationID string            `json:"applicationId"`
+	PlanID        *string           `json:"planId,omitempty"`
+	ActorID       *string           `json:"actorId,omitempty"`
+	Status        string            `json:"status"`
+	Message       string            `json:"message"`
+	Progress      OperationProgress `json:"progress"`
+	StartedAt     time.Time         `json:"startedAt"`
+	FinishedAt    *time.Time        `json:"finishedAt,omitempty"`
+}
+
+type OperationProgress struct {
+	Total     int             `json:"total"`
+	Completed []core.Identity `json:"completed"`
+	Current   *core.Identity  `json:"current,omitempty"`
+}
+
+func (s *Store) SetOperationProgress(ctx context.Context, id string, progress OperationProgress) error {
+	encoded, err := json.Marshal(progress)
+	if err != nil {
+		return err
+	}
+	_, err = s.DB.ExecContext(ctx, `UPDATE operations SET progress=$2 WHERE id=$1`, id, encoded)
+	return err
 }
 
 func (s *Store) AcquireOperation(ctx context.Context, applicationID, planID, actorID string, lease time.Duration) (string, error) {
@@ -920,7 +1019,7 @@ func (s *Store) FinishOperation(ctx context.Context, id, status, message string)
 	return tx.Commit()
 }
 func (s *Store) ListOperations(ctx context.Context, applicationID string, limit int) ([]Operation, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,plan_id,actor_id,status,message,started_at,finished_at FROM operations WHERE application_id=$1 ORDER BY started_at DESC LIMIT $2`, applicationID, limit)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,plan_id,actor_id,status,message,progress,started_at,finished_at FROM operations WHERE application_id=$1 ORDER BY started_at DESC LIMIT $2`, applicationID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -928,7 +1027,11 @@ func (s *Store) ListOperations(ctx context.Context, applicationID string, limit 
 	out := make([]Operation, 0)
 	for rows.Next() {
 		var item Operation
-		if err := rows.Scan(&item.ID, &item.ApplicationID, &item.PlanID, &item.ActorID, &item.Status, &item.Message, &item.StartedAt, &item.FinishedAt); err != nil {
+		var rawProgress []byte
+		if err := rows.Scan(&item.ID, &item.ApplicationID, &item.PlanID, &item.ActorID, &item.Status, &item.Message, &rawProgress, &item.StartedAt, &item.FinishedAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(rawProgress, &item.Progress); err != nil {
 			return nil, err
 		}
 		out = append(out, item)

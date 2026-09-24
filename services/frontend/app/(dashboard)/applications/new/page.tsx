@@ -69,7 +69,7 @@ export default function NewApplicationPage() {
   }
 
   return <>
-    <PageHeading eyebrow="Application setup" title="Create an application" description="Point JustCD at a Git revision and a repository path. We’ll render, diff, and review the changes before they reach Kubernetes." />
+    <PageHeading title="Create an application" description="Point JustCD at a Git revision and a repository path. We’ll render, diff, and review the changes before they reach Kubernetes." />
     {error && <div role="alert" className="mb-5 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</div>}
     <form className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]" onSubmit={submit}>
       <div className="space-y-5">

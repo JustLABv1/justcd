@@ -29,6 +29,17 @@ paths:
       responses:
         '200': { description: Authenticated; sets session and CSRF cookies }
         '401': { description: Invalid credentials }
+  /auth/setup:
+    get:
+      summary: Check whether first-administrator signup is available
+      responses:
+        '200': { description: Signup availability }
+  /auth/signup:
+    post:
+      summary: Create the first administrator and sign in (only on an uninitialized instance)
+      responses:
+        '200': { description: Administrator created; session and CSRF cookies set }
+        '409': { description: Setup already completed }
   /auth/session:
     get:
       summary: Return the current user
@@ -162,6 +173,11 @@ paths:
       summary: List resources managed by the application
       responses:
         '200': { description: Resource inventory }
+  /applications/{applicationID}/topology:
+    get:
+      summary: Show desired, managed, and read-only observed Kubernetes resources with their relationships
+      responses:
+        '200': { description: Resource graph with safe metadata and observation warnings }
   /applications/{applicationID}/operations:
     get:
       summary: List recent sync operations

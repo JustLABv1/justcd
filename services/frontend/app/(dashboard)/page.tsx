@@ -45,7 +45,6 @@ export default function OverviewPage() {
   return (
     <>
       <PageHeading
-        eyebrow="Delivery workspace"
         title="Good deployments start with a clear plan."
         description="A live view of your Git-managed Kubernetes applications, their health, and changes that need your attention."
         actions={<><Link href="/projects/new"><Button variant="outline">New project</Button></Link><Link href="/applications/new"><Button><span aria-hidden="true">＋</span> New application</Button></Link></>}
@@ -59,17 +58,17 @@ export default function OverviewPage() {
       </div>
 
       <div className="mt-7 grid gap-5 xl:grid-cols-[minmax(0,1fr)_330px]">
-        <Panel title="Applications" description="Recent health and reconciliation state" action={<Link href="/applications/new" className="text-xs font-medium text-primary hover:underline">Create app →</Link>}>
+        <Panel surface="flat" title="Applications" description="Recent health and reconciliation state" action={<Link href="/applications/new" className="text-xs font-medium text-primary hover:underline">Create app →</Link>}>
           {loading ? <div className="px-5 py-12 text-center text-sm text-muted-foreground">Loading applications…</div> : applications.length ? (
-            <div className="p-3 sm:p-4">
+            <div className="min-w-0">
               <DataGridList
                 rows={applications}
                 columns={[
-                  { id: "app", title: "Application", cell: (app) => <Link href={`/applications/${app.id}`} className="font-medium text-foreground hover:text-primary">{app.name}<span className="mt-0.5 block font-normal text-[10px] text-muted-foreground">{app.projectName} · {app.renderer}</span></Link> },
-                  { id: "target", title: "Target", cell: (app) => <span className="text-xs text-muted-foreground">{app.namespaces.map((item) => item.namespace).join(", ") || "—"}</span> },
-                  { id: "revision", title: "Revision", cell: (app) => <span className="font-mono text-[11px] text-muted-foreground">{app.lastSyncedRevision || app.revision}</span> },
-                  { id: "health", title: "Health", cell: (app) => <StatusBadge status={app.health} /> },
-                  { id: "policy", title: "Policy", cell: (app) => <span className="text-[11px] capitalize text-muted-foreground">{app.syncPolicy.replace("-", " ")}</span> },
+                  { id: "app", title: "Application", size: 265, cell: (app) => <Link href={`/applications/${app.id}`} title={app.name} className="block min-w-0 font-medium text-foreground hover:text-primary"><span className="block truncate">{app.name}</span><span className="mt-0.5 block truncate font-normal text-[10px] text-muted-foreground">{app.projectName} · {app.renderer}</span></Link> },
+                  { id: "target", title: "Target", size: 130, cell: (app) => <span className="text-xs text-muted-foreground">{app.namespaces.map((item) => item.namespace).join(", ") || "—"}</span> },
+                  { id: "revision", title: "Revision", size: 145, cell: (app) => <span title={app.lastSyncedRevision || app.revision} className="block max-w-32 truncate font-mono text-[11px] text-muted-foreground">{app.lastSyncedRevision || app.revision}</span> },
+                  { id: "health", title: "Health", size: 150, cell: (app) => <StatusBadge status={app.health} /> },
+                  { id: "policy", title: "Policy", size: 105, cell: (app) => <span className="text-[11px] capitalize text-muted-foreground">{app.syncPolicy.replace("-", " ")}</span> },
                 ]}
                 empty="No applications in this workspace yet."
               />

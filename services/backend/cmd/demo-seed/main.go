@@ -58,7 +58,7 @@ func main() {
 		log.Fatal(err)
 	}
 	if created {
-		fmt.Println("JustCD demo workspace created. All demo Git/cluster endpoints use .invalid and are intentionally unreachable.")
+		fmt.Println("JustCD demo data added. All demo Git/cluster endpoints use .invalid and are intentionally unreachable.")
 	} else {
 		fmt.Println("JustCD demo workspace already exists; no database rows were changed.")
 	}
@@ -76,7 +76,14 @@ func seed(ctx context.Context, db *sql.DB, encryptionKey []byte) (bool, error) {
 	var existing string
 	err = tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE name=$1 AND description=$2 LIMIT 1`, demoProjectName, demoDescription).Scan(&existing)
 	if err == nil {
-		return false, nil
+		created, err := seedHelmTopology(ctx, tx, existing)
+		if err != nil {
+			return false, err
+		}
+		if err := tx.Commit(); err != nil {
+			return false, err
+		}
+		return created, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return false, err
@@ -197,11 +204,75 @@ func seed(ctx context.Context, db *sql.DB, encryptionKey []byte) (bool, error) {
 			}
 		}
 	}
+	if _, err := seedHelmTopology(ctx, tx, projectID); err != nil {
+		return false, err
+	}
 
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'demo.seeded','project',$2,$3)`, ownerID, projectID, jsonBytes(map[string]any{"project": demoProjectName, "applications": len(fixtures), "clusterEndpoint": "reserved .invalid"})); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func seedHelmTopology(ctx context.Context, tx *sql.Tx, projectID string) (bool, error) {
+	const name = "Demo Helm Shop · Topology"
+	var existing string
+	err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE project_id=$1 AND name=$2`, projectID, name).Scan(&existing)
+	if err == nil {
+		return false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	var clusterID, sourceID, ownerID string
+	if err := tx.QueryRowContext(ctx, `SELECT cluster_id,source_id FROM applications WHERE project_id=$1 ORDER BY created_at LIMIT 1`, projectID).Scan(&clusterID, &sourceID); err != nil {
+		return false, err
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT user_id FROM project_memberships WHERE project_id=$1 AND role='owner' LIMIT 1`, projectID).Scan(&ownerID); err != nil {
+		return false, err
+	}
+	appID := store.NewID()
+	fixture := helmTopologyFixture(clusterID)
+	for i := range fixture.desired {
+		fixture.desired[i] = addApplicationOwnership(fixture.desired[i], appID)
+	}
+	for i := range fixture.live {
+		fixture.live[i] = addApplicationOwnership(fixture.live[i], appID)
+	}
+	namespaces := jsonBytes([]store.NamespaceBinding{{Namespace: "storefront"}})
+	now := time.Now().UTC()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id,project_id,name,source_id,revision,manifest_path,renderer,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,last_synced_revision,health) VALUES($1,$2,$3,$4,'main','charts/demo-shop','helm',$5,$6,'manual',86400,$7,'5555555555555555555555555555555555555555','out_of_sync')`, appID, projectID, name, sourceID, clusterID, namespaces, now); err != nil {
+		return false, err
+	}
+	bindings := []core.Binding{{ClusterID: clusterID, Namespace: "storefront", CredentialRef: "demo-topology-credential"}}
+	old, oldDesired, current, currentDesired := plansForFixture(appID, fixture, bindings)
+	oldID := store.NewID()
+	if err := insertPlan(ctx, tx, oldID, old, oldDesired, ownerID, "applied", now.Add(-2*time.Hour), now.Add(-105*time.Minute)); err != nil {
+		return false, err
+	}
+	if err := insertOperation(ctx, tx, appID, &oldID, &ownerID, "succeeded", "Demo history: Helm release deployed successfully.", now.Add(-2*time.Hour), now.Add(-119*time.Minute)); err != nil {
+		return false, err
+	}
+	currentID := store.NewID()
+	if err := insertPlan(ctx, tx, currentID, current, currentDesired, ownerID, "current", now, now.Add(15*time.Minute)); err != nil {
+		return false, err
+	}
+	for _, resource := range fixture.live {
+		if err := insertManagedResource(ctx, tx, appID, resource); err != nil {
+			return false, err
+		}
+	}
+	for _, item := range helmObservedResources(clusterID) {
+		labels := jsonBytes(item.Labels)
+		owners := jsonBytes(item.OwnerUIDs)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO application_resource_observations(application_id,cluster_id,api_version,kind,namespace,name,uid,resource_version,labels,owner_uids,phase,readiness,source) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'sample')`, appID, clusterID, item.Identity.APIVersion, item.Identity.Kind, item.Identity.Namespace, item.Identity.Name, item.UID, item.ResourceVersion, labels, owners, item.Phase, item.Readiness); err != nil {
+			return false, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'demo.seeded','application',$2,$3)`, ownerID, appID, jsonBytes(map[string]any{"application": name, "sampleObservations": true})); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -253,6 +324,60 @@ func buildFixtures(clusterID, paymentsCredentialID string) []appFixture {
 			revision: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", lastSynced: "4444444444444444444444444444444444444444",
 			desired: []core.Resource{checkout}, live: []core.Resource{}, planStatus: "failed", operation: "failed", operationNote: "Demo history: a previous sync failed; inspect the failed operation state.",
 		},
+	}
+}
+
+func helmTopologyFixture(clusterID string) appFixture {
+	labels := map[string]any{"app": "shop-web"}
+	apiLabels := map[string]any{"app": "shop-api"}
+	webSpec := func(replicas int, featureFlags bool) map[string]any {
+		config := []any{map[string]any{"configMapRef": map[string]any{"name": "shop-settings"}}}
+		if featureFlags {
+			config = append(config, map[string]any{"configMapRef": map[string]any{"name": "shop-feature-flags"}})
+		}
+		return map[string]any{"replicas": replicas, "selector": map[string]any{"matchLabels": labels}, "template": map[string]any{"metadata": map[string]any{"labels": labels}, "spec": map[string]any{"serviceAccountName": "shop-runtime", "containers": []any{map[string]any{"name": "web", "image": "example.invalid/shop-web:v2", "envFrom": config}}}}}
+	}
+	apiSpec := map[string]any{"replicas": 2, "selector": map[string]any{"matchLabels": apiLabels}, "template": map[string]any{"metadata": map[string]any{"labels": apiLabels}, "spec": map[string]any{"serviceAccountName": "shop-runtime", "containers": []any{map[string]any{"name": "api", "image": "example.invalid/shop-api:v1", "envFrom": []any{map[string]any{"secretRef": map[string]any{"name": "shop-runtime"}}}}}, "volumes": []any{map[string]any{"name": "data", "persistentVolumeClaim": map[string]any{"claimName": "shop-data"}}}}}}
+	webLive := helmResource(clusterID, "Deployment", "shop-web", "apps/v1", "shop-web-v1", "73", "web-v1", map[string]any{"spec": webSpec(2, false)})
+	webDesired := helmResource(clusterID, "Deployment", "shop-web", "apps/v1", "", "", "web-v2", map[string]any{"spec": webSpec(3, true)})
+	shared := []core.Resource{
+		helmResource(clusterID, "ConfigMap", "shop-settings", "v1", "shop-settings-v1", "11", "config-settings", map[string]any{"data": map[string]any{"THEME": "forest", "PUBLIC_API": "/api"}}),
+		helmResource(clusterID, "Deployment", "shop-api", "apps/v1", "shop-api-v1", "48", "api-v1", map[string]any{"spec": apiSpec}),
+		helmResource(clusterID, "Service", "shop-web", "v1", "shop-web-svc", "21", "web-service", map[string]any{"spec": map[string]any{"selector": labels, "ports": []any{map[string]any{"port": 80, "targetPort": 8080}}}}),
+		helmResource(clusterID, "Service", "shop-api", "v1", "shop-api-svc", "18", "api-service", map[string]any{"spec": map[string]any{"selector": apiLabels, "ports": []any{map[string]any{"port": 8080, "targetPort": 8080}}}}),
+		helmResource(clusterID, "Ingress", "shop-public", "networking.k8s.io/v1", "shop-ingress", "12", "ingress", map[string]any{"spec": map[string]any{"rules": []any{map[string]any{"host": "shop.example.invalid", "http": map[string]any{"paths": []any{map[string]any{"path": "/", "pathType": "Prefix", "backend": map[string]any{"service": map[string]any{"name": "shop-web", "port": map[string]any{"number": 80}}}}, map[string]any{"path": "/api", "pathType": "Prefix", "backend": map[string]any{"service": map[string]any{"name": "shop-api", "port": map[string]any{"number": 8080}}}}}}}}}}),
+		helmResource(clusterID, "ServiceAccount", "shop-runtime", "v1", "shop-sa", "5", "sa", nil),
+		helmResource(clusterID, "Secret", "shop-runtime", "v1", "shop-secret", "8", "secret", map[string]any{"type": "Opaque", "stringData": map[string]any{"DEMO_ONLY": "redacted"}}),
+		helmResource(clusterID, "PersistentVolumeClaim", "shop-data", "v1", "shop-pvc", "17", "pvc", map[string]any{"spec": map[string]any{"accessModes": []any{"ReadWriteOnce"}, "resources": map[string]any{"requests": map[string]any{"storage": "1Gi"}}}}),
+		helmResource(clusterID, "HorizontalPodAutoscaler", "shop-api", "autoscaling/v2", "shop-hpa", "15", "hpa", map[string]any{"spec": map[string]any{"scaleTargetRef": map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "name": "shop-api"}, "minReplicas": 2, "maxReplicas": 5}}),
+	}
+	newConfig := helmResource(clusterID, "ConfigMap", "shop-feature-flags", "v1", "", "", "config-new", map[string]any{"data": map[string]any{"CHECKOUT_V2": "enabled"}})
+	legacy := helmResource(clusterID, "Job", "shop-migrate-v1", "batch/v1", "shop-old-job", "3", "legacy-job", map[string]any{"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"restartPolicy": "Never", "containers": []any{map[string]any{"name": "migrate", "image": "example.invalid/migrate:v1"}}}}}})
+	return appFixture{name: "Demo Helm Shop · Topology", namespace: "storefront", syncPolicy: "manual", health: "out_of_sync", revision: "6666666666666666666666666666666666666666", lastSynced: "5555555555555555555555555555555555555555", desired: append([]core.Resource{webDesired, newConfig}, shared...), live: append([]core.Resource{webLive, legacy}, shared...), planStatus: "current", operation: "succeeded"}
+}
+
+func helmResource(clusterID, kind, name, apiVersion, uid, resourceVersion, fingerprintLabel string, fields map[string]any) core.Resource {
+	manifest := map[string]any{"apiVersion": apiVersion, "kind": kind, "metadata": map[string]any{"name": name, "namespace": "storefront", "labels": map[string]any{"app.kubernetes.io/instance": "demo-shop"}}}
+	for key, value := range fields {
+		manifest[key] = value
+	}
+	encoded := jsonBytes(manifest)
+	return core.Resource{Identity: core.Identity{ClusterID: clusterID, APIVersion: apiVersion, Kind: kind, Namespace: "storefront", Name: name}, Fingerprint: digest(fingerprintLabel + string(encoded)), UID: uid, ResourceVersion: resourceVersion, Manifest: encoded}
+}
+
+func helmObservedResources(clusterID string) []store.ObservedResource {
+	makeItem := func(kind, name, apiVersion, uid, owner, app, phase, readiness string) store.ObservedResource {
+		return store.ObservedResource{Identity: core.Identity{ClusterID: clusterID, APIVersion: apiVersion, Kind: kind, Namespace: "storefront", Name: name}, UID: uid, ResourceVersion: "12", Labels: map[string]string{"app": app}, OwnerUIDs: []string{owner}, Phase: phase, Readiness: readiness, Source: "sample"}
+	}
+	return []store.ObservedResource{
+		makeItem("ReplicaSet", "shop-web-8f6c", "apps/v1", "web-rs-new", "shop-web-v1", "shop-web", "", ""),
+		makeItem("ReplicaSet", "shop-web-6b2d", "apps/v1", "web-rs-old", "shop-web-v1", "shop-web", "", ""),
+		makeItem("ReplicaSet", "shop-api-9c41", "apps/v1", "api-rs", "shop-api-v1", "shop-api", "", ""),
+		makeItem("Pod", "shop-web-8f6c-a12", "v1", "web-pod-1", "web-rs-new", "shop-web", "Running", "Ready"),
+		makeItem("Pod", "shop-web-8f6c-b46", "v1", "web-pod-2", "web-rs-new", "shop-web", "Running", "Ready"),
+		makeItem("Pod", "shop-web-6b2d-c89", "v1", "web-pod-old", "web-rs-old", "shop-web", "Terminating", "Not ready"),
+		makeItem("Pod", "shop-api-9c41-d21", "v1", "api-pod-1", "api-rs", "shop-api", "Running", "Ready"),
+		makeItem("Pod", "shop-api-9c41-e52", "v1", "api-pod-2", "api-rs", "shop-api", "Pending", "Not ready"),
 	}
 }
 

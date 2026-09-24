@@ -3,11 +3,17 @@
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import { useEffect, useState } from "react"
+import { Tabs } from "@base-ui/react/tabs"
 import { Button } from "@/components/ui/button"
 import { DataGridList } from "@/components/data-grid-table"
+import { ResourceMap } from "@/components/resource-map"
 import { EmptyState, PageHeading, Panel, StatusBadge } from "@/components/ui-kit"
 import { APIError, api, apiPost, errorMessage } from "@/lib/api"
-import type { Application, Change, ListResponse, ManagedResource, Operation, PlanRecord, Project } from "@/lib/types"
+import type { Application, Change, Identity, ListResponse, ManagedResource, Operation, PlanRecord, Project, ResourceTopology } from "@/lib/types"
+
+function diffId(identity: Identity) {
+  return `diff-${[identity.clusterId ?? "", identity.apiVersion, identity.kind, identity.namespace, identity.name].map(encodeURIComponent).join("-")}`
+}
 
 export default function ApplicationDetailPage() {
   const { applicationID } = useParams<{ applicationID: string }>()
@@ -16,26 +22,49 @@ export default function ApplicationDetailPage() {
   const [plans, setPlans] = useState<PlanRecord[]>([])
   const [activePlan, setActivePlan] = useState<PlanRecord | null>(null)
   const [resources, setResources] = useState<ManagedResource[]>([])
+  const [topology, setTopology] = useState<ResourceTopology | null>(null)
+  const [topologyRefreshing, setTopologyRefreshing] = useState(false)
   const [operations, setOperations] = useState<Operation[]>([])
   const [approvalId, setApprovalId] = useState("")
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState("")
   const [error, setError] = useState("")
+  const [activeTab, setActiveTab] = useState("overview")
+
+  useEffect(() => {
+    const readTab = () => {
+      const value = new URLSearchParams(window.location.search).get("tab")
+      setActiveTab(["overview", "topology", "changes", "components", "activity"].includes(value ?? "") ? value! : "overview")
+    }
+    readTab()
+    window.addEventListener("popstate", readTab)
+    return () => window.removeEventListener("popstate", readTab)
+  }, [])
+
+  function selectTab(value: string) {
+    setActiveTab(value)
+    const url = new URL(window.location.href)
+    if (value === "overview") url.searchParams.delete("tab")
+    else url.searchParams.set("tab", value)
+    window.history.pushState(null, "", url)
+  }
 
   async function loadData() {
     const app = await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`)
-    const [projectList, planList, inventory, operationList] = await Promise.all([
+    const [projectList, planList, inventory, operationList, topologyResult] = await Promise.all([
       api<ListResponse<Project>>("/api/v1/projects"),
       api<ListResponse<PlanRecord>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/plans`),
       api<ListResponse<ManagedResource>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/resources`),
       api<ListResponse<Operation>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/operations`),
+      api<ResourceTopology>(`/api/v1/applications/${encodeURIComponent(applicationID)}/topology`).catch(() => null),
     ])
     setApplication(app)
     setProject(projectList.items.find((item) => item.id === app.projectId) ?? null)
     setPlans(planList.items)
     setActivePlan((current) => current && planList.items.some((item) => item.id === current.id) ? current : planList.items[0] ?? null)
     setResources(inventory.items)
+    setTopology(topologyResult)
     setOperations(operationList.items)
   }
 
@@ -47,6 +76,21 @@ export default function ApplicationDetailPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applicationID])
 
+  const hasRunningOperation = operations.some((operation) => operation.status === "running")
+  useEffect(() => {
+    if (!busy && !hasRunningOperation) return
+    const timer = window.setInterval(() => {
+      void Promise.all([
+        api<ListResponse<Operation>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/operations`),
+        api<ListResponse<ManagedResource>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/resources`),
+      ]).then(([nextOperations, nextResources]) => {
+        setOperations(nextOperations.items)
+        setResources(nextResources.items)
+      }).catch(() => {})
+    }, 1500)
+    return () => window.clearInterval(timer)
+  }, [applicationID, busy, hasRunningOperation])
+
   async function createPlan() {
     setBusy(true); setError(""); setNotice(""); setApprovalId("")
     try {
@@ -54,17 +98,19 @@ export default function ApplicationDetailPage() {
       setActivePlan(plan)
       setPlans((current) => [plan, ...current.filter((item) => item.id !== plan.id)])
       setNotice(plan.plan.changes.length ? `Plan ready: ${plan.plan.changes.length} change${plan.plan.changes.length === 1 ? "" : "s"} to review.` : "The application already matches its Git revision.")
+      selectTab("changes")
       await refreshSummary()
     } catch (cause) { setError(errorMessage(cause)) } finally { setBusy(false) }
   }
 
   async function refreshSummary() {
     try {
-      const [inventory, operationList] = await Promise.all([
+      const [inventory, operationList, topologyResult] = await Promise.all([
         api<ListResponse<ManagedResource>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/resources`),
         api<ListResponse<Operation>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/operations`),
+        api<ResourceTopology>(`/api/v1/applications/${encodeURIComponent(applicationID)}/topology`).catch(() => null),
       ])
-      setResources(inventory.items); setOperations(operationList.items)
+      setResources(inventory.items); setOperations(operationList.items); setTopology(topologyResult)
     } catch { /* the primary plan result remains useful when a secondary panel is unavailable */ }
   }
 
@@ -103,22 +149,71 @@ export default function ApplicationDetailPage() {
   const changeCounts = activePlan?.plan.changes.reduce((acc, item) => ({ ...acc, [item.kind]: acc[item.kind] + 1 }), { create: 0, update: 0, delete: 0 })
   const canDeploy = project?.role === "owner" || project?.role === "deployer"
   const canApprove = project?.role === "owner"
+  const latestOperation = operations[0]
+  const latestPlan = plans[0]
+  const latestCounts = latestPlan?.plan.changes.reduce((counts, change) => ({ ...counts, [change.kind]: counts[change.kind] + 1 }), { create: 0, update: 0, delete: 0 })
+  const resourceKinds = Object.entries((topology?.nodes ?? []).reduce<Record<string, number>>((counts, node) => {
+    counts[node.identity.kind] = (counts[node.identity.kind] ?? 0) + 1
+    return counts
+  }, {})).sort((a, b) => b[1] - a[1])
 
   return <>
-    <div className="mb-4"><Link href={application ? `/projects/${application.projectId}` : "/projects"} className="text-[11px] text-muted-foreground hover:text-foreground">← {project?.name ?? "Projects"}</Link></div>
-    <PageHeading eyebrow={project?.name ?? "Application"} title={application?.name ?? (loading ? "Loading application…" : "Application not found")} description={application ? `${application.renderer} · ${application.manifestPath} · ${application.revision}` : ""} actions={<><Button variant="outline" onClick={() => void createPlan()} disabled={!application || !canDeploy || busy}><span aria-hidden="true">↻</span> {busy ? "Working…" : "Refresh plan"}</Button><StatusBadge status={application?.health ?? "unknown"} /></>} />
+    <PageHeading title={application?.name ?? (loading ? "Loading application…" : "Application not found")} description={application ? `${application.renderer} · ${application.manifestPath} · ${application.revision}` : ""} actions={<><StatusBadge status={application?.health ?? "unknown"} /><Button variant="outline" onClick={() => void createPlan()} disabled={!application || !canDeploy || busy}><span aria-hidden="true">↻</span> {busy ? "Working…" : "Refresh plan"}</Button></>} />
     {error && <div role="alert" className="mb-4 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</div>}
     {notice && <div role="status" className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">{notice}</div>}
     {!loading && application && <>
-      <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <InfoCard label="Target" value={application.namespaces.map((binding) => binding.namespace).join(", ")} note={application.namespaces.length === 1 ? "Namespace-scoped credentials" : `${application.namespaces.length} bound namespaces`} />
-        <InfoCard label="Git source" value={application.revision} note={`Rendered from ${application.renderer}`} mono />
-        <InfoCard label="Last synced" value={application.lastSyncedRevision || "Not synced yet"} note={application.lastCheckedAt ? `Checked ${new Date(application.lastCheckedAt).toLocaleString()}` : "No sync operation recorded"} mono />
-        <InfoCard label="Policy" value={application.syncPolicy === "auto-safe" ? "Auto-safe" : "Manual"} note={application.syncPolicy === "auto-safe" ? `Checks every ${application.pollSeconds}s; stops before deletion` : "Every sync is user initiated"} />
+      <div className="mb-6 grid gap-3 rounded-xl border bg-card p-4 sm:grid-cols-3 sm:divide-x sm:p-5">
+        <SummaryFact label="Target" value={application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"} />
+        <SummaryFact label="Latest plan" value={latestPlan ? `${latestPlan.plan.changes.length} changes · ${latestPlan.status}` : "No plan yet"} />
+        <SummaryFact label="Last sync" value={application.lastSyncedRevision ? `${application.lastSyncedRevision.slice(0, 12)} · ${latestOperation?.status ?? "completed"}` : "Not synced yet"} />
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="space-y-5">
+      <Tabs.Root value={activeTab} onValueChange={(value) => selectTab(String(value))} className="min-w-0">
+        <Tabs.List aria-label="Application views" className="mb-6 flex gap-6 overflow-x-auto border-b" activateOnFocus>
+          {[
+            { id: "overview", label: "Overview" },
+            { id: "topology", label: "Topology", count: topology?.nodes.length },
+            { id: "changes", label: "Plan & diff", count: latestPlan?.plan.changes.length },
+            { id: "components", label: "Managed components", count: resources.length },
+            { id: "activity", label: "Activity & source", count: operations.length },
+          ].map((tab) => <Tabs.Tab key={tab.id} value={tab.id} className="flex shrink-0 items-center gap-2 border-b-2 border-transparent px-1 pb-3 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[active]:border-primary data-[active]:text-foreground">
+            {tab.label}{tab.count !== undefined && <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">{tab.count}</span>}
+          </Tabs.Tab>)}
+        </Tabs.List>
+
+        <Tabs.Panel value="overview" className="space-y-5 outline-none">
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(280px,1fr)]">
+            <Panel title="Delivery state" description="The current Git-to-cluster picture, without opening the full diff.">
+              <div className="space-y-5 p-5">
+                <div className="grid grid-cols-3 gap-2"><ChangeCount label="Create" count={latestCounts?.create ?? 0} color="text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/40" /><ChangeCount label="Update" count={latestCounts?.update ?? 0} color="text-blue-700 bg-blue-50 dark:text-blue-300 dark:bg-blue-950/40" /><ChangeCount label="Delete" count={latestCounts?.delete ?? 0} color="text-rose-700 bg-rose-50 dark:text-rose-300 dark:bg-rose-950/40" /></div>
+                {latestPlan?.plan.requiresApproval && <p className="rounded-lg border border-amber-300/70 bg-amber-50/70 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">Owner approval required before this plan can be applied.</p>}
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4"><span className="text-xs text-muted-foreground">{latestPlan ? `Plan ${latestPlan.status} · expires ${new Date(latestPlan.expiresAt).toLocaleTimeString()}` : "Create a plan to compare Git with the cluster."}</span><Button size="sm" variant="outline" onClick={() => selectTab("changes")}>Review plan →</Button></div>
+              </div>
+            </Panel>
+            <Panel title="Resource footprint" description="Connected objects observed for this application.">
+              <div className="space-y-4 p-5"><p className="text-2xl font-semibold tabular-nums">{topology?.nodes.length ?? 0}<span className="ml-2 text-xs font-normal text-muted-foreground">resources · {topology?.edges.length ?? 0} relationships</span></p>
+                <div className="flex flex-wrap gap-1.5">{resourceKinds.length ? resourceKinds.slice(0, 8).map(([kind, count]) => <span key={kind} className="rounded-md border bg-muted/30 px-2 py-1 text-[11px]">{count} {kind}</span>) : <span className="text-xs text-muted-foreground">No resources observed yet.</span>}</div>
+                <div className="border-t pt-4"><Button size="sm" variant="outline" onClick={() => selectTab("topology")}>Explore topology →</Button></div>
+              </div>
+            </Panel>
+          </div>
+          <div className="grid gap-5 sm:grid-cols-2"><InfoCard label="Git revision" value={application.revision} note={`${application.renderer} · ${application.manifestPath}`} mono /><InfoCard label="Sync policy" value={application.syncPolicy === "auto-safe" ? "Auto-safe" : "Manual"} note={application.syncPolicy === "auto-safe" ? `Checks every ${application.pollSeconds}s; stops before deletion` : "Every sync is user initiated"} /></div>
+          {latestOperation && <Panel title="Latest operation" action={<Button size="sm" variant="ghost" onClick={() => selectTab("activity")}>View activity →</Button>}><div className="flex flex-wrap items-center gap-3 p-5"><StatusBadge status={latestOperation.status} /><span className="min-w-0 flex-1 truncate text-xs">{latestOperation.message || "Sync operation"}</span><span className="text-[11px] text-muted-foreground">{new Date(latestOperation.startedAt).toLocaleString()}</span></div></Panel>}
+        </Tabs.Panel>
+
+        <Tabs.Panel value="topology" className="outline-none">
+      <ResourceMap application={application} plan={plans[0] ?? null} inventory={resources} operations={operations} topology={topology} refreshing={topologyRefreshing} onRefresh={() => {
+        setTopologyRefreshing(true)
+        void api<ResourceTopology>(`/api/v1/applications/${encodeURIComponent(applicationID)}/topology?refresh=1`).then(setTopology).catch((cause) => setError(errorMessage(cause))).finally(() => setTopologyRefreshing(false))
+      }} onViewDiff={(identity) => {
+        const matching = plans[0]?.plan.changes.some((change) => diffId(change.identity) === diffId(identity))
+        if (matching && plans[0]?.id !== activePlan?.id) setActivePlan(plans[0])
+        selectTab("changes")
+        window.setTimeout(() => document.getElementById(diffId(identity))?.scrollIntoView({ behavior: "smooth", block: "center" }), 100)
+      }} />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="changes" className="max-w-6xl outline-none">
           <Panel title="Plan & diff" description="A reviewed plan is a snapshot of the desired Git commit and live cluster state." action={plans.length > 0 && <select aria-label="Select plan" className="h-8 max-w-[210px] rounded-md border bg-background px-2 text-xs" value={activePlan?.id ?? ""} onChange={(event) => { setApprovalId(""); setActivePlan(plans.find((plan) => plan.id === event.target.value) ?? null) }}>{plans.map((plan) => <option value={plan.id} key={plan.id}>{new Date(plan.createdAt).toLocaleString()} · {plan.status}</option>)}</select>}>
             {!activePlan ? <EmptyState title="No review plan yet" description="Build a plan to render Git manifests and compare them with live, app-owned resources." /> : <div className="p-4 sm:p-5">
               <div className="mb-4 flex flex-wrap items-center gap-2"><StatusBadge status={activePlan.status} /><span className="font-mono text-[10px] text-muted-foreground">{activePlan.plan.revision.slice(0, 12)}</span><span className="text-[10px] text-muted-foreground">· expires {new Date(activePlan.expiresAt).toLocaleTimeString()}</span><span className="ml-auto font-mono text-[9px] text-muted-foreground">{activePlan.plan.digest.slice(0, 16)}</span></div>
@@ -132,30 +227,36 @@ export default function ApplicationDetailPage() {
               {!canApprove && activePlan.plan.requiresApproval && <p className="mt-2 text-right text-[10px] text-muted-foreground">Only a project owner can approve this plan.</p>}
             </div>}
           </Panel>
+        </Tabs.Panel>
 
-          <Panel title="Managed components" description="JustCD tracks only resources that it created and owns on the cluster.">
-            {resources.length ? <div className="p-4"><DataGridList rows={resources} columns={[
+        <Tabs.Panel value="components" className="outline-none">
+          <Panel surface="flat" title="Managed components" description="JustCD tracks only resources that it created and owns on the cluster.">
+            {resources.length ? <div className="min-w-0"><DataGridList rows={resources} columns={[
               { id: "resource", title: "Resource", cell: (item) => <span className="font-medium">{item.identity.name}<span className="mt-0.5 block text-[10px] font-normal text-muted-foreground">{item.identity.kind} · {item.identity.apiVersion}</span></span> },
               { id: "namespace", title: "Namespace", cell: (item) => <span className="text-xs text-muted-foreground">{item.identity.namespace || "cluster scope"}</span> },
               { id: "cluster", title: "Cluster", cell: (item) => <span className="font-mono text-[10px] text-muted-foreground">{item.identity.clusterId?.slice(0, 8)}</span> },
               { id: "version", title: "Live version", cell: (item) => <span className="font-mono text-[10px] text-muted-foreground">{item.resourceVersion}</span> },
             ]} empty="A component inventory appears after the first successful sync." /></div> : <EmptyState title="No managed components yet" description="After the first successful sync, this inventory shows every resource owned by this application." />}
           </Panel>
-        </div>
+        </Tabs.Panel>
 
-        <div className="space-y-5">
+        <Tabs.Panel value="activity" className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px] outline-none">
           <Panel title="Recent operations" description="Sync history and result state">
             {operations.length ? <div className="divide-y">{operations.slice(0, 8).map((operation) => <div key={operation.id} className="px-5 py-3.5"><div className="flex items-center justify-between gap-3"><span className="text-xs font-medium">{operation.status === "succeeded" ? "Sync completed" : operation.status === "failed" ? "Sync failed" : "Sync running"}</span><StatusBadge status={operation.status} /></div><p className="mt-1 line-clamp-2 text-[10px] leading-4 text-muted-foreground">{operation.message || "Sync operation"}</p><p className="mt-1.5 text-[9px] text-muted-foreground">{new Date(operation.startedAt).toLocaleString()}</p></div>)}</div> : <EmptyState title="No syncs yet" description="Operations will be recorded here with the actor and resulting status." />}
           </Panel>
           <Panel title="Application source" description="Configuration stored in JustCD"><div className="space-y-3 p-5 text-xs"><KeyValue label="Manifest path" value={application.manifestPath} mono /><KeyValue label="Renderer" value={application.renderer} /><KeyValue label="Cluster" value={application.clusterId.slice(0, 12)} mono /><KeyValue label="Poll interval" value={`${application.pollSeconds} seconds`} /><Link href={`/projects/${application.projectId}`} className="mt-1 inline-block text-xs font-medium text-primary hover:underline">Open project →</Link></div></Panel>
-        </div>
-      </div>
+        </Tabs.Panel>
+      </Tabs.Root>
     </>}
   </>
 }
 
 function InfoCard({ label, value, note, mono = false }: { label: string; value: string; note: string; mono?: boolean }) {
   return <div className="min-w-0 rounded-xl border bg-card p-4"><p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p><p className={`mt-2 truncate text-sm font-semibold ${mono ? "font-mono text-xs" : ""}`}>{value}</p><p className="mt-1 truncate text-[10px] text-muted-foreground">{note}</p></div>
+}
+
+function SummaryFact({ label, value }: { label: string; value: string }) {
+  return <div className="min-w-0 sm:px-4 first:sm:pl-0 last:sm:pr-0"><p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p><p className="mt-1 truncate text-sm font-medium" title={value}>{value}</p></div>
 }
 
 function ChangeCount({ label, count, color }: { label: string; count: number; color: string }) {
@@ -165,7 +266,7 @@ function ChangeCount({ label, count, color }: { label: string; count: number; co
 function DiffCard({ change }: { change: Change }) {
   const name = `${change.identity.kind} ${change.identity.namespace ? `${change.identity.namespace}/` : ""}${change.identity.name}`
   const color = change.kind === "delete" ? "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/25 dark:text-rose-300" : change.kind === "create" ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/25 dark:text-emerald-300" : "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/25 dark:text-blue-300"
-  return <article className="overflow-hidden rounded-lg border">
+  return <article id={diffId(change.identity)} className="scroll-mt-6 overflow-hidden rounded-lg border">
     <div className="flex items-center gap-2 border-b bg-muted/20 px-3 py-2"><span className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase ${color}`}>{change.kind}</span><span className="truncate text-xs font-medium">{name}</span>{change.identity.clusterScoped && <span className="ml-auto rounded-full border px-2 py-0.5 text-[9px] text-amber-700">cluster-wide</span>}</div>
     <div className="grid divide-y md:grid-cols-2 md:divide-x md:divide-y-0">
       <ManifestBlock title={change.kind === "create" ? "Current" : "Live before"} value={change.before} empty={change.kind === "create" ? "Not present" : "Unavailable"} />

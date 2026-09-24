@@ -13,21 +13,26 @@ import (
 )
 
 type planView struct {
-	ID        string    `json:"id"`
-	Plan      core.Plan `json:"plan"`
-	CreatedBy string    `json:"createdBy"`
-	CreatedAt time.Time `json:"createdAt"`
-	ExpiresAt time.Time `json:"expiresAt"`
-	Status    string    `json:"status"`
+	ID        string          `json:"id"`
+	Plan      core.Plan       `json:"plan"`
+	Resources []core.Identity `json:"resources"`
+	CreatedBy string          `json:"createdBy"`
+	CreatedAt time.Time       `json:"createdAt"`
+	ExpiresAt time.Time       `json:"expiresAt"`
+	Status    string          `json:"status"`
 }
 
 func toPlanView(record store.PlanRecord) planView {
 	plan := record.Plan
+	resources := make([]core.Identity, 0, len(record.Desired))
+	for _, resource := range record.Desired {
+		resources = append(resources, resource.Identity)
+	}
 	for index := range plan.Changes {
 		plan.Changes[index].Before = redactManifest(plan.Changes[index].Before)
 		plan.Changes[index].After = redactManifest(plan.Changes[index].After)
 	}
-	return planView{ID: record.ID, Plan: plan, CreatedBy: record.CreatedBy, CreatedAt: record.CreatedAt, ExpiresAt: record.ExpiresAt, Status: record.Status}
+	return planView{ID: record.ID, Plan: plan, Resources: resources, CreatedBy: record.CreatedBy, CreatedAt: record.CreatedAt, ExpiresAt: record.ExpiresAt, Status: record.Status}
 }
 
 func redactManifest(raw json.RawMessage) json.RawMessage {

@@ -2,24 +2,21 @@ import Link from "next/link"
 import type { ReactNode } from "react"
 
 export function PageHeading({
-  eyebrow,
   title,
   description,
   actions,
 }: {
-  eyebrow?: string
   title: string
   description?: string
   actions?: ReactNode
 }) {
   return (
-    <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-      <div>
-        {eyebrow && <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">{eyebrow}</p>}
+    <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+      <div className="min-w-0">
         <h1 className="text-2xl font-semibold tracking-tight sm:text-[28px]">{title}</h1>
         {description && <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p>}
       </div>
-      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+      {actions && <div className="flex flex-wrap items-center gap-2 sm:shrink-0">{actions}</div>}
     </div>
   )
 }
@@ -30,22 +27,24 @@ export function Panel({
   action,
   children,
   className = "",
+  surface = "card",
 }: {
   title?: string
   description?: string
   action?: ReactNode
   children: ReactNode
   className?: string
+  surface?: "card" | "flat"
 }) {
   return (
-    <section className={`rounded-xl border bg-card ${className}`}>
+    <section className={`${surface === "flat" ? "min-w-0" : "rounded-xl border bg-card"} ${className}`}>
       {(title || action) && (
-        <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
-          <div>
+        <div className={`flex items-start justify-between gap-4 ${surface === "flat" ? "pb-4" : "border-b px-5 py-4"}`}>
+          <div className="min-w-0">
             {title && <h2 className="text-sm font-semibold">{title}</h2>}
             {description && <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>}
           </div>
-          {action}
+          <div className="shrink-0">{action}</div>
         </div>
       )}
       {children}
@@ -73,7 +72,7 @@ export function StatCard({
           <p className="text-xs font-medium text-muted-foreground">{label}</p>
           <p className="mt-3 text-2xl font-semibold tracking-tight">{value}</p>
         </div>
-        <span className={`grid size-9 place-items-center rounded-lg text-base ${accent}`}>{icon}</span>
+        <span aria-hidden="true" className={`grid size-9 shrink-0 place-items-center rounded-lg text-base leading-none ${accent}`}>{icon}</span>
       </div>
       <p className="mt-3 text-[11px] text-muted-foreground">{note}</p>
     </div>
@@ -89,7 +88,7 @@ export function StatusBadge({ status }: { status: string }) {
       : normalized.includes("sync") || normalized.includes("pending") || normalized.includes("running") || normalized.includes("out of")
         ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-300"
         : "border-border bg-muted/50 text-muted-foreground"
-  return <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize ${styles}`}><span className="size-1.5 rounded-full bg-current opacity-70" />{normalized}</span>
+  return <span className={`inline-flex w-fit shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize ${styles}`}><span className="size-1.5 shrink-0 rounded-full bg-current opacity-70" />{normalized}</span>
 }
 
 export function EmptyState({

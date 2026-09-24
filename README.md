@@ -6,7 +6,7 @@ install a JustCD operator, controller, or JustCD-specific CRDs.
 
 The current v1 includes local password authentication and OIDC login, projects
 and roles, encrypted Git/Kubernetes credentials, cluster and namespace
-connections, YAML/Kustomize/Helm rendering, drift plans, resource inventory,
+connections, YAML/Kustomize/Helm rendering, drift plans, resource topology and inventory,
 audited sync operations, and explicit owner approval for deletion and
 cluster-scoped changes. `auto-safe` checks drift in the background and applies
 only namespaced creates/updates. It never prunes automatically.
@@ -43,8 +43,9 @@ go run .
 
 `JUSTCD_ENCRYPTION_KEY` must be 32 random bytes, or their hex/base64 encoding.
 Keep it stable and back it up: losing it makes stored Git, Kubernetes, and OIDC
-credentials unreadable. The bootstrap admin is created only when the users
-table is empty. Schema migrations are applied at backend startup. Keep `.env`
+credentials unreadable. On a fresh database, visit `/signup` to create the
+first administrator; no bootstrap password is needed in the environment.
+Schema migrations are applied at backend startup. Keep `.env`
 and `.envrc` out of version control; the backend's `.gitignore` excludes both.
 
 To add sample project/application states to that same database, load your
@@ -59,9 +60,17 @@ go run ./cmd/demo-seed
 ```
 
 The seed is additive and idempotent. It creates a clearly named demo workspace,
-fake encrypted credentials, example drift/diff and approval plans, and a failed
-operation. Its Git and Kubernetes endpoints use the reserved `.invalid` domain;
+fake encrypted credentials, example drift/diff and approval plans, a failed
+operation, and a Helm shop with connected Ingress, Services, Deployments,
+ReplicaSets, Pods, ConfigMaps, Secret, PVC, and autoscaler. ReplicaSets and Pods
+in that demo are marked as sample observations. Its Git and Kubernetes endpoints use the reserved `.invalid` domain;
 they are intentionally unreachable, so the demo cannot sync to a real cluster.
+
+For real applications, the topology endpoint derives links from rendered Helm,
+Kustomize, or YAML manifests and reads controller-created ReplicaSets, Jobs,
+and Pods from the cluster using the configured namespace credential. Grant
+read/list access to those resource kinds to see descendants. Observation is
+read-only; missing permissions are shown as a partial-topology warning.
 
 Start the web application in a second terminal:
 
@@ -77,7 +86,7 @@ credentials directly.
 
 ## First setup
 
-1. Sign in with the bootstrap administrator, create a project, and add a local
+1. Create the first administrator at `/signup`, then create a project and add a local
    user or configure an OIDC provider.
 2. Add a global Kubernetes token or static kubeconfig credential, then register
    the Kubernetes API endpoint and CA. Leave cluster-scope access disabled

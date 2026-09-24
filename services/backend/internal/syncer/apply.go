@@ -65,6 +65,7 @@ func (s *Service) Apply(ctx context.Context, planID, actorID, approvalID string)
 		return store.Operation{}, err
 	}
 	operation := store.Operation{ID: operationID, ApplicationID: app.ID, PlanID: &record.ID, ActorID: &actorID, Status: "running", StartedAt: time.Now().UTC()}
+	operation.Progress = store.OperationProgress{Total: len(record.Plan.Changes), Completed: []core.Identity{}}
 	finishFailure := func(cause error) (store.Operation, error) {
 		message := safeApplyFailure(cause)
 		_ = s.Store.FinishOperation(context.Background(), operationID, "failed", message)
@@ -76,6 +77,9 @@ func (s *Service) Apply(ctx context.Context, planID, actorID, approvalID string)
 		now := time.Now().UTC()
 		operation.FinishedAt = &now
 		return operation, cause
+	}
+	if err := s.Store.SetOperationProgress(ctx, operationID, operation.Progress); err != nil {
+		return finishFailure(err)
 	}
 	if record.Plan.RequiresApproval {
 		used, err := s.Store.ConsumeApproval(ctx, approvalID, record.ID, record.Plan.Digest)
@@ -90,6 +94,15 @@ func (s *Service) Apply(ctx context.Context, planID, actorID, approvalID string)
 	if err != nil {
 		return finishFailure(err)
 	}
+	beginResource := func(identity core.Identity) error {
+		operation.Progress.Current = &identity
+		return s.Store.SetOperationProgress(ctx, operationID, operation.Progress)
+	}
+	completeResource := func(identity core.Identity) error {
+		operation.Progress.Completed = append(operation.Progress.Completed, identity)
+		operation.Progress.Current = nil
+		return s.Store.SetOperationProgress(ctx, operationID, operation.Progress)
+	}
 	resources := append([]core.Resource(nil), record.Desired...)
 	sort.Slice(resources, func(i, j int) bool { return resources[i].Identity.Key() < resources[j].Identity.Key() })
 	for _, resource := range resources {
@@ -100,7 +113,13 @@ func (s *Service) Apply(ctx context.Context, planID, actorID, approvalID string)
 		if err := s.Store.RenewOperationLease(ctx, operationID, 10*time.Minute); err != nil {
 			return finishFailure(err)
 		}
+		if err := beginResource(resource.Identity); err != nil {
+			return finishFailure(err)
+		}
 		if err := s.applyResource(ctx, input, app.ID, resource, change); err != nil {
+			return finishFailure(err)
+		}
+		if err := completeResource(resource.Identity); err != nil {
 			return finishFailure(err)
 		}
 	}
@@ -111,7 +130,13 @@ func (s *Service) Apply(ctx context.Context, planID, actorID, approvalID string)
 		if err := s.Store.RenewOperationLease(ctx, operationID, 10*time.Minute); err != nil {
 			return finishFailure(err)
 		}
+		if err := beginResource(change.Identity); err != nil {
+			return finishFailure(err)
+		}
 		if err := s.deleteResource(ctx, input, app.ID, change); err != nil {
+			return finishFailure(err)
+		}
+		if err := completeResource(change.Identity); err != nil {
 			return finishFailure(err)
 		}
 	}

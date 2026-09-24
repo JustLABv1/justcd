@@ -17,6 +17,7 @@ export type GridColumn<T extends object> = {
   id: string
   title: string
   cell: (row: T) => React.ReactNode
+  size?: number
 }
 
 export function DataGridList<T extends object>({
@@ -37,6 +38,7 @@ export function DataGridList<T extends object>({
             id: column.id,
             header: column.title,
             cell: ({ row }) => column.cell(row.original),
+            size: column.size,
             meta: { headerTitle: column.title },
           }),
         ),
@@ -51,7 +53,7 @@ export function DataGridList<T extends object>({
   })
 
   return (
-    <div className="overflow-hidden rounded-xl border bg-card">
+    <div className="min-w-0 overflow-hidden rounded-xl border bg-card">
       {rows.length === 0 ? (
         <div className="px-5 py-10 text-center text-sm text-muted-foreground">{empty}</div>
       ) : (
@@ -63,7 +65,7 @@ export function DataGridList<T extends object>({
           <DataGridContainer className="max-h-[460px] overflow-auto">
             <DataGridTable />
           </DataGridContainer>
-          <div className="px-3">
+          <div className="border-t px-4 py-1">
             <DataGridPagination sizes={[10, 25, 50]} />
           </div>
         </DataGrid>

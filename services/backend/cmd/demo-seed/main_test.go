@@ -1,10 +1,53 @@
 package main
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/justlab/justcd/services/backend/internal/core"
+	"github.com/justlab/justcd/services/backend/internal/store"
+	"github.com/justlab/justcd/services/backend/internal/topology"
 )
+
+func TestHelmTopologyFixtureShowsRealRelationships(t *testing.T) {
+	fixture := helmTopologyFixture("demo-cluster")
+	if len(fixture.desired) < 9 || len(helmObservedResources("demo-cluster")) < 5 {
+		t.Fatal("Helm topology fixture should cover a realistic multi-resource release")
+	}
+	managed := make([]store.ManagedResource, 0, len(fixture.live))
+	for _, resource := range fixture.live {
+		managed = append(managed, store.ManagedResource{Identity: resource.Identity, UID: resource.UID, ResourceVersion: resource.ResourceVersion, Manifest: resource.Manifest})
+	}
+	graph := topology.Build(&store.PlanRecord{ID: "plan", Desired: fixture.desired}, managed, helmObservedResources("demo-cluster"))
+	links := map[string]bool{}
+	byID := map[string]string{}
+	for _, node := range graph.Nodes {
+		byID[node.ID] = node.Identity.Kind + "/" + node.Identity.Name
+	}
+	for _, edge := range graph.Edges {
+		links[byID[edge.From]+" -> "+byID[edge.To]] = true
+	}
+	for _, want := range []string{
+		"Ingress/shop-public -> Service/shop-web",
+		"Service/shop-web -> Deployment/shop-web",
+		"Deployment/shop-web -> ReplicaSet/shop-web-8f6c",
+		"ReplicaSet/shop-web-8f6c -> Pod/shop-web-8f6c-a12",
+		"Deployment/shop-web -> ConfigMap/shop-feature-flags",
+		"Deployment/shop-api -> Secret/shop-runtime",
+	} {
+		if !links[want] {
+			t.Errorf("missing topology link %q", want)
+		}
+	}
+	encoded, err := json.Marshal(graph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "redacted") || strings.Contains(string(encoded), "stringData") {
+		t.Fatal("topology response leaked Secret manifest")
+	}
+}
 
 func TestDemoFixturesCoverReviewStates(t *testing.T) {
 	fixtures := buildFixtures("demo-cluster", "demo-payments-credential")

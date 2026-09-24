@@ -22,7 +22,7 @@ export default function NewProjectPage() {
     } catch (cause) { setError(errorMessage(cause)) } finally { setBusy(false) }
   }
   return <>
-    <PageHeading eyebrow="Project setup" title="Create a project" description="Create a delivery scope first. You can then add repository credentials, Kubernetes access, and applications." />
+    <PageHeading title="Create a project" description="Create a delivery scope first. You can then add repository credentials, Kubernetes access, and applications." />
     <div className="max-w-2xl"><Panel title="Project details" description="This name is visible to project members."><form className="space-y-5 p-5" onSubmit={submit}>
       <FormField label="Project name" htmlFor="project-name"><Input id="project-name" placeholder="payments-platform" value={name} onChange={(event) => setName(event.target.value)} required maxLength={100} /></FormField>
       <FormField label="Description" htmlFor="project-description" hint="Optional; briefly explain what this project deploys."><textarea id="project-description" className="min-h-24 w-full rounded-lg border bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" placeholder="Services and infrastructure for…" value={description} onChange={(event) => setDescription(event.target.value)} maxLength={500} /></FormField>

@@ -13,7 +13,6 @@ import (
 
 	"github.com/justlab/justcd/services/backend/internal/api"
 	"github.com/justlab/justcd/services/backend/internal/config"
-	"github.com/justlab/justcd/services/backend/internal/security"
 	"github.com/justlab/justcd/services/backend/internal/store"
 )
 
@@ -37,23 +36,6 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	defer db.DB.Close()
-	count, err := db.UserCount(startupCtx)
-	if err != nil {
-		return fmt.Errorf("check bootstrap state: %w", err)
-	}
-	if count == 0 {
-		if cfg.BootstrapAdminEmail == "" || cfg.BootstrapAdminPassword == "" {
-			return errors.New("first startup requires JUSTCD_BOOTSTRAP_ADMIN_EMAIL and JUSTCD_BOOTSTRAP_ADMIN_PASSWORD (at least 12 characters)")
-		}
-		hash, err := security.HashPassword(cfg.BootstrapAdminPassword)
-		if err != nil {
-			return fmt.Errorf("validate bootstrap administrator password: %w", err)
-		}
-		if err := db.CreateBootstrapAdmin(startupCtx, store.NewID(), cfg.BootstrapAdminEmail, hash); err != nil {
-			return err
-		}
-		logger.Info("created initial JustCD administrator", "email", cfg.BootstrapAdminEmail)
-	}
 	if err := db.EnsureSystemActor(startupCtx); err != nil {
 		return fmt.Errorf("initialize automatic reconciliation actor: %w", err)
 	}

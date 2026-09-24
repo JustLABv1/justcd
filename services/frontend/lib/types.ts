@@ -94,6 +94,7 @@ export type Plan = {
 export type PlanRecord = {
   id: string
   plan: Plan
+  resources?: Identity[]
   createdBy: string
   createdAt: string
   expiresAt: string
@@ -102,6 +103,20 @@ export type PlanRecord = {
 
 export type ManagedResource = { identity: Identity; uid: string; resourceVersion: string }
 
+export type TopologyNode = {
+  id: string
+  identity: Identity
+  source: "desired" | "managed" | "kubernetes" | "sample"
+  uid?: string
+  resourceVersion?: string
+  phase?: string
+  readiness?: string
+  observedAt?: string
+}
+
+export type TopologyEdge = { from: string; to: string; relation: string }
+export type ResourceTopology = { planId?: string; nodes: TopologyNode[]; edges: TopologyEdge[]; warnings: string[] }
+
 export type Operation = {
   id: string
   applicationId: string
@@ -109,6 +124,7 @@ export type Operation = {
   actorId?: string
   status: string
   message: string
+  progress?: { total: number; completed: Identity[]; current?: Identity }
   startedAt: string
   finishedAt?: string
 }

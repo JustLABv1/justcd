@@ -21,10 +21,10 @@ export default function AuditPage() {
   const [error, setError] = useState("")
   useEffect(() => { api<ListResponse<AuditEvent>>("/api/v1/audit").then((result) => setEvents(result.items)).catch((cause) => setError(errorMessage(cause))) }, [])
   return <>
-    <PageHeading eyebrow="Governance" title="Audit trail" description="Recent changes to users, access, connections, plans, and sync operations." />
+    <PageHeading title="Audit trail" description="Recent changes to users, access, connections, plans, and sync operations." />
     {error && <div role="alert" className="mb-5 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</div>}
-    <Panel title="Recent activity" description="The audit trail is available to instance administrators.">
-      {events.length ? <div className="p-4"><DataGridList rows={events} columns={[
+    <Panel surface="flat" title="Recent activity" description="The audit trail is available to instance administrators.">
+      {events.length ? <div className="min-w-0"><DataGridList rows={events} columns={[
         { id: "when", title: "When", cell: (event) => <span className="text-[10px] text-muted-foreground">{new Date(event.createdAt).toLocaleString()}</span> },
         { id: "action", title: "Action", cell: (event) => <span className="font-medium">{event.action.replaceAll(".", " · ")}</span> },
         { id: "resource", title: "Resource", cell: (event) => <span className="text-xs text-muted-foreground">{event.resourceType}<span className="block font-mono text-[9px]">{event.resourceId.slice(0, 12)}</span></span> },

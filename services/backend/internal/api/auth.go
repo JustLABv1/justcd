@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/subtle"
+	"errors"
 	"net"
 	"net/http"
 	"strings"
@@ -10,6 +11,57 @@ import (
 	"github.com/justlab/justcd/services/backend/internal/security"
 	"github.com/justlab/justcd/services/backend/internal/store"
 )
+
+func (s *Server) setupStatus(w http.ResponseWriter, r *http.Request) {
+	available, err := s.Store.SignupAvailable(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not check setup state")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"signupAvailable": available})
+}
+
+func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		ip = r.RemoteAddr
+	}
+	if !s.allowLogin(ip) {
+		writeError(w, http.StatusTooManyRequests, "too many attempts; try again later")
+		return
+	}
+	var input struct {
+		Email       string `json:"email"`
+		DisplayName string `json:"displayName"`
+		Password    string `json:"password"`
+	}
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	input.Email = strings.TrimSpace(strings.ToLower(input.Email))
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	if len(input.Email) > 320 || !strings.Contains(input.Email, "@") || len(input.DisplayName) == 0 || len(input.DisplayName) > 100 {
+		writeError(w, http.StatusBadRequest, "a valid email and display name are required")
+		return
+	}
+	hash, err := security.HashPassword(input.Password)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	user := store.User{ID: store.NewID(), Email: input.Email, DisplayName: input.DisplayName, IsAdmin: true}
+	if err := s.Store.CreateInitialAdmin(r.Context(), &user, hash); err != nil {
+		if errors.Is(err, store.ErrAlreadyInitialized) {
+			writeError(w, http.StatusConflict, "setup is complete; sign in instead")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not create administrator")
+		return
+	}
+	s.clearLogin(ip)
+	s.createSession(w, r, user)
+}
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)

@@ -15,9 +15,9 @@ export default function ProjectsPage() {
     api<ListResponse<Project>>("/api/v1/projects").then((result) => setItems(result.items)).finally(() => setLoading(false))
   }, [])
   return <>
-    <PageHeading eyebrow="Workspace" title="Projects" description="Keep delivery scopes, Git sources, namespace access, and team permissions organized." actions={<Link href="/projects/new"><Button><span aria-hidden="true">＋</span> New project</Button></Link>} />
-    <Panel title="All projects" description={`${items.length} project${items.length === 1 ? "" : "s"}`}>
-      {loading ? <div className="p-8 text-sm text-muted-foreground">Loading projects…</div> : items.length ? <div className="p-4"><DataGridList rows={items} columns={[
+    <PageHeading title="Projects" description="Keep delivery scopes, Git sources, namespace access, and team permissions organized." actions={<Link href="/projects/new"><Button><span aria-hidden="true">＋</span> New project</Button></Link>} />
+    <Panel surface="flat" title="All projects" description={`${items.length} project${items.length === 1 ? "" : "s"}`}>
+      {loading ? <div className="p-8 text-sm text-muted-foreground">Loading projects…</div> : items.length ? <div className="min-w-0"><DataGridList rows={items} columns={[
         { id: "name", title: "Project", cell: (project) => <Link href={`/projects/${project.id}`} className="font-medium hover:text-primary">{project.name}<span className="mt-0.5 block max-w-[440px] truncate text-[10px] font-normal text-muted-foreground">{project.description || "No description"}</span></Link> },
         { id: "role", title: "Your role", cell: (project) => <span className="text-xs capitalize text-muted-foreground">{project.role}</span> },
         { id: "created", title: "Created", cell: (project) => <span className="text-xs text-muted-foreground">{new Date(project.createdAt).toLocaleDateString()}</span> },

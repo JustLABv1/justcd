@@ -50,63 +50,50 @@ function ApplicationActions({ app, canManage, onDeleted }: { app: WorkspaceAppli
 }
 
 export function ApplicationCard({ app, canManage, onDeleted }: { app: WorkspaceApplication; canManage?: boolean; onDeleted?: (id: string) => void }) {
+  const namespaces = app.namespaces.map((item) => item.namespace).join(", ")
+  const revision = /^[a-f0-9]{40}$|^[a-f0-9]{64}$/i.test(app.revision)
+    ? app.revision.slice(0, 8)
+    : app.revision
+
   return (
-    <article className="workspace-card group flex min-w-0 flex-col overflow-hidden rounded-2xl border bg-card">
-      <div
-        className={`h-0.5 ${app.health === "synced" ? "bg-emerald-500/70" : needsAttention(app) ? "bg-amber-500/80" : "bg-border"}`}
-      />
-      <div className="p-5">
-        <div className="flex items-start justify-between gap-3">
-          <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/7 text-primary">
-            <WorkspaceIcon name="app" />
-          </span>
-          <div className="flex items-center gap-1"><StatusBadge status={app.health} /><ApplicationActions app={app} canManage={Boolean(canManage)} onDeleted={onDeleted} /></div>
+    <article className="flex min-w-0 flex-col rounded-xl border bg-card p-5">
+      <header className="flex items-start justify-between gap-3">
+        <div className="min-w-0 pt-1">
+          <h3 className="truncate text-base font-semibold tracking-tight" title={app.name}>
+            <Link href={`/applications/${app.id}`} className="rounded-sm hover:underline underline-offset-4">
+              {app.name}
+            </Link>
+          </h3>
+          <p className="mt-1 truncate text-xs text-muted-foreground" title={app.projectName || app.projectId}>
+            {app.projectName || app.projectId}
+          </p>
         </div>
-        <h3
-          className="mt-4 truncate text-base font-semibold tracking-tight group-hover:text-primary"
-          title={app.name}
-        >
-          <Link href={`/applications/${app.id}`} className="hover:underline focus-visible:rounded focus-visible:outline-2 focus-visible:outline-primary">{app.name}</Link>
-        </h3>
-        <p className="mt-1 truncate text-xs text-muted-foreground">
-          {app.projectName || app.renderer} <span aria-hidden="true">/</span>{" "}
-          {app.manifestPath || "."}
-        </p>
-        <dl className="mt-5 grid grid-cols-[76px_minmax(0,1fr)] gap-x-3 gap-y-2.5 text-xs">
-          <dt className="text-muted-foreground">Revision</dt>
-          <dd className="flex min-w-0 items-center gap-1.5 font-mono">
-            <WorkspaceIcon
-              name="branch"
-              className="size-3.5 shrink-0 text-muted-foreground"
-            />
-            <span className="truncate" title={app.revision}>
-              {app.revision}
-            </span>
-          </dd>
-          <dt className="text-muted-foreground">Target</dt>
-          <dd
-            className="truncate"
-            title={app.namespaces.map((item) => item.namespace).join(", ")}
-          >
-            {app.namespaces.map((item) => item.namespace).join(", ") ||
-              "No namespace"}
-          </dd>
-        </dl>
+        <ApplicationActions app={app} canManage={Boolean(canManage)} onDeleted={onDeleted} />
+      </header>
+
+      <div className="mt-4">
+        <StatusBadge status={app.health} />
       </div>
-      <Link href={`/applications/${app.id}`} className="mt-auto flex items-center justify-between gap-2 border-t bg-muted/20 px-5 py-3 text-[11px] text-muted-foreground hover:text-foreground">
-        <span className="flex min-w-0 items-center gap-2">
-          <span className="rounded border bg-card px-1.5 py-0.5 font-mono">
-            {app.renderer}
-          </span>
-          <span>
-            {app.syncPolicy === "auto-safe" ? "Auto-safe sync" : "Manual sync"}
-          </span>
-        </span>
-        <WorkspaceIcon
-          name="arrow"
-          className="size-4 shrink-0 group-hover:text-primary"
-        />
-      </Link>
+
+      <dl className="my-5 grid grid-cols-[70px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-2.5 text-xs">
+        <dt className="text-muted-foreground">Path</dt>
+        <dd className="truncate font-mono" title={app.manifestPath || "."}>
+          {app.manifestPath || "."}
+        </dd>
+        <dt className="text-muted-foreground">Revision</dt>
+        <dd className="truncate font-mono" title={app.revision}>
+          {revision}
+        </dd>
+        <dt className="text-muted-foreground">Namespace</dt>
+        <dd className="truncate" title={namespaces || "No namespace"}>
+          {namespaces || "No namespace"}
+        </dd>
+      </dl>
+
+      <footer className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t pt-3 text-xs text-muted-foreground">
+        <span>{app.renderer === "helm" ? "Helm" : app.renderer === "kustomize" ? "Kustomize" : app.renderer}</span>
+        <span>{app.syncPolicy === "auto-safe" ? "Auto-safe sync" : "Manual sync"}</span>
+      </footer>
     </article>
   )
 }

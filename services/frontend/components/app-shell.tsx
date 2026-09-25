@@ -177,8 +177,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             return <Link key={item.href} href={item.href} className={`shrink-0 rounded-md px-3 py-1.5 text-[11px] ${selected ? "bg-primary/8 font-semibold text-primary" : "text-muted-foreground hover:bg-muted"}`}>{item.label}</Link>
           })}
         </nav>
-        <main className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") ? "max-w-none" : "max-w-[1440px]"} px-5 py-7 sm:px-8 sm:py-9`}>{children}</main>
-        <footer className="mx-auto flex max-w-[1440px] justify-between px-5 pb-8 text-[11px] text-muted-foreground sm:px-8">
+        <main className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") ? "max-w-none" : "max-w-[1440px]"} px-5 py-7 sm:px-8 sm:py-9 ${pathname === "/audit" ? "lg:flex lg:h-[calc(100dvh-64px)] lg:flex-col lg:overflow-hidden" : ""}`}>{children}</main>
+        <footer className={`mx-auto flex max-w-[1440px] justify-between px-5 pb-8 text-[11px] text-muted-foreground sm:px-8 ${pathname === "/audit" ? "lg:hidden" : ""}`}>
           <span>JustCD · no cluster-side operator</span>
           <span>Plans expire after 15 minutes</span>
         </footer>

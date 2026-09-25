@@ -60,6 +60,7 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearLogin(ip)
+	_ = s.Store.Audit(r.Context(), user.ID, "user.created", "user", user.ID, map[string]any{"email": user.Email, "isAdmin": true, "initialSetup": true})
 	s.createSession(w, r, user)
 }
 

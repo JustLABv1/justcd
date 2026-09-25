@@ -933,8 +933,26 @@ func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "could not create application")
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "application.created", "application", app.ID, map[string]any{"projectId": app.ProjectID, "sourceId": app.SourceID, "clusterId": app.ClusterID, "renderer": app.Renderer, "helmValuesFiles": app.HelmValuesFiles, "helmValuesConfigured": app.HelmValuesYAML != ""})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "application.created", "application", app.ID, applicationAuditDetails(app))
 	writeJSON(w, http.StatusCreated, app)
+}
+
+func applicationAuditDetails(app store.Application) map[string]any {
+	namespaceValues := make(map[string]any, len(app.NamespaceHelmValues))
+	for namespace, values := range app.NamespaceHelmValues {
+		namespaceValues[namespace] = map[string]any{"files": values.Files, "configured": values.YAML != ""}
+	}
+	return map[string]any{
+		"name": app.Name, "projectId": app.ProjectID, "sourceId": app.SourceID,
+		"revision": app.Revision, "manifestPath": app.ManifestPath,
+		"targetManifestPath": app.TargetManifestPath, "namespaceManifestPaths": app.NamespaceManifestPaths,
+		"renderer": app.Renderer, "clusterId": app.ClusterID, "namespaces": app.Namespaces,
+		"syncPolicy": app.SyncPolicy, "pollSeconds": app.PollSeconds,
+		"kustomizeHelmEnabled": app.KustomizeHelmEnabled, "kustomizeNamespaceOverride": app.KustomizeNamespaceOverride,
+		"helmValuesFiles": app.HelmValuesFiles, "helmValuesConfigured": app.HelmValuesYAML != "",
+		"targetHelmValuesFiles": app.TargetHelmValuesFiles, "targetHelmValuesConfigured": app.TargetHelmValuesYAML != "",
+		"namespaceHelmValues": namespaceValues,
+	}
 }
 
 func valueOf(value *string) string {

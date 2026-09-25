@@ -68,6 +68,11 @@ func (s *Service) RunOperationWorker(ctx context.Context, logger *slog.Logger) {
 					}
 					result.Status = "failed"
 					_ = s.Store.PauseAutoSync(context.Background(), operation.ApplicationID)
+					actorID := ""
+					if operation.ActorID != nil {
+						actorID = *operation.ActorID
+					}
+					_ = s.Store.Audit(context.Background(), actorID, operation.Type+".failed", "application", operation.ApplicationID, map[string]any{"operationId": operation.ID, "planId": operation.PlanID, "message": message, "interrupted": true})
 				}
 				logger.Warn("JustCD sync operation failed", "operationId", operation.ID, "applicationId", operation.ApplicationID, "status", result.Status, "error", executeErr)
 			}

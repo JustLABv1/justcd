@@ -257,6 +257,7 @@ func (s *Store) ResolveOIDCUser(ctx context.Context, providerID, subject, email,
 	}
 	defer tx.Rollback()
 	var user User
+	created, linked := false, false
 	err = tx.QueryRowContext(ctx, `SELECT u.id,u.email,u.display_name,u.is_admin,u.created_at FROM oidc_identities i JOIN users u ON u.id=i.user_id WHERE i.provider_id=$1 AND i.subject=$2 AND u.disabled=FALSE AND u.deleted_at IS NULL`, providerID, subject).Scan(&user.ID, &user.Email, &user.DisplayName, &user.IsAdmin, &user.CreatedAt)
 	if err == sql.ErrNoRows {
 		err = tx.QueryRowContext(ctx, `SELECT id,email,display_name,is_admin,created_at FROM users WHERE LOWER(email)=LOWER($1) AND disabled=FALSE AND deleted_at IS NULL`, email).Scan(&user.ID, &user.Email, &user.DisplayName, &user.IsAdmin, &user.CreatedAt)
@@ -264,6 +265,7 @@ func (s *Store) ResolveOIDCUser(ctx context.Context, providerID, subject, email,
 			user.ID = NewID()
 			user.Email = email
 			user.DisplayName = displayName
+			created = true
 			err = tx.QueryRowContext(ctx, `INSERT INTO users(id,email,display_name) VALUES($1,LOWER($2),$3) RETURNING created_at`, user.ID, email, displayName).Scan(&user.CreatedAt)
 			if err != nil {
 				return User{}, err
@@ -274,13 +276,25 @@ func (s *Store) ResolveOIDCUser(ctx context.Context, providerID, subject, email,
 		if _, err = tx.ExecContext(ctx, `INSERT INTO oidc_identities(provider_id,subject,user_id) VALUES($1,$2,$3)`, providerID, subject, user.ID); err != nil {
 			return User{}, err
 		}
+		linked = true
 	} else if err != nil {
 		return User{}, err
 	}
+	profileUpdated := false
 	if displayName != "" {
-		if _, err = tx.ExecContext(ctx, `UPDATE users SET display_name=$2 WHERE id=$1 AND display_name=''`, user.ID, displayName); err != nil {
-			return User{}, err
+		result, updateErr := tx.ExecContext(ctx, `UPDATE users SET display_name=$2 WHERE id=$1 AND display_name=''`, user.ID, displayName)
+		if updateErr != nil {
+			return User{}, updateErr
 		}
+		count, _ := result.RowsAffected()
+		profileUpdated = count > 0 && !created
+		if count > 0 {
+			user.DisplayName = displayName
+		}
+	}
+	var previousGrants []byte
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(jsonb_object_agg(project_id,role),'{}'::jsonb) FROM oidc_membership_grants WHERE provider_id=$1 AND user_id=$2`, providerID, user.ID).Scan(&previousGrants); err != nil {
+		return User{}, err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM oidc_membership_grants WHERE provider_id=$1 AND user_id=$2`, providerID, user.ID); err != nil {
 		return User{}, err
@@ -293,6 +307,29 @@ func (s *Store) ResolveOIDCUser(ctx context.Context, providerID, subject, email,
 			ELSE 'viewer' END
 			FROM oidc_group_roles WHERE provider_id=$1 AND group_name=ANY($3) GROUP BY provider_id,project_id
 			ON CONFLICT(provider_id,user_id,project_id) DO UPDATE SET role=EXCLUDED.role`, providerID, user.ID, groups); err != nil {
+			return User{}, err
+		}
+	}
+	var currentGrants []byte
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(jsonb_object_agg(project_id,role),'{}'::jsonb) FROM oidc_membership_grants WHERE provider_id=$1 AND user_id=$2`, providerID, user.ID).Scan(&currentGrants); err != nil {
+		return User{}, err
+	}
+	if created {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'user.oidc_provisioned','user',$1,jsonb_build_object('email',$2,'providerId',$3))`, user.ID, user.Email, providerID); err != nil {
+			return User{}, err
+		}
+	} else if linked {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'user.oidc_linked','user',$1,jsonb_build_object('providerId',$2))`, user.ID, providerID); err != nil {
+			return User{}, err
+		}
+	}
+	if profileUpdated {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'user.oidc_profile_updated','user',$1,jsonb_build_object('displayName',$2,'providerId',$3))`, user.ID, displayName, providerID); err != nil {
+			return User{}, err
+		}
+	}
+	if string(previousGrants) != string(currentGrants) {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'user.oidc_access_updated','user',$1,jsonb_build_object('providerId',$2,'previousRoles',$3::jsonb,'roles',$4::jsonb))`, user.ID, providerID, string(previousGrants), string(currentGrants)); err != nil {
 			return User{}, err
 		}
 	}
@@ -2613,6 +2650,13 @@ func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actor
 	if _, err = tx.ExecContext(ctx, `INSERT INTO operation_leases(application_id,operation_id,expires_at) VALUES($1,$2,NOW()+($3 * INTERVAL '1 second'))`, applicationID, id, int64(lease.Seconds())); err != nil {
 		return Operation{}, err
 	}
+	auditDetails, err := json.Marshal(map[string]any{"operationId": id, "planId": planID, "digest": planDigest, "approvalIds": approvalIDs})
+	if err != nil {
+		return Operation{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES(NULLIF($1,''),$2,'application',$3,$4)`, actorID, operationType+".queued", applicationID, auditDetails); err != nil {
+		return Operation{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return Operation{}, err
 	}
@@ -2680,7 +2724,12 @@ func (s *Store) ClaimQueuedOperation(ctx context.Context, lease time.Duration) (
 // RecoverInterruptedOperations makes expired running jobs visible as failed;
 // queued jobs remain eligible for normal processing after a restart.
 func (s *Store) RecoverInterruptedOperations(ctx context.Context) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE operations o SET status='failed',message=CASE WHEN o.operation_type='rollback' THEN 'Rollback interrupted by backend restart or worker loss; partial changes remain and the operation will not resume automatically. Review cluster state and any available checkpoint.' ELSE 'Sync interrupted by backend restart or worker loss; review the plan before retrying.' END,finished_at=NOW() WHERE o.status='running' AND NOT EXISTS (SELECT 1 FROM operation_leases l WHERE l.operation_id=o.id AND l.expires_at>NOW())`)
+	_, err := s.DB.ExecContext(ctx, `WITH interrupted AS (
+		UPDATE operations o SET status='failed',message=CASE WHEN o.operation_type='rollback' THEN 'Rollback interrupted by backend restart or worker loss; partial changes remain and the operation will not resume automatically. Review cluster state and any available checkpoint.' ELSE 'Sync interrupted by backend restart or worker loss; review the plan before retrying.' END,finished_at=NOW()
+		WHERE o.status='running' AND NOT EXISTS (SELECT 1 FROM operation_leases l WHERE l.operation_id=o.id AND l.expires_at>NOW())
+		RETURNING o.id,o.actor_id,o.application_id,o.plan_id,o.operation_type,o.message
+	) INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details)
+	SELECT actor_id,operation_type||'.failed','application',application_id,jsonb_build_object('operationId',id,'planId',plan_id,'message',message,'interrupted',true) FROM interrupted`)
 	if err != nil {
 		return err
 	}
@@ -2789,6 +2838,7 @@ func (s *Store) ListOperations(ctx context.Context, applicationID string, limit 
 type AuditEvent struct {
 	ID           int64           `json:"id"`
 	ActorID      *string         `json:"actorId,omitempty"`
+	ActorName    string          `json:"actorName"`
 	Action       string          `json:"action"`
 	ResourceType string          `json:"resourceType"`
 	ResourceID   string          `json:"resourceId"`
@@ -2796,8 +2846,10 @@ type AuditEvent struct {
 	CreatedAt    time.Time       `json:"createdAt"`
 }
 
-func (s *Store) ListAuditEvents(ctx context.Context, limit int) ([]AuditEvent, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,actor_id,action,resource_type,resource_id,details,created_at FROM audit_events ORDER BY id DESC LIMIT $1`, limit)
+func (s *Store) ListAuditEvents(ctx context.Context, limit int, before int64) ([]AuditEvent, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT e.id,e.actor_id,COALESCE(NULLIF(u.display_name,''),u.email,''),e.action,e.resource_type,e.resource_id,e.details,e.created_at
+		FROM audit_events e LEFT JOIN users u ON u.id=e.actor_id
+		WHERE ($2 = 0 OR e.id < $2) ORDER BY e.id DESC LIMIT $1`, limit, before)
 	if err != nil {
 		return nil, err
 	}
@@ -2805,10 +2857,39 @@ func (s *Store) ListAuditEvents(ctx context.Context, limit int) ([]AuditEvent, e
 	out := make([]AuditEvent, 0)
 	for rows.Next() {
 		var e AuditEvent
-		if err := rows.Scan(&e.ID, &e.ActorID, &e.Action, &e.ResourceType, &e.ResourceID, &e.Details, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.ActorID, &e.ActorName, &e.Action, &e.ResourceType, &e.ResourceID, &e.Details, &e.CreatedAt); err != nil {
 			return nil, err
 		}
+		e.Details = safeAuditDetails(e.Details)
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// Older rollback events included settings that may contain Helm values.
+// Keep target provenance while withholding configuration content from the API.
+func safeAuditDetails(raw json.RawMessage) json.RawMessage {
+	var details map[string]json.RawMessage
+	if json.Unmarshal(raw, &details) != nil {
+		return raw
+	}
+	target, ok := details["rollbackTarget"]
+	if !ok || string(target) == "null" {
+		return raw
+	}
+	var rollback map[string]json.RawMessage
+	if json.Unmarshal(target, &rollback) != nil {
+		return raw
+	}
+	delete(rollback, "settings")
+	safeTarget, err := json.Marshal(rollback)
+	if err != nil {
+		return raw
+	}
+	details["rollbackTarget"] = safeTarget
+	safeDetails, err := json.Marshal(details)
+	if err != nil {
+		return raw
+	}
+	return safeDetails
 }

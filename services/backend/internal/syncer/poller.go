@@ -48,6 +48,8 @@ func (s *Service) reconcileDue(ctx context.Context, logger *slog.Logger) {
 			_ = s.Store.SetPlanStatus(ctx, record.ID, "applied")
 			if err := s.Store.MarkApplicationSynced(ctx, app.ID, record.Plan.Revision, "synced"); err != nil {
 				logger.Warn("could not mark no-op JustCD plan synced", "applicationId", app.ID, "error", err)
+			} else if app.Health != "synced" || app.LastSyncedRevision != record.Plan.Revision {
+				_ = s.Store.Audit(ctx, systemActorID, "sync.succeeded", "application", app.ID, map[string]any{"planId": record.ID, "revision": record.Plan.Revision, "digest": record.Plan.Digest, "changes": 0})
 			}
 			continue
 		}

@@ -37,7 +37,7 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "could not update project")
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "project.updated", "project", id, map[string]string{"name": input.Name})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "project.updated", "project", id, map[string]string{"name": input.Name, "description": input.Description})
 	project, err := s.Store.ProjectByID(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "project updated but could not reload it")
@@ -225,7 +225,7 @@ func (s *Server) updateApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "application.updated", "application", app.ID, map[string]any{"name": app.Name, "sourceId": app.SourceID, "revision": app.Revision, "manifestPath": app.ManifestPath, "renderer": app.Renderer, "clusterId": app.ClusterID, "namespaces": input.Namespaces, "syncPolicy": app.SyncPolicy, "helmValuesFiles": app.HelmValuesFiles, "helmValuesConfigured": app.HelmValuesYAML != "", "targetHelmValuesFiles": app.TargetHelmValuesFiles, "targetHelmValuesConfigured": app.TargetHelmValuesYAML != ""})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "application.updated", "application", app.ID, applicationAuditDetails(app))
 	writeJSON(w, http.StatusOK, app)
 }
 

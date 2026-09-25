@@ -310,9 +310,14 @@ paths:
         '409': { description: Plan or live state changed after review }
   /audit:
     get:
-      summary: List recent audit events (instance administrator only)
+      summary: List audit events newest first (instance administrator only)
+      parameters:
+        - in: query
+          name: before
+          description: Return events older than this event ID
+          schema: { type: integer, minimum: 1 }
       responses:
-        '200': { description: Audit events }
+        '200': { description: Up to 50 audit events and a hasMore flag }
   /admin/oidc-providers:
     get:
       summary: List OIDC provider configuration without client secrets

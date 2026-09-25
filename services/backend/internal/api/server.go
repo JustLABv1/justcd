@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -295,12 +296,25 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "instance administrator role required")
 		return
 	}
-	items, err := s.Store.ListAuditEvents(r.Context(), 100)
+	before := int64(0)
+	if raw := r.URL.Query().Get("before"); raw != "" {
+		parsed, parseErr := strconv.ParseInt(raw, 10, 64)
+		if parseErr != nil || parsed <= 0 {
+			writeError(w, http.StatusBadRequest, "before must be a positive audit event ID")
+			return
+		}
+		before = parsed
+	}
+	items, err := s.Store.ListAuditEvents(r.Context(), 51, before)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not load audit events")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	hasMore := len(items) > 50
+	if hasMore {
+		items = items[:50]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "hasMore": hasMore})
 }
 func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 	items, err := s.Store.ListUsers(r.Context())
@@ -388,7 +402,7 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		writeAdminUserError(w, err)
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "user.updated", "user", user.ID, map[string]any{"email": user.Email, "isAdmin": user.IsAdmin, "disabled": user.Disabled, "passwordChanged": passwordHash != ""})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "user.updated", "user", user.ID, map[string]any{"email": user.Email, "displayName": user.DisplayName, "isAdmin": user.IsAdmin, "disabled": user.Disabled, "passwordChanged": passwordHash != ""})
 	writeJSON(w, http.StatusOK, user)
 }
 

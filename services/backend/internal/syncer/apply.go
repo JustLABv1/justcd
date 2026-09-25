@@ -329,7 +329,11 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 	}
 	operation.Progress.Phase = "complete"
 	_ = s.Store.SetOperationProgress(ctx, operationID, operation.Progress)
-	_ = s.Store.Audit(ctx, actorID, action, "application", app.ID, map[string]any{"operationId": operationID, "planId": record.ID, "revision": lastSyncedRevision, "digest": record.Plan.Digest, "rollbackTarget": record.Plan.Rollback})
+	details := map[string]any{"operationId": operationID, "planId": record.ID, "revision": lastSyncedRevision, "digest": record.Plan.Digest, "changes": len(record.Plan.Changes)}
+	if target := record.Plan.Rollback; target != nil {
+		details["rollbackTarget"] = map[string]any{"kind": target.Kind, "id": target.ID, "revision": target.Revision}
+	}
+	_ = s.Store.Audit(ctx, actorID, action, "application", app.ID, details)
 	operation.Status = "succeeded"
 	operation.Message = message
 	now := time.Now().UTC()

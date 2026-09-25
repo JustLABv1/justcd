@@ -176,7 +176,10 @@ func (s *Server) createApplicationGroup(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusConflict, "could not create deployment group; verify its name and target application names are unique")
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "application_group.created", "application_group", group.ID, map[string]any{"projectId": group.ProjectID, "targetCount": len(apps), "applicationIds": applicationIDs(apps), "sourceId": group.SourceID})
+	details := applicationGroupAuditDetails(group)
+	details["targetCount"] = len(apps)
+	details["applicationIds"] = applicationIDs(apps)
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "application_group.created", "application_group", group.ID, details)
 	writeJSON(w, http.StatusCreated, map[string]any{"group": group, "applications": apps})
 }
 
@@ -186,6 +189,16 @@ func applicationIDs(apps []store.Application) []string {
 		ids = append(ids, app.ID)
 	}
 	return ids
+}
+
+func applicationGroupAuditDetails(group store.ApplicationGroup) map[string]any {
+	return map[string]any{
+		"name": group.Name, "projectId": group.ProjectID, "sourceId": group.SourceID,
+		"revision": group.Revision, "manifestPath": group.ManifestPath, "renderer": group.Renderer,
+		"syncPolicy": group.SyncPolicy, "pollSeconds": group.PollSeconds,
+		"kustomizeHelmEnabled": group.KustomizeHelmEnabled, "kustomizeNamespaceOverride": group.KustomizeNamespaceOverride,
+		"helmValuesFiles": group.HelmValuesFiles, "helmValuesConfigured": group.HelmValuesYAML != "",
+	}
 }
 
 func (s *Server) getApplicationGroup(w http.ResponseWriter, r *http.Request) {
@@ -261,11 +274,13 @@ func (s *Server) updateApplicationGroup(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "application_group.updated", "application_group", group.ID, map[string]any{"revision": group.Revision, "manifestPath": group.ManifestPath, "helmValuesFiles": group.HelmValuesFiles, "helmValuesConfigured": group.HelmValuesYAML != ""})
 	apps, err := s.Store.ApplicationsByGroupID(r.Context(), group.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "deployment group updated, but targets could not be loaded")
 		return
 	}
+	details := applicationGroupAuditDetails(group)
+	details["applicationIds"] = applicationIDs(apps)
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "application_group.updated", "application_group", group.ID, details)
 	writeJSON(w, http.StatusOK, map[string]any{"group": group, "applications": apps})
 }

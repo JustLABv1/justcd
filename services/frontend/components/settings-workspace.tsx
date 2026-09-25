@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation"
 import Link from "next/link"
 import { WorkspaceIcon } from "@/components/workspace-ui"
 import { ErrorDetailsButton } from "@/components/error-details"
+import { ConfirmDisclosure } from "@/components/confirm-disclosure"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -65,8 +66,8 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
     },
     {
       id: "users",
-      title: "Local users",
-      description: "Accounts managed by JustCD",
+      title: "Platform users",
+      description: "Accounts and access on this JustCD instance",
       adminOnly: true,
     },
   ]
@@ -587,7 +588,7 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
                         />
                       )}
                       {section === "users" && user?.isAdmin && (
-                        <LocalUsersPanel busy={busy} action={action} />
+                        <PlatformUsersPanel currentUserId={user.id} busy={busy} action={action} />
                       )}
                     </div>
                   )}
@@ -1993,10 +1994,12 @@ function OIDCPanel({
   )
 }
 
-function LocalUsersPanel({
+function PlatformUsersPanel({
+  currentUserId,
   busy,
   action,
 }: {
+  currentUserId: string
   busy: boolean
   action: <T>(
     work: () => Promise<T>,
@@ -2004,16 +2007,95 @@ function LocalUsersPanel({
     after?: (value: T) => void
   ) => Promise<void>
 }) {
+  const toast = useToast()
   const [email, setEmail] = useState("")
   const [displayName, setDisplayName] = useState("")
   const [password, setPassword] = useState("")
   const [isAdmin, setIsAdmin] = useState(false)
   const [users, setUsers] = useState<User[]>([])
-  useEffect(() => {
-    api<ListResponse<User>>("/api/v1/admin/users")
-      .then((result) => setUsers(result.items))
-      .catch(() => undefined)
+  const [editingUserId, setEditingUserId] = useState<string | null>(null)
+  const [editEmail, setEditEmail] = useState("")
+  const [editDisplayName, setEditDisplayName] = useState("")
+  const [editPassword, setEditPassword] = useState("")
+  const [editIsAdmin, setEditIsAdmin] = useState(false)
+  const [mutatingUserId, setMutatingUserId] = useState<string | null>(null)
+  const [usersLoading, setUsersLoading] = useState(true)
+  const [usersError, setUsersError] = useState<unknown | null>(null)
+  const loadUsers = useCallback(async () => {
+    setUsersLoading(true)
+    setUsersError(null)
+    try {
+      const result = await api<ListResponse<User>>("/api/v1/admin/users")
+      setUsers(result.items)
+    } catch (cause) {
+      setUsersError(cause)
+    } finally {
+      setUsersLoading(false)
+    }
   }, [])
+  useEffect(() => { void loadUsers() }, [loadUsers])
+
+  function startEditing(user: User) {
+    setEditingUserId(user.id)
+    setEditEmail(user.email)
+    setEditDisplayName(user.displayName)
+    setEditPassword("")
+    setEditIsAdmin(user.isAdmin)
+  }
+
+  async function saveUser(event: React.FormEvent<HTMLFormElement>, user: User) {
+    event.preventDefault()
+    await action(
+      () => api<User>(`/api/v1/admin/users/${encodeURIComponent(user.id)}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          email: editEmail,
+          displayName: editDisplayName,
+          password: editPassword,
+          isAdmin: user.id === currentUserId ? user.isAdmin : editIsAdmin,
+          disabled: user.disabled,
+        }),
+      }),
+      "Platform user updated.",
+      (updated) => {
+        setUsers((items) => items.map((item) => item.id === updated.id ? updated : item))
+        setEditingUserId(null)
+        setEditPassword("")
+      }
+    )
+  }
+
+  async function toggleLock(user: User) {
+    await action(
+      () => api<User>(`/api/v1/admin/users/${encodeURIComponent(user.id)}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          email: user.email,
+          displayName: user.displayName,
+          isAdmin: user.isAdmin,
+          disabled: !user.disabled,
+        }),
+      }),
+      user.disabled ? "User unlocked." : "User locked. Active sessions were revoked.",
+      (updated) => setUsers((items) => items.map((item) => item.id === updated.id ? updated : item))
+    )
+  }
+
+  async function deleteUser(user: User) {
+    setMutatingUserId(user.id)
+    try {
+      await api<void>(`/api/v1/admin/users/${encodeURIComponent(user.id)}`, { method: "DELETE" })
+      const deletedAt = new Date().toISOString()
+      setUsers((items) => items.map((item) => item.id === user.id
+        ? { ...item, email: `deleted+${item.id}@deleted.justcd.invalid`, displayName: "Deleted user", isAdmin: false, disabled: true, deletedAt }
+        : item))
+      if (editingUserId === user.id) setEditingUserId(null)
+      toast.success("User deleted. Account details were anonymized and access was revoked.")
+    } finally {
+      setMutatingUserId(null)
+    }
+  }
+
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     await action(async () => {
@@ -2027,34 +2109,106 @@ function LocalUsersPanel({
       setDisplayName("")
       setPassword("")
       setIsAdmin(false)
-      setUsers((items) => [...items, user])
+      setUsers((items) => [...items, user].sort((a, b) => a.email.localeCompare(b.email)))
       return user
     }, "Local user added.")
   }
   return (
     <div className="space-y-6">
-      <SettingsInventory title="Local accounts" count={users.length}>
-        {users.length > 0 && (
-          <div className="divide-y border-b">
-            {users.map((user) => (
-              <div
-                key={user.id}
-                className="flex flex-wrap items-center gap-3 px-6 py-2.5"
-              >
-                <span className="min-w-0 flex-1 truncate text-xs">
-                  {user.displayName || user.email}{" "}
-                  <span className="text-muted-foreground">· {user.email}</span>
-                </span>
-                <span className="text-[9px] text-muted-foreground">
-                  {user.isAdmin ? "admin" : "user"}
-                </span>
-              </div>
-            ))}
+      <SettingsInventory title="Platform users" count={users.length}>
+        {usersError !== null && usersError !== undefined && (
+          <div role="alert" className="flex flex-wrap items-center justify-between gap-3 border-b border-destructive/20 bg-destructive/5 px-5 py-3 text-xs text-destructive">
+            <span>{errorMessage(usersError)}</span>
+            <div className="flex items-center gap-2">
+              <ErrorDetailsButton error={usersError} />
+              <Button type="button" size="xs" variant="outline" onClick={() => void loadUsers()}>Try again</Button>
+            </div>
           </div>
         )}
-        {!users.length && (
+        {usersLoading && <p role="status" className="px-5 py-4 text-xs text-muted-foreground">Loading platform users…</p>}
+        {users.length > 0 && (
+          <ul className="divide-y border-b">
+            {users.map((user) => {
+              const deleted = Boolean(user.deletedAt)
+              const self = user.id === currentUserId
+              const rowBusy = busy || mutatingUserId !== null
+              return (
+                <li key={user.id} className="px-5 py-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-[10px] font-semibold uppercase">
+                      {(user.displayName || user.email).slice(0, 2)}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-xs">
+                      <span className="font-medium">{user.displayName || user.email}</span>
+                      <span className="text-muted-foreground"> · {user.email}</span>
+                      <span className="mt-1 flex flex-wrap gap-1.5">
+                        <span className="rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
+                          {user.isAdmin ? "Instance admin" : "User"}
+                        </span>
+                        {deleted ? (
+                          <span className="rounded-full border border-destructive/25 bg-destructive/5 px-2 py-0.5 text-[9px] text-destructive">Deleted</span>
+                        ) : user.disabled ? (
+                          <span className="rounded-full border border-amber-500/30 bg-amber-500/5 px-2 py-0.5 text-[9px] text-amber-700 dark:text-amber-300">Locked</span>
+                        ) : null}
+                        {self && !deleted && <span className="text-[9px] text-muted-foreground">Current account</span>}
+                      </span>
+                    </span>
+                    {!deleted && (
+                      <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                        <Button type="button" size="xs" variant="outline" disabled={rowBusy || editingUserId === user.id} onClick={() => startEditing(user)}>
+                          Edit
+                        </Button>
+                        <Button type="button" size="xs" variant="outline" disabled={rowBusy || self || editingUserId === user.id} title={self ? "Use another administrator to lock this account." : undefined} onClick={() => void toggleLock(user)}>
+                          {user.disabled ? "Unlock" : "Lock"}
+                        </Button>
+                        <ConfirmDisclosure
+                          trigger="Delete"
+                          title={`Delete ${user.displayName || user.email}?`}
+                          description="This removes the account's project and SSO access, revokes sessions, and anonymizes its identity. Plan, approval, and audit history remains attached to a Deleted user record. Transfer ownership first if this user is the last active owner of a project."
+                          confirmLabel="Delete user"
+                          onConfirm={() => deleteUser(user)}
+                          disabled={rowBusy || self}
+                        />
+                      </div>
+                    )}
+                  </div>
+                  {editingUserId === user.id && !deleted && (
+                    <form className="mt-4 space-y-3 rounded-lg border bg-muted/10 p-4" onSubmit={(event) => void saveUser(event, user)}>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <FormField label="Email" htmlFor={`edit-user-email-${user.id}`}>
+                          <Input id={`edit-user-email-${user.id}`} type="email" value={editEmail} onChange={(event) => setEditEmail(event.target.value)} required />
+                        </FormField>
+                        <FormField label="Display name" htmlFor={`edit-user-name-${user.id}`}>
+                          <Input id={`edit-user-name-${user.id}`} value={editDisplayName} onChange={(event) => setEditDisplayName(event.target.value)} maxLength={200} />
+                        </FormField>
+                      </div>
+                      <FormField label="Reset password" htmlFor={`edit-user-password-${user.id}`} hint="Leave blank to keep the current password. A new password must contain at least 12 characters.">
+                        <Input id={`edit-user-password-${user.id}`} type="password" autoComplete="new-password" minLength={12} value={editPassword} onChange={(event) => setEditPassword(event.target.value)} />
+                      </FormField>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        {self ? (
+                          <span className="text-[11px] text-muted-foreground">Your administrator access cannot be changed here.</span>
+                        ) : (
+                          <label className="flex items-center gap-2 text-[11px]">
+                            <Checkbox checked={editIsAdmin} onCheckedChange={(checked) => setEditIsAdmin(Boolean(checked))} />
+                            Instance administrator
+                          </label>
+                        )}
+                        <div className="flex gap-2">
+                          <Button type="button" size="sm" variant="outline" disabled={rowBusy} onClick={() => setEditingUserId(null)}>Cancel</Button>
+                          <Button size="sm" type="submit" loading={busy} loadingText="Saving user…" disabled={mutatingUserId !== null}>Save user</Button>
+                        </div>
+                      </div>
+                    </form>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+        {!usersLoading && !usersError && !users.length && (
           <p className="px-6 py-5 text-sm text-muted-foreground">
-            No local accounts yet. Use the form below to get started.
+            No platform users yet. Use the form below to create the first local account.
           </p>
         )}
       </SettingsInventory>
@@ -2063,7 +2217,7 @@ function LocalUsersPanel({
         onSubmit={submit}
       >
         <div className="border-b pb-4">
-          <h2 className="text-base font-semibold">Create a local account</h2>
+          <h2 className="text-base font-semibold">Create a local user</h2>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
             Add a person who signs in directly with an email address and
             password.
@@ -2109,9 +2263,9 @@ function LocalUsersPanel({
           />
           Instance administrator
         </label>
-        <Button size="sm" type="submit" loading={busy} loadingText="Adding user…">
-          Add local user
-        </Button>
+      <Button size="sm" type="submit" loading={busy} loadingText="Adding user…">
+          Add platform user
+      </Button>
       </form>
     </div>
   )

@@ -79,6 +79,37 @@ paths:
       summary: Add a member or update a project role (owner only)
       responses:
         '200': { description: Membership updated }
+  /projects/{projectID}/members/{userID}:
+    put:
+      summary: Change a direct project member's role (owner only)
+      responses:
+        '200': { description: Membership updated }
+        '409': { description: Last-owner protection or membership managed by SSO }
+    delete:
+      summary: Remove a direct project member (owner only)
+      responses:
+        '204': { description: Membership removed }
+        '409': { description: Last-owner protection or membership managed by SSO }
+  /admin/users:
+    get:
+      summary: List platform users, including locked and deleted accounts (instance admin only)
+      responses:
+        '200': { description: User list }
+    post:
+      summary: Create a local platform user (instance admin only)
+      responses:
+        '201': { description: Created user }
+  /admin/users/{userID}:
+    put:
+      summary: Edit, lock, unlock, or reset a platform user (instance admin only)
+      responses:
+        '200': { description: Updated user }
+        '409': { description: Last-admin, last-project-owner, or deleted-account protection }
+    delete:
+      summary: Revoke access and anonymize a platform user while preserving history (instance admin only)
+      responses:
+        '204': { description: User anonymized and access revoked }
+        '409': { description: Last-admin, last-project-owner, or deleted-account protection }
   /projects/{projectID}/approval-policy:
     put:
       summary: Set project sync and application deletion approval rules (owner only)

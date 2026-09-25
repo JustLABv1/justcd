@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"github.com/justlab/justcd/services/backend/internal/gitops"
 	"github.com/justlab/justcd/services/backend/internal/render"
 	"net/http"
@@ -61,31 +62,43 @@ func (s *Server) setProjectMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "you cannot demote yourself from project owner")
 		return
 	}
-	if input.Role != "owner" {
-		previousRole, roleErr := s.Store.ProjectRoleForUser(r.Context(), projectID, input.UserID)
-		if roleErr != nil {
-			writeError(w, http.StatusInternalServerError, "could not verify project ownership")
-			return
-		}
-		if previousRole == "owner" {
-			owners, countErr := s.Store.ProjectOwnerCount(r.Context(), projectID)
-			if countErr != nil {
-				writeError(w, http.StatusInternalServerError, "could not verify project ownership")
-				return
-			}
-			if owners <= 1 {
-				writeError(w, http.StatusConflict, "a project must keep at least one owner")
-				return
-			}
-		}
-	}
 	if err := s.Store.SetProjectMember(r.Context(), projectID, input.UserID, input.Role); err != nil {
-		writeError(w, http.StatusBadRequest, "could not set project member")
+		writeProjectMemberError(w, err)
 		return
 	}
 	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "project_member.updated", "project", projectID, map[string]string{"userId": input.UserID, "role": input.Role})
 	writeJSON(w, http.StatusOK, map[string]string{"projectId": projectID, "userId": input.UserID, "role": input.Role})
 }
+
+func (s *Server) updateProjectMember(w http.ResponseWriter, r *http.Request) {
+	projectID := r.PathValue("projectID")
+	if !s.requireProjectRole(w, r, projectID, "owner") {
+		return
+	}
+	userID := r.PathValue("userID")
+	var input struct {
+		Role string `json:"role"`
+	}
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !validRole(input.Role) {
+		writeError(w, http.StatusBadRequest, "a valid project role is required")
+		return
+	}
+	if userID == currentUser(r).ID && input.Role != "owner" {
+		writeError(w, http.StatusConflict, "you cannot demote yourself from project owner")
+		return
+	}
+	if err := s.Store.SetProjectMember(r.Context(), projectID, userID, input.Role); err != nil {
+		writeProjectMemberError(w, err)
+		return
+	}
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "project_member.updated", "project", projectID, map[string]string{"userId": userID, "role": input.Role})
+	writeJSON(w, http.StatusOK, map[string]string{"projectId": projectID, "userId": userID, "role": input.Role})
+}
+
 func (s *Server) removeProjectMember(w http.ResponseWriter, r *http.Request) {
 	projectID := r.PathValue("projectID")
 	if !s.requireProjectRole(w, r, projectID, "owner") {
@@ -96,28 +109,25 @@ func (s *Server) removeProjectMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "you cannot remove yourself from the project")
 		return
 	}
-	role, roleErr := s.Store.ProjectRoleForUser(r.Context(), projectID, userID)
-	if roleErr != nil {
-		writeError(w, http.StatusInternalServerError, "could not verify project ownership")
-		return
-	}
-	if role == "owner" {
-		owners, countErr := s.Store.ProjectOwnerCount(r.Context(), projectID)
-		if countErr != nil {
-			writeError(w, http.StatusInternalServerError, "could not verify project ownership")
-			return
-		}
-		if owners <= 1 {
-			writeError(w, http.StatusConflict, "a project must keep at least one owner")
-			return
-		}
-	}
 	if err := s.Store.RemoveProjectMember(r.Context(), projectID, userID); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not remove project member")
+		writeProjectMemberError(w, err)
 		return
 	}
 	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "project_member.removed", "project", projectID, map[string]string{"userId": userID})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func writeProjectMemberError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, store.ErrProjectNotFound), errors.Is(err, store.ErrProjectMemberNotFound):
+		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, store.ErrLastProjectOwner), errors.Is(err, store.ErrProjectMemberManagedSSO):
+		writeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, store.ErrUserUnavailable):
+		writeError(w, http.StatusBadRequest, "locked or deleted users cannot be added to a project")
+	default:
+		writeError(w, http.StatusInternalServerError, "could not update project member")
+	}
 }
 
 func (s *Server) listCredentials(w http.ResponseWriter, r *http.Request) {

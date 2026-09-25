@@ -82,11 +82,13 @@ func (s *Store) Migrate(ctx context.Context) error {
 }
 
 type User struct {
-	ID          string    `json:"id"`
-	Email       string    `json:"email"`
-	DisplayName string    `json:"displayName"`
-	IsAdmin     bool      `json:"isAdmin"`
-	CreatedAt   time.Time `json:"createdAt"`
+	ID          string     `json:"id"`
+	Email       string     `json:"email"`
+	DisplayName string     `json:"displayName"`
+	IsAdmin     bool       `json:"isAdmin"`
+	Disabled    bool       `json:"disabled"`
+	DeletedAt   *time.Time `json:"deletedAt,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt"`
 }
 
 type Session struct {
@@ -96,6 +98,18 @@ type Session struct {
 }
 
 var ErrAlreadyInitialized = errors.New("instance already has a user")
+
+var (
+	ErrLastInstanceAdmin       = errors.New("the instance must keep at least one active administrator")
+	ErrUserDeleted             = errors.New("deleted users cannot be changed")
+	ErrSystemUser              = errors.New("the system user cannot be changed")
+	ErrLastProjectOwner        = errors.New("a project must keep at least one owner")
+	ErrProjectMemberNotFound   = errors.New("project member not found")
+	ErrProjectMemberManagedSSO = errors.New("project member access is managed by SSO")
+	ErrProjectNotFound         = errors.New("project not found")
+	ErrUserUnavailable         = errors.New("user is locked or deleted")
+	ErrUserLastProjectOwner    = errors.New("transfer ownership of every project before locking or deleting this user")
+)
 
 func (s *Store) SignupAvailable(ctx context.Context) (bool, error) {
 	var exists bool
@@ -141,14 +155,14 @@ func (s *Store) UserCount(ctx context.Context) (int, error) {
 func (s *Store) UserByEmail(ctx context.Context, email string) (User, string, error) {
 	var user User
 	var passwordHash sql.NullString
-	err := s.DB.QueryRowContext(ctx, `SELECT id,email,display_name,is_admin,created_at,password_hash FROM users WHERE LOWER(email)=LOWER($1) AND disabled=FALSE`, email).
+	err := s.DB.QueryRowContext(ctx, `SELECT id,email,display_name,is_admin,created_at,password_hash FROM users WHERE LOWER(email)=LOWER($1) AND disabled=FALSE AND deleted_at IS NULL`, email).
 		Scan(&user.ID, &user.Email, &user.DisplayName, &user.IsAdmin, &user.CreatedAt, &passwordHash)
 	return user, passwordHash.String, err
 }
 
 func (s *Store) UserByID(ctx context.Context, id string) (User, error) {
 	var user User
-	err := s.DB.QueryRowContext(ctx, `SELECT id,email,display_name,is_admin,created_at FROM users WHERE id=$1 AND disabled=FALSE`, id).
+	err := s.DB.QueryRowContext(ctx, `SELECT id,email,display_name,is_admin,created_at FROM users WHERE id=$1 AND disabled=FALSE AND deleted_at IS NULL`, id).
 		Scan(&user.ID, &user.Email, &user.DisplayName, &user.IsAdmin, &user.CreatedAt)
 	return user, err
 }
@@ -243,9 +257,9 @@ func (s *Store) ResolveOIDCUser(ctx context.Context, providerID, subject, email,
 	}
 	defer tx.Rollback()
 	var user User
-	err = tx.QueryRowContext(ctx, `SELECT u.id,u.email,u.display_name,u.is_admin,u.created_at FROM oidc_identities i JOIN users u ON u.id=i.user_id WHERE i.provider_id=$1 AND i.subject=$2 AND u.disabled=FALSE`, providerID, subject).Scan(&user.ID, &user.Email, &user.DisplayName, &user.IsAdmin, &user.CreatedAt)
+	err = tx.QueryRowContext(ctx, `SELECT u.id,u.email,u.display_name,u.is_admin,u.created_at FROM oidc_identities i JOIN users u ON u.id=i.user_id WHERE i.provider_id=$1 AND i.subject=$2 AND u.disabled=FALSE AND u.deleted_at IS NULL`, providerID, subject).Scan(&user.ID, &user.Email, &user.DisplayName, &user.IsAdmin, &user.CreatedAt)
 	if err == sql.ErrNoRows {
-		err = tx.QueryRowContext(ctx, `SELECT id,email,display_name,is_admin,created_at FROM users WHERE LOWER(email)=LOWER($1) AND disabled=FALSE`, email).Scan(&user.ID, &user.Email, &user.DisplayName, &user.IsAdmin, &user.CreatedAt)
+		err = tx.QueryRowContext(ctx, `SELECT id,email,display_name,is_admin,created_at FROM users WHERE LOWER(email)=LOWER($1) AND disabled=FALSE AND deleted_at IS NULL`, email).Scan(&user.ID, &user.Email, &user.DisplayName, &user.IsAdmin, &user.CreatedAt)
 		if err == sql.ErrNoRows {
 			user.ID = NewID()
 			user.Email = email
@@ -290,12 +304,13 @@ func (s *Store) AddOIDCGroupRole(ctx context.Context, providerID, groupName, pro
 	return err
 }
 
-func (s *Store) CreateUser(ctx context.Context, user User, passwordHash string) error {
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO users(id,email,display_name,password_hash,is_admin) VALUES($1,LOWER($2),$3,$4,$5)`, user.ID, user.Email, user.DisplayName, passwordHash, user.IsAdmin)
-	return err
+func (s *Store) CreateUser(ctx context.Context, user User, passwordHash string) (User, error) {
+	err := s.DB.QueryRowContext(ctx, `INSERT INTO users(id,email,display_name,password_hash,is_admin) VALUES($1,LOWER($2),$3,$4,$5) RETURNING created_at`, user.ID, user.Email, user.DisplayName, passwordHash, user.IsAdmin).Scan(&user.CreatedAt)
+	return user, err
 }
+
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,email,display_name,is_admin,created_at FROM users WHERE disabled=FALSE ORDER BY email`)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,email,display_name,is_admin,disabled,deleted_at,created_at FROM users WHERE id <> 'justcd-system' ORDER BY deleted_at NULLS FIRST, email`)
 	if err != nil {
 		return nil, err
 	}
@@ -303,21 +318,337 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	out := make([]User, 0)
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.Email, &u.DisplayName, &u.IsAdmin, &u.CreatedAt); err != nil {
+		var deletedAt sql.NullTime
+		if err := rows.Scan(&u.ID, &u.Email, &u.DisplayName, &u.IsAdmin, &u.Disabled, &deletedAt, &u.CreatedAt); err != nil {
 			return nil, err
+		}
+		if deletedAt.Valid {
+			u.DeletedAt = &deletedAt.Time
 		}
 		out = append(out, u)
 	}
 	return out, rows.Err()
 }
+
+func lockActiveAdmins(ctx context.Context, tx *sql.Tx) (int, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM users WHERE is_admin=TRUE AND disabled=FALSE AND deleted_at IS NULL ORDER BY id FOR UPDATE`)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	return count, rows.Close()
+}
+
+func (s *Store) UpdateAdminUser(ctx context.Context, id, email, displayName string, isAdmin, disabled bool, passwordHash string) (User, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return User{}, err
+	}
+	defer tx.Rollback()
+
+	if err := lockUserProjectRows(ctx, tx, id); err != nil {
+		return User{}, err
+	}
+	activeAdmins, err := lockActiveAdmins(ctx, tx)
+	if err != nil {
+		return User{}, err
+	}
+	var wasAdmin, wasDisabled bool
+	var deletedAt sql.NullTime
+	err = tx.QueryRowContext(ctx, `SELECT is_admin,disabled,deleted_at FROM users WHERE id=$1 FOR UPDATE`, id).Scan(&wasAdmin, &wasDisabled, &deletedAt)
+	if err != nil {
+		return User{}, err
+	}
+	if id == "justcd-system" {
+		return User{}, ErrSystemUser
+	}
+	if deletedAt.Valid {
+		return User{}, ErrUserDeleted
+	}
+	if wasAdmin && !wasDisabled && (!isAdmin || disabled) && activeAdmins <= 1 {
+		return User{}, ErrLastInstanceAdmin
+	}
+	if disabled && !wasDisabled {
+		lastOwner, err := userIsLastActiveProjectOwner(ctx, tx, id)
+		if err != nil {
+			return User{}, err
+		}
+		if lastOwner {
+			return User{}, ErrUserLastProjectOwner
+		}
+	}
+
+	query := `UPDATE users SET email=LOWER($2),display_name=$3,is_admin=$4,disabled=$5,
+		password_hash=CASE WHEN $6='' THEN password_hash ELSE $6 END
+		WHERE id=$1 AND deleted_at IS NULL
+		RETURNING id,email,display_name,is_admin,disabled,deleted_at,created_at`
+	var user User
+	var updatedDeletedAt sql.NullTime
+	err = tx.QueryRowContext(ctx, query, id, email, displayName, isAdmin, disabled, passwordHash).
+		Scan(&user.ID, &user.Email, &user.DisplayName, &user.IsAdmin, &user.Disabled, &updatedDeletedAt, &user.CreatedAt)
+	if err != nil {
+		return User{}, err
+	}
+	if updatedDeletedAt.Valid {
+		user.DeletedAt = &updatedDeletedAt.Time
+	}
+	if disabled || passwordHash != "" {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=$1`, id); err != nil {
+			return User{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return User{}, err
+	}
+	return user, nil
+}
+
+func (s *Store) DeleteAdminUser(ctx context.Context, id string) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if err := lockUserProjectRows(ctx, tx, id); err != nil {
+		return err
+	}
+	activeAdmins, err := lockActiveAdmins(ctx, tx)
+	if err != nil {
+		return err
+	}
+	var wasAdmin, wasDisabled bool
+	var deletedAt sql.NullTime
+	err = tx.QueryRowContext(ctx, `SELECT is_admin,disabled,deleted_at FROM users WHERE id=$1 FOR UPDATE`, id).Scan(&wasAdmin, &wasDisabled, &deletedAt)
+	if err != nil {
+		return err
+	}
+	if id == "justcd-system" {
+		return ErrSystemUser
+	}
+	if deletedAt.Valid {
+		return ErrUserDeleted
+	}
+	if wasAdmin && !wasDisabled && activeAdmins <= 1 {
+		return ErrLastInstanceAdmin
+	}
+	if !wasDisabled {
+		lastOwner, err := userIsLastActiveProjectOwner(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if lastOwner {
+			return ErrUserLastProjectOwner
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=$1`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM project_memberships WHERE user_id=$1`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM oidc_membership_grants WHERE user_id=$1`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM oidc_identities WHERE user_id=$1`, id); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE users SET email='deleted+' || id || '@deleted.justcd.invalid',display_name='Deleted user',password_hash=NULL,is_admin=FALSE,disabled=TRUE,deleted_at=NOW() WHERE id=$1`, id)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) SetProjectMember(ctx context.Context, projectID, userID, role string) error {
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO project_memberships(project_id,user_id,role) VALUES($1,$2,$3) ON CONFLICT(project_id,user_id) DO UPDATE SET role=EXCLUDED.role`, projectID, userID, role)
-	return err
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := lockProject(ctx, tx, projectID); err != nil {
+		return err
+	}
+	var currentRole string
+	err = tx.QueryRowContext(ctx, `SELECT role FROM project_memberships WHERE project_id=$1 AND user_id=$2`, projectID, userID).Scan(&currentRole)
+	if err == sql.ErrNoRows {
+		if err := ensureActiveUser(ctx, tx, userID); err != nil {
+			return err
+		}
+		var managedBySSO bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM oidc_membership_grants WHERE project_id=$1 AND user_id=$2)`, projectID, userID).Scan(&managedBySSO); err != nil {
+			return err
+		}
+		if managedBySSO {
+			return ErrProjectMemberManagedSSO
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO project_memberships(project_id,user_id,role) VALUES($1,$2,$3)`, projectID, userID, role); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	} else {
+		var managedBySSO bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM oidc_membership_grants WHERE project_id=$1 AND user_id=$2)`, projectID, userID).Scan(&managedBySSO); err != nil {
+			return err
+		}
+		if managedBySSO {
+			return ErrProjectMemberManagedSSO
+		}
+		var targetActive bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND disabled=FALSE AND deleted_at IS NULL)`, userID).Scan(&targetActive); err != nil {
+			return err
+		}
+		if currentRole == "owner" && role != "owner" && targetActive {
+			owners, err := projectOwnerCountTx(ctx, tx, projectID)
+			if err != nil {
+				return err
+			}
+			if owners <= 1 {
+				return ErrLastProjectOwner
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE project_memberships SET role=$3 WHERE project_id=$1 AND user_id=$2`, projectID, userID, role); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
+
 func (s *Store) RemoveProjectMember(ctx context.Context, projectID, userID string) error {
-	_, err := s.DB.ExecContext(ctx, `DELETE FROM project_memberships WHERE project_id=$1 AND user_id=$2`, projectID, userID)
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := lockProject(ctx, tx, projectID); err != nil {
+		return err
+	}
+	var role string
+	err = tx.QueryRowContext(ctx, `SELECT role FROM project_memberships WHERE project_id=$1 AND user_id=$2`, projectID, userID).Scan(&role)
+	if err == sql.ErrNoRows {
+		var managedBySSO bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM oidc_membership_grants WHERE project_id=$1 AND user_id=$2)`, projectID, userID).Scan(&managedBySSO); err != nil {
+			return err
+		}
+		if managedBySSO {
+			return ErrProjectMemberManagedSSO
+		}
+		return ErrProjectMemberNotFound
+	}
+	if err != nil {
+		return err
+	}
+	var managedBySSO bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM oidc_membership_grants WHERE project_id=$1 AND user_id=$2)`, projectID, userID).Scan(&managedBySSO); err != nil {
+		return err
+	}
+	if managedBySSO {
+		return ErrProjectMemberManagedSSO
+	}
+	var targetActive bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND disabled=FALSE AND deleted_at IS NULL)`, userID).Scan(&targetActive); err != nil {
+		return err
+	}
+	if role == "owner" && targetActive {
+		owners, err := projectOwnerCountTx(ctx, tx, projectID)
+		if err != nil {
+			return err
+		}
+		if owners <= 1 {
+			return ErrLastProjectOwner
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM project_memberships WHERE project_id=$1 AND user_id=$2`, projectID, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func lockProject(ctx context.Context, tx *sql.Tx, projectID string) error {
+	var id string
+	err := tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE id=$1 FOR UPDATE`, projectID).Scan(&id)
+	if err == sql.ErrNoRows {
+		return ErrProjectNotFound
+	}
 	return err
 }
+
+func lockUserProjectRows(ctx context.Context, tx *sql.Tx, userID string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT p.id FROM projects p WHERE
+		EXISTS(SELECT 1 FROM project_memberships pm WHERE pm.project_id=p.id AND pm.user_id=$1) OR
+		EXISTS(SELECT 1 FROM oidc_membership_grants gm WHERE gm.project_id=p.id AND gm.user_id=$1)
+		ORDER BY p.id FOR UPDATE OF p`, userID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var projectID string
+		if err := rows.Scan(&projectID); err != nil {
+			rows.Close()
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	return rows.Close()
+}
+
+func userIsLastActiveProjectOwner(ctx context.Context, tx *sql.Tx, userID string) (bool, error) {
+	var lastOwner bool
+	err := tx.QueryRowContext(ctx, `WITH effective AS (
+		SELECT project_id,user_id,MAX(CASE role WHEN 'owner' THEN 3 WHEN 'deployer' THEN 2 ELSE 1 END) AS rank
+		FROM (
+			SELECT project_id,user_id,role FROM project_memberships
+			UNION ALL SELECT project_id,user_id,role FROM oidc_membership_grants
+		) grants GROUP BY project_id,user_id
+	), owners AS (
+		SELECT effective.project_id,effective.user_id FROM effective
+		JOIN users u ON u.id=effective.user_id
+		WHERE effective.rank=3 AND u.disabled=FALSE AND u.deleted_at IS NULL
+	)
+	SELECT EXISTS(
+		SELECT project_id FROM owners GROUP BY project_id
+		HAVING COUNT(*)=1 AND BOOL_OR(user_id=$1)
+	)`, userID).Scan(&lastOwner)
+	return lastOwner, err
+}
+
+func ensureActiveUser(ctx context.Context, tx *sql.Tx, userID string) error {
+	var activeID string
+	err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE id=$1 AND disabled=FALSE AND deleted_at IS NULL FOR SHARE`, userID).Scan(&activeID)
+	if err == sql.ErrNoRows {
+		return ErrUserUnavailable
+	}
+	return err
+}
+
+func projectOwnerCountTx(ctx context.Context, tx *sql.Tx, projectID string) (int, error) {
+	var count int
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM (
+		SELECT user_id,MAX(CASE role WHEN 'owner' THEN 3 WHEN 'deployer' THEN 2 ELSE 1 END) AS rank
+		FROM (
+			SELECT user_id,role FROM project_memberships WHERE project_id=$1
+			UNION ALL SELECT user_id,role FROM oidc_membership_grants WHERE project_id=$1
+		) members GROUP BY user_id
+	) effective JOIN users u ON u.id=effective.user_id WHERE effective.rank=3 AND u.disabled=FALSE AND u.deleted_at IS NULL`, projectID).Scan(&count)
+	return count, err
+}
+
 func (s *Store) ListProjectMembers(ctx context.Context, projectID string) ([]map[string]any, error) {
 	rows, err := s.DB.QueryContext(ctx, `WITH effective AS (
 		SELECT user_id,role FROM project_memberships WHERE project_id=$1
@@ -325,7 +656,10 @@ func (s *Store) ListProjectMembers(ctx context.Context, projectID string) ([]map
 	), ranked AS (
 		SELECT user_id,MAX(CASE role WHEN 'owner' THEN 3 WHEN 'deployer' THEN 2 ELSE 1 END) AS rank FROM effective GROUP BY user_id
 	)
-	SELECT u.id,u.email,u.display_name,CASE ranked.rank WHEN 3 THEN 'owner' WHEN 2 THEN 'deployer' ELSE 'viewer' END
+	SELECT u.id,u.email,u.display_name,CASE ranked.rank WHEN 3 THEN 'owner' WHEN 2 THEN 'deployer' ELSE 'viewer' END,
+		u.disabled,
+		EXISTS(SELECT 1 FROM project_memberships direct WHERE direct.project_id=$1 AND direct.user_id=u.id),
+		EXISTS(SELECT 1 FROM oidc_membership_grants sso WHERE sso.project_id=$1 AND sso.user_id=u.id)
 	FROM ranked JOIN users u ON u.id=ranked.user_id ORDER BY u.email`, projectID)
 	if err != nil {
 		return nil, err
@@ -334,10 +668,11 @@ func (s *Store) ListProjectMembers(ctx context.Context, projectID string) ([]map
 	out := make([]map[string]any, 0)
 	for rows.Next() {
 		var id, email, name, role string
-		if err := rows.Scan(&id, &email, &name, &role); err != nil {
+		var disabled, hasDirect, managedBySSO bool
+		if err := rows.Scan(&id, &email, &name, &role, &disabled, &hasDirect, &managedBySSO); err != nil {
 			return nil, err
 		}
-		out = append(out, map[string]any{"id": id, "email": email, "displayName": name, "role": role})
+		out = append(out, map[string]any{"id": id, "email": email, "displayName": name, "role": role, "disabled": disabled, "managedBySSO": managedBySSO, "editable": hasDirect && !managedBySSO})
 	}
 	return out, rows.Err()
 }
@@ -558,7 +893,7 @@ func (s *Store) ProjectOwnerCount(ctx context.Context, projectID string) (int, e
 			SELECT user_id,role FROM project_memberships WHERE project_id=$1
 			UNION ALL SELECT user_id,role FROM oidc_membership_grants WHERE project_id=$1
 		) members GROUP BY user_id
-	) effective WHERE rank=3`, projectID).Scan(&count)
+	) effective JOIN users u ON u.id=effective.user_id WHERE effective.rank=3 AND u.disabled=FALSE AND u.deleted_at IS NULL`, projectID).Scan(&count)
 	return count, err
 }
 
@@ -1675,7 +2010,7 @@ func (s *Store) CreateApproval(ctx context.Context, id, planID string, approval 
 		err := tx.QueryRowContext(ctx, `SELECT CASE WHEN u.is_admin THEN 'owner' ELSE COALESCE((SELECT member_roles.role FROM (
 			SELECT role FROM project_memberships WHERE project_id=$1 AND user_id=u.id
 			UNION ALL SELECT role FROM oidc_membership_grants WHERE project_id=$1 AND user_id=u.id
-		) member_roles ORDER BY CASE member_roles.role WHEN 'owner' THEN 3 WHEN 'deployer' THEN 2 ELSE 1 END DESC LIMIT 1),'') END FROM users u WHERE u.id=$2`, projectID, actorID).Scan(&role)
+		) member_roles ORDER BY CASE member_roles.role WHEN 'owner' THEN 3 WHEN 'deployer' THEN 2 ELSE 1 END DESC LIMIT 1),'') END FROM users u WHERE u.id=$2 AND u.disabled=FALSE AND u.deleted_at IS NULL`, projectID, actorID).Scan(&role)
 		return role, err
 	}
 	currentRole, err := projectRole(approval.ActorID)

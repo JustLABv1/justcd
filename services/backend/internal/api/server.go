@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -72,6 +73,7 @@ func (s *Server) routes() {
 	s.Mux.Handle("DELETE /api/v1/projects/{projectID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.deleteProject))))
 	s.Mux.Handle("GET /api/v1/projects/{projectID}/members", s.requireAuth(http.HandlerFunc(s.listProjectMembers)))
 	s.Mux.Handle("POST /api/v1/projects/{projectID}/members", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.setProjectMember))))
+	s.Mux.Handle("PUT /api/v1/projects/{projectID}/members/{userID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateProjectMember))))
 	s.Mux.Handle("DELETE /api/v1/projects/{projectID}/members/{userID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.removeProjectMember))))
 	s.Mux.Handle("GET /api/v1/credentials", s.requireAuth(http.HandlerFunc(s.listCredentials)))
 	s.Mux.Handle("POST /api/v1/credentials", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createCredential))))
@@ -123,6 +125,8 @@ func (s *Server) routes() {
 	s.Mux.Handle("GET /api/v1/audit", s.requireAuth(http.HandlerFunc(s.listAudit)))
 	s.Mux.Handle("GET /api/v1/admin/users", s.requireAuth(s.requireAdmin(http.HandlerFunc(s.listUsers))))
 	s.Mux.Handle("POST /api/v1/admin/users", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.createUser)))))
+	s.Mux.Handle("PUT /api/v1/admin/users/{userID}", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.updateUser)))))
+	s.Mux.Handle("DELETE /api/v1/admin/users/{userID}", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.deleteUser)))))
 	s.Mux.Handle("GET /api/v1/admin/oidc-providers", s.requireAuth(s.requireAdmin(http.HandlerFunc(s.listOIDCProviders))))
 	s.Mux.Handle("POST /api/v1/admin/oidc-providers", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.createOIDCProvider)))))
 	s.Mux.Handle("POST /api/v1/admin/oidc-providers/{providerID}/groups", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.addOIDCGroupRole)))))
@@ -316,8 +320,13 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.Email = strings.TrimSpace(strings.ToLower(input.Email))
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
 	if !strings.Contains(input.Email, "@") || len(input.Email) > 320 {
 		writeError(w, http.StatusBadRequest, "a valid email is required")
+		return
+	}
+	if len(input.DisplayName) > 200 {
+		writeError(w, http.StatusBadRequest, "display name must be 200 characters or fewer")
 		return
 	}
 	hash, err := security.HashPassword(input.Password)
@@ -326,12 +335,88 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := store.User{ID: store.NewID(), Email: input.Email, DisplayName: strings.TrimSpace(input.DisplayName), IsAdmin: input.IsAdmin}
-	if err := s.Store.CreateUser(r.Context(), u, hash); err != nil {
+	u, err = s.Store.CreateUser(r.Context(), u, hash)
+	if err != nil {
 		writeError(w, http.StatusConflict, "could not create user; the email may already be in use")
 		return
 	}
 	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "user.created", "user", u.ID, map[string]any{"email": u.Email, "isAdmin": u.IsAdmin})
 	writeJSON(w, http.StatusCreated, u)
+}
+
+func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Email       string `json:"email"`
+		DisplayName string `json:"displayName"`
+		Password    string `json:"password"`
+		IsAdmin     bool   `json:"isAdmin"`
+		Disabled    bool   `json:"disabled"`
+	}
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	input.Email = strings.TrimSpace(strings.ToLower(input.Email))
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	if !strings.Contains(input.Email, "@") || len(input.Email) > 320 {
+		writeError(w, http.StatusBadRequest, "a valid email is required")
+		return
+	}
+	if len(input.DisplayName) > 200 {
+		writeError(w, http.StatusBadRequest, "display name must be 200 characters or fewer")
+		return
+	}
+	passwordHash := ""
+	if input.Password != "" {
+		var err error
+		passwordHash, err = security.HashPassword(input.Password)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	userID := r.PathValue("userID")
+	if userID == currentUser(r).ID && (!input.IsAdmin || input.Disabled) {
+		writeError(w, http.StatusConflict, "you cannot lock or demote your own account")
+		return
+	}
+	user, err := s.Store.UpdateAdminUser(r.Context(), userID, input.Email, input.DisplayName, input.IsAdmin, input.Disabled, passwordHash)
+	if err != nil {
+		writeAdminUserError(w, err)
+		return
+	}
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "user.updated", "user", user.ID, map[string]any{"email": user.Email, "isAdmin": user.IsAdmin, "disabled": user.Disabled, "passwordChanged": passwordHash != ""})
+	writeJSON(w, http.StatusOK, user)
+}
+
+func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("userID")
+	if userID == currentUser(r).ID {
+		writeError(w, http.StatusConflict, "you cannot delete your own account")
+		return
+	}
+	if err := s.Store.DeleteAdminUser(r.Context(), userID); err != nil {
+		writeAdminUserError(w, err)
+		return
+	}
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "user.deleted", "user", userID, map[string]bool{"anonymized": true})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func writeAdminUserError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		writeError(w, http.StatusNotFound, "user not found")
+	case errors.Is(err, store.ErrLastInstanceAdmin), errors.Is(err, store.ErrUserLastProjectOwner), errors.Is(err, store.ErrUserDeleted), errors.Is(err, store.ErrSystemUser):
+		writeError(w, http.StatusConflict, err.Error())
+	default:
+		var sqlStateErr interface{ SQLState() string }
+		if errors.As(err, &sqlStateErr) && sqlStateErr.SQLState() == "23505" {
+			writeError(w, http.StatusConflict, "that email address is already in use")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not update user")
+	}
 }
 
 func (s *Server) serveOpenAPI(w http.ResponseWriter, r *http.Request) {

@@ -51,7 +51,8 @@ func (s *Server) validateApprovalRule(r *http.Request, projectID string, rule st
 	}
 	memberIDs := make(map[string]bool, len(members))
 	for _, member := range members {
-		if userID, ok := member["id"].(string); ok {
+		disabled, _ := member["disabled"].(bool)
+		if userID, ok := member["id"].(string); ok && !disabled {
 			memberIDs[userID] = true
 		}
 	}
@@ -70,7 +71,8 @@ func (s *Server) validateApprovalRule(r *http.Request, projectID string, rule st
 		for _, member := range members {
 			userID, _ := member["id"].(string)
 			role, _ := member["role"].(string)
-			if store.ApprovalRuleAllows(rule, role, userID) {
+			disabled, _ := member["disabled"].(bool)
+			if !disabled && store.ApprovalRuleAllows(rule, role, userID) {
 				eligible++
 			}
 		}

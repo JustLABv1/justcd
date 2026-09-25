@@ -33,6 +33,7 @@ export default function ProjectDetailPage() {
   const [memberEmail, setMemberEmail] = useState("")
   const [memberRole, setMemberRole] = useState("viewer")
   const [memberBusy, setMemberBusy] = useState(false)
+  const [memberActionId, setMemberActionId] = useState<string | null>(null)
   const [editName, setEditName] = useState("")
   const [editDescription, setEditDescription] = useState("")
   const [projectBusy, setProjectBusy] = useState(false)
@@ -95,6 +96,22 @@ export default function ProjectDetailPage() {
     finally { setMemberBusy(false) }
   }
 
+  async function changeMemberRole(member: ProjectMember, role: string) {
+    setMemberActionId(member.id)
+    try {
+      const result = await api<{ role: string }>(`/api/v1/projects/${encodeURIComponent(projectID)}/members/${encodeURIComponent(member.id)}`, { method: "PUT", body: JSON.stringify({ role }) })
+      setMembers((items) => items.map((item) => item.id === member.id ? { ...item, role: result.role } : item))
+      toast.success(`Updated ${member.displayName || member.email}'s project role.`)
+    } catch (cause) { toast.error(errorMessage(cause), cause) }
+    finally { setMemberActionId(null) }
+  }
+
+  async function removeMember(member: ProjectMember) {
+    await api<void>(`/api/v1/projects/${encodeURIComponent(projectID)}/members/${encodeURIComponent(member.id)}`, { method: "DELETE" })
+    setMembers((items) => items.filter((item) => item.id !== member.id))
+    toast.success(`Removed ${member.displayName || member.email} from the project.`)
+  }
+
   async function saveProject(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); setProjectBusy(true)
     try {
@@ -144,7 +161,7 @@ export default function ProjectDetailPage() {
             <FormField label="Project role" htmlFor="member-role"><FormSelect id="member-role" size="sm" value={memberRole} onValueChange={setMemberRole} items={[{ value: "viewer", label: "Viewer" }, { value: "deployer", label: "Deployer" }, { value: "owner", label: "Owner" }]} /></FormField>
             <Button size="sm" type="submit" className="w-fit" loading={memberBusy} loadingText="Adding member…">Add member</Button>
           </form>}
-          {members.length ? <div className="divide-y">{members.map((member) => <div key={member.id} className="flex items-center gap-3 px-5 py-3"><span className="grid size-8 place-items-center rounded-full bg-muted text-[10px] font-semibold uppercase">{(member.displayName || member.email).slice(0, 2)}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{member.displayName || member.email}</span><span className="block truncate text-[10px] text-muted-foreground">{member.email}</span></span><span className="text-[10px] capitalize text-muted-foreground">{member.role}</span></div>)}</div> : <p className="px-5 py-6 text-xs text-muted-foreground">Project owner is the only member so far.</p>}
+          {members.length ? <div className="divide-y">{members.map((member) => <div key={member.id} className="flex flex-wrap items-center gap-3 px-5 py-3"><span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-[10px] font-semibold uppercase">{(member.displayName || member.email).slice(0, 2)}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{member.displayName || member.email}</span><span className="block truncate text-[10px] text-muted-foreground">{member.email}</span><span className="mt-1 flex flex-wrap gap-1.5">{member.disabled && <span className="rounded-full border border-amber-500/30 bg-amber-500/5 px-2 py-0.5 text-[9px] text-amber-700 dark:text-amber-300">Locked</span>}{member.managedBySSO && <span className="rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">Managed by SSO</span>}</span></span>{project?.role === "owner" && member.editable ? <><FormSelect ariaLabel={`Project role for ${member.displayName || member.email}`} size="sm" className="max-w-32 min-w-28" value={member.role} disabled={memberActionId !== null} onValueChange={(role) => { if (role !== member.role) void changeMemberRole(member, role) }} items={[{ value: "viewer", label: "Viewer" }, { value: "deployer", label: "Deployer" }, { value: "owner", label: "Owner" }]} /><ConfirmDisclosure trigger="Remove" triggerVariant="outline" title={`Remove ${member.displayName || member.email}?`} description="They will lose access to this project and its applications immediately. Their JustCD account and activity history will remain." confirmLabel="Remove member" onConfirm={() => removeMember(member)} disabled={memberActionId !== null} /></> : <span className="text-[10px] capitalize text-muted-foreground">{member.role}</span>}</div>)}</div> : <p className="px-5 py-6 text-xs text-muted-foreground">Project owner is the only member so far.</p>}
         </Panel>
       </Tabs.Panel>
       {project && project.role !== "viewer" && <Tabs.Panel value="connections" className="outline-none">

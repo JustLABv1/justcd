@@ -89,9 +89,9 @@ export function ApprovalRuleEditor({
           <div className="mt-3 grid gap-2 border-t pt-3 sm:grid-cols-2">
             {members.map((member) => (
               <label key={member.id} className="flex min-w-0 items-center gap-2 text-xs">
-                <Checkbox checked={selectedUsers.has(member.id)} disabled={disabled} onCheckedChange={(checked) => toggleMember(member.id, Boolean(checked))} />
+                <Checkbox checked={selectedUsers.has(member.id)} disabled={disabled || (member.disabled && !selectedUsers.has(member.id))} onCheckedChange={(checked) => toggleMember(member.id, Boolean(checked))} />
                 <span className="min-w-0 truncate">{member.displayName || member.email}</span>
-                <span className="shrink-0 text-[10px] capitalize text-muted-foreground">{member.role}</span>
+                <span className="shrink-0 text-[10px] capitalize text-muted-foreground">{member.disabled ? "locked" : member.role}</span>
               </label>
             ))}
           </div>

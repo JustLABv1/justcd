@@ -3,6 +3,8 @@ export type User = {
   email: string
   displayName: string
   isAdmin: boolean
+  disabled: boolean
+  deletedAt?: string
   createdAt: string
 }
 
@@ -31,7 +33,15 @@ export type ApprovalPolicyOverride = {
   deletion?: ApprovalRule
 }
 
-export type ProjectMember = { id: string; email: string; displayName: string; role: string }
+export type ProjectMember = {
+  id: string
+  email: string
+  displayName: string
+  role: string
+  disabled: boolean
+  managedBySSO: boolean
+  editable: boolean
+}
 
 export type Credential = {
   id: string

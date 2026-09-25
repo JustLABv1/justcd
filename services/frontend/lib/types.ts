@@ -99,6 +99,7 @@ export type Application = {
   lastCheckedAt?: string
   lastSyncedRevision?: string
   health: string
+  statusIssues: { source: string; summary: string; observedAt: string }[]
   decommissioning: boolean
   autoSyncPaused?: boolean
   rollbackResumeAvailable?: boolean

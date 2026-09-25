@@ -73,6 +73,7 @@ export function ApplicationCard({ app, canManage, onDeleted }: { app: WorkspaceA
 
       <div className="mt-4">
         <StatusBadge status={app.health} />
+        {app.statusIssues?.length > 0 && <p className="mt-2 text-xs leading-5 text-destructive" title={app.statusIssues.map((issue) => issue.summary).join("\n")}>{app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")} check failed · <Link href={`/applications/${app.id}`} className="underline underline-offset-2">Details</Link></p>}
       </div>
 
       <dl className="my-5 grid grid-cols-[70px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-2.5 text-xs">
@@ -293,7 +294,7 @@ export function ApplicationCollection({
                 id: "health",
                 title: "Health",
                 size: 150,
-                cell: (app) => <StatusBadge status={app.health} />,
+                cell: (app) => <div className="space-y-1"><StatusBadge status={app.health} />{app.statusIssues?.length > 0 && <span className="block text-xs text-destructive">{app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")} check failed</span>}</div>,
               },
               {
                 id: "target",

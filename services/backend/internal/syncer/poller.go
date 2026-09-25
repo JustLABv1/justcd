@@ -40,7 +40,6 @@ func (s *Service) reconcileDue(ctx context.Context, logger *slog.Logger) {
 		record, err := s.BuildPlan(ctx, app.ID, systemActorID)
 		if err != nil {
 			logger.Warn("automatic JustCD plan failed", "applicationId", app.ID, "error", err)
-			_ = s.Store.UpdateApplicationHealth(ctx, app.ID, "degraded", time.Now().UTC().Format(time.RFC3339Nano))
 			_ = s.Store.Audit(ctx, systemActorID, "auto_sync.plan_failed", "application", app.ID, map[string]string{"message": "automatic drift check failed; see server logs"})
 			continue
 		}

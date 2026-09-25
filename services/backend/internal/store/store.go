@@ -1169,6 +1169,7 @@ type Application struct {
 	LastCheckedAt                  *time.Time                         `json:"lastCheckedAt,omitempty"`
 	LastSyncedRevision             string                             `json:"lastSyncedRevision,omitempty"`
 	Health                         string                             `json:"health"`
+	StatusIssues                   []ApplicationStatusIssue           `json:"statusIssues"`
 	Decommissioning                bool                               `json:"decommissioning"`
 	AutoSyncPaused                 bool                               `json:"autoSyncPaused"`
 	RollbackResumeAvailable        bool                               `json:"rollbackResumeAvailable"`
@@ -1176,6 +1177,12 @@ type Application struct {
 	RollbackResumeState            *ApplicationRollbackState          `json:"-"`
 	ApprovalPolicyOverride         *ApprovalPolicyOverride            `json:"approvalPolicyOverride,omitempty"`
 	CreatedAt                      time.Time                          `json:"createdAt"`
+}
+
+type ApplicationStatusIssue struct {
+	Source     string    `json:"source"`
+	Summary    string    `json:"summary"`
+	ObservedAt time.Time `json:"observedAt"`
 }
 
 type ApplicationGroup struct {
@@ -1251,8 +1258,11 @@ func (s *Store) CreateApplication(ctx context.Context, a Application) error {
 
 func scanApplication(row interface{ Scan(...any) error }) (Application, error) {
 	var a Application
-	var namespaces, helmValuesFiles, namespaceManifestPaths, targetValuesFiles, namespaceValues, rawApprovalOverride, rawRollbackState []byte
-	err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.SourceID, &a.Revision, &a.ManifestPath, &a.Renderer, &a.KustomizeHelmEnabled, &a.KustomizeNamespaceOverride, &helmValuesFiles, &a.HelmValuesYAML, &a.ApplicationGroupID, &a.TargetManifestPath, &namespaceManifestPaths, &targetValuesFiles, &a.TargetHelmValuesYAML, &namespaceValues, &a.ClusterID, &namespaces, &a.SyncPolicy, &a.PollSeconds, &a.LastCheckedAt, &a.LastSyncedRevision, &a.Health, &a.Decommissioning, &rawApprovalOverride, &a.AutoSyncPaused, &rawRollbackState, &a.RollbackResumeRequiresRevision, &a.CreatedAt)
+	var namespaces, helmValuesFiles, namespaceManifestPaths, targetValuesFiles, namespaceValues, rawApprovalOverride, rawRollbackState, rawStatusIssues []byte
+	err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.SourceID, &a.Revision, &a.ManifestPath, &a.Renderer, &a.KustomizeHelmEnabled, &a.KustomizeNamespaceOverride, &helmValuesFiles, &a.HelmValuesYAML, &a.ApplicationGroupID, &a.TargetManifestPath, &namespaceManifestPaths, &targetValuesFiles, &a.TargetHelmValuesYAML, &namespaceValues, &a.ClusterID, &namespaces, &a.SyncPolicy, &a.PollSeconds, &a.LastCheckedAt, &a.LastSyncedRevision, &a.Health, &rawStatusIssues, &a.Decommissioning, &rawApprovalOverride, &a.AutoSyncPaused, &rawRollbackState, &a.RollbackResumeRequiresRevision, &a.CreatedAt)
+	if err == nil {
+		err = json.Unmarshal(rawStatusIssues, &a.StatusIssues)
+	}
 	if err == nil {
 		err = json.Unmarshal(namespaces, &a.Namespaces)
 	}
@@ -1270,6 +1280,9 @@ func scanApplication(row interface{ Scan(...any) error }) (Application, error) {
 	}
 	if a.HelmValuesFiles == nil {
 		a.HelmValuesFiles = []string{}
+	}
+	if a.StatusIssues == nil {
+		a.StatusIssues = []ApplicationStatusIssue{}
 	}
 	if a.TargetHelmValuesFiles == nil {
 		a.TargetHelmValuesFiles = []string{}
@@ -1298,7 +1311,7 @@ func scanApplication(row interface{ Scan(...any) error }) (Application, error) {
 	return a, err
 }
 
-const applicationColumns = `id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,COALESCE(application_group_id,''),target_manifest_path,namespace_manifest_paths,target_helm_values_files,target_helm_values_yaml,namespace_helm_values,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,COALESCE(last_synced_revision,''),health,decommissioning,approval_policy_override,auto_sync_paused,rollback_resume_state,rollback_resume_requires_revision,created_at`
+const applicationColumns = `id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,COALESCE(application_group_id,''),target_manifest_path,namespace_manifest_paths,target_helm_values_files,target_helm_values_yaml,namespace_helm_values,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,COALESCE(last_synced_revision,''),health,status_issues,decommissioning,approval_policy_override,auto_sync_paused,rollback_resume_state,rollback_resume_requires_revision,created_at`
 
 func (s *Store) ApplicationByID(ctx context.Context, id string) (Application, error) {
 	return scanApplication(s.DB.QueryRowContext(ctx, `SELECT `+applicationColumns+` FROM applications WHERE id=$1`, id))
@@ -1367,7 +1380,7 @@ func (s *Store) UpdateApplication(ctx context.Context, app Application) error {
 			return errors.New("a deployment group can have only one application per cluster")
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE applications SET name=$2,source_id=$3,revision=$4,manifest_path=$5,renderer=$6,kustomize_helm_enabled=$7,kustomize_namespace_override=$8,helm_values_files=$9,helm_values_yaml=$10,target_manifest_path=$11,namespace_manifest_paths=$12,target_helm_values_files=$13,target_helm_values_yaml=$14,namespace_helm_values=$15,cluster_id=$16,namespaces=$17,sync_policy=$18,poll_seconds=$19,last_checked_at=NULL,health='unknown',updated_at=NOW() WHERE id=$1`, app.ID, app.Name, app.SourceID, app.Revision, app.ManifestPath, app.Renderer, app.KustomizeHelmEnabled, app.KustomizeNamespaceOverride, valuesFiles, app.HelmValuesYAML, app.TargetManifestPath, namespaceManifestPaths, targetValuesFiles, app.TargetHelmValuesYAML, namespaceValues, app.ClusterID, namespaces, app.SyncPolicy, app.PollSeconds); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET name=$2,source_id=$3,revision=$4,manifest_path=$5,renderer=$6,kustomize_helm_enabled=$7,kustomize_namespace_override=$8,helm_values_files=$9,helm_values_yaml=$10,target_manifest_path=$11,namespace_manifest_paths=$12,target_helm_values_files=$13,target_helm_values_yaml=$14,namespace_helm_values=$15,cluster_id=$16,namespaces=$17,sync_policy=$18,poll_seconds=$19,last_checked_at=NULL,health='unknown',status_issues='[]'::jsonb,updated_at=NOW() WHERE id=$1`, app.ID, app.Name, app.SourceID, app.Revision, app.ManifestPath, app.Renderer, app.KustomizeHelmEnabled, app.KustomizeNamespaceOverride, valuesFiles, app.HelmValuesYAML, app.TargetManifestPath, namespaceManifestPaths, targetValuesFiles, app.TargetHelmValuesYAML, namespaceValues, app.ClusterID, namespaces, app.SyncPolicy, app.PollSeconds); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, app.ID); err != nil {
@@ -1606,7 +1619,7 @@ func (s *Store) UpdateApplicationGroup(ctx context.Context, group ApplicationGro
 	if _, err := tx.ExecContext(ctx, `UPDATE application_groups SET source_id=$2,revision=$3,manifest_path=$4,kustomize_helm_enabled=$5,kustomize_namespace_override=$6,helm_values_files=$7,helm_values_yaml=$8,sync_policy=$9,poll_seconds=$10,updated_at=NOW() WHERE id=$1`, group.ID, group.SourceID, group.Revision, group.ManifestPath, group.KustomizeHelmEnabled, group.KustomizeNamespaceOverride, valuesFiles, group.HelmValuesYAML, group.SyncPolicy, group.PollSeconds); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE applications SET source_id=$2,revision=$3,manifest_path=$4,kustomize_helm_enabled=$5,kustomize_namespace_override=$6,helm_values_files=$7,helm_values_yaml=$8,sync_policy=$9,poll_seconds=$10,last_checked_at=NULL,health='unknown',updated_at=NOW() WHERE application_group_id=$1`, group.ID, group.SourceID, group.Revision, group.ManifestPath, group.KustomizeHelmEnabled, group.KustomizeNamespaceOverride, valuesFiles, group.HelmValuesYAML, group.SyncPolicy, group.PollSeconds); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET source_id=$2,revision=$3,manifest_path=$4,kustomize_helm_enabled=$5,kustomize_namespace_override=$6,helm_values_files=$7,helm_values_yaml=$8,sync_policy=$9,poll_seconds=$10,last_checked_at=NULL,health='unknown',status_issues='[]'::jsonb,updated_at=NOW() WHERE application_group_id=$1`, group.ID, group.SourceID, group.Revision, group.ManifestPath, group.KustomizeHelmEnabled, group.KustomizeNamespaceOverride, valuesFiles, group.HelmValuesYAML, group.SyncPolicy, group.PollSeconds); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE status='current' AND application_id IN (SELECT id FROM applications WHERE application_group_id=$1)`, group.ID); err != nil {
@@ -1638,12 +1651,23 @@ func (s *Store) UpdateApplicationHealth(ctx context.Context, id, health, checked
 	_, err := s.DB.ExecContext(ctx, `UPDATE applications SET health=$2,last_checked_at=$3::timestamptz,updated_at=NOW() WHERE id=$1`, id, health, checkedAt)
 	return err
 }
-func (s *Store) MarkApplicationSynced(ctx context.Context, id, revision, health string) error {
-	if revision == "" {
-		_, err := s.DB.ExecContext(ctx, `UPDATE applications SET health=$2,last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, id, health)
+func (s *Store) SetApplicationStatusIssues(ctx context.Context, id string, issues []ApplicationStatusIssue) error {
+	if issues == nil {
+		issues = []ApplicationStatusIssue{}
+	}
+	raw, err := json.Marshal(issues)
+	if err != nil {
 		return err
 	}
-	_, err := s.DB.ExecContext(ctx, `UPDATE applications SET last_synced_revision=$2,health=$3,last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, id, revision, health)
+	_, err = s.DB.ExecContext(ctx, `UPDATE applications SET health='degraded',status_issues=$2::jsonb,last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, id, raw)
+	return err
+}
+func (s *Store) MarkApplicationSynced(ctx context.Context, id, revision, health string) error {
+	if revision == "" {
+		_, err := s.DB.ExecContext(ctx, `UPDATE applications SET health=$2,status_issues='[]'::jsonb,last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, id, health)
+		return err
+	}
+	_, err := s.DB.ExecContext(ctx, `UPDATE applications SET last_synced_revision=$2,health=$3,status_issues='[]'::jsonb,last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, id, revision, health)
 	return err
 }
 
@@ -1701,7 +1725,7 @@ func (s *Store) PinApplicationForRollback(ctx context.Context, id, planID string
 	}
 	// Keep the currently configured cluster and namespace credential bindings.
 	// A rollback changes desired application content, never authentication wiring.
-	if _, err := tx.ExecContext(ctx, `UPDATE applications SET source_id=$2,revision=$3,manifest_path=$4,target_manifest_path=$5,namespace_manifest_paths=$6,renderer=$7,kustomize_helm_enabled=$8,kustomize_namespace_override=$9,helm_values_files=$10,helm_values_yaml=$11,target_helm_values_files=$12,target_helm_values_yaml=$13,namespace_helm_values=$14,auto_sync_paused=TRUE,rollback_resume_state=$15,rollback_resume_requires_revision=$16,last_checked_at=NULL,health='unknown',updated_at=NOW() WHERE id=$1`, id, settings.SourceID, pinnedRevision, settings.ManifestPath, settings.TargetManifestPath, namespaceManifestPaths, settings.Renderer, settings.KustomizeHelmEnabled, settings.KustomizeNamespaceOverride, valuesFiles, settings.HelmValuesYAML, targetValuesFiles, settings.TargetHelmValuesYAML, namespaceValues, rawPrior, requireRevision); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET source_id=$2,revision=$3,manifest_path=$4,target_manifest_path=$5,namespace_manifest_paths=$6,renderer=$7,kustomize_helm_enabled=$8,kustomize_namespace_override=$9,helm_values_files=$10,helm_values_yaml=$11,target_helm_values_files=$12,target_helm_values_yaml=$13,namespace_helm_values=$14,auto_sync_paused=TRUE,rollback_resume_state=$15,rollback_resume_requires_revision=$16,last_checked_at=NULL,health='unknown',status_issues='[]'::jsonb,updated_at=NOW() WHERE id=$1`, id, settings.SourceID, pinnedRevision, settings.ManifestPath, settings.TargetManifestPath, namespaceManifestPaths, settings.Renderer, settings.KustomizeHelmEnabled, settings.KustomizeNamespaceOverride, valuesFiles, settings.HelmValuesYAML, targetValuesFiles, settings.TargetHelmValuesYAML, namespaceValues, rawPrior, requireRevision); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current' AND id<>$2`, id, planID); err != nil {
@@ -1802,14 +1826,14 @@ func (s *Store) ResumeRollbackTracking(ctx context.Context, id, selectedRevision
 		if state.NamespaceHelmValues == nil {
 			namespaceValues = []byte(`{}`)
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE applications SET source_id=$2,revision=$3,manifest_path=$4,target_manifest_path=$5,namespace_manifest_paths=$6,renderer=$7,kustomize_helm_enabled=$8,kustomize_namespace_override=$9,helm_values_files=$10,helm_values_yaml=$11,target_helm_values_files=$12,target_helm_values_yaml=$13,namespace_helm_values=$14,cluster_id=$15,namespaces=$16,sync_policy=$17,poll_seconds=$18,auto_sync_paused=FALSE,rollback_resume_state=NULL,rollback_resume_requires_revision=FALSE,last_checked_at=NULL,health='unknown',updated_at=NOW() WHERE id=$1`, id, state.SourceID, state.Revision, state.ManifestPath, state.TargetManifestPath, namespaceManifestPaths, state.Renderer, state.KustomizeHelmEnabled, state.KustomizeNamespaceOverride, valuesFiles, state.HelmValuesYAML, targetValuesFiles, state.TargetHelmValuesYAML, namespaceValues, state.ClusterID, namespaces, state.SyncPolicy, state.PollSeconds); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE applications SET source_id=$2,revision=$3,manifest_path=$4,target_manifest_path=$5,namespace_manifest_paths=$6,renderer=$7,kustomize_helm_enabled=$8,kustomize_namespace_override=$9,helm_values_files=$10,helm_values_yaml=$11,target_helm_values_files=$12,target_helm_values_yaml=$13,namespace_helm_values=$14,cluster_id=$15,namespaces=$16,sync_policy=$17,poll_seconds=$18,auto_sync_paused=FALSE,rollback_resume_state=NULL,rollback_resume_requires_revision=FALSE,last_checked_at=NULL,health='unknown',status_issues='[]'::jsonb,updated_at=NOW() WHERE id=$1`, id, state.SourceID, state.Revision, state.ManifestPath, state.TargetManifestPath, namespaceManifestPaths, state.Renderer, state.KustomizeHelmEnabled, state.KustomizeNamespaceOverride, valuesFiles, state.HelmValuesYAML, targetValuesFiles, state.TargetHelmValuesYAML, namespaceValues, state.ClusterID, namespaces, state.SyncPolicy, state.PollSeconds); err != nil {
 			return err
 		}
 	} else {
 		if selectedRevision == "" {
-			_, err = tx.ExecContext(ctx, `UPDATE applications SET auto_sync_paused=FALSE,last_checked_at=NULL,health='unknown',updated_at=NOW() WHERE id=$1`, id)
+			_, err = tx.ExecContext(ctx, `UPDATE applications SET auto_sync_paused=FALSE,last_checked_at=NULL,health='unknown',status_issues='[]'::jsonb,updated_at=NOW() WHERE id=$1`, id)
 		} else {
-			_, err = tx.ExecContext(ctx, `UPDATE applications SET revision=$2,auto_sync_paused=FALSE,last_checked_at=NULL,health='unknown',updated_at=NOW() WHERE id=$1`, id, selectedRevision)
+			_, err = tx.ExecContext(ctx, `UPDATE applications SET revision=$2,auto_sync_paused=FALSE,last_checked_at=NULL,health='unknown',status_issues='[]'::jsonb,updated_at=NOW() WHERE id=$1`, id, selectedRevision)
 		}
 		if err != nil {
 			return err

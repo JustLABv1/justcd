@@ -27,6 +27,27 @@ type Service struct {
 	EncryptionKey []byte
 }
 
+type planStageError struct {
+	stage string
+	err   error
+}
+
+func (e *planStageError) Error() string { return e.err.Error() }
+func (e *planStageError) Unwrap() error { return e.err }
+
+func statusIssue(stage string, at time.Time) store.ApplicationStatusIssue {
+	summary := "Application check failed. Review the plan error for details."
+	switch stage {
+	case "git":
+		summary = "Git source could not be reached or read. Check the repository URL, credentials, and revision."
+	case "cluster":
+		summary = "Kubernetes API could not be reached or read. Check cluster connectivity and credentials."
+	case "render":
+		summary = "Manifests could not be rendered. Check the source configuration."
+	}
+	return store.ApplicationStatusIssue{Source: stage, Summary: summary, ObservedAt: at}
+}
+
 // OwnershipConflict is returned when a rendered object already exists but has
 // never been claimed by this application. It contains only review metadata;
 // callers must recheck the object before adopting it.
@@ -84,6 +105,21 @@ func (s *Service) BuildPlan(ctx context.Context, applicationID, actorID string) 
 func (s *Service) BuildPlanWithSelection(ctx context.Context, app store.Application, actorID string, selection core.PlanSelection) (store.PlanRecord, error) {
 	plan, desired, err := s.CalculatePlanWithSelection(ctx, app, selection)
 	if err != nil {
+		if ctx.Err() == nil {
+			var stageErr *planStageError
+			issues := []store.ApplicationStatusIssue{statusIssue("check", time.Now().UTC())}
+			if errors.As(err, &stageErr) {
+				issues[0] = statusIssue(stageErr.stage, time.Now().UTC())
+				if stageErr.stage == "git" {
+					// Git failure prevents the normal plan from probing Kubernetes.
+					// Check it independently so simultaneous outages remain visible.
+					if _, clusterErr := s.loadPlanInput(ctx, app); clusterErr != nil && ctx.Err() == nil {
+						issues = append(issues, statusIssue("cluster", time.Now().UTC()))
+					}
+				}
+			}
+			_ = s.Store.SetApplicationStatusIssues(ctx, app.ID, issues)
+		}
 		return store.PlanRecord{}, err
 	}
 	now := time.Now().UTC()
@@ -91,7 +127,7 @@ func (s *Service) BuildPlanWithSelection(ctx context.Context, app store.Applicat
 	if err := s.Store.SavePlan(ctx, record); err != nil {
 		return store.PlanRecord{}, err
 	}
-	if _, err := s.Store.DB.ExecContext(ctx, `UPDATE applications SET health=$2,last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, app.ID, healthForPlan(plan)); err != nil {
+	if _, err := s.Store.DB.ExecContext(ctx, `UPDATE applications SET health=$2,status_issues='[]'::jsonb,last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, app.ID, healthForPlan(plan)); err != nil {
 		return store.PlanRecord{}, err
 	}
 	_ = s.Store.Audit(ctx, actorID, "plan.created", "application", app.ID, map[string]any{"planId": record.ID, "revision": plan.Revision, "digest": plan.Digest, "changes": len(plan.Changes)})
@@ -197,16 +233,16 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 	selection = normalizeSelection(selection)
 	source, err := s.Store.GitSourceByID(ctx, app.SourceID)
 	if err != nil {
-		return core.Plan{}, nil, errors.New("application Git source is unavailable")
+		return core.Plan{}, nil, &planStageError{stage: "git", err: errors.New("application Git source is unavailable")}
 	}
 	checkout, err := gitops.Fetch(ctx, s.Store, s.EncryptionKey, source, app.Revision)
 	if err != nil {
-		return core.Plan{}, nil, err
+		return core.Plan{}, nil, &planStageError{stage: "git", err: err}
 	}
 	defer checkout.Close()
 	input, err := s.loadPlanInput(ctx, app)
 	if err != nil {
-		return core.Plan{}, nil, err
+		return core.Plan{}, nil, &planStageError{stage: "cluster", err: err}
 	}
 	input.IgnoreRules = rules
 	input.IgnoreSelectors = selectors
@@ -225,7 +261,7 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 	}
 	desired, err := render.Render(ctx, render.Options{RepositoryRoot: checkout.Root, ManifestPath: app.ManifestPath, TargetManifestPath: app.TargetManifestPath, NamespaceManifestPaths: app.NamespaceManifestPaths, Renderer: app.Renderer, KustomizeHelmEnabled: app.KustomizeHelmEnabled, KustomizeNamespaceOverride: app.KustomizeNamespaceOverride, HelmValuesFiles: app.HelmValuesFiles, HelmValuesYAML: app.HelmValuesYAML, TargetHelmValuesFiles: app.TargetHelmValuesFiles, TargetHelmValuesYAML: app.TargetHelmValuesYAML, NamespaceHelmValues: app.NamespaceHelmValues, ApplicationID: app.ID, ClusterID: app.ClusterID, Namespaces: namespaceBindings, Mapper: input.Mapper.Mapper, IgnoredResources: ignoredResources, IgnoredSelectors: selectors})
 	if err != nil {
-		return core.Plan{}, nil, err
+		return core.Plan{}, nil, &planStageError{stage: "render", err: err}
 	}
 	for _, resource := range desired {
 		if resource.Identity.ClusterScoped && input.ClusterScopeClient == nil {
@@ -234,7 +270,7 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 	}
 	live, changedIgnoredFields, err := s.liveSnapshot(ctx, input, desired)
 	if err != nil {
-		return core.Plan{}, nil, err
+		return core.Plan{}, nil, &planStageError{stage: "cluster", err: err}
 	}
 	plan, err := core.BuildPlan(app.ID, checkout.Commit, input.Bindings, desired, live)
 	if err != nil {

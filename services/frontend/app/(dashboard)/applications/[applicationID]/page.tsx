@@ -11,6 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { DataGridList } from "@/components/data-grid-table"
 import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
 import { ResourceMap } from "@/components/resource-map"
 import { Textarea } from "@/components/ui/textarea"
 import { EmptyState, FormField, PageHeading, Panel, StatusBadge } from "@/components/ui-kit"
@@ -56,6 +57,7 @@ export default function ApplicationDetailPage() {
   const [activePlan, setActivePlan] = useState<PlanRecord | null>(null)
   const [resources, setResources] = useState<ManagedResource[]>([])
   const [topology, setTopology] = useState<ResourceTopology | null>(null)
+  const [topologyError, setTopologyError] = useState<unknown | null>(null)
   const [topologyRefreshing, setTopologyRefreshing] = useState(false)
   const [operations, setOperations] = useState<Operation[]>([])
   const [rollbackTargets, setRollbackTargets] = useState<RollbackTarget[]>([])
@@ -76,6 +78,7 @@ export default function ApplicationDetailPage() {
   const [ignoreReasons, setIgnoreReasons] = useState<Record<string, string>>({})
   const [approvalSummary, setApprovalSummary] = useState<PlanApprovalSummary | null>(null)
   const [loading, setLoading] = useState(true)
+  const [pendingData, setPendingData] = useState({ project: true, plans: true, resources: true, operations: true, topology: true, rollback: true, rules: true, selectors: true })
   const [busy, setBusy] = useState(false)
   const [pendingAction, setPendingAction] = useState("")
   const [error, setError] = useState<unknown | null>(null)
@@ -83,6 +86,7 @@ export default function ApplicationDetailPage() {
   const [ownershipConflicts, setOwnershipConflicts] = useState<OwnershipConflict[]>([])
   const [selectedConflictKeys, setSelectedConflictKeys] = useState<string[]>([])
   const conflictEpoch = useRef(0)
+  const loadEpoch = useRef(0)
   const [adoptionReason, setAdoptionReason] = useState("")
   const [previousControllerDisabled, setPreviousControllerDisabled] = useState(false)
   const [activeTab, setActiveTab] = useState("overview")
@@ -130,44 +134,82 @@ export default function ApplicationDetailPage() {
   }
 
   async function loadData() {
+    const epoch = ++loadEpoch.current
     const app = await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`)
-    const [projectList, memberList, planList, inventory, operationList, topologyResult, ignoreRuleList, selectorList, rollbackTargetList, kustomizationResult] = await Promise.all([
-      api<ListResponse<Project>>("/api/v1/projects"),
-      api<ListResponse<ProjectMember>>(`/api/v1/projects/${encodeURIComponent(app.projectId)}/members`).catch(() => ({ items: [] as ProjectMember[] })),
-      api<ListResponse<PlanRecord>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/plans`),
-      api<ListResponse<ManagedResource>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/resources`),
-      api<ListResponse<Operation>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/operations`),
-      api<ResourceTopology>(`/api/v1/applications/${encodeURIComponent(applicationID)}/topology`).catch(() => null),
-      api<ListResponse<IgnoreRule>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ignore-rules`),
-      api<ListResponse<IgnoreSelector>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ignore-selectors`),
-      api<ListResponse<RollbackTarget>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/rollback-targets`).catch(() => ({ items: [] as RollbackTarget[] })),
-      app.renderer === "kustomize" ? api<{ namespace: string; commit: string }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/kustomization`).then((value) => ({ value, error: null })).catch((cause) => ({ value: null, error: cause })) : Promise.resolve({ value: null, error: null }),
-    ])
+    if (epoch !== loadEpoch.current) return
     setApplication(app)
+    setLoading(false)
     if (app.decommissioning) setDeletePolicy("delete")
     setKustomizeHelmDraft(app.kustomizeHelmEnabled)
     setNamespaceOverrideDraft(app.kustomizeNamespaceOverride)
-    setKustomization(kustomizationResult.value)
-    setKustomizationError(kustomizationResult.error)
-    setProject(projectList.items.find((item) => item.id === app.projectId) ?? null)
-    setProjectMembers(memberList.items)
-    setPlans(planList.items)
-    setActivePlan((current) => current ? planList.items.find((item) => item.id === current.id) ?? planList.items[0] ?? null : planList.items[0] ?? null)
-    setResources(inventory.items)
-    setTopology(topologyResult)
-    setOperations(operationList.items)
-    setRollbackTargets(rollbackTargetList.items)
-    setIgnoreRules(ignoreRuleList.items)
-    setIgnoreSelectors(selectorList.items)
+    const current = () => epoch === loadEpoch.current
+    const done = (section: keyof typeof pendingData) => { if (current()) setPendingData((state) => ({ ...state, [section]: false })) }
+    const appPath = `/api/v1/applications/${encodeURIComponent(applicationID)}`
+    const results = await Promise.allSettled([
+      api<ListResponse<Project>>("/api/v1/projects").then((value) => { if (current()) setProject(value.items.find((item) => item.id === app.projectId) ?? null) }).finally(() => done("project")),
+      api<ListResponse<ProjectMember>>(`/api/v1/projects/${encodeURIComponent(app.projectId)}/members`).catch(() => ({ items: [] as ProjectMember[] })).then((value) => { if (current()) setProjectMembers(value.items) }),
+      api<ListResponse<PlanRecord>>(`${appPath}/plans`).then((value) => { if (current()) { setPlans(value.items); setActivePlan((selected) => selected ? value.items.find((item) => item.id === selected.id) ?? value.items[0] ?? null : value.items[0] ?? null) } }).finally(() => done("plans")),
+      api<ListResponse<ManagedResource>>(`${appPath}/resources`).then((value) => { if (current()) setResources(value.items) }).finally(() => done("resources")),
+      api<ListResponse<Operation>>(`${appPath}/operations`).then((value) => { if (current()) setOperations(value.items) }).finally(() => done("operations")),
+      api<ListResponse<IgnoreRule>>(`${appPath}/ignore-rules`).then((value) => { if (current()) setIgnoreRules(value.items) }).finally(() => done("rules")),
+      api<ListResponse<IgnoreSelector>>(`${appPath}/ignore-selectors`).then((value) => { if (current()) setIgnoreSelectors(value.items) }).finally(() => done("selectors")),
+      api<ListResponse<RollbackTarget>>(`${appPath}/rollback-targets`).catch(() => ({ items: [] as RollbackTarget[] })).then((value) => { if (current()) setRollbackTargets(value.items) }).finally(() => done("rollback")),
+    ])
+    if (current()) {
+      const failed = results.find((result) => result.status === "rejected")
+      if (failed?.status === "rejected") setError(failed.reason)
+    }
   }
 
   useEffect(() => {
     let active = true
-    Promise.resolve().then(loadData).catch((cause) => active && setError(cause)).finally(() => active && setLoading(false))
-    return () => { active = false }
+    Promise.resolve().then(() => {
+      if (!active) return
+      setLoading(true)
+      setPendingData({ project: true, plans: true, resources: true, operations: true, topology: true, rollback: true, rules: true, selectors: true })
+      setApplication(null)
+      setError(null)
+      setProject(null)
+      setProjectMembers([])
+      setPlans([])
+      setActivePlan(null)
+      setResources([])
+      setOperations([])
+      setRollbackTargets([])
+      setIgnoreRules([])
+      setIgnoreSelectors([])
+      setTopology(null)
+      setTopologyError(null)
+      setKustomization(null)
+      setKustomizationError(null)
+      return loadData()
+    }).catch((cause) => active && setError(cause)).finally(() => active && setLoading(false))
+    return () => { active = false; loadEpoch.current += 1 }
   // loadData is intentionally tied to this resource identifier only.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applicationID])
+
+  const loadedAppID = application?.id
+  const checkKustomization = application?.renderer === "kustomize" && (activeTab === "settings" || (!application.kustomizeNamespaceOverride && application.namespaces.length === 1))
+
+  useEffect(() => {
+    if (!loadedAppID) return
+    let active = true
+    void api<ResourceTopology>(`/api/v1/applications/${encodeURIComponent(loadedAppID)}/topology?cached=1`)
+      .then((result) => { if (active) { setTopology(result); setTopologyError(null) } })
+      .catch((cause) => { if (active) setTopologyError(cause) })
+      .finally(() => { if (active) setPendingData((state) => ({ ...state, topology: false })) })
+    return () => { active = false }
+  }, [loadedAppID])
+
+  useEffect(() => {
+    if (!loadedAppID || !checkKustomization) return
+    let active = true
+    void api<{ namespace: string; commit: string }>(`/api/v1/applications/${encodeURIComponent(loadedAppID)}/kustomization`)
+      .then((value) => { if (active) { setKustomization(value); setKustomizationError(null) } })
+      .catch((cause) => { if (active) setKustomizationError(cause) })
+    return () => { active = false }
+  }, [loadedAppID, checkKustomization])
 
   useEffect(() => {
     if (loading || !application) return
@@ -234,7 +276,10 @@ export default function ApplicationDetailPage() {
         const payload = cause.payload as { conflict: OwnershipConflict; conflicts?: OwnershipConflict[] }
         setConflictReview(payload.conflicts ?? [payload.conflict])
       } else if (!acceptRefreshedPlan(cause)) toast.error(errorMessage(cause), cause)
-    } finally { setBusy(false); setPendingAction("") }
+    } finally {
+      try { setApplication(await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`)) } catch { /* Retain the current application if refresh is unavailable. */ }
+      setBusy(false); setPendingAction("")
+    }
   }
 
   async function adoptConflict() {
@@ -525,8 +570,9 @@ export default function ApplicationDetailPage() {
   if (loading && !application) return <ApplicationDetailSkeleton />
 
   return <>
-    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.renderer} · ${application.manifestPath} · ${application.revision}` : ""} actions={application && <><StatusBadge status={application.health} />{canApprove && !application.decommissioning && <Link href={`/applications/${applicationID}/edit`}><Button variant="outline">Edit application</Button></Link>}<Button variant="outline" loading={pendingAction === "create-plan"} loadingText="Calculating plan…" onClick={() => void createPlan()} disabled={application.decommissioning || !canDeploy || busy || (namespaceMismatch && !application.kustomizeNamespaceOverride)} title={namespaceMismatch && !application.kustomizeNamespaceOverride ? "Choose a namespace override before refreshing the plan" : undefined}><span aria-hidden="true">↻</span> Refresh plan</Button></>} />
+    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.renderer} · ${application.manifestPath} · ${application.revision}` : ""} actions={application && <><StatusBadge status={application.health} />{pendingData.project && <span role="status" className="text-xs text-muted-foreground">Loading permissions…</span>}{canApprove && !application.decommissioning && <Link href={`/applications/${applicationID}/edit`}><Button variant="outline">Edit application</Button></Link>}<Button variant="outline" loading={pendingAction === "create-plan"} loadingText="Calculating plan…" onClick={() => void createPlan()} disabled={application.decommissioning || !canDeploy || busy || (namespaceMismatch && !application.kustomizeNamespaceOverride)} title={namespaceMismatch && !application.kustomizeNamespaceOverride ? "Choose a namespace override before refreshing the plan" : undefined}><span aria-hidden="true">↻</span> Refresh plan</Button></>} />
     {error && <ErrorNotice error={error} />}
+    {application && application.statusIssues?.length > 0 && <section role="alert" className="mb-5 rounded-xl border border-destructive/30 bg-destructive/5 p-4"><h2 className="text-sm font-semibold">Application check failed</h2><p className="mt-1 text-xs text-muted-foreground">JustCD could not verify the current state. The last successful sync does not confirm that Git or Kubernetes is reachable now.</p><ul className="mt-3 space-y-2">{application.statusIssues.map((issue) => <li key={issue.source} className="text-sm"><strong>{issue.source === "git" ? "Git repository" : issue.source === "cluster" ? "Target cluster" : "Application"}:</strong> {issue.summary}</li>)}</ul><p className="mt-3 text-xs text-muted-foreground">Checked {application.lastCheckedAt ? new Date(application.lastCheckedAt).toLocaleString() : "recently"}. Refresh the plan after maintenance to recheck both connections.</p></section>}
     {application?.decommissioning && <div role="status" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300/70 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><span>Deletion in progress. Auto-sync is paused. Review and apply the deletion plan, then finish removing the application.</span>{canApprove && <Button size="sm" variant="outline" disabled={busy || hasPendingOperation} onClick={() => void cancelDecommission()}>Cancel deletion</Button>}</div>}
     {application?.autoSyncPaused && <div role="status" className="mb-5 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-300/70 bg-amber-50/70 p-4 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"><div className="min-w-0 flex-1"><p className="text-sm font-semibold">Automatic reconciliation is paused</p><p className="mt-1 text-xs leading-5">{application.rollbackResumeAvailable ? "JustCD is pinned to the approved target. An owner can keep this pin or explicitly resume the previous tracked source." : "An operation failed or was interrupted. JustCD will not automatically retry; review its details and any available checkpoint before resuming."}</p>{application.rollbackResumeRequiresRevision && <div className="mt-3 max-w-md"><FormField label="Git revision to use before resuming" htmlFor="rollback-resume-revision"><Input id="rollback-resume-revision" value={resumeRevision} onChange={(event) => setResumeRevision(event.target.value)} placeholder="branch, tag, or commit" /></FormField></div>}</div>{canApprove && <div className="flex flex-wrap gap-2">{application.rollbackResumeAvailable && <Button size="sm" variant="outline" loading={pendingAction === "rollback-state-keep"} loadingText="Keeping pin…" disabled={busy || hasPendingOperation} onClick={() => void updateRollbackTracking("keep")}>Keep rollback pin</Button>}<Button size="sm" loading={pendingAction === "rollback-state-resume"} loadingText="Resuming…" disabled={busy || hasPendingOperation || (application.rollbackResumeRequiresRevision && !resumeRevision.trim())} onClick={() => void updateRollbackTracking("resume")}>{application.rollbackResumeAvailable ? "Resume previous source" : "Resume reconciliation"}</Button></div>}</div>}
     {namespaceMismatch && !application?.kustomizeNamespaceOverride && <div role="alert" className="mb-5 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><strong>Kustomize namespace: {kustomization?.namespace}.</strong> JustCD target: {application?.namespaces[0]?.namespace}. The namespaces differ, so a plan cannot be refreshed until an owner enables the transform. {application?.applicationGroupId ? <Link className="font-semibold underline underline-offset-4" href={`/application-groups/${application.applicationGroupId}`}>Review group settings →</Link> : <button type="button" className="font-semibold underline underline-offset-4" onClick={() => selectTab("settings")}>Review namespace setting →</button>}</div>}
@@ -559,18 +605,18 @@ export default function ApplicationDetailPage() {
       </div>}
       <div className="mb-6 grid gap-3 rounded-xl border bg-card p-4 sm:grid-cols-3 sm:divide-x sm:p-5">
         <SummaryFact label="Target" value={application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"} />
-        <SummaryFact label="Latest plan" value={latestPlan ? `${latestPlan.plan.changes.length} changes · ${latestPlan.status}` : "No plan yet"} />
-        <SummaryFact label="Last sync" value={application.lastSyncedRevision ? `${application.lastSyncedRevision.slice(0, 12)} · ${latestOperation?.status ?? "completed"}` : "Not synced yet"} />
+        <SummaryFact label="Latest plan" value={latestPlan ? `${latestPlan.plan.changes.length} changes · ${latestPlan.status}` : "No plan yet"} loading={pendingData.plans} />
+        <SummaryFact label="Last sync" value={application.lastSyncedRevision ? `${application.lastSyncedRevision.slice(0, 12)} · ${latestOperation?.status ?? "completed"}` : "Not synced yet"} loading={pendingData.operations} />
       </div>
 
       <Tabs.Root value={activeTab} onValueChange={(value) => selectTab(String(value))} className="min-w-0">
         <Tabs.List aria-label="Application views" className="mb-6 flex gap-6 overflow-x-auto border-b" activateOnFocus>
           {[
             { id: "overview", label: "Overview" },
-            { id: "topology", label: "Topology", count: topology?.nodes.length },
-            { id: "changes", label: "Plan & diff", count: latestPlan ? latestPlan.plan.changes.length + (latestPlan.plan.ignored?.length ?? 0) : 0 },
-            { id: "components", label: "Managed components", count: resources.length },
-            { id: "activity", label: "Activity & source", count: operations.length },
+            { id: "topology", label: "Topology", count: pendingData.topology ? undefined : topology?.nodes.length },
+            { id: "changes", label: "Plan & diff", count: pendingData.plans ? undefined : latestPlan ? latestPlan.plan.changes.length + (latestPlan.plan.ignored?.length ?? 0) : 0 },
+            { id: "components", label: "Managed components", count: pendingData.resources ? undefined : resources.length },
+            { id: "activity", label: "Activity & source", count: pendingData.operations ? undefined : operations.length },
             { id: "settings", label: "Settings" },
           ].map((tab) => <Tabs.Tab key={tab.id} value={tab.id} className="flex shrink-0 items-center gap-2 border-b-2 border-transparent px-1 pb-3 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[active]:border-primary data-[active]:text-foreground">
             {tab.label}{tab.count !== undefined && <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">{tab.count}</span>}
@@ -580,39 +626,43 @@ export default function ApplicationDetailPage() {
         <Tabs.Panel value="overview" className="space-y-5 outline-none">
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(280px,1fr)]">
             <Panel title="Delivery state" description="The current Git-to-cluster picture, without opening the full diff.">
+              {pendingData.plans ? <SectionLoading label="Loading the latest plan" compact /> :
               <div className="space-y-5 p-5">
                 <div className="grid grid-cols-3 gap-2"><ChangeCount label="Create" count={latestCounts?.create ?? 0} color="text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/40" /><ChangeCount label="Update" count={latestCounts?.update ?? 0} color="text-blue-700 bg-blue-50 dark:text-blue-300 dark:bg-blue-950/40" /><ChangeCount label="Delete" count={latestCounts?.delete ?? 0} color="text-rose-700 bg-rose-50 dark:text-rose-300 dark:bg-rose-950/40" /></div>
                 {latestPlan?.plan.requiresApproval && <p className="rounded-lg border border-amber-300/70 bg-amber-50/70 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">{latestPlan.plan.requiredApprovals ?? 1} eligible approval{(latestPlan.plan.requiredApprovals ?? 1) === 1 ? "" : "s"} required before this plan can be applied.</p>}
                 <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4"><span className="text-xs text-muted-foreground">{latestPlan ? `Plan ${latestPlan.status} · expires ${new Date(latestPlan.expiresAt).toLocaleTimeString()}` : "Create a plan to compare Git with the cluster."}</span><Button size="sm" variant="outline" onClick={() => selectTab("changes")}>Review plan →</Button></div>
-              </div>
+              </div>}
             </Panel>
             <Panel title="Resource footprint" description="Connected objects observed for this application.">
+              {pendingData.topology ? <SectionLoading label="Loading saved topology" compact /> : topologyError ? <div role="alert" className="space-y-2 p-5 text-xs text-muted-foreground"><p>Saved topology could not be loaded.</p><ErrorDetailsButton error={topologyError} /></div> :
               <div className="space-y-4 p-5"><p className="text-2xl font-semibold tabular-nums">{topology?.nodes.length ?? 0}<span className="ml-2 text-xs font-normal text-muted-foreground">resources · {topology?.edges.length ?? 0} relationships</span></p>
                 <div className="flex flex-wrap gap-1.5">{resourceKinds.length ? resourceKinds.slice(0, 8).map(([kind, count]) => <span key={kind} className="rounded-md border bg-muted/30 px-2 py-1 text-[11px]">{count} {kind}</span>) : <span className="text-xs text-muted-foreground">No resources observed yet.</span>}</div>
                 <div className="border-t pt-4"><Button size="sm" variant="outline" onClick={() => selectTab("topology")}>Explore topology →</Button></div>
-              </div>
+              </div>}
             </Panel>
           </div>
           <div className="grid gap-5 sm:grid-cols-2"><InfoCard label="Git revision" value={application.revision} note={`${application.renderer} · ${application.manifestPath}`} mono /><InfoCard label="Sync policy" value={application.syncPolicy === "auto-safe" ? "Auto-safe" : "Manual"} note={application.syncPolicy === "auto-safe" ? `Checks every ${application.pollSeconds}s; stops before deletion` : "Every sync is user initiated"} /></div>
-          {latestOperation && <Panel title="Latest operation" action={<Button size="sm" variant="ghost" onClick={() => selectTab("activity")}>View activity →</Button>}><div className="flex flex-wrap items-center gap-3 p-5"><StatusBadge status={latestOperation.status} /><span className="min-w-0 flex-1 truncate text-xs">{latestOperation.message || "Sync operation"}</span><span className="text-[11px] text-muted-foreground">{new Date(latestOperation.startedAt).toLocaleString()}</span></div></Panel>}
+          {pendingData.operations ? <Panel title="Latest operation"><SectionLoading label="Loading recent operations" compact /></Panel> : latestOperation && <Panel title="Latest operation" action={<Button size="sm" variant="ghost" onClick={() => selectTab("activity")}>View activity →</Button>}><div className="flex flex-wrap items-center gap-3 p-5"><StatusBadge status={latestOperation.status} /><span className="min-w-0 flex-1 truncate text-xs">{latestOperation.message || "Sync operation"}</span><span className="text-[11px] text-muted-foreground">{new Date(latestOperation.startedAt).toLocaleString()}</span></div></Panel>}
         </Tabs.Panel>
 
         <Tabs.Panel value="topology" className="outline-none">
+      {pendingData.topology || pendingData.resources || pendingData.plans || pendingData.operations ? <SectionLoading label="Loading the resource map" /> : <>
+      {topologyError && <div role="alert" className="mb-4 rounded-lg border border-destructive/30 p-3 text-xs">Saved topology could not be loaded. The map uses available inventory. <ErrorDetailsButton error={topologyError} /></div>}
       <ResourceMap application={application} plan={plans[0] ?? null} inventory={resources} operations={operations} topology={topology} refreshing={topologyRefreshing} onRefresh={() => {
         setTopologyRefreshing(true)
-        void api<ResourceTopology>(`/api/v1/applications/${encodeURIComponent(applicationID)}/topology?refresh=1`).then(setTopology).catch((cause) => toast.error(errorMessage(cause), cause)).finally(() => setTopologyRefreshing(false))
+        void api<ResourceTopology>(`/api/v1/applications/${encodeURIComponent(applicationID)}/topology?refresh=1`).then((result) => { setTopology(result); setTopologyError(null) }).catch((cause) => { setTopologyError(cause); toast.error(errorMessage(cause), cause) }).finally(() => setTopologyRefreshing(false))
       }} onViewDiff={(identity) => {
         const matching = plans[0]?.plan.changes.some((change) => diffId(change.identity) === diffId(identity))
         if (matching && plans[0]?.id !== activePlan?.id) setActivePlan(plans[0])
         setReviewResource(diffId(identity))
         selectTab("changes")
         window.setTimeout(() => document.getElementById(diffId(identity))?.scrollIntoView({ behavior: "smooth", block: "center" }), 100)
-      }} />
+      }} /></>}
         </Tabs.Panel>
 
         <Tabs.Panel value="changes" className="min-w-0 outline-none">
           <Panel title={activePlan?.plan.rollback ? "Rollback plan & diff" : activePlan?.plan.decommission ? "Deletion plan & diff" : "Plan & diff"} description={activePlan?.plan.rollback ? "A rollback is a new reviewed plan that restores a recorded deployment or Git revision." : activePlan?.plan.decommission ? "Every managed resource below will be checked again before it is deleted." : "A reviewed plan is a snapshot of the desired Git commit and live cluster state."} action={plans.length > 0 && <FormSelect ariaLabel="Select plan" value={activePlan?.id ?? ""} onValueChange={(id) => { setApprovalSummary(null); setActivePlan(plans.find((plan) => plan.id === id) ?? null) }} className="h-8 max-w-[220px] text-xs" items={plans.map((plan) => ({ value: plan.id, label: `${new Date(plan.createdAt).toLocaleString()} · ${plan.plan.rollback ? "rollback · " : plan.plan.decommission ? "deletion · " : ""}${plan.status}` }))} />}>
-            {!activePlan ? <EmptyState title="No review plan yet" description="Build a plan to render Git manifests and compare them with live, app-owned resources." /> : <div className="p-4 sm:p-5">
+            {pendingData.plans ? <SectionLoading label="Loading plans and differences" /> : !activePlan ? <EmptyState title="No review plan yet" description="Build a plan to render Git manifests and compare them with live, app-owned resources." /> : <div className="p-4 sm:p-5">
               <div className="mb-4 flex flex-wrap items-center gap-2"><StatusBadge status={activePlan.status} /><span className="font-mono text-xs text-muted-foreground">{activePlan.plan.revision.slice(0, 12)}</span><span className="text-xs text-muted-foreground">· expires {new Date(activePlan.expiresAt).toLocaleTimeString()}</span><span className="ml-auto font-mono text-xs text-muted-foreground">{activePlan.plan.digest.slice(0, 16)}</span></div>
               {activePlan.plan.rollback && <section className="mb-5 rounded-lg border border-amber-300/70 bg-amber-50/70 p-3.5 text-sm leading-6 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"><div className="font-semibold">Rollback target · {activePlan.plan.rollback.kind === "successful_sync" ? "successful deployment" : activePlan.plan.rollback.kind === "pre_operation" ? "state before an interrupted operation" : "Git revision"}</div><p className="mt-1">{activePlan.plan.rollback.revision ? `Resolved commit ${activePlan.plan.rollback.revision.slice(0, 12)}.` : "This checkpoint has no historical successful commit; the application ref will remain paused."}{activePlan.plan.rollback.createdAt ? ` Captured ${new Date(activePlan.plan.rollback.createdAt).toLocaleString()}.` : ""}{activePlan.plan.rollback.operationId ? ` Operation ${activePlan.plan.rollback.operationId.slice(0, 8)}.` : ""} {activePlan.plan.rollback.resourceCount !== undefined ? `${activePlan.plan.rollback.resourceCount} resources in target.` : ""}</p><p className="mt-2 font-medium">Kubernetes resources cannot be changed atomically. This diff may contain creations, updates, and deletions; a failure can leave a visible partial result.</p>{(activePlan.plan.ignored?.length ?? 0) > 0 && <p className="mt-2">{activePlan.plan.ignored?.length} difference{activePlan.plan.ignored?.length === 1 ? " is" : "s are"} limited by the application&apos;s current ignore rules.</p>}</section>}
               <div className="mb-5 grid grid-cols-3 gap-2"><ChangeCount label="Create" count={changeCounts?.create ?? 0} color="text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/40" /><ChangeCount label="Update" count={changeCounts?.update ?? 0} color="text-blue-700 bg-blue-50 dark:text-blue-300 dark:bg-blue-950/40" /><ChangeCount label="Delete" count={changeCounts?.delete ?? 0} color="text-rose-700 bg-rose-50 dark:text-rose-300 dark:bg-rose-950/40" /></div>
@@ -635,7 +685,7 @@ export default function ApplicationDetailPage() {
 
         <Tabs.Panel value="components" className="outline-none">
           <Panel surface="flat" title="Managed components" description="JustCD tracks only resources that it created and owns on the cluster.">
-            {resources.length ? <div className="min-w-0"><DataGridList rows={resources} columns={[
+            {pendingData.resources ? <SectionLoading label="Loading managed components" /> : resources.length ? <div className="min-w-0"><DataGridList rows={resources} columns={[
               { id: "resource", title: "Resource", cell: (item) => <span className="font-medium">{item.identity.name}<span className="mt-0.5 block text-[10px] font-normal text-muted-foreground">{item.identity.kind} · {item.identity.apiVersion}{item.adopted ? " · field handover pending" : ""}</span></span> },
               { id: "namespace", title: "Namespace", cell: (item) => <span className="text-xs text-muted-foreground">{item.identity.namespace || "cluster scope"}</span> },
               { id: "cluster", title: "Cluster", cell: (item) => <span className="font-mono text-[10px] text-muted-foreground">{item.identity.clusterId?.slice(0, 8)}</span> },
@@ -647,11 +697,11 @@ export default function ApplicationDetailPage() {
         <Tabs.Panel value="activity" className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px] outline-none">
           <div className="space-y-5">
           <Panel title="Recent operations" description="Sync history and result state">
-            {operations.length ? <div className="divide-y">{operations.slice(0, 8).map((operation) => { const checkpoint = operation.rollbackCheckpointId ?? rollbackTargets.find((target) => target.kind === "pre_operation" && target.operationId === operation.id)?.id; return <div key={operation.id} className="px-5 py-3.5"><div className="flex items-center justify-between gap-3"><span className="text-xs font-medium">{operation.type === "rollback" ? operation.status === "succeeded" ? "Rollback completed" : operation.status === "failed" ? "Rollback stopped" : operation.status === "queued" ? "Rollback queued" : "Rollback running" : operation.status === "succeeded" ? "Sync completed" : operation.status === "failed" ? "Sync stopped" : operation.status === "queued" ? "Sync queued" : "Sync running"}</span><StatusBadge status={operation.status} /></div><p className="mt-1 line-clamp-2 text-[10px] leading-4 text-muted-foreground">{operation.message || (operation.type === "rollback" ? "Rollback operation" : "Sync operation")}</p>{operation.progress && <p className="mt-1 text-[10px] text-muted-foreground">{operationPhaseLabel(operation.progress.phase, operation.status)} · {operation.progress.completed.length}/{operation.progress.total} resources{operation.progress.current ? ` · ${resourceLabel(operation.progress.current)}` : ""}</p>}{operation.status === "failed" && <div className="mt-2 flex flex-wrap items-center gap-2">{canApprove && checkpoint && <Button size="sm" variant="outline" disabled={busy || hasPendingOperation} onClick={() => void createRollbackPlan({ kind: "pre_operation", id: checkpoint })}>Restore state before this {operation.type === "rollback" ? "rollback" : "sync"}</Button>}<ErrorDetailsButton label="Debug details" error={{ name: "SyncOperationError", message: operation.message, operationId: operation.id, applicationId: operation.applicationId, planId: operation.planId, status: operation.status, startedAt: operation.startedAt, finishedAt: operation.finishedAt, progress: operation.progress }} /></div>}<p className="mt-1.5 text-[9px] text-muted-foreground">{new Date(operation.startedAt).toLocaleString()}</p></div>})}</div> : <EmptyState title="No syncs yet" description="Operations will be recorded here with the actor and resulting status." />}
+            {pendingData.operations ? <SectionLoading label="Loading recent operations" /> : operations.length ? <div className="divide-y">{operations.slice(0, 8).map((operation) => { const checkpoint = operation.rollbackCheckpointId ?? rollbackTargets.find((target) => target.kind === "pre_operation" && target.operationId === operation.id)?.id; return <div key={operation.id} className="px-5 py-3.5"><div className="flex items-center justify-between gap-3"><span className="text-xs font-medium">{operation.type === "rollback" ? operation.status === "succeeded" ? "Rollback completed" : operation.status === "failed" ? "Rollback stopped" : operation.status === "queued" ? "Rollback queued" : "Rollback running" : operation.status === "succeeded" ? "Sync completed" : operation.status === "failed" ? "Sync stopped" : operation.status === "queued" ? "Sync queued" : "Sync running"}</span><StatusBadge status={operation.status} /></div><p className="mt-1 line-clamp-2 text-[10px] leading-4 text-muted-foreground">{operation.message || (operation.type === "rollback" ? "Rollback operation" : "Sync operation")}</p>{operation.progress && <p className="mt-1 text-[10px] text-muted-foreground">{operationPhaseLabel(operation.progress.phase, operation.status)} · {operation.progress.completed.length}/{operation.progress.total} resources{operation.progress.current ? ` · ${resourceLabel(operation.progress.current)}` : ""}</p>}{operation.status === "failed" && <div className="mt-2 flex flex-wrap items-center gap-2">{canApprove && checkpoint && <Button size="sm" variant="outline" disabled={busy || hasPendingOperation} onClick={() => void createRollbackPlan({ kind: "pre_operation", id: checkpoint })}>Restore state before this {operation.type === "rollback" ? "rollback" : "sync"}</Button>}<ErrorDetailsButton label="Debug details" error={{ name: "SyncOperationError", message: operation.message, operationId: operation.id, applicationId: operation.applicationId, planId: operation.planId, status: operation.status, startedAt: operation.startedAt, finishedAt: operation.finishedAt, progress: operation.progress }} /></div>}<p className="mt-1.5 text-[9px] text-muted-foreground">{new Date(operation.startedAt).toLocaleString()}</p></div>})}</div> : <EmptyState title="No syncs yet" description="Operations will be recorded here with the actor and resulting status." />}
           </Panel>
           <Panel title="Rollback targets" description="Review a new plan to restore a previous deployment. Opening a target never changes the cluster.">
             <div className="space-y-4 p-5">
-              {rollbackTargets.length > 0 ? <div className="divide-y rounded-lg border">{rollbackTargets.map((target) => <div key={target.id} className="flex flex-wrap items-center gap-3 px-3 py-3"><div className="min-w-0 flex-1"><p className="text-xs font-medium">{target.kind === "successful_sync" ? "Successful deployment" : "Before failed operation"}</p><p className="mt-1 text-[10px] text-muted-foreground">{new Date(target.createdAt).toLocaleString()} · {target.resourceCount} resources{target.revision ? ` · ${target.revision.slice(0, 12)}` : " · no successful revision"}</p>{target.operationId && <p className="mt-0.5 font-mono text-[9px] text-muted-foreground">Operation {target.operationId.slice(0, 12)}</p>}</div>{canApprove && <Button size="sm" variant="outline" loading={pendingAction === "rollback-plan"} disabled={busy || hasPendingOperation} onClick={() => void createRollbackPlan({ kind: target.kind, id: target.id })}>Review rollback</Button>}</div>)}</div> : <EmptyState title="No rollback history yet" description="A target appears after a successful deployment or a failed/interrupted operation with a saved checkpoint." />}
+              {pendingData.rollback ? <SectionLoading label="Loading rollback targets" compact /> : rollbackTargets.length > 0 ? <div className="divide-y rounded-lg border">{rollbackTargets.map((target) => <div key={target.id} className="flex flex-wrap items-center gap-3 px-3 py-3"><div className="min-w-0 flex-1"><p className="text-xs font-medium">{target.kind === "successful_sync" ? "Successful deployment" : "Before failed operation"}</p><p className="mt-1 text-[10px] text-muted-foreground">{new Date(target.createdAt).toLocaleString()} · {target.resourceCount} resources{target.revision ? ` · ${target.revision.slice(0, 12)}` : " · no successful revision"}</p>{target.operationId && <p className="mt-0.5 font-mono text-[9px] text-muted-foreground">Operation {target.operationId.slice(0, 12)}</p>}</div>{canApprove && <Button size="sm" variant="outline" loading={pendingAction === "rollback-plan"} disabled={busy || hasPendingOperation} onClick={() => void createRollbackPlan({ kind: target.kind, id: target.id })}>Review rollback</Button>}</div>)}</div> : <EmptyState title="No rollback history yet" description="A target appears after a successful deployment or a failed/interrupted operation with a saved checkpoint." />}
               <div className="border-t pt-4"><FormField label="Git revision" htmlFor="rollback-git-revision"><Input id="rollback-git-revision" value={rollbackRevision} onChange={(event) => setRollbackRevision(event.target.value)} placeholder="branch, tag, or commit SHA" disabled={!canApprove || busy || hasPendingOperation} /></FormField><div className="mt-2 flex flex-wrap items-center justify-between gap-3"><p className="max-w-xl text-[10px] leading-4 text-muted-foreground">JustCD resolves and renders this revision, then shows a normal create/update/delete diff for owner approval.</p><Button size="sm" variant="outline" loading={pendingAction === "rollback-plan"} loadingText="Rendering target…" disabled={!canApprove || busy || hasPendingOperation || !rollbackRevision.trim()} onClick={() => void createRollbackPlan({ kind: "git_revision", revision: rollbackRevision.trim() })}>Review Git rollback</Button></div></div>
             </div>
           </Panel>
@@ -680,7 +730,7 @@ export default function ApplicationDetailPage() {
                 {pendingAction === "add-ignore" && <p role="status" aria-live="polite" className="self-center text-xs text-muted-foreground sm:col-span-2">Saving the exclusion and invalidating reviewed plans…</p>}
               </div>}
               <p className="text-xs text-muted-foreground">Ignored resources stay visible here and are not read, updated, or deleted by normal plans. Existing plans become stale when these rules change.</p>
-              {(ignoreSelectors.length > 0 || ignoreRules.length > 0) && <div className="divide-y rounded-lg border">{ignoreSelectors.map((rule) => <div key={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-xs"><span className="min-w-0 flex-1"><strong>{rule.kind ? `${rule.apiVersion} · ${rule.kind}` : "Any kind"}</strong>{rule.labelKey && <span className="ml-2 font-mono text-muted-foreground">{rule.labelKey}={rule.labelValue}</span>}<span className="mt-1 block text-muted-foreground">{rule.reason}</span></span>{canApprove && <ConfirmDisclosure trigger="Remove" title="Remove exclusion?" description="Future plans may manage matching resources again." confirmLabel="Remove exclusion" onConfirm={() => removeIgnoreSelector(rule)} disabled={busy || hasPendingOperation} />}</div>)}{ignoreRules.map((rule) => <div key={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-xs"><span className="min-w-0 flex-1"><strong>{rule.identity.kind} {rule.identity.namespace}/{rule.identity.name}</strong><span className="ml-2 font-mono text-muted-foreground">{rule.path || "whole resource"}</span><span className="mt-1 block text-muted-foreground">{rule.reason}</span></span>{canApprove && <ConfirmDisclosure trigger="Remove" title="Remove ignore rule?" description="Future plans may manage this resource again." confirmLabel="Remove rule" onConfirm={async () => { await removeIgnoreRule(rule) }} disabled={busy || hasPendingOperation} />}</div>)}</div>}
+              {pendingData.rules || pendingData.selectors ? <SectionLoading label="Loading exclusions" compact /> : (ignoreSelectors.length > 0 || ignoreRules.length > 0) && <div className="divide-y rounded-lg border">{ignoreSelectors.map((rule) => <div key={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-xs"><span className="min-w-0 flex-1"><strong>{rule.kind ? `${rule.apiVersion} · ${rule.kind}` : "Any kind"}</strong>{rule.labelKey && <span className="ml-2 font-mono text-muted-foreground">{rule.labelKey}={rule.labelValue}</span>}<span className="mt-1 block text-muted-foreground">{rule.reason}</span></span>{canApprove && <ConfirmDisclosure trigger="Remove" title="Remove exclusion?" description="Future plans may manage matching resources again." confirmLabel="Remove exclusion" onConfirm={() => removeIgnoreSelector(rule)} disabled={busy || hasPendingOperation} />}</div>)}{ignoreRules.map((rule) => <div key={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-xs"><span className="min-w-0 flex-1"><strong>{rule.identity.kind} {rule.identity.namespace}/{rule.identity.name}</strong><span className="ml-2 font-mono text-muted-foreground">{rule.path || "whole resource"}</span><span className="mt-1 block text-muted-foreground">{rule.reason}</span></span>{canApprove && <ConfirmDisclosure trigger="Remove" title="Remove ignore rule?" description="Future plans may manage this resource again." confirmLabel="Remove rule" onConfirm={async () => { await removeIgnoreRule(rule) }} disabled={busy || hasPendingOperation} />}</div>)}</div>}
             </div>
           </Panel>
           {canApprove && <Panel title="Delete application" description="Choose whether JustCD keeps or removes the resources it manages."><div className="flex flex-wrap items-center justify-between gap-3 p-5"><p className="text-xs text-muted-foreground">{`${resources.length} managed resource${resources.length === 1 ? "" : "s"} currently recorded.`} Keeping them removes ownership tracking from JustCD.</p><ConfirmDisclosure trigger="Delete application" title={`Delete ${application.name}?`} description="Removing this application from JustCD cannot be undone. Choose what happens to its managed Kubernetes resources." confirmLabel="Delete application" onConfirm={deleteApplication} disabled={busy || hasPendingOperation}><FormField label="Managed cluster resources" htmlFor="application-delete-policy"><FormSelect id="application-delete-policy" value={deletePolicy} onValueChange={setDeletePolicy} items={[{ value: "keep", label: "Keep resources in Kubernetes" }, { value: "delete", label: "Delete resources through a reviewed plan" }]} /></FormField>{deletePolicy === "delete" && resources.length > 0 && <p className="mt-2 text-xs text-muted-foreground">A deletion plan must receive {deletionApprovalCount} approval{deletionApprovalCount === 1 ? "" : "s"} from eligible project members before the resources can be removed.</p>}</ConfirmDisclosure></div></Panel>}
@@ -694,8 +744,12 @@ function InfoCard({ label, value, note, mono = false }: { label: string; value: 
   return <div className="min-w-0 rounded-xl border bg-card p-4"><p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p><p className={`mt-2 truncate text-sm font-semibold ${mono ? "font-mono text-xs" : ""}`}>{value}</p><p className="mt-1 truncate text-[10px] text-muted-foreground">{note}</p></div>
 }
 
-function SummaryFact({ label, value }: { label: string; value: string }) {
-  return <div className="min-w-0 sm:px-4 first:sm:pl-0 last:sm:pr-0"><p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p><p className="mt-1 truncate text-sm font-medium" title={value}>{value}</p></div>
+function SummaryFact({ label, value, loading = false }: { label: string; value: string; loading?: boolean }) {
+  return <div className="min-w-0 sm:px-4 first:sm:pl-0 last:sm:pr-0"><p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p>{loading ? <Skeleton role="status" aria-label={`Loading ${label.toLowerCase()}`} className="mt-2 h-4 w-28 max-w-full motion-reduce:animate-none" /> : <p className="mt-1 truncate text-sm font-medium" title={value}>{value}</p>}</div>
+}
+
+function SectionLoading({ label, compact = false }: { label: string; compact?: boolean }) {
+  return <div role="status" aria-label={label} className={`space-y-4 ${compact ? "p-5" : "p-5 sm:p-6"}`}><span className="text-xs text-muted-foreground">{label}…</span><div aria-hidden="true" className="space-y-3"><Skeleton className="h-5 w-2/3 max-w-72 motion-reduce:animate-none" /><Skeleton className="h-4 w-full max-w-lg motion-reduce:animate-none" /><Skeleton className="h-4 w-4/5 max-w-md motion-reduce:animate-none" /></div></div>
 }
 
 function ChangeCount({ label, count, color }: { label: string; count: number; color: string }) {

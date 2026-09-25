@@ -773,25 +773,44 @@ func (s *Store) ListGitSources(ctx context.Context, projectID string) ([]GitSour
 }
 
 type Application struct {
-	ID                         string                  `json:"id"`
-	ProjectID                  string                  `json:"projectId"`
-	Name                       string                  `json:"name"`
-	SourceID                   string                  `json:"sourceId"`
-	Revision                   string                  `json:"revision"`
-	ManifestPath               string                  `json:"manifestPath"`
-	Renderer                   string                  `json:"renderer"`
-	KustomizeHelmEnabled       bool                    `json:"kustomizeHelmEnabled"`
-	KustomizeNamespaceOverride bool                    `json:"kustomizeNamespaceOverride"`
-	ClusterID                  string                  `json:"clusterId"`
-	Namespaces                 []NamespaceBinding      `json:"namespaces"`
-	SyncPolicy                 string                  `json:"syncPolicy"`
-	PollSeconds                int                     `json:"pollSeconds"`
-	LastCheckedAt              *time.Time              `json:"lastCheckedAt,omitempty"`
-	LastSyncedRevision         string                  `json:"lastSyncedRevision,omitempty"`
-	Health                     string                  `json:"health"`
-	Decommissioning            bool                    `json:"decommissioning"`
-	ApprovalPolicyOverride     *ApprovalPolicyOverride `json:"approvalPolicyOverride,omitempty"`
-	CreatedAt                  time.Time               `json:"createdAt"`
+	ID                             string                    `json:"id"`
+	ProjectID                      string                    `json:"projectId"`
+	Name                           string                    `json:"name"`
+	SourceID                       string                    `json:"sourceId"`
+	Revision                       string                    `json:"revision"`
+	ManifestPath                   string                    `json:"manifestPath"`
+	Renderer                       string                    `json:"renderer"`
+	KustomizeHelmEnabled           bool                      `json:"kustomizeHelmEnabled"`
+	KustomizeNamespaceOverride     bool                      `json:"kustomizeNamespaceOverride"`
+	ClusterID                      string                    `json:"clusterId"`
+	Namespaces                     []NamespaceBinding        `json:"namespaces"`
+	SyncPolicy                     string                    `json:"syncPolicy"`
+	PollSeconds                    int                       `json:"pollSeconds"`
+	LastCheckedAt                  *time.Time                `json:"lastCheckedAt,omitempty"`
+	LastSyncedRevision             string                    `json:"lastSyncedRevision,omitempty"`
+	Health                         string                    `json:"health"`
+	Decommissioning                bool                      `json:"decommissioning"`
+	AutoSyncPaused                 bool                      `json:"autoSyncPaused"`
+	RollbackResumeAvailable        bool                      `json:"rollbackResumeAvailable"`
+	RollbackResumeRequiresRevision bool                      `json:"rollbackResumeRequiresRevision"`
+	RollbackResumeState            *ApplicationRollbackState `json:"-"`
+	ApprovalPolicyOverride         *ApprovalPolicyOverride   `json:"approvalPolicyOverride,omitempty"`
+	CreatedAt                      time.Time                 `json:"createdAt"`
+}
+
+// ApplicationRollbackState is non-secret configuration needed to return to
+// the tracked source after a successful rollback pin.
+type ApplicationRollbackState struct {
+	SourceID                   string             `json:"sourceId"`
+	Revision                   string             `json:"revision"`
+	ManifestPath               string             `json:"manifestPath"`
+	Renderer                   string             `json:"renderer"`
+	KustomizeHelmEnabled       bool               `json:"kustomizeHelmEnabled"`
+	KustomizeNamespaceOverride bool               `json:"kustomizeNamespaceOverride"`
+	ClusterID                  string             `json:"clusterId"`
+	Namespaces                 []NamespaceBinding `json:"namespaces"`
+	SyncPolicy                 string             `json:"syncPolicy"`
+	PollSeconds                int                `json:"pollSeconds"`
 }
 
 func (s *Store) CreateApplication(ctx context.Context, a Application) error {
@@ -805,8 +824,8 @@ func (s *Store) CreateApplication(ctx context.Context, a Application) error {
 
 func scanApplication(row interface{ Scan(...any) error }) (Application, error) {
 	var a Application
-	var namespaces, rawApprovalOverride []byte
-	err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.SourceID, &a.Revision, &a.ManifestPath, &a.Renderer, &a.KustomizeHelmEnabled, &a.KustomizeNamespaceOverride, &a.ClusterID, &namespaces, &a.SyncPolicy, &a.PollSeconds, &a.LastCheckedAt, &a.LastSyncedRevision, &a.Health, &a.Decommissioning, &rawApprovalOverride, &a.CreatedAt)
+	var namespaces, rawApprovalOverride, rawRollbackState []byte
+	err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.SourceID, &a.Revision, &a.ManifestPath, &a.Renderer, &a.KustomizeHelmEnabled, &a.KustomizeNamespaceOverride, &a.ClusterID, &namespaces, &a.SyncPolicy, &a.PollSeconds, &a.LastCheckedAt, &a.LastSyncedRevision, &a.Health, &a.Decommissioning, &rawApprovalOverride, &a.AutoSyncPaused, &rawRollbackState, &a.RollbackResumeRequiresRevision, &a.CreatedAt)
 	if err == nil {
 		err = json.Unmarshal(namespaces, &a.Namespaces)
 	}
@@ -817,10 +836,18 @@ func scanApplication(row interface{ Scan(...any) error }) (Application, error) {
 			a.ApprovalPolicyOverride = &override
 		}
 	}
+	if err == nil && len(rawRollbackState) > 0 && string(rawRollbackState) != "null" {
+		var rollbackState ApplicationRollbackState
+		err = json.Unmarshal(rawRollbackState, &rollbackState)
+		if err == nil {
+			a.RollbackResumeState = &rollbackState
+			a.RollbackResumeAvailable = true
+		}
+	}
 	return a, err
 }
 
-const applicationColumns = `id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,COALESCE(last_synced_revision,''),health,decommissioning,approval_policy_override,created_at`
+const applicationColumns = `id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,COALESCE(last_synced_revision,''),health,decommissioning,approval_policy_override,auto_sync_paused,rollback_resume_state,rollback_resume_requires_revision,created_at`
 
 func (s *Store) ApplicationByID(ctx context.Context, id string) (Application, error) {
 	return scanApplication(s.DB.QueryRowContext(ctx, `SELECT `+applicationColumns+` FROM applications WHERE id=$1`, id))
@@ -1004,7 +1031,7 @@ func (s *Store) DueApplications(ctx context.Context, limit int) ([]Application, 
 	if limit < 1 || limit > 100 {
 		limit = 25
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+applicationColumns+` FROM applications a WHERE NOT a.decommissioning AND (a.last_checked_at IS NULL OR a.last_checked_at<=NOW()-(a.poll_seconds * INTERVAL '1 second')) AND NOT EXISTS (SELECT 1 FROM operation_leases l WHERE l.application_id=a.id AND l.expires_at>NOW()) ORDER BY a.last_checked_at ASC NULLS FIRST LIMIT $1`, limit)
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+applicationColumns+` FROM applications a WHERE NOT a.decommissioning AND NOT a.auto_sync_paused AND (a.last_checked_at IS NULL OR a.last_checked_at<=NOW()-(a.poll_seconds * INTERVAL '1 second')) AND NOT EXISTS (SELECT 1 FROM operation_leases l WHERE l.application_id=a.id AND l.expires_at>NOW()) ORDER BY a.last_checked_at ASC NULLS FIRST LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1024,8 +1051,142 @@ func (s *Store) UpdateApplicationHealth(ctx context.Context, id, health, checked
 	return err
 }
 func (s *Store) MarkApplicationSynced(ctx context.Context, id, revision, health string) error {
+	if revision == "" {
+		_, err := s.DB.ExecContext(ctx, `UPDATE applications SET health=$2,last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, id, health)
+		return err
+	}
 	_, err := s.DB.ExecContext(ctx, `UPDATE applications SET last_synced_revision=$2,health=$3,last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, id, revision, health)
 	return err
+}
+
+func (s *Store) PauseAutoSync(ctx context.Context, id string) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE applications SET auto_sync_paused=TRUE,health='degraded',last_checked_at=NOW(),updated_at=NOW() WHERE id=$1 AND sync_policy='auto-safe'`, id)
+	return err
+}
+
+// PinApplicationForRollback switches the saved source/render settings to the
+// rollback target and pauses reconciliation. The prior tracked settings remain
+// available for an explicit owner-initiated resume.
+func (s *Store) PinApplicationForRollback(ctx context.Context, id, planID string, settings core.RollbackSettings, revision string, requireRevision bool) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	app, err := scanApplication(tx.QueryRowContext(ctx, `SELECT `+applicationColumns+` FROM applications WHERE id=$1 FOR UPDATE`, id))
+	if err != nil {
+		return err
+	}
+	if app.ClusterID != settings.ClusterID || !sameApplicationNamespaces(app.Namespaces, settings.Namespaces) {
+		return errors.New("rollback target scope changed before it could be pinned")
+	}
+	prior := &ApplicationRollbackState{SourceID: app.SourceID, Revision: app.Revision, ManifestPath: app.ManifestPath, Renderer: app.Renderer, KustomizeHelmEnabled: app.KustomizeHelmEnabled, KustomizeNamespaceOverride: app.KustomizeNamespaceOverride, ClusterID: app.ClusterID, Namespaces: app.Namespaces, SyncPolicy: app.SyncPolicy, PollSeconds: app.PollSeconds}
+	rawPrior, err := json.Marshal(prior)
+	if err != nil {
+		return err
+	}
+	pinnedRevision := revision
+	if pinnedRevision == "" {
+		pinnedRevision = settings.Revision
+	}
+	// Keep the currently configured cluster and namespace credential bindings.
+	// A rollback changes desired application content, never authentication wiring.
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET source_id=$2,revision=$3,manifest_path=$4,renderer=$5,kustomize_helm_enabled=$6,kustomize_namespace_override=$7,auto_sync_paused=TRUE,rollback_resume_state=$8,rollback_resume_requires_revision=$9,last_checked_at=NULL,health='unknown',updated_at=NOW() WHERE id=$1`, id, settings.SourceID, pinnedRevision, settings.ManifestPath, settings.Renderer, settings.KustomizeHelmEnabled, settings.KustomizeNamespaceOverride, rawPrior, requireRevision); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current' AND id<>$2`, id, planID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func sameApplicationNamespaces(bindings []NamespaceBinding, names []string) bool {
+	if len(bindings) != len(names) {
+		return false
+	}
+	actual := make([]string, 0, len(bindings))
+	for _, binding := range bindings {
+		actual = append(actual, binding.Namespace)
+	}
+	sort.Strings(actual)
+	expected := append([]string(nil), names...)
+	sort.Strings(expected)
+	for index := range actual {
+		if actual[index] != expected[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Store) KeepRollbackPin(ctx context.Context, id string) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var lockedID string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE id=$1 FOR UPDATE`, id).Scan(&lockedID); err != nil {
+		return err
+	}
+	var active bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM operations WHERE application_id=$1 AND status IN ('queued','running'))`, id).Scan(&active); err != nil {
+		return err
+	}
+	if active {
+		return errors.New("application is currently syncing")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET rollback_resume_state=NULL,rollback_resume_requires_revision=FALSE,auto_sync_paused=TRUE,last_checked_at=NULL,updated_at=NOW() WHERE id=$1`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) ResumeRollbackTracking(ctx context.Context, id, selectedRevision string) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	app, err := scanApplication(tx.QueryRowContext(ctx, `SELECT `+applicationColumns+` FROM applications WHERE id=$1 FOR UPDATE`, id))
+	if err != nil {
+		return err
+	}
+	var active bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM operations WHERE application_id=$1 AND status IN ('queued','running'))`, id).Scan(&active); err != nil {
+		return err
+	}
+	if active {
+		return errors.New("application is currently syncing")
+	}
+	if app.RollbackResumeRequiresRevision && selectedRevision == "" {
+		return errors.New("select and verify a Git revision before resuming this first deployment")
+	}
+	if state := app.RollbackResumeState; state != nil {
+		if selectedRevision != "" {
+			state.Revision = selectedRevision
+		}
+		namespaces, err := json.Marshal(state.Namespaces)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE applications SET source_id=$2,revision=$3,manifest_path=$4,renderer=$5,kustomize_helm_enabled=$6,kustomize_namespace_override=$7,cluster_id=$8,namespaces=$9,sync_policy=$10,poll_seconds=$11,auto_sync_paused=FALSE,rollback_resume_state=NULL,rollback_resume_requires_revision=FALSE,last_checked_at=NULL,health='unknown',updated_at=NOW() WHERE id=$1`, id, state.SourceID, state.Revision, state.ManifestPath, state.Renderer, state.KustomizeHelmEnabled, state.KustomizeNamespaceOverride, state.ClusterID, namespaces, state.SyncPolicy, state.PollSeconds); err != nil {
+			return err
+		}
+	} else {
+		if selectedRevision == "" {
+			_, err = tx.ExecContext(ctx, `UPDATE applications SET auto_sync_paused=FALSE,last_checked_at=NULL,health='unknown',updated_at=NOW() WHERE id=$1`, id)
+		} else {
+			_, err = tx.ExecContext(ctx, `UPDATE applications SET revision=$2,auto_sync_paused=FALSE,last_checked_at=NULL,health='unknown',updated_at=NOW() WHERE id=$1`, id, selectedRevision)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Store) RenewOperationLease(ctx context.Context, operationID string, lease time.Duration) error {
 	result, err := s.DB.ExecContext(ctx, `UPDATE operation_leases SET expires_at=NOW()+($2 * INTERVAL '1 second') WHERE operation_id=$1`, operationID, int64(lease.Seconds()))
@@ -1061,6 +1222,81 @@ type PlanRecord struct {
 	Status    string          `json:"status"`
 }
 
+type RollbackSnapshot struct {
+	ID            string
+	ApplicationID string
+	OperationID   string
+	Kind          string
+	Revision      string
+	ResourceCount int
+	PayloadCipher []byte
+	CreatedAt     time.Time
+}
+
+type RollbackTargetSummary struct {
+	ID            string    `json:"id"`
+	Kind          string    `json:"kind"`
+	OperationID   string    `json:"operationId,omitempty"`
+	Revision      string    `json:"revision,omitempty"`
+	ResourceCount int       `json:"resourceCount"`
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
+func (s *Store) SaveRollbackSnapshot(ctx context.Context, snapshot RollbackSnapshot) error {
+	if snapshot.ID == "" || snapshot.ApplicationID == "" || len(snapshot.PayloadCipher) == 0 || (snapshot.Kind != "successful_sync" && snapshot.Kind != "pre_operation") {
+		return errors.New("rollback snapshot is incomplete")
+	}
+	var operation any
+	if snapshot.OperationID != "" {
+		operation = snapshot.OperationID
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO rollback_snapshots(id,application_id,operation_id,kind,revision,resource_count,payload_cipher) VALUES($1,$2,$3,$4,$5,$6,$7)`, snapshot.ID, snapshot.ApplicationID, operation, snapshot.Kind, snapshot.Revision, snapshot.ResourceCount, snapshot.PayloadCipher); err != nil {
+		return err
+	}
+	if snapshot.Kind == "pre_operation" && snapshot.OperationID != "" {
+		result, err := tx.ExecContext(ctx, `UPDATE operations SET rollback_checkpoint_id=$2 WHERE id=$1 AND application_id=$3`, snapshot.OperationID, snapshot.ID, snapshot.ApplicationID)
+		if err != nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count != 1 {
+			return errors.New("pre-operation checkpoint has no matching operation")
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) RollbackSnapshotByID(ctx context.Context, applicationID, id string) (RollbackSnapshot, error) {
+	var snapshot RollbackSnapshot
+	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,COALESCE(operation_id,''),kind,revision,resource_count,payload_cipher,created_at FROM rollback_snapshots WHERE application_id=$1 AND id=$2`, applicationID, id).Scan(&snapshot.ID, &snapshot.ApplicationID, &snapshot.OperationID, &snapshot.Kind, &snapshot.Revision, &snapshot.ResourceCount, &snapshot.PayloadCipher, &snapshot.CreatedAt)
+	return snapshot, err
+}
+
+func (s *Store) ListRollbackTargets(ctx context.Context, applicationID string) ([]RollbackTargetSummary, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT r.id,r.kind,COALESCE(r.operation_id,''),r.revision,r.resource_count,r.created_at FROM rollback_snapshots r LEFT JOIN operations o ON o.id=r.operation_id WHERE r.application_id=$1 AND ((r.kind='successful_sync' AND o.status='succeeded') OR (r.kind='pre_operation' AND o.status='failed' AND o.rollback_checkpoint_id=r.id)) ORDER BY r.created_at DESC,r.id`, applicationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]RollbackTargetSummary, 0)
+	for rows.Next() {
+		var item RollbackTargetSummary
+		if err := rows.Scan(&item.ID, &item.Kind, &item.OperationID, &item.Revision, &item.ResourceCount, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) SavePlan(ctx context.Context, record PlanRecord) error {
 	bindings, err := json.Marshal(record.Plan.Bindings)
 	if err != nil {
@@ -1090,6 +1326,14 @@ func (s *Store) SavePlan(ctx context.Context, record PlanRecord) error {
 	if err != nil {
 		return err
 	}
+	var rollbackTarget any
+	if record.Plan.Rollback != nil {
+		encoded, err := json.Marshal(record.Plan.Rollback)
+		if err != nil {
+			return err
+		}
+		rollbackTarget = encoded
+	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1109,7 +1353,7 @@ func (s *Store) SavePlan(ctx context.Context, record PlanRecord) error {
 	if _, err = tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, record.Plan.ApplicationID); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO plans(id,application_id,revision,digest,bindings,changes,desired,created_by,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`, record.ID, record.Plan.ApplicationID, record.Plan.Revision, record.Plan.Digest, bindings, changes, desired, record.CreatedBy, record.ExpiresAt, record.Status, ignored, selection, record.Plan.IgnoreRulesDigest, record.Plan.Decommission, record.Plan.ApprovalKind, record.Plan.RequiredApprovals, approverRoles, approverUserIDs)
+	_, err = tx.ExecContext(ctx, `INSERT INTO plans(id,application_id,revision,digest,bindings,changes,desired,created_by,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`, record.ID, record.Plan.ApplicationID, record.Plan.Revision, record.Plan.Digest, bindings, changes, desired, record.CreatedBy, record.ExpiresAt, record.Status, ignored, selection, record.Plan.IgnoreRulesDigest, record.Plan.Decommission, record.Plan.ApprovalKind, record.Plan.RequiredApprovals, approverRoles, approverUserIDs, rollbackTarget)
 	if err != nil {
 		return err
 	}
@@ -1123,8 +1367,8 @@ func (s *Store) SavePlan(ctx context.Context, record PlanRecord) error {
 
 func (s *Store) PlanByID(ctx context.Context, id string) (PlanRecord, error) {
 	var out PlanRecord
-	var bindings, changes, desired, ignored, selection, approverRoles, approverUserIDs []byte
-	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids FROM plans WHERE id=$1`, id).Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission, &out.Plan.ApprovalKind, &out.Plan.RequiredApprovals, &approverRoles, &approverUserIDs)
+	var bindings, changes, desired, ignored, selection, approverRoles, approverUserIDs, rollbackTarget []byte
+	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target FROM plans WHERE id=$1`, id).Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission, &out.Plan.ApprovalKind, &out.Plan.RequiredApprovals, &approverRoles, &approverUserIDs, &rollbackTarget)
 	if err != nil {
 		return PlanRecord{}, err
 	}
@@ -1149,6 +1393,13 @@ func (s *Store) PlanByID(ctx context.Context, id string) (PlanRecord, error) {
 	if err = json.Unmarshal(approverUserIDs, &out.Plan.ApproverUserIDs); err != nil {
 		return PlanRecord{}, err
 	}
+	if len(rollbackTarget) > 0 && string(rollbackTarget) != "null" {
+		var target core.RollbackTarget
+		if err = json.Unmarshal(rollbackTarget, &target); err != nil {
+			return PlanRecord{}, err
+		}
+		out.Plan.Rollback = &target
+	}
 	out.Plan.RequiresApproval = core.RequiredApprovalCount(out.Plan) > 0
 	for _, change := range out.Plan.Changes {
 		if change.Kind == core.Delete || change.Identity.ClusterScoped {
@@ -1163,7 +1414,7 @@ func (s *Store) ListPlans(ctx context.Context, applicationID string, limit int) 
 	if limit < 1 || limit > 100 {
 		limit = 20
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids FROM plans WHERE application_id=$1 ORDER BY created_at DESC LIMIT $2`, applicationID, limit)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target FROM plans WHERE application_id=$1 ORDER BY created_at DESC LIMIT $2`, applicationID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1171,8 +1422,8 @@ func (s *Store) ListPlans(ctx context.Context, applicationID string, limit int) 
 	items := make([]PlanRecord, 0)
 	for rows.Next() {
 		var out PlanRecord
-		var bindings, changes, desired, ignored, selection, approverRoles, approverUserIDs []byte
-		if err := rows.Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission, &out.Plan.ApprovalKind, &out.Plan.RequiredApprovals, &approverRoles, &approverUserIDs); err != nil {
+		var bindings, changes, desired, ignored, selection, approverRoles, approverUserIDs, rollbackTarget []byte
+		if err := rows.Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission, &out.Plan.ApprovalKind, &out.Plan.RequiredApprovals, &approverRoles, &approverUserIDs, &rollbackTarget); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(bindings, &out.Plan.Bindings); err != nil {
@@ -1192,6 +1443,13 @@ func (s *Store) ListPlans(ctx context.Context, applicationID string, limit int) 
 		}
 		if err := json.Unmarshal(approverUserIDs, &out.Plan.ApproverUserIDs); err != nil {
 			return nil, err
+		}
+		if len(rollbackTarget) > 0 && string(rollbackTarget) != "null" {
+			var target core.RollbackTarget
+			if err := json.Unmarshal(rollbackTarget, &target); err != nil {
+				return nil, err
+			}
+			out.Plan.Rollback = &target
 		}
 		if err := json.Unmarshal(desired, &out.Desired); err != nil {
 			return nil, err
@@ -1670,17 +1928,19 @@ func (s *Store) DeleteManagedResource(ctx context.Context, applicationID string,
 }
 
 type Operation struct {
-	ID            string            `json:"id"`
-	ApplicationID string            `json:"applicationId"`
-	PlanID        *string           `json:"planId,omitempty"`
-	ActorID       *string           `json:"actorId,omitempty"`
-	ApprovalID    string            `json:"-"`
-	ApprovalIDs   []string          `json:"-"`
-	Status        string            `json:"status"`
-	Message       string            `json:"message"`
-	Progress      OperationProgress `json:"progress"`
-	StartedAt     time.Time         `json:"startedAt"`
-	FinishedAt    *time.Time        `json:"finishedAt,omitempty"`
+	ID                   string            `json:"id"`
+	ApplicationID        string            `json:"applicationId"`
+	PlanID               *string           `json:"planId,omitempty"`
+	ActorID              *string           `json:"actorId,omitempty"`
+	ApprovalID           string            `json:"-"`
+	ApprovalIDs          []string          `json:"-"`
+	Status               string            `json:"status"`
+	Type                 string            `json:"type"`
+	RollbackCheckpointID string            `json:"rollbackCheckpointId,omitempty"`
+	Message              string            `json:"message"`
+	Progress             OperationProgress `json:"progress"`
+	StartedAt            time.Time         `json:"startedAt"`
+	FinishedAt           *time.Time        `json:"finishedAt,omitempty"`
 }
 
 type OperationProgress struct {
@@ -1704,12 +1964,13 @@ func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actor
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE id=$1 FOR UPDATE`, applicationID).Scan(&lockedApplicationID); err != nil {
 		return Operation{}, err
 	}
-	var status string
+	var status, storedDigest string
+	var rollback bool
 	var expires time.Time
-	if err := tx.QueryRowContext(ctx, `SELECT status,expires_at FROM plans WHERE id=$1 AND application_id=$2 FOR UPDATE`, planID, applicationID).Scan(&status, &expires); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT status,digest,expires_at,rollback_target IS NOT NULL FROM plans WHERE id=$1 AND application_id=$2 FOR UPDATE`, planID, applicationID).Scan(&status, &storedDigest, &expires, &rollback); err != nil {
 		return Operation{}, err
 	}
-	if status != "current" || !time.Now().Before(expires) {
+	if status != "current" || storedDigest != planDigest || !time.Now().Before(expires) {
 		return Operation{}, errors.New("plan is no longer current or has expired")
 	}
 	var active bool
@@ -1746,7 +2007,11 @@ func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actor
 	if err != nil {
 		return Operation{}, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO operations(id,application_id,plan_id,actor_id,approval_id,approval_ids,status,message,progress) VALUES($1,$2,$3,NULLIF($4,''),$5,$6,'queued','Sync queued',$7)`, id, applicationID, planID, actorID, approval, encodedApprovalIDs, encoded)
+	operationType, message := "sync", "Sync queued"
+	if rollback {
+		operationType, message = "rollback", "Rollback queued"
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO operations(id,application_id,plan_id,actor_id,approval_id,approval_ids,operation_type,status,message,progress) VALUES($1,$2,$3,NULLIF($4,''),$5,$6,$7,'queued',$8,$9)`, id, applicationID, planID, actorID, approval, encodedApprovalIDs, operationType, message, encoded)
 	if err != nil {
 		return Operation{}, err
 	}
@@ -1761,7 +2026,7 @@ func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actor
 	if len(approvalIDs) > 0 {
 		firstApprovalID = approvalIDs[0]
 	}
-	return Operation{ID: id, ApplicationID: applicationID, PlanID: &plan, ActorID: &actor, ApprovalID: firstApprovalID, ApprovalIDs: append([]string(nil), approvalIDs...), Status: "queued", Progress: progress, StartedAt: time.Now().UTC(), Message: "Sync queued"}, nil
+	return Operation{ID: id, ApplicationID: applicationID, PlanID: &plan, ActorID: &actor, ApprovalID: firstApprovalID, ApprovalIDs: append([]string(nil), approvalIDs...), Status: "queued", Type: operationType, Progress: progress, StartedAt: time.Now().UTC(), Message: message}, nil
 }
 
 // ClaimQueuedOperation atomically claims one durable queue entry. It never
@@ -1775,7 +2040,7 @@ func (s *Store) ClaimQueuedOperation(ctx context.Context, lease time.Duration) (
 	var operation Operation
 	var progress []byte
 	var rawApprovalIDs []byte
-	err = tx.QueryRowContext(ctx, `SELECT id,application_id,plan_id,actor_id,approval_id,approval_ids,status,message,progress,started_at,finished_at FROM operations WHERE status='queued' ORDER BY started_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`).Scan(&operation.ID, &operation.ApplicationID, &operation.PlanID, &operation.ActorID, &operation.ApprovalID, &rawApprovalIDs, &operation.Status, &operation.Message, &progress, &operation.StartedAt, &operation.FinishedAt)
+	err = tx.QueryRowContext(ctx, `SELECT id,application_id,plan_id,actor_id,approval_id,approval_ids,operation_type,COALESCE(rollback_checkpoint_id,''),status,message,progress,started_at,finished_at FROM operations WHERE status='queued' ORDER BY started_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`).Scan(&operation.ID, &operation.ApplicationID, &operation.PlanID, &operation.ActorID, &operation.ApprovalID, &rawApprovalIDs, &operation.Type, &operation.RollbackCheckpointID, &operation.Status, &operation.Message, &progress, &operation.StartedAt, &operation.FinishedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Operation{}, false, nil
 	}
@@ -1802,22 +2067,29 @@ func (s *Store) ClaimQueuedOperation(ctx context.Context, lease time.Duration) (
 	if count != 1 {
 		return Operation{}, false, nil
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE operations SET status='running',message='Sync in progress' WHERE id=$1 AND status='queued'`, operation.ID); err != nil {
+	message := "Sync in progress"
+	if operation.Type == "rollback" {
+		message = "Rollback in progress"
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE operations SET status='running',message=$2 WHERE id=$1 AND status='queued'`, operation.ID, message); err != nil {
 		return Operation{}, false, err
 	}
 	if err := tx.Commit(); err != nil {
 		return Operation{}, false, err
 	}
 	operation.Status = "running"
-	operation.Message = "Sync in progress"
+	operation.Message = message
 	return operation, true, nil
 }
 
 // RecoverInterruptedOperations makes expired running jobs visible as failed;
 // queued jobs remain eligible for normal processing after a restart.
 func (s *Store) RecoverInterruptedOperations(ctx context.Context) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE operations o SET status='failed',message='Sync interrupted by backend restart or worker loss; review the plan before retrying',finished_at=NOW() WHERE o.status='running' AND NOT EXISTS (SELECT 1 FROM operation_leases l WHERE l.operation_id=o.id AND l.expires_at>NOW())`)
+	_, err := s.DB.ExecContext(ctx, `UPDATE operations o SET status='failed',message=CASE WHEN o.operation_type='rollback' THEN 'Rollback interrupted by backend restart or worker loss; partial changes remain and the operation will not resume automatically. Review cluster state and any available checkpoint.' ELSE 'Sync interrupted by backend restart or worker loss; review the plan before retrying.' END,finished_at=NOW() WHERE o.status='running' AND NOT EXISTS (SELECT 1 FROM operation_leases l WHERE l.operation_id=o.id AND l.expires_at>NOW())`)
 	if err != nil {
+		return err
+	}
+	if _, err := s.DB.ExecContext(ctx, `UPDATE applications a SET auto_sync_paused=TRUE,health='degraded',updated_at=NOW() WHERE a.sync_policy='auto-safe' AND EXISTS (SELECT 1 FROM operations o WHERE o.application_id=a.id AND o.status='failed' AND o.message LIKE '%interrupted by backend restart%')`); err != nil {
 		return err
 	}
 	_, err = s.DB.ExecContext(ctx, `DELETE FROM operation_leases l USING operations o WHERE l.operation_id=o.id AND l.expires_at<=NOW() AND o.status<>'queued'`)
@@ -1899,7 +2171,7 @@ func (s *Store) FinishOperation(ctx context.Context, id, status, message string)
 	return tx.Commit()
 }
 func (s *Store) ListOperations(ctx context.Context, applicationID string, limit int) ([]Operation, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,plan_id,actor_id,status,message,progress,started_at,finished_at FROM operations WHERE application_id=$1 ORDER BY started_at DESC LIMIT $2`, applicationID, limit)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,plan_id,actor_id,operation_type,COALESCE(rollback_checkpoint_id,''),status,message,progress,started_at,finished_at FROM operations WHERE application_id=$1 ORDER BY started_at DESC LIMIT $2`, applicationID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1908,7 +2180,7 @@ func (s *Store) ListOperations(ctx context.Context, applicationID string, limit 
 	for rows.Next() {
 		var item Operation
 		var rawProgress []byte
-		if err := rows.Scan(&item.ID, &item.ApplicationID, &item.PlanID, &item.ActorID, &item.Status, &item.Message, &rawProgress, &item.StartedAt, &item.FinishedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.ApplicationID, &item.PlanID, &item.ActorID, &item.Type, &item.RollbackCheckpointID, &item.Status, &item.Message, &rawProgress, &item.StartedAt, &item.FinishedAt); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(rawProgress, &item.Progress); err != nil {

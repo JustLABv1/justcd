@@ -82,6 +82,9 @@ export type Application = {
   lastSyncedRevision?: string
   health: string
   decommissioning: boolean
+  autoSyncPaused?: boolean
+  rollbackResumeAvailable?: boolean
+  rollbackResumeRequiresRevision?: boolean
   approvalPolicyOverride?: ApprovalPolicyOverride
   createdAt: string
 }
@@ -156,6 +159,15 @@ export type Plan = {
   requiredApprovals?: number
   approverRoles?: string[]
   approverUserIds?: string[]
+  rollback?: {
+    kind: "successful_sync" | "pre_operation" | "git_revision"
+    id?: string
+    operationId?: string
+    revision?: string
+    createdAt?: string
+    resourceCount?: number
+    settings: { sourceId: string; revision: string; manifestPath: string; renderer: string; kustomizeHelmEnabled: boolean; kustomizeNamespaceOverride: boolean; clusterId: string; namespaces: string[] }
+  }
   digest: string
 }
 
@@ -213,11 +225,22 @@ export type Operation = {
   applicationId: string
   planId?: string
   actorId?: string
+  type?: "sync" | "rollback"
+  rollbackCheckpointId?: string
   status: string
   message: string
   progress?: { phase?: string; total: number; completed: Identity[]; current?: Identity }
   startedAt: string
   finishedAt?: string
+}
+
+export type RollbackTarget = {
+  id: string
+  kind: "successful_sync" | "pre_operation"
+  operationId?: string
+  revision?: string
+  resourceCount: number
+  createdAt: string
 }
 
 export type OIDCProvider = {

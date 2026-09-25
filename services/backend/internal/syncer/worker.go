@@ -31,7 +31,7 @@ func (s *Service) RunOperationWorker(ctx context.Context, logger *slog.Logger) {
 			if !claimed {
 				break
 			}
-			logger.Info("starting queued JustCD sync", "operationId", operation.ID, "applicationId", operation.ApplicationID)
+			logger.Info("starting queued JustCD operation", "operationId", operation.ID, "applicationId", operation.ApplicationID, "operationType", operation.Type)
 			opCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 			heartbeatDone := make(chan struct{})
 			go func() {
@@ -57,6 +57,9 @@ func (s *Service) RunOperationWorker(ctx context.Context, logger *slog.Logger) {
 			if executeErr != nil {
 				if result.Status == "" || result.Status == "running" || result.Status == "queued" {
 					message := "Sync interrupted before a result was recorded. Review cluster state and rebuild the plan before retrying."
+					if operation.Type == "rollback" {
+						message = "Rollback interrupted before a result was recorded. It will not be resumed automatically; review cluster state and any available checkpoint."
+					}
 					if err := s.Store.FinishOperation(context.Background(), operation.ID, "failed", message); err != nil {
 						logger.Error("could not persist failed JustCD sync result", "operationId", operation.ID, "error", err)
 					}
@@ -64,6 +67,7 @@ func (s *Service) RunOperationWorker(ctx context.Context, logger *slog.Logger) {
 						_ = s.Store.SetPlanStatus(context.Background(), *operation.PlanID, "failed")
 					}
 					result.Status = "failed"
+					_ = s.Store.PauseAutoSync(context.Background(), operation.ApplicationID)
 				}
 				logger.Warn("JustCD sync operation failed", "operationId", operation.ID, "applicationId", operation.ApplicationID, "status", result.Status, "error", executeErr)
 			}

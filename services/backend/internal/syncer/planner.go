@@ -148,6 +148,10 @@ func (s *Service) CalculateDecommissionPlan(ctx context.Context, app store.Appli
 }
 
 func (s *Service) RecheckPlan(ctx context.Context, app store.Application, record store.PlanRecord) (core.Plan, error) {
+	if record.Plan.Rollback != nil {
+		plan, _, err := s.CalculateRollbackPlan(ctx, app, *record.Plan.Rollback)
+		return plan, err
+	}
 	if record.Plan.Decommission {
 		if !app.Decommissioning {
 			return core.Plan{}, errors.New("decommission plan was cancelled")
@@ -162,6 +166,9 @@ func (s *Service) RecheckPlan(ctx context.Context, app store.Application, record
 }
 
 func (s *Service) RefreshPlan(ctx context.Context, app store.Application, actorID string, record store.PlanRecord) (store.PlanRecord, error) {
+	if record.Plan.Rollback != nil {
+		return s.buildRollbackRecord(ctx, app, actorID, *record.Plan.Rollback)
+	}
 	if record.Plan.Decommission {
 		if !app.Decommissioning {
 			return store.PlanRecord{}, errors.New("decommission plan was cancelled")

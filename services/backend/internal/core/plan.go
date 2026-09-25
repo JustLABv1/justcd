@@ -119,21 +119,48 @@ func (selector IgnoreSelector) Matches(identity Identity, labels map[string]stri
 	return selector.Kind != "" || selector.LabelKey != ""
 }
 
+// RollbackSettings are the non-secret source/rendering settings associated
+// with a rollback target. Kubernetes credentials remain resolved from the
+// application's current project bindings when a plan is reviewed and applied.
+type RollbackSettings struct {
+	SourceID                   string   `json:"sourceId"`
+	Revision                   string   `json:"revision"`
+	ManifestPath               string   `json:"manifestPath"`
+	Renderer                   string   `json:"renderer"`
+	KustomizeHelmEnabled       bool     `json:"kustomizeHelmEnabled"`
+	KustomizeNamespaceOverride bool     `json:"kustomizeNamespaceOverride"`
+	ClusterID                  string   `json:"clusterId"`
+	Namespaces                 []string `json:"namespaces"`
+}
+
+// RollbackTarget records the provenance of a reviewed rollback plan. Snapshot
+// IDs reference encrypted server-side state; manifests are never included here.
+type RollbackTarget struct {
+	Kind          string           `json:"kind"`
+	ID            string           `json:"id,omitempty"`
+	OperationID   string           `json:"operationId,omitempty"`
+	Revision      string           `json:"revision,omitempty"`
+	CreatedAt     time.Time        `json:"createdAt,omitempty"`
+	ResourceCount int              `json:"resourceCount,omitempty"`
+	Settings      RollbackSettings `json:"settings"`
+}
+
 type Plan struct {
-	ApplicationID     string        `json:"applicationId"`
-	Decommission      bool          `json:"decommission,omitempty"`
-	Revision          string        `json:"revision"`
-	Bindings          []Binding     `json:"bindings"`
-	Changes           []Change      `json:"changes"`
-	Ignored           []Change      `json:"ignored,omitempty"`
-	Selection         PlanSelection `json:"selection,omitempty"`
-	IgnoreRulesDigest string        `json:"ignoreRulesDigest,omitempty"`
-	RequiresApproval  bool          `json:"requiresApproval"`
-	ApprovalKind      string        `json:"approvalKind,omitempty"`
-	RequiredApprovals int           `json:"requiredApprovals,omitempty"`
-	ApproverRoles     []string      `json:"approverRoles,omitempty"`
-	ApproverUserIDs   []string      `json:"approverUserIds,omitempty"`
-	Digest            string        `json:"digest"`
+	ApplicationID     string          `json:"applicationId"`
+	Decommission      bool            `json:"decommission,omitempty"`
+	Revision          string          `json:"revision"`
+	Bindings          []Binding       `json:"bindings"`
+	Changes           []Change        `json:"changes"`
+	Ignored           []Change        `json:"ignored,omitempty"`
+	Selection         PlanSelection   `json:"selection,omitempty"`
+	IgnoreRulesDigest string          `json:"ignoreRulesDigest,omitempty"`
+	RequiresApproval  bool            `json:"requiresApproval"`
+	ApprovalKind      string          `json:"approvalKind,omitempty"`
+	RequiredApprovals int             `json:"requiredApprovals,omitempty"`
+	ApproverRoles     []string        `json:"approverRoles,omitempty"`
+	ApproverUserIDs   []string        `json:"approverUserIds,omitempty"`
+	Rollback          *RollbackTarget `json:"rollback,omitempty"`
+	Digest            string          `json:"digest"`
 }
 
 // BuildPlan is pure: callers must provide a complete, authorized live snapshot

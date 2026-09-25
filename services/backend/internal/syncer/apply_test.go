@@ -27,10 +27,20 @@ func TestGroupVersionResolvesCoreAndGroupedResources(t *testing.T) {
 
 func TestPartialSyncFailureExplainsNoAutomaticRollback(t *testing.T) {
 	progress := store.OperationProgress{Total: 4, Completed: []core.Identity{{Kind: "Deployment", Namespace: "apps", Name: "api"}}}
-	message := safeApplyFailure(errors.New("update target changed after plan review"), progress)
+	message := safeApplyFailure(errors.New("update target changed after plan review"), progress, "sync")
 	for _, fragment := range []string{"1 of 4", "not rolled back", "rebuild the plan"} {
 		if !strings.Contains(message, fragment) {
 			t.Errorf("partial failure message %q does not contain %q", message, fragment)
+		}
+	}
+}
+
+func TestPartialRollbackFailureIsNotReportedAsSync(t *testing.T) {
+	progress := store.OperationProgress{Total: 3, Completed: []core.Identity{{Kind: "Deployment", Namespace: "apps", Name: "api"}}}
+	message := safeApplyFailure(errors.New("update target changed after plan review"), progress, "rollback")
+	for _, fragment := range []string{"Rollback stopped", "1 of 3 resources", "were not rolled back"} {
+		if !strings.Contains(message, fragment) {
+			t.Errorf("rollback failure message %q does not contain %q", message, fragment)
 		}
 	}
 }

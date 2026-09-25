@@ -181,6 +181,25 @@ paths:
         '201': { description: Immutable review plan }
         '409': { description: An existing untracked resource blocks the plan; includes ownership conflict metadata }
         '422': { description: Could not create a safe plan }
+  /applications/{applicationID}/rollback-targets:
+    get:
+      summary: List recorded successful deployments and failed-operation checkpoints
+      responses:
+        '200': { description: Rollback target metadata; encrypted manifest contents are not returned }
+  /applications/{applicationID}/rollback-plans:
+    post:
+      summary: Create a reviewed rollback plan from a snapshot or Git revision (project owner only)
+      description: Creates a new immutable plan only. No cluster resources are changed until the plan is approved and applied.
+      responses:
+        '201': { description: Rollback plan with target provenance and normal resource diffs }
+        '409': { description: Snapshot target is no longer available }
+        '422': { description: Git target, scope, or Kubernetes dry-run could not be validated }
+  /applications/{applicationID}/rollback-state:
+    post:
+      summary: Keep a rollback pin or resume the previously tracked source (project owner only)
+      responses:
+        '200': { description: Updated application tracking state }
+        '422': { description: The selected Git revision is required or could not be verified }
   /applications/{applicationID}/ownership-conflict:
     get:
       summary: Inspect all untracked resources blocking this application's plan

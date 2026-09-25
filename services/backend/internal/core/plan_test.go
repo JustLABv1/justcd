@@ -5,6 +5,41 @@ import (
 	"time"
 )
 
+func TestRollbackPlanRequiresOwnerAndDistinctApprovals(t *testing.T) {
+	plan := Plan{Digest: "rollback-digest", RequiredApprovals: 2, RequiresApproval: true, ApproverRoles: []string{"owner"}, Rollback: &RollbackTarget{Kind: "successful_sync", ID: "snapshot-1", Revision: "abc123"}}
+	if RequiredApprovalCount(plan) != 2 {
+		t.Fatal("rollback deletion policy count should remain enforced")
+	}
+	if !ApprovalRoleAllows(plan, "owner", "owner-1") || ApprovalRoleAllows(plan, "deployer", "deployer-1") {
+		t.Fatal("rollback approval must be restricted to project owners")
+	}
+	now := time.Now()
+	first := DeletionApproval{PlanDigest: plan.Digest, ActorID: "owner-1", ExpiresAt: now.Add(time.Minute)}
+	if err := AuthorizeApplyMany(plan, []DeletionApproval{first}, now); err == nil {
+		t.Fatal("a single approval must not satisfy the stricter two-owner rule")
+	}
+	second := DeletionApproval{PlanDigest: plan.Digest, ActorID: "owner-2", ExpiresAt: now.Add(time.Minute)}
+	if err := AuthorizeApplyMany(plan, []DeletionApproval{first, second}, now); err != nil {
+		t.Fatalf("two distinct approvals should satisfy rollback: %v", err)
+	}
+}
+
+func TestRollbackTargetIsBoundIntoPlanDigest(t *testing.T) {
+	plan := Plan{ApplicationID: "app", Revision: "commit-a", Bindings: []Binding{{ClusterID: "cluster", Namespace: "demo", CredentialRef: "credential"}}}
+	plan.Rollback = &RollbackTarget{Kind: "successful_sync", ID: "snapshot-a", Revision: "commit-a"}
+	if err := RefreshDigest(&plan); err != nil {
+		t.Fatal(err)
+	}
+	original := plan.Digest
+	plan.Rollback.Revision = "commit-b"
+	if err := RefreshDigest(&plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.Digest == original {
+		t.Fatal("changing the rollback target must invalidate the plan digest")
+	}
+}
+
 func TestDeletionNeedsExactApproval(t *testing.T) {
 	binding := []Binding{{ClusterID: "cluster-a", Namespace: "team-a", CredentialRef: "secret/team-a"}}
 	id := Identity{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "team-a", Name: "web"}

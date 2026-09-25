@@ -38,6 +38,16 @@ func (s *Service) ApplyWithApprovals(ctx context.Context, planID, actorID string
 	if err != nil {
 		return store.Operation{}, err
 	}
+	if record.Plan.Rollback != nil {
+		actor, err := s.Store.UserByID(ctx, actorID)
+		if err != nil {
+			return store.Operation{}, errors.New("rollback actor is no longer available")
+		}
+		role, err := s.Store.ProjectRole(ctx, actor, app.ProjectID)
+		if err != nil || role != "owner" {
+			return store.Operation{}, errors.New("rollback can only be applied by a project owner")
+		}
+	}
 	fresh, err := s.RecheckPlan(ctx, app, record)
 	if err != nil {
 		return store.Operation{}, err
@@ -108,13 +118,18 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		actorID = *operation.ActorID
 	}
 	finishFailure := func(cause error, planStatus string) (store.Operation, error) {
-		message := safeApplyFailure(cause, operation.Progress)
+		message := safeApplyFailure(cause, operation.Progress, operation.Type)
 		_ = s.Store.FinishOperation(context.Background(), operationID, "failed", message)
 		if planStatus != "" {
 			_ = s.Store.SetPlanStatus(context.Background(), planID, planStatus)
 		}
 		_, _ = s.Store.DB.ExecContext(context.Background(), `UPDATE applications SET health='degraded',last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, app.ID)
-		_ = s.Store.Audit(context.Background(), actorID, "sync.failed", "application", app.ID, map[string]any{"operationId": operationID, "planId": planID, "message": message, "completed": len(operation.Progress.Completed), "total": operation.Progress.Total})
+		_ = s.Store.PauseAutoSync(context.Background(), app.ID)
+		action := "sync.failed"
+		if record.Plan.Rollback != nil {
+			action = "rollback.failed"
+		}
+		_ = s.Store.Audit(context.Background(), actorID, action, "application", app.ID, map[string]any{"operationId": operationID, "planId": planID, "message": message, "completed": len(operation.Progress.Completed), "total": operation.Progress.Total, "rollbackCheckpointId": operation.RollbackCheckpointID})
 		operation.Status, operation.Message = "failed", message
 		now := time.Now().UTC()
 		operation.FinishedAt = &now
@@ -131,6 +146,9 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		}
 		if record.Plan.Decommission && role != "owner" {
 			return finishFailure(errors.New("decommission requires a project owner"), "failed")
+		}
+		if record.Plan.Rollback != nil && role != "owner" {
+			return finishFailure(errors.New("rollback requires a project owner"), "failed")
 		}
 	}
 	if required := core.RequiredApprovalCount(record.Plan); required > 0 {
@@ -181,6 +199,13 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 	if err != nil {
 		return finishFailure(err, "failed")
 	}
+	if len(record.Plan.Changes) > 0 && !record.Plan.Decommission {
+		checkpoint, err := s.SavePreOperationCheckpoint(ctx, app, operationID, input)
+		if err != nil {
+			return finishFailure(fmt.Errorf("could not durably save the pre-operation checkpoint: %w", err), "failed")
+		}
+		operation.RollbackCheckpointID = checkpoint.ID
+	}
 	operation.Progress.Phase = "applying"
 	if err := s.Store.SetOperationProgress(ctx, operationID, operation.Progress); err != nil {
 		return finishFailure(err, "failed")
@@ -204,6 +229,12 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		if err := s.Store.RenewOperationLease(ctx, operationID, 90*time.Second); err != nil {
 			return finishFailure(err, "failed")
 		}
+		if record.Plan.Rollback != nil {
+			input, err = s.ValidateRollbackResourceStep(ctx, operation, record, app, actorID)
+			if err != nil {
+				return finishFailure(err, "failed")
+			}
+		}
 		if err := beginResource(resource.Identity); err != nil {
 			return finishFailure(err, "failed")
 		}
@@ -225,6 +256,12 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		if err := s.Store.RenewOperationLease(ctx, operationID, 90*time.Second); err != nil {
 			return finishFailure(err, "failed")
 		}
+		if record.Plan.Rollback != nil {
+			input, err = s.ValidateRollbackResourceStep(ctx, operation, record, app, actorID)
+			if err != nil {
+				return finishFailure(err, "failed")
+			}
+		}
 		if err := beginResource(change.Identity); err != nil {
 			return finishFailure(err, "failed")
 		}
@@ -235,37 +272,76 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 			return finishFailure(err, "failed")
 		}
 	}
-	if err := s.Store.FinishOperation(ctx, operationID, "succeeded", "Sync completed successfully"); err != nil {
-		return operation, err
-	}
-	if err := s.Store.SetPlanStatus(ctx, record.ID, "applied"); err != nil {
-		return operation, err
-	}
 	health := "synced"
 	if record.Plan.Decommission {
 		health = "decommissioned"
 	}
-	if err := s.Store.MarkApplicationSynced(ctx, app.ID, record.Plan.Revision, health); err != nil {
+	if record.Plan.Rollback != nil {
+		rollbackRevision := record.Plan.Rollback.Revision
+		requireRevision := rollbackRevision == ""
+		if err := s.Store.PinApplicationForRollback(ctx, app.ID, record.ID, record.Plan.Rollback.Settings, rollbackRevision, requireRevision); err != nil {
+			return finishFailure(fmt.Errorf("cluster changes completed but JustCD could not pin the rollback target: %w", err), "failed")
+		}
+		app.SourceID = record.Plan.Rollback.Settings.SourceID
+		app.ManifestPath = record.Plan.Rollback.Settings.ManifestPath
+		app.Renderer = record.Plan.Rollback.Settings.Renderer
+		app.KustomizeHelmEnabled = record.Plan.Rollback.Settings.KustomizeHelmEnabled
+		app.KustomizeNamespaceOverride = record.Plan.Rollback.Settings.KustomizeNamespaceOverride
+		if rollbackRevision != "" {
+			app.Revision = rollbackRevision
+		}
+	}
+	if !record.Plan.Decommission {
+		snapshotRevision, snapshotSettings := record.Plan.Revision, rollbackSettings(app)
+		if record.Plan.Rollback != nil {
+			snapshotRevision = record.Plan.Rollback.Revision
+			snapshotSettings = record.Plan.Rollback.Settings
+		}
+		if _, err := s.SaveSuccessfulDeploymentSnapshot(ctx, app, operationID, snapshotRevision, snapshotSettings, input); err != nil {
+			return finishFailure(fmt.Errorf("cluster changes completed but the deployment snapshot could not be saved: %w", err), "failed")
+		}
+	}
+	lastSyncedRevision := record.Plan.Revision
+	if record.Plan.Rollback != nil {
+		lastSyncedRevision = record.Plan.Rollback.Revision
+	}
+	if err := s.Store.MarkApplicationSynced(ctx, app.ID, lastSyncedRevision, health); err != nil {
+		return finishFailure(fmt.Errorf("cluster changes completed but sync status could not be saved: %w", err), "failed")
+	}
+	if err := s.Store.SetPlanStatus(ctx, record.ID, "applied"); err != nil {
+		return finishFailure(fmt.Errorf("cluster changes completed but plan status could not be saved: %w", err), "failed")
+	}
+	message := "Sync completed successfully"
+	action := "sync.succeeded"
+	if record.Plan.Rollback != nil {
+		message = "Rollback completed successfully; automatic reconciliation is paused"
+		action = "rollback.succeeded"
+	}
+	if err := s.Store.FinishOperation(ctx, operationID, "succeeded", message); err != nil {
 		return operation, err
 	}
 	operation.Progress.Phase = "complete"
 	_ = s.Store.SetOperationProgress(ctx, operationID, operation.Progress)
-	_ = s.Store.Audit(ctx, actorID, "sync.succeeded", "application", app.ID, map[string]any{"operationId": operationID, "planId": record.ID, "revision": record.Plan.Revision, "digest": record.Plan.Digest})
+	_ = s.Store.Audit(ctx, actorID, action, "application", app.ID, map[string]any{"operationId": operationID, "planId": record.ID, "revision": lastSyncedRevision, "digest": record.Plan.Digest, "rollbackTarget": record.Plan.Rollback})
 	operation.Status = "succeeded"
-	operation.Message = "Sync completed successfully"
+	operation.Message = message
 	now := time.Now().UTC()
 	operation.FinishedAt = &now
 	return operation, nil
 }
 
-func safeApplyFailure(cause error, progress store.OperationProgress) string {
+func safeApplyFailure(cause error, progress store.OperationProgress, operationType ...string) string {
+	name := "Sync"
+	if len(operationType) > 0 && operationType[0] == "rollback" {
+		name = "Rollback"
+	}
 	if len(progress.Completed) > 0 {
-		return fmt.Sprintf("Sync stopped after %d of %d resources; completed resources remain applied and were not rolled back. Review cluster state and rebuild the plan before retrying.", len(progress.Completed), progress.Total)
+		return fmt.Sprintf("%s stopped after %d of %d resources; completed resources remain applied and were not rolled back. Review cluster state and rebuild the plan before retrying.", name, len(progress.Completed), progress.Total)
 	}
 	if cause != nil && (strings.Contains(cause.Error(), "changed after") || strings.Contains(cause.Error(), "recheck")) {
-		return "Sync stopped because live state changed after review. No automatic rollback was attempted. Rebuild and review the plan."
+		return fmt.Sprintf("%s stopped because live state changed after review. No automatic rollback was attempted. Rebuild and review the plan.", name)
 	}
-	return "Sync did not complete. No automatic rollback was attempted; review cluster state and server logs before retrying."
+	return fmt.Sprintf("%s did not complete. No automatic rollback was attempted; review cluster state and server logs before retrying.", name)
 }
 
 func changeFor(changes []core.Change, identity core.Identity) (core.Change, bool) {

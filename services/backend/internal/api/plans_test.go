@@ -27,6 +27,24 @@ func TestPlanViewExposesDesiredIdentitiesWithoutManifest(t *testing.T) {
 	}
 }
 
+func TestRollbackPlanViewPreservesTargetProvenanceAndRedactsSecrets(t *testing.T) {
+	identity := core.Identity{APIVersion: "v1", Kind: "Secret", Namespace: "demo", Name: "credentials"}
+	record := store.PlanRecord{Plan: core.Plan{Rollback: &core.RollbackTarget{Kind: "pre_operation", ID: "snapshot-id", OperationID: "failed-op", Revision: "commit-1", ResourceCount: 1}, Changes: []core.Change{{Kind: core.Update, Identity: identity, Before: json.RawMessage(`{"kind":"Secret","data":{"token":"before-secret"}}`), After: json.RawMessage(`{"kind":"Secret","data":{"token":"after-secret"}}`)}}}}
+	view := toPlanView(record)
+	if view.Plan.Rollback == nil || view.Plan.Rollback.Kind != "pre_operation" || view.Plan.Rollback.OperationID != "failed-op" {
+		t.Fatalf("rollback provenance missing from the plan view: %+v", view.Plan.Rollback)
+	}
+	encoded, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"before-secret", "after-secret"} {
+		if strings.Contains(string(encoded), value) {
+			t.Fatalf("rollback plan response leaked secret data: %s", encoded)
+		}
+	}
+}
+
 func TestRedactManifestMasksSecretMaterial(t *testing.T) {
 	manifest := json.RawMessage(`{"apiVersion":"v1","kind":"Secret","data":{"password":"c2VjcmV0","config":"dG9rZW4="},"stringData":{"api-key":"plaintext"},"metadata":{"name":"example"}}`)
 	redacted := string(redactManifest(manifest))

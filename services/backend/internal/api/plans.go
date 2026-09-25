@@ -318,6 +318,9 @@ func (s *Server) applyPlan(w http.ResponseWriter, r *http.Request) {
 	if record.Plan.Decommission && !s.requireProjectRole(w, r, app.ProjectID, "owner") {
 		return
 	}
+	if record.Plan.Rollback != nil && !s.requireProjectRole(w, r, app.ProjectID, "owner") {
+		return
+	}
 	var input struct {
 		ApprovalIDs []string `json:"approvalIds"`
 		ApprovalID  string   `json:"approvalId"`
@@ -359,6 +362,10 @@ func (s *Server) createPlanSelection(w http.ResponseWriter, r *http.Request) {
 	}
 	if record.Plan.Decommission {
 		writeError(w, http.StatusBadRequest, "decommission plans cannot exclude managed resource deletions")
+		return
+	}
+	if record.Plan.Rollback != nil {
+		writeError(w, http.StatusBadRequest, "rollback plans are immutable and cannot exclude resources or fields")
 		return
 	}
 	var input core.PlanSelection

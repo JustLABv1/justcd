@@ -1,0 +1,9 @@
+.env*
+.envrc
+graphify-out
+data
+vendor
+*.test
+*.out
+.git
+Dockerfile

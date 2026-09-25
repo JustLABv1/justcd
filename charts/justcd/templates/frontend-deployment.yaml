@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "justcd.fullname" . }}-frontend
+  labels:
+    {{- include "justcd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  replicas: {{ .Values.frontend.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "justcd.selectorLabels" (dict "root" . "component" "frontend") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "justcd.selectorLabels" (dict "root" . "component" "frontend") | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: frontend
+          image: "{{ .Values.frontend.image.repository }}:{{ default .Chart.AppVersion .Values.frontend.image.tag }}"
+          imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.frontend.service.port }}
+              protocol: TCP
+          env:
+            - name: PORT
+              value: {{ .Values.frontend.service.port | quote }}
+            - name: HOSTNAME
+              value: 0.0.0.0
+            - name: JUSTCD_API_URL
+              value: "http://{{ include "justcd.fullname" . }}-backend:{{ .Values.backend.service.port }}"
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.frontend.resources | nindent 12 }}

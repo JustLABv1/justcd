@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "justcd.fullname" . }}-backend
+  labels:
+    {{- include "justcd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  replicas: 1
+  # The API also runs the reconciliation worker. Avoid overlapping workers
+  # while replacing the single backend pod.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "justcd.selectorLabels" (dict "root" . "component" "backend") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "justcd.selectorLabels" (dict "root" . "component" "backend") | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backend
+          image: "{{ .Values.backend.image.repository }}:{{ default .Chart.AppVersion .Values.backend.image.tag }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.backend.service.port }}
+              protocol: TCP
+          env:
+            - name: JUSTCD_LISTEN_ADDRESS
+              value: ":{{ .Values.backend.service.port }}"
+            - name: JUSTCD_PUBLIC_URL
+              value: {{ required "Set publicUrl to the browser-facing JustCD origin" .Values.publicUrl | quote }}
+            - name: JUSTCD_FRONTEND_URL
+              value: {{ .Values.publicUrl | quote }}
+            - name: JUSTCD_COOKIE_SECURE
+              value: {{ .Values.cookieSecure | quote }}
+            - name: JUSTCD_SESSION_LIFETIME
+              value: {{ .Values.sessionLifetime | quote }}
+            - name: JUSTCD_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "Set backend.existingSecret to a Secret containing JUSTCD_DATABASE_URL and JUSTCD_ENCRYPTION_KEY" .Values.backend.existingSecret }}
+                  key: JUSTCD_DATABASE_URL
+            - name: JUSTCD_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.existingSecret }}
+                  key: JUSTCD_ENCRYPTION_KEY
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}

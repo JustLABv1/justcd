@@ -115,3 +115,30 @@ cd services/frontend && pnpm typecheck && pnpm lint && pnpm build
 
 The backend API is documented at `/api/v1/openapi.yaml` and health checks are
 available at `/api/v1/health`.
+
+## Container deployment
+
+Build and publish the two images from their service directories:
+
+```sh
+docker build -t registry.example.com/justcd-backend:0.1.0 services/backend
+docker build -t registry.example.com/justcd-frontend:0.1.0 services/frontend
+docker push registry.example.com/justcd-backend:0.1.0
+docker push registry.example.com/justcd-frontend:0.1.0
+```
+
+The frontend runtime uses a nonroot distroless Node image. The backend runtime
+uses Alpine with Git and SSH, which are needed to access repositories. Build
+tools and package managers stay in the build stages. Scan the exact images you
+intend to deploy after every build, for example:
+
+```sh
+trivy image --scanners vuln --severity HIGH,CRITICAL registry.example.com/justcd-backend:0.1.0
+trivy image --scanners vuln --severity HIGH,CRITICAL registry.example.com/justcd-frontend:0.1.0
+```
+
+Rebuild and rescan regularly as base images and vulnerability data change.
+
+Deploy with the [Helm chart](charts/justcd/README.md). It requires an external
+PostgreSQL database, a Secret holding `JUSTCD_DATABASE_URL` and
+`JUSTCD_ENCRYPTION_KEY`, and the browser-facing `publicUrl`.

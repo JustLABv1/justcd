@@ -4,6 +4,33 @@ export type JsonLineDiff = {
   removed: Set<number>
   added: Set<number>
 }
+export type ReviewRow = { before?: string; after?: string; oldLine?: number; newLine?: number; changed: boolean }
+
+/** Align unchanged context and pair replacement lines without hiding additions or deletions. */
+export function reviewRows(before: unknown, after: unknown): ReviewRow[] {
+  const diff = diffJsonLines(before ?? null, after ?? null)
+  const rows: ReviewRow[] = []
+  let i = 0, j = 0
+  while (i < diff.before.length || j < diff.after.length) {
+    if (diff.removed.has(i) || diff.added.has(j)) {
+      const oldLine = diff.removed.has(i) ? i++ : undefined
+      const newLine = diff.added.has(j) ? j++ : undefined
+      rows.push({ before: oldLine === undefined ? undefined : diff.before[oldLine], after: newLine === undefined ? undefined : diff.after[newLine], oldLine: oldLine === undefined ? undefined : oldLine + 1, newLine: newLine === undefined ? undefined : newLine + 1, changed: true })
+    } else {
+      rows.push({ before: diff.before[i], after: diff.after[j], oldLine: i < diff.before.length ? i + 1 : undefined, newLine: j < diff.after.length ? j + 1 : undefined, changed: false })
+      i++; j++
+    }
+  }
+  return rows
+}
+
+export function contextRows(rows: ReviewRow[], context = 3): Set<number> {
+  const visible = new Set<number>()
+  rows.forEach((row, index) => {
+    if (row.changed) for (let n = Math.max(0, index - context); n <= Math.min(rows.length - 1, index + context); n++) visible.add(n)
+  })
+  return visible
+}
 
 function sameLine(left: string, right: string) {
   return left.replace(/,\s*$/, "") === right.replace(/,\s*$/, "")

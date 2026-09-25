@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Tabs } from "@base-ui/react/tabs"
 import { Button } from "@/components/ui/button"
 import { ApplicationDetailSkeleton } from "@/components/application-detail-skeleton"
@@ -19,7 +19,7 @@ import { ErrorNotice } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
 import { APIError, api, apiDelete, apiPost, errorMessage } from "@/lib/api"
 import { diffJsonLines } from "@/lib/line-diff"
-import type { Application, Change, FieldExclusion, Identity, IgnoreRule, IgnoreSelector, ListResponse, ManagedResource, Operation, PlanApprovalSummary, PlanRecord, Project, ProjectMember, ResourceTopology } from "@/lib/types"
+import type { Application, Change, FieldExclusion, Identity, IgnoreRule, IgnoreSelector, ListResponse, ManagedResource, Operation, OwnershipConflict, PlanApprovalSummary, PlanRecord, Project, ProjectMember, ResourceTopology } from "@/lib/types"
 
 function diffId(identity: Identity) {
   return `diff-${[identity.clusterId ?? "", identity.apiVersion, identity.kind, identity.namespace, identity.name].map(encodeURIComponent).join("-")}`
@@ -74,7 +74,19 @@ export default function ApplicationDetailPage() {
   const [busy, setBusy] = useState(false)
   const [pendingAction, setPendingAction] = useState("")
   const [error, setError] = useState<unknown | null>(null)
+  const [ownershipConflict, setOwnershipConflict] = useState<OwnershipConflict | null>(null)
+  const [ownershipConflicts, setOwnershipConflicts] = useState<OwnershipConflict[]>([])
+  const [selectedConflictKeys, setSelectedConflictKeys] = useState<string[]>([])
+  const conflictEpoch = useRef(0)
+  const [adoptionReason, setAdoptionReason] = useState("")
+  const [previousControllerDisabled, setPreviousControllerDisabled] = useState(false)
   const [activeTab, setActiveTab] = useState("overview")
+
+  function setConflictReview(conflicts: OwnershipConflict[]) {
+    setOwnershipConflicts(conflicts)
+    setOwnershipConflict(conflicts[0] ?? null)
+    setSelectedConflictKeys(conflicts.filter((item) => !item.hasOwnerReferences && (!item.owner || item.owner === applicationID)).map((item) => diffId(item.identity)))
+  }
 
   const selectionDraftForPlan = activePlan && selectionDraft?.planId === activePlan.id ? selectionDraft : null
   const selectionResources = selectionDraftForPlan?.resources ?? activePlan?.plan.selection?.resources ?? []
@@ -150,12 +162,23 @@ export default function ApplicationDetailPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applicationID])
 
+  useEffect(() => {
+    if (loading || !application) return
+    let active = true
+    const epoch = conflictEpoch.current
+    void api<{ conflict: OwnershipConflict | null; conflicts: OwnershipConflict[] }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ownership-conflict`)
+      .then((result) => { if (active && conflictEpoch.current === epoch) setConflictReview(result.conflicts ?? (result.conflict ? [result.conflict] : [])) })
+      .catch(() => {})
+    return () => { active = false }
+  // Run discovery once after the page loads, independently of data refreshes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applicationID, loading])
+
   const hasPendingOperation = operations.some((operation) => operation.status === "queued" || operation.status === "running")
   const activePlanId = activePlan?.id
   const activePlanRequiresApproval = activePlan?.plan.requiresApproval ?? false
   useEffect(() => {
     if (!activePlanId || !activePlanRequiresApproval) {
-      setApprovalSummary(null)
       return
     }
     let active = true
@@ -187,15 +210,76 @@ export default function ApplicationDetailPage() {
   }, [applicationID, busy, hasPendingOperation])
 
   async function createPlan() {
+    conflictEpoch.current += 1
     setBusy(true); setPendingAction("create-plan"); setError(null); setApprovalSummary(null)
     try {
       const plan = await apiPost<PlanRecord>(`/api/v1/applications/${encodeURIComponent(applicationID)}/plans`)
+      setConflictReview([])
       setActivePlan(plan)
       setPlans((current) => [plan, ...current.filter((item) => item.id !== plan.id)])
       toast.success(plan.plan.changes.length ? `Plan ready: ${plan.plan.changes.length} change${plan.plan.changes.length === 1 ? "" : "s"} to review.` : "The application already matches its Git revision.")
       selectTab("changes")
       await refreshSummary()
-    } catch (cause) { if (!acceptRefreshedPlan(cause)) toast.error(errorMessage(cause), cause) } finally { setBusy(false); setPendingAction("") }
+    } catch (cause) {
+      if (cause instanceof APIError && cause.status === 409 && typeof cause.payload === "object" && cause.payload && "conflict" in cause.payload) {
+        const payload = cause.payload as { conflict: OwnershipConflict; conflicts?: OwnershipConflict[] }
+        setConflictReview(payload.conflicts ?? [payload.conflict])
+      } else if (!acceptRefreshedPlan(cause)) toast.error(errorMessage(cause), cause)
+    } finally { setBusy(false); setPendingAction("") }
+  }
+
+  async function adoptConflict() {
+    if (!ownershipConflict) return
+    conflictEpoch.current += 1
+    setBusy(true); setPendingAction("adopt-resource")
+    try {
+      await apiPost(`/api/v1/applications/${encodeURIComponent(applicationID)}/adopt`, {
+        conflict: ownershipConflict,
+        reason: adoptionReason.trim(),
+        previousControllerDisabled,
+      })
+      setConflictReview([])
+      setAdoptionReason("")
+      setPreviousControllerDisabled(false)
+      setApprovalSummary(null)
+      await loadData().catch(() => {})
+      const next = await api<{ conflict: OwnershipConflict | null; conflicts: OwnershipConflict[] }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ownership-conflict`).catch(() => null)
+      if (next) setConflictReview(next.conflicts ?? (next.conflict ? [next.conflict] : []))
+      toast.success("Resource claimed without changing its workload. Auto-sync is paused; create and review a fresh plan before syncing.")
+    } finally { setBusy(false); setPendingAction("") }
+  }
+
+  async function adoptSelectedConflicts() {
+    const selected = ownershipConflicts.filter((item) => selectedConflictKeys.includes(diffId(item.identity)))
+    if (selected.length === 0) return
+    conflictEpoch.current += 1
+    setBusy(true); setPendingAction("adopt-batch")
+    try {
+      const result = await apiPost<{ claimed: number; failed: number; results: { identity: Identity; status: string; error?: string }[] }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/adopt-batch`, {
+        conflicts: selected,
+        reason: adoptionReason.trim(),
+        previousControllerDisabled,
+      })
+      setAdoptionReason("")
+      setPreviousControllerDisabled(false)
+      setApprovalSummary(null)
+      await loadData().catch(() => {})
+      const next = await api<{ conflict: OwnershipConflict | null; conflicts: OwnershipConflict[] }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ownership-conflict`).catch(() => null)
+      if (next) setConflictReview(next.conflicts ?? (next.conflict ? [next.conflict] : []))
+      if (result.failed) toast.error(`${result.claimed} claimed; ${result.failed} failed. Refresh the conflict list and retry the remaining resources.`)
+      else toast.success(`${result.claimed} resources claimed without changing workloads. Auto-sync is paused; review a fresh plan before syncing.`)
+    } finally { setBusy(false); setPendingAction("") }
+  }
+
+  function configureConflictIgnore() {
+    if (!ownershipConflict) return
+    setIgnoreMode("resource")
+    setIgnoreVersion(ownershipConflict.identity.apiVersion)
+    setIgnoreKind(ownershipConflict.identity.kind)
+    setIgnoreNamespace(ownershipConflict.identity.namespace)
+    setIgnoreName(ownershipConflict.identity.name)
+    setIgnoreReason("Managed by another controller")
+    selectTab("settings")
   }
 
   async function saveRenderSettings() {
@@ -403,6 +487,27 @@ export default function ApplicationDetailPage() {
     {error && <ErrorNotice error={error} />}
     {application?.decommissioning && <div role="status" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300/70 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><span>Deletion in progress. Auto-sync is paused. Review and apply the deletion plan, then finish removing the application.</span>{canApprove && <Button size="sm" variant="outline" disabled={busy || hasPendingOperation} onClick={() => void cancelDecommission()}>Cancel deletion</Button>}</div>}
     {namespaceMismatch && !application?.kustomizeNamespaceOverride && <div role="alert" className="mb-5 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><strong>Kustomize namespace: {kustomization?.namespace}.</strong> JustCD target: {application?.namespaces[0]?.namespace}. The namespaces differ, so a plan cannot be refreshed until an owner enables the override. <button type="button" className="font-semibold underline underline-offset-4" onClick={() => selectTab("settings")}>Review namespace setting →</button></div>}
+    {ownershipConflict && <section role="alert" aria-label="Existing resource ownership conflict" className="mb-5 rounded-xl border border-amber-400/70 bg-amber-50 p-5 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+      <h2 className="text-sm font-semibold">{ownershipConflicts.length} rendered resource{ownershipConflicts.length === 1 ? "" : "s"} already exist{ownershipConflicts.length === 1 ? "s" : ""}</h2>
+      <p className="mt-1 text-xs leading-5">{ownershipConflict.identity.kind} <span className="font-mono">{ownershipConflict.identity.namespace || "cluster"}/{ownershipConflict.identity.name}</span> exists in Kubernetes, but JustCD has not recorded it as managed by this application. Sync is blocked until these conflicts are resolved. Review each resource before claiming it; resources with another owner or Kubernetes owner references cannot be claimed here.</p>
+      <dl className="mt-3 grid gap-2 text-[11px] sm:grid-cols-3"><div><dt className="text-amber-700 dark:text-amber-300">UID</dt><dd className="break-all font-mono">{ownershipConflict.uid}</dd></div><div><dt className="text-amber-700 dark:text-amber-300">Resource version</dt><dd className="font-mono">{ownershipConflict.resourceVersion}</dd></div><div><dt className="text-amber-700 dark:text-amber-300">JustCD owner label</dt><dd className="break-all font-mono">{ownershipConflict.owner || "None"}</dd></div></dl>
+      {ownershipConflicts.length > 1 && <div className="mt-4 rounded-lg border border-amber-300/70 bg-background/70 p-3 dark:border-amber-900">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><strong className="text-xs">Select resources to claim</strong><span className="text-[11px]">{selectedConflictKeys.length} of {ownershipConflicts.length} selected</span></div>
+        <div className="max-h-64 divide-y overflow-y-auto">{ownershipConflicts.map((item) => { const key = diffId(item.identity); const blocked = item.hasOwnerReferences || Boolean(item.owner && item.owner !== application?.id); return <label key={key} className="flex cursor-pointer items-start gap-3 py-2 text-xs"><Checkbox checked={selectedConflictKeys.includes(key)} disabled={blocked || busy} onCheckedChange={(checked) => setSelectedConflictKeys((current) => checked ? [...current, key] : current.filter((value) => value !== key))} /><span className="min-w-0 flex-1"><span className="font-medium">{item.identity.kind}</span> <span className="break-all font-mono">{item.identity.namespace || "cluster"}/{item.identity.name}</span><span className="block break-all text-[10px] text-muted-foreground">UID {item.uid} · RV {item.resourceVersion}</span></span>{blocked && <span className="text-[10px] text-amber-700 dark:text-amber-300">Other owner</span>}</label> })}</div>
+      </div>}
+      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-amber-300/60 pt-4 dark:border-amber-900">
+        {canApprove && <Button size="sm" variant="outline" onClick={configureConflictIgnore}>Keep externally managed · configure ignore</Button>}
+        {canApprove && ownershipConflicts.length > 1 && <ConfirmDisclosure trigger={`Take over selected (${selectedConflictKeys.length})`} triggerVariant="outline" title={`Take over ${selectedConflictKeys.length} selected resources?`} description="JustCD will claim only ownership labels and inventory records. Auto-sync will pause. Each resource is rechecked before its claim; earlier successful claims remain if a later resource changes. Review a fresh plan before applying workload changes." confirmLabel="Claim selected resources" confirmDisabled={!previousControllerDisabled || selectedConflictKeys.length === 0} onConfirm={adoptSelectedConflicts} disabled={busy || selectedConflictKeys.length === 0}>
+          <div className="space-y-3"><FormField label="Reason for takeover (optional)" htmlFor="batch-adoption-reason"><Textarea id="batch-adoption-reason" value={adoptionReason} onChange={(event) => setAdoptionReason(event.target.value)} maxLength={500} placeholder="Migrating this deployment from the previous controller" /></FormField><label className="flex items-start gap-2 text-xs"><Checkbox checked={previousControllerDisabled} onCheckedChange={(checked) => setPreviousControllerDisabled(Boolean(checked))} /><span>I have stopped the previous controller from reconciling these resources.</span></label></div>
+        </ConfirmDisclosure>}
+        {canApprove && ownershipConflicts.length === 1 && <ConfirmDisclosure trigger="Take over in JustCD" triggerVariant="outline" title={`Take over ${ownershipConflict.identity.kind} ${ownershipConflict.identity.name}?`} description="JustCD will claim the ownership label and inventory record only. It will pause auto-sync; no workload fields change until you review and apply a fresh plan. Stop the previous controller first or it may undo this claim." confirmLabel="Claim resource" confirmDisabled={!previousControllerDisabled} onConfirm={adoptConflict} disabled={busy || Boolean(ownershipConflict.owner && ownershipConflict.owner !== application?.id) || ownershipConflict.hasOwnerReferences}>
+          <div className="space-y-3"><FormField label="Reason for takeover (optional)" htmlFor="adoption-reason"><Textarea id="adoption-reason" value={adoptionReason} onChange={(event) => setAdoptionReason(event.target.value)} maxLength={500} placeholder="Migrating this deployment from the previous controller" /></FormField><label className="flex items-start gap-2 text-xs"><Checkbox checked={previousControllerDisabled} onCheckedChange={(checked) => setPreviousControllerDisabled(Boolean(checked))} /><span>I have stopped the previous controller from reconciling this resource.</span></label></div>
+        </ConfirmDisclosure>}
+        {!canApprove && <span className="text-xs">A project owner must choose how to resolve this conflict.</span>}
+      </div>
+      <p className="mt-3 text-xs leading-5">Or change the Git manifest or remove the old object through its current controller, then refresh the plan. JustCD will not delete an untracked resource for you.</p>
+      {(ownershipConflict.owner && ownershipConflict.owner !== application?.id || ownershipConflict.hasOwnerReferences) && <p className="mt-3 text-xs">Takeover is unavailable because the object belongs to another JustCD application or is a Kubernetes dependent. Resolve that ownership first.</p>}
+    </section>}
     {!loading && application && <>
       {visibleOperation && <div role="status" aria-live="polite" className={`mb-5 rounded-xl border px-4 py-3 ${visibleOperation.status === "failed" ? "border-destructive/30 bg-destructive/5" : "bg-card"}`}>
         <div className="flex flex-wrap items-center gap-3"><StatusBadge status={visibleOperation.status} /><span className="text-xs font-medium">{operationPhaseLabel(visibleOperation.progress?.phase, visibleOperation.status)}</span><span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{visibleOperation.progress?.completed.length ?? 0} / {visibleOperation.progress?.total ?? 0} resources</span></div>
@@ -470,10 +575,10 @@ export default function ApplicationDetailPage() {
               {activePlan.plan.changes.length ? <div className="space-y-3">{activePlan.plan.changes.map((change, index) => <DiffCard key={`${change.identity.apiVersion}/${change.identity.kind}/${change.identity.namespace}/${change.identity.name}/${index}`} change={change} canSelect={canDeploy && !activePlan.plan.decommission} canManageIgnores={canApprove && !activePlan.plan.decommission} excluded={selectionResources.some((identity) => sameIdentity(identity, change.identity))} excludedPaths={selectionFields.filter((field) => sameIdentity(field.identity, change.identity)).map((field) => field.path)} permanentResourceIgnore={ignoreRules.some((rule) => !rule.path && sameIdentity(rule.identity, change.identity))} permanentFieldIgnores={ignoreRules.filter((rule) => Boolean(rule.path) && sameIdentity(rule.identity, change.identity)).map((rule) => rule.path!)} reason={ignoreReasons[diffId(change.identity)] ?? ""} onReasonChange={(reason) => setIgnoreReasons((current) => ({ ...current, [diffId(change.identity)]: reason }))} onToggleResource={() => toggleResourceExclusion(change.identity)} onToggleField={(path) => toggleFieldExclusion(change.identity, path)} onSaveIgnore={(path) => void saveIgnoreRule(change.identity, path, ignoreReasons[diffId(change.identity)] ?? "")} busy={busy} />)}</div> : <div className="rounded-lg border border-dashed px-4 py-8 text-center"><span className="text-emerald-600">✓</span><p className="mt-2 text-sm font-medium">No changes to apply</p><p className="mt-1 text-xs text-muted-foreground">Git and the managed cluster fields are in sync, or every difference is excluded below.</p></div>}
               {(activePlan.plan.ignored?.length ?? 0) > 0 && <section className="mt-6 space-y-3"><div className="flex items-end justify-between gap-3"><div><h3 className="text-sm font-semibold">Excluded from this sync</h3><p className="mt-1 text-xs text-muted-foreground">These differences stay visible and will appear again in a later plan unless covered by a permanent rule.</p></div><span className="text-xs tabular-nums text-muted-foreground">{activePlan.plan.ignored?.length} excluded</span></div>{activePlan.plan.ignored?.map((change, index) => <DiffCard key={`ignored-${change.identity.kind}-${change.identity.namespace}-${change.identity.name}-${index}`} change={change} canSelect={canDeploy} canManageIgnores={canApprove} excluded={selectionResources.some((identity) => sameIdentity(identity, change.identity))} excludedPaths={selectionFields.filter((field) => sameIdentity(field.identity, change.identity)).map((field) => field.path)} permanentResourceIgnore={ignoreRules.some((rule) => !rule.path && sameIdentity(rule.identity, change.identity))} permanentFieldIgnores={ignoreRules.filter((rule) => Boolean(rule.path) && sameIdentity(rule.identity, change.identity)).map((rule) => rule.path!)} reason={ignoreReasons[diffId(change.identity)] ?? ""} onReasonChange={(reason) => setIgnoreReasons((current) => ({ ...current, [diffId(change.identity)]: reason }))} onToggleResource={() => toggleResourceExclusion(change.identity)} onToggleField={(path) => toggleFieldExclusion(change.identity, path)} onSaveIgnore={(path) => void saveIgnoreRule(change.identity, path, ignoreReasons[diffId(change.identity)] ?? "")} busy={busy} ignored />)}</section>}
               {selectionDirty && <div className="mt-5 flex flex-wrap items-center gap-3 rounded-lg border border-primary/20 bg-primary/5 p-3"><p className="min-w-0 flex-1 text-xs text-muted-foreground">Exclusions are drafts until you save. Saving creates a new immutable plan and clears any earlier approval.</p><Button size="sm" variant="outline" onClick={() => { setSelectionResources(activePlan.plan.selection?.resources ?? []); setSelectionFields(activePlan.plan.selection?.fields ?? []) }} disabled={busy}>Reset</Button><Button size="sm" loading={pendingAction === "selection"} loadingText="Recalculating…" onClick={() => void savePlanSelection()} disabled={busy}>Create selected plan</Button></div>}
-              {activePlan.plan.requiresApproval && <div className="mt-5 rounded-lg border border-amber-300/70 bg-amber-50/70 p-3.5 text-xs leading-5 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><strong>{requiredApprovals} distinct approval{requiredApprovals === 1 ? "" : "s"} required.</strong> {activePlan.plan.approvalKind === "deletion" ? "Review the exact resources being removed." : "Review the cluster-scoped or sync changes."} {approvedApprovals} of {requiredApprovals} approved.<p className="mt-2"><strong>Eligible approvers:</strong> {displayedApproverRoles.length ? displayedApproverRoles.map((role) => role[0].toUpperCase() + role.slice(1)).join(", ") : "selected members only"}{displayedApproverMembers.length ? `; ${displayedApproverMembers.map((member) => member.label).join(", ")}` : ""}. {displayedApproverRoles.length ? "Higher project roles also qualify." : "Only the selected members qualify."}</p>{currentApprovalSummary?.approvals.length ? <ul className="mt-2 space-y-1">{currentApprovalSummary.approvals.map((approval) => <li key={approval.id}>{approval.displayName || approval.email}{approval.role ? ` · ${approval.role}` : ""}{approval.eligible ? " · approved" : " · no longer eligible"}</li>)}</ul> : null}</div>}
+              {activePlan.plan.requiresApproval && <div className="mt-5 rounded-lg border border-amber-300/70 bg-amber-50/70 p-3.5 text-xs leading-5 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><strong>{requiredApprovals} distinct approval{requiredApprovals === 1 ? "" : "s"} required.</strong> {activePlan.plan.approvalKind === "deletion" ? "Review the exact resources being removed." : activePlan.plan.approvalKind === "takeover" ? "This plan transfers Kubernetes field ownership for the marked resources. Review every changed field before approval." : "Review the cluster-scoped or sync changes."} {approvedApprovals} of {requiredApprovals} approved.<p className="mt-2"><strong>Eligible approvers:</strong> {displayedApproverRoles.length ? displayedApproverRoles.map((role) => role[0].toUpperCase() + role.slice(1)).join(", ") : "selected members only"}{displayedApproverMembers.length ? `; ${displayedApproverMembers.map((member) => member.label).join(", ")}` : ""}. {displayedApproverRoles.length ? "Higher project roles also qualify." : "Only the selected members qualify."}</p>{currentApprovalSummary?.approvals.length ? <ul className="mt-2 space-y-1">{currentApprovalSummary.approvals.map((approval) => <li key={approval.id}>{approval.displayName || approval.email}{approval.role ? ` · ${approval.role}` : ""}{approval.eligible ? " · approved" : " · no longer eligible"}</li>)}</ul> : null}</div>}
               <div className="mt-5 flex flex-wrap justify-end gap-2 border-t pt-4">
-                {activePlan.plan.requiresApproval && <ConfirmDisclosure trigger={currentApprovalSummary?.currentUserApproved ? "Approval recorded ✓" : approvalsComplete ? "Approvals complete" : "Add approval"} triggerVariant="outline" title="Approve this exact plan?" description={`${requiredApprovals} distinct eligible project members must approve this exact plan before it can be applied.`} confirmLabel="Approve plan" onConfirm={approvePlan} disabled={busy || hasPendingOperation || selectionDirty || !currentApprovalSummary?.canApprove || activePlan.status !== "current"}><ul className="max-h-36 space-y-1 overflow-y-auto text-xs text-muted-foreground">{activePlan.plan.changes.filter((change) => change.kind === "delete").map((change) => <li key={diffId(change.identity)}>{change.identity.kind} {change.identity.namespace}/{change.identity.name}</li>)}</ul></ConfirmDisclosure>}
-                <Button loading={pendingAction === "apply-plan"} loadingText="Starting sync…" onClick={() => void applyPlan()} disabled={busy || hasPendingOperation || selectionDirty || !canDeploy || (activePlan.plan.decommission && !canApprove) || activePlan.status !== "current" || activePlan.plan.changes.length === 0 || (activePlan.plan.requiresApproval && !approvalsComplete)}>{activePlan.plan.decommission ? "Delete approved resources" : activePlan.plan.requiresApproval ? "Apply approved plan" : "Sync application"}</Button>
+                {activePlan.plan.requiresApproval && <ConfirmDisclosure trigger={currentApprovalSummary?.currentUserApproved ? "Approval recorded ✓" : approvalsComplete ? "Approvals complete" : "Add approval"} triggerVariant="outline" title="Approve this exact plan?" description={`${requiredApprovals} distinct eligible project members must approve this exact plan before it can be applied.`} confirmLabel="Approve plan" onConfirm={approvePlan} disabled={busy || hasPendingOperation || Boolean(ownershipConflict) || selectionDirty || !currentApprovalSummary?.canApprove || activePlan.status !== "current"}><ul className="max-h-36 space-y-1 overflow-y-auto text-xs text-muted-foreground">{activePlan.plan.changes.filter((change) => change.kind === "delete" || change.takeover).map((change) => <li key={diffId(change.identity)}>{change.takeover ? "Take over" : "Delete"} {change.identity.kind} {change.identity.namespace}/{change.identity.name}</li>)}</ul></ConfirmDisclosure>}
+                <Button loading={pendingAction === "apply-plan"} loadingText="Starting sync…" onClick={() => void applyPlan()} disabled={busy || hasPendingOperation || Boolean(ownershipConflict) || selectionDirty || !canDeploy || (activePlan.plan.decommission && !canApprove) || activePlan.status !== "current" || activePlan.plan.changes.length === 0 || (activePlan.plan.requiresApproval && !approvalsComplete)}>{activePlan.plan.decommission ? "Delete approved resources" : activePlan.plan.requiresApproval ? "Apply approved plan" : "Sync application"}</Button>
               </div>
               {!currentApprovalSummary?.canApprove && activePlan.plan.requiresApproval && !approvalsComplete && <p className="mt-2 text-right text-[10px] text-muted-foreground">Approvals can be added by project members eligible under this plan&apos;s approval rule.</p>}
             </div>}
@@ -483,7 +588,7 @@ export default function ApplicationDetailPage() {
         <Tabs.Panel value="components" className="outline-none">
           <Panel surface="flat" title="Managed components" description="JustCD tracks only resources that it created and owns on the cluster.">
             {resources.length ? <div className="min-w-0"><DataGridList rows={resources} columns={[
-              { id: "resource", title: "Resource", cell: (item) => <span className="font-medium">{item.identity.name}<span className="mt-0.5 block text-[10px] font-normal text-muted-foreground">{item.identity.kind} · {item.identity.apiVersion}</span></span> },
+              { id: "resource", title: "Resource", cell: (item) => <span className="font-medium">{item.identity.name}<span className="mt-0.5 block text-[10px] font-normal text-muted-foreground">{item.identity.kind} · {item.identity.apiVersion}{item.adopted ? " · field handover pending" : ""}</span></span> },
               { id: "namespace", title: "Namespace", cell: (item) => <span className="text-xs text-muted-foreground">{item.identity.namespace || "cluster scope"}</span> },
               { id: "cluster", title: "Cluster", cell: (item) => <span className="font-mono text-[10px] text-muted-foreground">{item.identity.clusterId?.slice(0, 8)}</span> },
               { id: "version", title: "Live version", cell: (item) => <span className="font-mono text-[10px] text-muted-foreground">{item.resourceVersion}</span> },
@@ -563,7 +668,7 @@ function DiffCard({ change, canSelect, canManageIgnores, excluded, excludedPaths
     ? diffJsonLines(change.before, change.after)
     : null, [change.kind, change.before, change.after])
   return <article id={diffId(change.identity)} className="scroll-mt-6 overflow-hidden rounded-lg border">
-    <div className="flex flex-wrap items-center gap-2 border-b bg-muted/20 px-3 py-2"><span className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase ${color}`}>{change.kind}</span><span className="min-w-0 flex-1 truncate text-xs font-medium">{name}</span>{ignored && <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[9px] text-amber-800">Excluded</span>}{lineDiff && <span className="flex shrink-0 items-center gap-3 text-[10px] text-muted-foreground"><span><span className="font-semibold text-rose-700 dark:text-rose-300">−</span> removed</span><span><span className="font-semibold text-emerald-700 dark:text-emerald-300">+</span> added</span></span>}{change.identity.clusterScoped && <span className="rounded-full border px-2 py-0.5 text-[9px] text-amber-700">cluster-wide</span>}</div>
+    <div className="flex flex-wrap items-center gap-2 border-b bg-muted/20 px-3 py-2"><span className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase ${color}`}>{change.kind}</span><span className="min-w-0 flex-1 truncate text-xs font-medium">{name}</span>{change.takeover && <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[9px] text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">Field ownership takeover</span>}{ignored && <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[9px] text-amber-800">Excluded</span>}{lineDiff && <span className="flex shrink-0 items-center gap-3 text-[10px] text-muted-foreground"><span><span className="font-semibold text-rose-700 dark:text-rose-300">−</span> removed</span><span><span className="font-semibold text-emerald-700 dark:text-emerald-300">+</span> added</span></span>}{change.identity.clusterScoped && <span className="rounded-full border px-2 py-0.5 text-[9px] text-amber-700">cluster-wide</span>}</div>
     <div className="grid divide-y md:grid-cols-2 md:divide-x md:divide-y-0">
       <ManifestBlock title={change.kind === "create" ? "Current" : "Live before"} value={change.before} empty={change.kind === "create" ? "Not present" : "Unavailable"} lines={lineDiff?.before} highlighted={lineDiff?.removed} tone="removed" />
       <ManifestBlock title={change.kind === "delete" ? "After sync" : "Desired after"} value={change.after} empty={change.kind === "delete" ? "Resource removed" : "Unavailable"} lines={lineDiff?.after} highlighted={lineDiff?.added} tone="added" />

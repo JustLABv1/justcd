@@ -336,7 +336,8 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 		return err
 	}
 	fieldManager := "justcd/" + applicationID
-	applied, err := resourceClient.Patch(ctx, resource.Identity.Name, types.ApplyPatchType, body, metav1.PatchOptions{FieldManager: fieldManager})
+	patchOptions := applyPatchOptions(change, fieldManager)
+	applied, err := resourceClient.Patch(ctx, resource.Identity.Name, types.ApplyPatchType, body, patchOptions)
 	if err != nil {
 		return fmt.Errorf("server-side apply failed for %s %s/%s: %w", resource.Identity.Kind, resource.Identity.Namespace, resource.Identity.Name, err)
 	}
@@ -352,6 +353,15 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 		return err
 	}
 	return nil
+}
+
+func applyPatchOptions(change core.Change, fieldManager string) metav1.PatchOptions {
+	options := metav1.PatchOptions{FieldManager: fieldManager}
+	if change.Takeover {
+		force := true
+		options.Force = &force
+	}
+	return options
 }
 
 func validateUpdatePreconditions(identity core.Identity, expectedUID, expectedResourceVersion, applicationID, actualUID, actualResourceVersion, actualOwner string) error {

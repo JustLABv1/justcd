@@ -2,11 +2,82 @@ package render
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
+
+func TestComparisonIgnoresKubernetesDefaultsButKeepsGitChanges(t *testing.T) {
+	live := json.RawMessage(`{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"web","namespace":"team","annotations":{"kubectl.kubernetes.io/last-applied-configuration":"old"}},"spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"web","image":"old","terminationMessagePath":"/dev/termination-log","env":[{"name":"MODE","value":"prod"}]}],"dnsPolicy":"ClusterFirst"}}}}`)
+	desired := json.RawMessage(`{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"web","namespace":"team"},"spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"web","image":"new","env":[{"name":"MODE","value":"prod"}]}]}}}}`)
+	before, after, err := ComparisonManifests(live, desired, desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, err := ChangedJSONPointers(before, after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(paths, []string{"/spec/template/spec/containers"}) {
+		t.Fatalf("unexpected changed paths: %v; before=%s after=%s", paths, before, after)
+	}
+	object := &unstructured.Unstructured{}
+	if err := object.UnmarshalJSON(live); err != nil {
+		t.Fatal(err)
+	}
+	object.SetUID("uid-1")
+	object.SetResourceVersion("2")
+	resource, _, err := CanonicalLiveAgainst(object, "cluster", "app", false, desired, desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid(resource.Manifest) {
+		t.Fatal("live inventory must stay valid JSON")
+	}
+	matched := json.RawMessage(`{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"web","namespace":"team"},"spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"web","image":"old","env":[{"name":"MODE","value":"prod"}]}]}}}}`)
+	_, wantedFingerprint, err := CanonicalLiveAgainst(object, "cluster", "app", false, matched, matched)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resource.Fingerprint != wantedFingerprint {
+		t.Fatal("defaulted fields inside named lists must not create drift")
+	}
+}
+
+func TestEmptyOptionalListAndAbsentLiveFieldAreEquivalent(t *testing.T) {
+	desired := json.RawMessage(`{"apiVersion":"networking.k8s.io/v1","kind":"Ingress","metadata":{"name":"oauth","namespace":"team"},"spec":{"rules":[{"host":"example.test"}],"tls":[]}}`)
+	live := json.RawMessage(`{"apiVersion":"networking.k8s.io/v1","kind":"Ingress","metadata":{"name":"oauth","namespace":"team"},"spec":{"rules":[{"host":"example.test"}]}}`)
+	before, after, err := ComparisonManifests(live, desired, desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("empty optional TLS list must not appear as drift: before=%s after=%s", before, after)
+	}
+	object := &unstructured.Unstructured{}
+	if err := object.UnmarshalJSON(live); err != nil {
+		t.Fatal(err)
+	}
+	object.SetUID("uid-1")
+	object.SetResourceVersion("2")
+	resource, desiredFingerprint, err := CanonicalLiveAgainst(object, "cluster", "app", false, desired, desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resource.Fingerprint != desiredFingerprint {
+		t.Fatal("empty optional TLS list caused drift")
+	}
+	withTLS := json.RawMessage(`{"apiVersion":"networking.k8s.io/v1","kind":"Ingress","metadata":{"name":"oauth","namespace":"team"},"spec":{"rules":[{"host":"example.test"}],"tls":[{"hosts":["example.test"],"secretName":"tls"}]}}`)
+	before, after, err = ComparisonManifests(withTLS, desired, desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) == string(after) {
+		t.Fatal("non-empty live TLS must remain a real diff against an empty desired list")
+	}
+}
 
 func TestJSONPointerRejectsIdentityAndArrayIndexes(t *testing.T) {
 	for _, pointer := range []string{"kind", "/kind", "/metadata/name", "/metadata/labels/justcd.io~1application-id", "/spec/containers/0/image", "/spec/replicas/~2bad"} {

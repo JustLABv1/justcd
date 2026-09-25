@@ -95,8 +95,18 @@ export type Identity = {
   clusterScoped?: boolean
 }
 
+export type OwnershipConflict = {
+  identity: Identity
+  uid: string
+  resourceVersion: string
+  owner?: string
+  desiredFingerprint: string
+  hasOwnerReferences: boolean
+}
+
 export type Change = {
   kind: "create" | "update" | "delete"
+  takeover?: boolean
   identity: Identity
   liveUid?: string
   liveResourceVersion?: string
@@ -182,7 +192,7 @@ export type PlanRecord = {
   status: string
 }
 
-export type ManagedResource = { identity: Identity; uid: string; resourceVersion: string }
+export type ManagedResource = { identity: Identity; uid: string; resourceVersion: string; adopted?: boolean }
 
 export type TopologyNode = {
   id: string

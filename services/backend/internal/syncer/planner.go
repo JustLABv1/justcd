@@ -44,6 +44,22 @@ func (e *OwnershipConflict) Error() string {
 	return fmt.Sprintf("%s %s/%s exists but is not recorded as managed by this application", e.Identity.Kind, e.Identity.Namespace, e.Identity.Name)
 }
 
+type OwnershipConflicts struct {
+	Items []*OwnershipConflict
+}
+
+func (e *OwnershipConflicts) Error() string {
+	return fmt.Sprintf("%d rendered resources already exist but are not managed by this application", len(e.Items))
+}
+
+// Keep callers that inspect a single conflict compatible with the first item.
+func (e *OwnershipConflicts) Unwrap() error {
+	if len(e.Items) == 0 {
+		return nil
+	}
+	return e.Items[0]
+}
+
 type planInput struct {
 	Application        store.Application
 	Cluster            store.Cluster
@@ -217,7 +233,21 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 	if err != nil {
 		return core.Plan{}, nil, err
 	}
+	managed, err := s.Store.ManagedResources(ctx, app.ID)
+	if err != nil {
+		return core.Plan{}, nil, err
+	}
+	previousByKey := make(map[string][]byte, len(managed))
+	for _, resource := range managed {
+		previousByKey[resource.Identity.Key()] = resource.Manifest
+	}
 	for index := range plan.Changes {
+		if plan.Changes[index].Kind == core.Update {
+			plan.Changes[index].Before, plan.Changes[index].After, err = render.ComparisonManifests(plan.Changes[index].Before, plan.Changes[index].After, previousByKey[plan.Changes[index].Identity.Key()])
+			if err != nil {
+				return core.Plan{}, nil, err
+			}
+		}
 		for _, path := range persistentPathsFor(input, plan.Changes[index].Identity) {
 			if len(plan.Changes[index].Before) > 0 {
 				plan.Changes[index].Before, err = render.RemoveJSONPointer(plan.Changes[index].Before, path)
@@ -329,19 +359,33 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 			}
 		}
 	}
+	adopted := make(map[string]bool, len(managed))
+	for _, resource := range managed {
+		if resource.Adopted {
+			adopted[resource.Identity.Key()] = true
+		}
+	}
+	for index := range plan.Changes {
+		if plan.Changes[index].Kind == core.Update && adopted[plan.Changes[index].Identity.Key()] {
+			plan.Changes[index].Takeover = true
+		}
+	}
 	policy, err := s.Store.EffectiveApprovalPolicy(ctx, app)
 	if err != nil {
 		return core.Plan{}, nil, err
 	}
 	kind := "sync"
 	rule := policy.Sync
-	hasDeletes, hasClusterScoped := false, false
+	hasDeletes, hasClusterScoped, hasTakeover := false, false, false
 	for _, change := range plan.Changes {
 		if change.Kind == core.Delete {
 			hasDeletes = true
 		}
 		if change.Identity.ClusterScoped {
 			hasClusterScoped = true
+		}
+		if change.Takeover {
+			hasTakeover = true
 		}
 	}
 	if hasDeletes {
@@ -350,6 +394,10 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 		// Cluster-scoped changes keep the existing explicit owner approval
 		// safeguard even when ordinary sync approvals are disabled.
 		rule = store.ApprovalRule{RequiredApprovals: 1, ApproverRoles: []string{"owner"}, ApproverUserIDs: []string{}}
+	}
+	if hasTakeover {
+		count := max(1, rule.RequiredApprovals)
+		kind, rule = "takeover", store.ApprovalRule{RequiredApprovals: count, ApproverRoles: []string{"owner"}, ApproverUserIDs: []string{}}
 	}
 	setApprovalRule(&plan, kind, rule)
 	if err := core.RefreshDigest(&plan); err != nil {
@@ -493,10 +541,8 @@ func selectedPathsFor(input planInput, identity core.Identity) []string {
 }
 
 func resourceExcluded(input planInput, identity core.Identity) bool {
-	for _, rule := range input.IgnoreRules {
-		if rule.Identity.Key() == identity.Key() && rule.Path == "" {
-			return true
-		}
+	if persistentResourceExcluded(input.IgnoreRules, identity) {
+		return true
 	}
 	for _, selected := range input.Selection.Resources {
 		if selected.Key() == identity.Key() {
@@ -504,6 +550,19 @@ func resourceExcluded(input planInput, identity core.Identity) bool {
 		}
 	}
 	return false
+}
+
+func persistentResourceExcluded(rules []store.ApplicationIgnoreRule, identity core.Identity) bool {
+	for _, rule := range rules {
+		if rule.Identity.Key() == identity.Key() && rule.Path == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldTrackManagedResource(input planInput, resource store.ManagedResource) bool {
+	return !persistentResourceExcluded(input.IgnoreRules, resource.Identity) && !selectorMatchesManifest(input.IgnoreSelectors, resource.Identity, resource.Manifest)
 }
 
 func selectorMatchesManifest(selectors []core.IgnoreSelector, identity core.Identity, manifest []byte) bool {
@@ -721,7 +780,9 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 	for _, resource := range managed {
 		identity := resource.Identity
 		identity.ClusterScoped = identity.Namespace == ""
-		if resourceExcluded(input, identity) || selectorMatchesManifest(input.IgnoreSelectors, identity, resource.Manifest) {
+		// One-time selections remove changes after the live snapshot. They must
+		// not make an already-managed object appear untracked during this scan.
+		if !shouldTrackManagedResource(input, resource) {
 			continue
 		}
 		identities[identity.Key()] = identity
@@ -735,6 +796,7 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 	sort.Strings(keys)
 	liveByKey := map[string]core.Resource{}
 	changedIgnoredFields := map[string][]string{}
+	conflicts := make([]*OwnershipConflict, 0)
 	for _, key := range keys {
 		identity := identities[key]
 		mapping, err := input.Mapper.Mapper.RESTMapping(groupKind(identity), groupVersion(identity))
@@ -772,7 +834,8 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 		}
 		tracked, owned := managedByKey[identity.Key()]
 		if !owned {
-			return nil, nil, &OwnershipConflict{Identity: identity, UID: string(object.GetUID()), ResourceVersion: object.GetResourceVersion(), Owner: object.GetLabels()["justcd.io/application-id"], DesiredFingerprint: desired[desiredIndex[key]].Fingerprint, DesiredManifest: desired[desiredIndex[key]].Manifest, HasOwnerReferences: len(object.GetOwnerReferences()) > 0}
+			conflicts = append(conflicts, &OwnershipConflict{Identity: identity, UID: string(object.GetUID()), ResourceVersion: object.GetResourceVersion(), Owner: object.GetLabels()["justcd.io/application-id"], DesiredFingerprint: desired[desiredIndex[key]].Fingerprint, DesiredManifest: desired[desiredIndex[key]].Manifest, HasOwnerReferences: len(object.GetOwnerReferences()) > 0})
+			continue
 		}
 		if object.GetLabels()["justcd.io/application-id"] != input.Application.ID || string(object.GetUID()) != tracked.UID {
 			return nil, nil, fmt.Errorf("%s %s/%s ownership changed; refusing to adopt or mutate it", identity.Kind, identity.Namespace, identity.Name)
@@ -804,6 +867,9 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 			return nil, nil, err
 		}
 		liveByKey[identity.Key()] = resource
+	}
+	if len(conflicts) > 0 {
+		return nil, nil, &OwnershipConflicts{Items: conflicts}
 	}
 	kinds := map[string]core.Identity{}
 	for _, identity := range identities {

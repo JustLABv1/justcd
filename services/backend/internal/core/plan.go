@@ -63,6 +63,7 @@ const (
 
 type Change struct {
 	Kind                ChangeKind      `json:"kind"`
+	Takeover            bool            `json:"takeover,omitempty"`
 	Identity            Identity        `json:"identity"`
 	LiveUID             string          `json:"liveUid,omitempty"`
 	LiveResourceVersion string          `json:"liveResourceVersion,omitempty"`

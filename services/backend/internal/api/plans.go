@@ -106,6 +106,16 @@ func (s *Server) createPlan(w http.ResponseWriter, r *http.Request) {
 	}
 	record, err := s.Syncer.BuildPlan(r.Context(), app.ID, currentUser(r).ID)
 	if err != nil {
+		var conflicts *syncer.OwnershipConflicts
+		if errors.As(err, &conflicts) {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": conflicts.Error(), "conflict": conflicts.Items[0], "conflicts": conflicts.Items})
+			return
+		}
+		var conflict *syncer.OwnershipConflict
+		if errors.As(err, &conflict) {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": conflict.Error(), "conflict": conflict})
+			return
+		}
 		s.Logger.Warn("plan calculation failed", "applicationId", app.ID, "error", err)
 		writeError(w, http.StatusUnprocessableEntity, "could not calculate a safe plan")
 		return
@@ -565,11 +575,12 @@ func (s *Server) listApplicationResources(w http.ResponseWriter, r *http.Request
 		Identity        core.Identity `json:"identity"`
 		UID             string        `json:"uid"`
 		ResourceVersion string        `json:"resourceVersion"`
+		Adopted         bool          `json:"adopted"`
 	}
 	items := make([]resourceView, 0, len(managed))
 	for _, item := range managed {
 		item.Identity.ClusterScoped = item.Identity.Namespace == ""
-		items = append(items, resourceView{Identity: item.Identity, UID: item.UID, ResourceVersion: item.ResourceVersion})
+		items = append(items, resourceView{Identity: item.Identity, UID: item.UID, ResourceVersion: item.ResourceVersion, Adopted: item.Adopted})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }

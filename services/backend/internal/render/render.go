@@ -800,6 +800,8 @@ func CanonicalLiveAgainstIgnoring(object *unstructured.Unstructured, clusterID, 
 	}
 	projectedDesired := projectFields(desired, unique)
 	projectedLive := projectFields(live.Object, unique)
+	projectListItems(projectedDesired, projectedLive, previous)
+	normalizeEmptyEquivalents(projectedDesired, projectedLive)
 	desiredJSON, err := json.Marshal(projectedDesired)
 	if err != nil {
 		return core.Resource{}, "", nil, err
@@ -815,6 +817,188 @@ func CanonicalLiveAgainstIgnoring(object *unstructured.Unstructured, clusterID, 
 	identity := core.Identity{ClusterID: clusterID, APIVersion: live.GetAPIVersion(), Kind: live.GetKind(), Namespace: live.GetNamespace(), Name: live.GetName(), ClusterScoped: clusterScoped}
 	resource := core.Resource{Identity: identity, Fingerprint: fingerprint(liveProjectionJSON), UID: string(object.GetUID()), ResourceVersion: object.GetResourceVersion(), Owner: object.GetLabels()["justcd.io/application-id"], Manifest: canonical}
 	return resource, fingerprint(desiredJSON), changedIgnored, nil
+}
+
+// ComparisonManifests returns the same Git-owned field projection used for
+// drift checks. These are review documents only; the original desired manifest
+// must be retained for server-side apply.
+func ComparisonManifests(liveManifest, desiredManifest, previousManifest []byte) ([]byte, []byte, error) {
+	var live, desired, previous map[string]interface{}
+	if err := json.Unmarshal(liveManifest, &live); err != nil {
+		return nil, nil, err
+	}
+	if err := json.Unmarshal(desiredManifest, &desired); err != nil {
+		return nil, nil, err
+	}
+	if len(previousManifest) > 0 {
+		if err := json.Unmarshal(previousManifest, &previous); err != nil {
+			return nil, nil, err
+		}
+	}
+	paths := make([][]string, 0, 64)
+	collectManagedPaths(desired, nil, &paths)
+	collectManagedPaths(previous, nil, &paths)
+	projectedDesired := projectFields(desired, paths)
+	projectedLive := projectFields(live, paths)
+	projectListItems(projectedDesired, projectedLive, previous)
+	normalizeEmptyEquivalents(projectedDesired, projectedLive)
+	before, err := json.Marshal(projectedLive)
+	if err != nil {
+		return nil, nil, err
+	}
+	after, err := json.Marshal(projectedDesired)
+	return before, after, err
+}
+
+func projectListItems(desired, live map[string]interface{}, previous map[string]interface{}) {
+	for key, value := range live {
+		want, wantExists := desired[key]
+		prior := previous[key]
+		switch current := value.(type) {
+		case map[string]interface{}:
+			wantMap, _ := want.(map[string]interface{})
+			priorMap, _ := prior.(map[string]interface{})
+			projectListItems(wantMap, current, priorMap)
+		case []interface{}:
+			wantList, _ := want.([]interface{})
+			priorList, _ := prior.([]interface{})
+			if !wantExists && len(priorList) == 0 {
+				continue
+			}
+			live[key] = projectList(current, wantList, priorList)
+		}
+	}
+}
+
+// Kubernetes commonly omits explicitly empty optional maps and lists from
+// live objects. An absent value and an empty value are equivalent only when
+// the other side is absent; a non-empty live list versus an empty desired list
+// remains a real deletion diff.
+func normalizeEmptyEquivalents(desired, live map[string]interface{}) {
+	for key, wanted := range desired {
+		actual, exists := live[key]
+		if !exists {
+			if isEmptyCollection(wanted) {
+				delete(desired, key)
+			}
+			continue
+		}
+		wantMap, wantIsMap := wanted.(map[string]interface{})
+		liveMap, liveIsMap := actual.(map[string]interface{})
+		if wantIsMap && liveIsMap {
+			normalizeEmptyEquivalents(wantMap, liveMap)
+			if len(wantMap) == 0 && len(liveMap) == 0 {
+				delete(desired, key)
+				delete(live, key)
+			}
+		}
+	}
+	for key, actual := range live {
+		if _, exists := desired[key]; !exists && isEmptyCollection(actual) {
+			delete(live, key)
+		}
+	}
+}
+
+func isEmptyCollection(value interface{}) bool {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		return len(typed) == 0
+	case []interface{}:
+		return len(typed) == 0
+	default:
+		return false
+	}
+}
+
+func projectList(live, desired, previous []interface{}) []interface{} {
+	if len(desired) == 0 && len(previous) == 0 {
+		return live
+	}
+	result := make([]interface{}, 0, len(live))
+	for index, item := range live {
+		itemMap, isMap := item.(map[string]interface{})
+		if !isMap {
+			result = append(result, item)
+			continue
+		}
+		var shape map[string]interface{}
+		if name, ok := itemMap["name"].(string); ok {
+			shape = mergeListItemShape(desired, previous, name)
+		} else if index < len(desired) || index < len(previous) {
+			shape = map[string]interface{}{}
+			if index < len(previous) {
+				mergeShape(shape, previous[index])
+			}
+			if index < len(desired) {
+				mergeShape(shape, desired[index])
+			}
+		}
+		if shape == nil {
+			continue
+		}
+		projected := projectByShape(itemMap, shape)
+		result = append(result, projected)
+	}
+	return result
+}
+
+func mergeListItemShape(desired, previous []interface{}, name string) map[string]interface{} {
+	shape := map[string]interface{}{}
+	for _, list := range [][]interface{}{previous, desired} {
+		for _, item := range list {
+			entry, ok := item.(map[string]interface{})
+			if ok && entry["name"] == name {
+				mergeShape(shape, entry)
+			}
+		}
+	}
+	if len(shape) == 0 {
+		return nil
+	}
+	return shape
+}
+
+func mergeShape(target map[string]interface{}, value interface{}) {
+	source, ok := value.(map[string]interface{})
+	if !ok {
+		return
+	}
+	for key, field := range source {
+		if nested, ok := field.(map[string]interface{}); ok {
+			current, _ := target[key].(map[string]interface{})
+			if current == nil {
+				current = map[string]interface{}{}
+				target[key] = current
+			}
+			mergeShape(current, nested)
+		} else {
+			target[key] = field
+		}
+	}
+}
+
+func projectByShape(source, shape map[string]interface{}) map[string]interface{} {
+	result := map[string]interface{}{}
+	for key, shapeValue := range shape {
+		value, exists := source[key]
+		if !exists {
+			continue
+		}
+		switch nested := shapeValue.(type) {
+		case map[string]interface{}:
+			if sourceMap, ok := value.(map[string]interface{}); ok {
+				result[key] = projectByShape(sourceMap, nested)
+			}
+		case []interface{}:
+			if sourceList, ok := value.([]interface{}); ok {
+				result[key] = projectList(sourceList, nested, nil)
+			}
+		default:
+			result[key] = value
+		}
+	}
+	return result
 }
 
 func ParseJSONPointer(pointer string) ([]string, error) {

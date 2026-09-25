@@ -179,7 +179,28 @@ paths:
       summary: Render Git, inspect live state, and create a plan
       responses:
         '201': { description: Immutable review plan }
+        '409': { description: An existing untracked resource blocks the plan; includes ownership conflict metadata }
         '422': { description: Could not create a safe plan }
+  /applications/{applicationID}/ownership-conflict:
+    get:
+      summary: Inspect all untracked resources blocking this application's plan
+      responses:
+        '200': { description: Conflict list plus the first conflict for compatibility }
+        '422': { description: Plan inspection failed for another reason }
+  /applications/{applicationID}/adopt:
+    post:
+      summary: Claim an unchanged, reviewed resource for this application (project owner only)
+      description: Claims the ownership label and inventory record, pauses auto-sync, and requires a fresh plan before workload changes. A later marked takeover update requires owner approval before transferring field ownership.
+      responses:
+        '201': { description: Resource claimed without changing workload fields }
+        '409': { description: Git, UID, resource version, or existing ownership changed }
+  /applications/{applicationID}/adopt-batch:
+    post:
+      summary: Claim selected, freshly reviewed resources for this application (project owner only)
+      description: Validates the full selection before claiming any resource. Each claim has UID and resource-version preconditions; a mid-run change is reported as a partial result. Auto-sync is paused and a fresh approved plan is required before workload changes.
+      responses:
+        '200': { description: Per-resource claimed or failed results }
+        '409': { description: The review set became stale or contains an unsafe resource }
   /applications/{applicationID}/ignore-rules:
     get:
       summary: List exact-resource and field-level ignore rules

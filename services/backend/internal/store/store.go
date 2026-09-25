@@ -1529,10 +1529,11 @@ type ManagedResource struct {
 	UID             string
 	ResourceVersion string
 	Manifest        json.RawMessage
+	Adopted         bool
 }
 
 func (s *Store) ManagedResources(ctx context.Context, applicationID string) ([]ManagedResource, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT cluster_id,api_version,kind,namespace,name,uid,resource_version,manifest FROM managed_resources WHERE application_id=$1 ORDER BY api_version,kind,namespace,name`, applicationID)
+	rows, err := s.DB.QueryContext(ctx, `SELECT cluster_id,api_version,kind,namespace,name,uid,resource_version,manifest,adopted FROM managed_resources WHERE application_id=$1 ORDER BY api_version,kind,namespace,name`, applicationID)
 	if err != nil {
 		return nil, err
 	}
@@ -1540,7 +1541,7 @@ func (s *Store) ManagedResources(ctx context.Context, applicationID string) ([]M
 	out := make([]ManagedResource, 0)
 	for rows.Next() {
 		var item ManagedResource
-		if err := rows.Scan(&item.Identity.ClusterID, &item.Identity.APIVersion, &item.Identity.Kind, &item.Identity.Namespace, &item.Identity.Name, &item.UID, &item.ResourceVersion, &item.Manifest); err != nil {
+		if err := rows.Scan(&item.Identity.ClusterID, &item.Identity.APIVersion, &item.Identity.Kind, &item.Identity.Namespace, &item.Identity.Name, &item.UID, &item.ResourceVersion, &item.Manifest, &item.Adopted); err != nil {
 			return nil, err
 		}
 		out = append(out, item)
@@ -1610,9 +1611,59 @@ func (s *Store) ReplaceObservedResources(ctx context.Context, applicationID stri
 }
 
 func (s *Store) UpsertManagedResource(ctx context.Context, applicationID string, resource core.Resource) error {
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO managed_resources(application_id,cluster_id,api_version,kind,namespace,name,uid,resource_version,manifest) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(application_id,cluster_id,api_version,kind,namespace,name) DO UPDATE SET uid=EXCLUDED.uid,resource_version=EXCLUDED.resource_version,manifest=EXCLUDED.manifest,last_seen_at=NOW()`, applicationID, resource.Identity.ClusterID, resource.Identity.APIVersion, resource.Identity.Kind, resource.Identity.Namespace, resource.Identity.Name, resource.UID, resource.ResourceVersion, resource.Manifest)
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO managed_resources(application_id,cluster_id,api_version,kind,namespace,name,uid,resource_version,manifest) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(application_id,cluster_id,api_version,kind,namespace,name) DO UPDATE SET uid=EXCLUDED.uid,resource_version=EXCLUDED.resource_version,manifest=EXCLUDED.manifest,adopted=FALSE,last_seen_at=NOW()`, applicationID, resource.Identity.ClusterID, resource.Identity.APIVersion, resource.Identity.Kind, resource.Identity.Namespace, resource.Identity.Name, resource.UID, resource.ResourceVersion, resource.Manifest)
 	return err
 }
+
+// AdoptManagedResource records a reviewed takeover without racing another
+// takeover. It deliberately switches auto-safe applications to manual sync so
+// the first post-adoption diff cannot be applied without a fresh user review.
+func (s *Store) AdoptManagedResource(ctx context.Context, applicationID, actorID, reason string, resource core.Resource) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	identity := resource.Identity
+	lockKey, err := json.Marshal(identity)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, string(lockKey)); err != nil {
+		return err
+	}
+	var active, tracked int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM operations WHERE application_id=$1 AND status IN ('queued','running')`, applicationID).Scan(&active); err != nil {
+		return err
+	}
+	if active != 0 {
+		return errors.New("application is currently syncing")
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM managed_resources WHERE cluster_id=$1 AND api_version=$2 AND kind=$3 AND namespace=$4 AND name=$5`, identity.ClusterID, identity.APIVersion, identity.Kind, identity.Namespace, identity.Name).Scan(&tracked); err != nil {
+		return err
+	}
+	if tracked != 0 {
+		return errors.New("resource is already recorded as managed")
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO managed_resources(application_id,cluster_id,api_version,kind,namespace,name,uid,resource_version,manifest,adopted) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE)`, applicationID, identity.ClusterID, identity.APIVersion, identity.Kind, identity.Namespace, identity.Name, resource.UID, resource.ResourceVersion, resource.Manifest); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, applicationID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET sync_policy='manual',health='unknown',last_checked_at=NULL,updated_at=NOW() WHERE id=$1`, applicationID); err != nil {
+		return err
+	}
+	details, err := json.Marshal(map[string]any{"identity": resource.Identity, "uid": resource.UID, "reason": reason, "autoSyncPaused": true})
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'application.resource_adopted','application',$2,$3)`, actorID, applicationID, details); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) DeleteManagedResource(ctx context.Context, applicationID string, identity core.Identity) error {
 	_, err := s.DB.ExecContext(ctx, `DELETE FROM managed_resources WHERE application_id=$1 AND cluster_id=$2 AND api_version=$3 AND kind=$4 AND namespace=$5 AND name=$6`, applicationID, identity.ClusterID, identity.APIVersion, identity.Kind, identity.Namespace, identity.Name)
 	return err

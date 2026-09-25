@@ -49,7 +49,7 @@ export function ApprovalRuleEditor({
 
   return (
     <section className="rounded-lg border p-4">
-      <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_120px] sm:items-end">
+      <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_120px] sm:items-center">
         <div>
           <h3 className="text-xs font-semibold">{title}</h3>
           <p className="mt-1 text-[11px] leading-4 text-muted-foreground">

@@ -25,7 +25,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [routeProject, setRouteProject] = useState<Project | null>(null)
   const [routeApplication, setRouteApplication] = useState<Application | null>(null)
-  const [apiOnline, setApiOnline] = useState<boolean | null>(null)
 
   useEffect(() => {
     let active = true
@@ -59,14 +58,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }).catch(() => { if (active) { setRouteProject(null); setRouteApplication(null) } })
     return () => { active = false }
   }, [pathname])
-
-  useEffect(() => {
-    let active = true
-    const check = () => { void api("/api/v1/health").then(() => { if (active) setApiOnline(true) }).catch(() => { if (active) setApiOnline(false) }) }
-    check()
-    const timer = window.setInterval(check, 30000)
-    return () => { active = false; window.clearInterval(timer) }
-  }, [])
 
   const crumbs = pageCrumbs(pathname, routeProject, routeApplication)
 
@@ -162,9 +153,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <Link href="/applications/new" className="hidden shrink-0 items-center gap-1.5 rounded-md border bg-background px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-muted md:inline-flex">
               <HugeiconsIcon icon={PlusSignIcon} className="size-3.5" aria-hidden="true" /> New application
             </Link>
-            <span role="status" className="hidden shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground sm:flex" title="Backend API health">
-              <span className={`size-1.5 rounded-full ${apiOnline === null ? "bg-muted-foreground" : apiOnline ? "bg-emerald-500" : "bg-destructive"}`} /> {apiOnline === null ? "Checking API" : apiOnline ? "API online" : "API unavailable"}
-            </span>
             <Link href="/settings" className="grid size-8 place-items-center rounded-full bg-muted text-xs font-semibold uppercase lg:hidden">
               {(user.displayName || user.email).slice(0, 2)}
             </Link>
@@ -178,10 +166,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
         <main className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") ? "max-w-none" : "max-w-[1440px]"} px-5 py-7 sm:px-8 sm:py-9 ${pathname === "/audit" ? "lg:flex lg:h-[calc(100dvh-64px)] lg:flex-col lg:overflow-hidden" : ""}`}>{children}</main>
-        <footer className={`mx-auto flex max-w-[1440px] justify-between px-5 pb-8 text-[11px] text-muted-foreground sm:px-8 ${pathname === "/audit" ? "lg:hidden" : ""}`}>
-          <span>JustCD · no cluster-side operator</span>
-          <span>Plans expire after 15 minutes</span>
-        </footer>
       </div>
     </div>
   )

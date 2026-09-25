@@ -123,14 +123,26 @@ func (selector IgnoreSelector) Matches(identity Identity, labels map[string]stri
 // with a rollback target. Kubernetes credentials remain resolved from the
 // application's current project bindings when a plan is reviewed and applied.
 type RollbackSettings struct {
-	SourceID                   string   `json:"sourceId"`
-	Revision                   string   `json:"revision"`
-	ManifestPath               string   `json:"manifestPath"`
-	Renderer                   string   `json:"renderer"`
-	KustomizeHelmEnabled       bool     `json:"kustomizeHelmEnabled"`
-	KustomizeNamespaceOverride bool     `json:"kustomizeNamespaceOverride"`
-	ClusterID                  string   `json:"clusterId"`
-	Namespaces                 []string `json:"namespaces"`
+	SourceID                   string                        `json:"sourceId"`
+	Revision                   string                        `json:"revision"`
+	ManifestPath               string                        `json:"manifestPath"`
+	TargetManifestPath         string                        `json:"targetManifestPath,omitempty"`
+	NamespaceManifestPaths     map[string]string             `json:"namespaceManifestPaths,omitempty"`
+	Renderer                   string                        `json:"renderer"`
+	KustomizeHelmEnabled       bool                          `json:"kustomizeHelmEnabled"`
+	KustomizeNamespaceOverride bool                          `json:"kustomizeNamespaceOverride"`
+	HelmValuesFiles            []string                      `json:"helmValuesFiles,omitempty"`
+	HelmValuesYAML             string                        `json:"helmValuesYaml,omitempty"`
+	TargetHelmValuesFiles      []string                      `json:"targetHelmValuesFiles,omitempty"`
+	TargetHelmValuesYAML       string                        `json:"targetHelmValuesYaml,omitempty"`
+	NamespaceHelmValues        map[string]HelmValuesOverride `json:"namespaceHelmValues,omitempty"`
+	ClusterID                  string                        `json:"clusterId"`
+	Namespaces                 []string                      `json:"namespaces"`
+}
+
+type HelmValuesOverride struct {
+	Files []string `json:"files"`
+	YAML  string   `json:"yaml"`
 }
 
 // RollbackTarget records the provenance of a reviewed rollback plan. Snapshot

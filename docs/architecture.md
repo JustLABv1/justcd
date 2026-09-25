@@ -63,6 +63,10 @@ roles. The namespace credentials are service credentials used by the backend.
 - **Namespace binding:** cluster, namespace, credential, allowed applications.
 - **Application:** Git source, revision policy, path, renderer, namespace bindings,
   sync policy, and ownership ID.
+- **Application group:** shared renderer source, revision, and reconciliation
+  settings, with Helm values or Kustomize options. Each configured cluster is
+  stored as an ordinary child application with one or more bound namespaces,
+  its own plans, health, and approvals.
 - **Plan:** immutable source commit, target bindings, resource changes, digest,
   creation time, and expiry.
 - **Deletion approval:** actor, plan digest, exact resource identities and UIDs,
@@ -103,3 +107,22 @@ permission self-tests during binding creation remain follow-up work.
 CI is separate from this CD core: image builds and tests can remain in the
 existing CI provider. JustCD consumes the resulting Git commit as desired
 state. Native build pipelines can be added later if that is a product goal.
+
+Multi-target Helm groups layer values in this order: chart defaults, shared Git
+values files, shared JustCD values, cluster Git values files, cluster JustCD
+values, namespace Git values files, and namespace JustCD values. Helm renders
+once for each bound namespace. Identical cluster-scoped resources are coalesced;
+if namespace renders disagree about a cluster-scoped resource, planning fails
+instead of allowing one child application to manage different versions.
+
+Kustomize groups use a shared repository path, with optional cluster and
+namespace path overrides. JustCD selects the namespace path first, then the
+cluster path, then the shared path. Each selected path is a complete Kustomize
+entry point: include the shared base and any needed cluster overlay through
+`resources` or components.
+When namespace transformation is enabled, JustCD builds the selected entry
+point once per bound namespace and applies that namespace through a temporary
+Kustomize wrapper. Identical cluster-scoped resources across namespace builds
+are coalesced; conflicting output stops planning. Helm charts in Kustomize are
+available as an explicit render option. A shared group edit invalidates each
+child's existing plans; each child still requires its own review and sync.

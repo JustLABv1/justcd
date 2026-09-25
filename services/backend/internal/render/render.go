@@ -39,6 +39,13 @@ type Options struct {
 	Renderer                   string
 	KustomizeHelmEnabled       bool
 	KustomizeNamespaceOverride bool
+	HelmValuesFiles            []string
+	HelmValuesYAML             string
+	TargetHelmValuesFiles      []string
+	TargetHelmValuesYAML       string
+	NamespaceHelmValues        map[string]core.HelmValuesOverride
+	TargetManifestPath         string
+	NamespaceManifestPaths     map[string]string
 	ApplicationID              string
 	ClusterID                  string
 	Namespaces                 []core.Binding
@@ -60,20 +67,27 @@ func Render(ctx context.Context, opts Options) ([]core.Resource, error) {
 	case "yaml":
 		output, err = readManifestFiles(manifestPath)
 	case "kustomize":
+		if len(opts.Namespaces) > 1 && len(opts.NamespaceManifestPaths) > 0 {
+			return renderKustomizeNamespaces(ctx, opts)
+		}
+		if opts.KustomizeNamespaceOverride && len(opts.Namespaces) > 1 {
+			return renderKustomizeNamespaces(ctx, opts)
+		}
+		selectedPath := opts.ManifestPath
+		if len(opts.Namespaces) == 1 {
+			selectedPath = kustomizePathForNamespace(opts, opts.Namespaces[0].Namespace)
+			manifestPath, err = safeRepositoryPath(opts.RepositoryRoot, selectedPath)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if err := validateKustomizeSources(ctx, manifestPath, opts.RepositoryRoot, opts.KustomizeHelmEnabled); err != nil {
 			return nil, err
 		}
 		buildPath := manifestPath
 		if opts.KustomizeNamespaceOverride {
 			if len(opts.Namespaces) != 1 {
-				return nil, errors.New("Kustomize namespace override requires exactly one bound namespace")
-			}
-			declared, readErr := KustomizationNamespace(opts.RepositoryRoot, opts.ManifestPath)
-			if readErr != nil {
-				return nil, readErr
-			}
-			if declared == "" {
-				return nil, errors.New("Kustomize namespace override requires namespace in the application kustomization")
+				return nil, errors.New("Kustomize namespace transform requires exactly one bound namespace in a single render")
 			}
 			var cleanup func()
 			buildPath, cleanup, err = namespaceOverrideOverlay(opts.RepositoryRoot, manifestPath, opts.Namespaces[0].Namespace)
@@ -84,10 +98,7 @@ func Render(ctx context.Context, opts Options) ([]core.Resource, error) {
 		}
 		output, err = runKustomizeRenderer(ctx, buildPath, opts.RepositoryRoot, opts.KustomizeHelmEnabled)
 	case "helm":
-		if len(opts.Namespaces) != 1 {
-			return nil, errors.New("Helm applications require exactly one bound namespace")
-		}
-		output, err = runRenderer(ctx, "helm", []string{"template", "justcd", manifestPath, "--include-crds", "--namespace", opts.Namespaces[0].Namespace}, opts.RepositoryRoot)
+		return renderHelm(ctx, opts, manifestPath)
 	default:
 		return nil, fmt.Errorf("unsupported renderer %q", opts.Renderer)
 	}
@@ -95,6 +106,121 @@ func Render(ctx context.Context, opts Options) ([]core.Resource, error) {
 		return nil, err
 	}
 	return parseAndNormalize(output, opts)
+}
+
+func renderHelm(ctx context.Context, opts Options, chartPath string) ([]core.Resource, error) {
+	if len(opts.Namespaces) == 0 {
+		return nil, errors.New("Helm applications require at least one bound namespace")
+	}
+	resources := make([]core.Resource, 0)
+	byIdentity := make(map[string]core.Resource)
+	for _, binding := range opts.Namespaces {
+		output, err := renderHelmNamespace(ctx, opts, chartPath, binding)
+		if err != nil {
+			return nil, err
+		}
+		namespaceOptions := opts
+		namespaceOptions.Namespaces = []core.Binding{binding}
+		rendered, err := parseAndNormalize(output, namespaceOptions)
+		if err != nil {
+			return nil, fmt.Errorf("render Helm chart for namespace %q: %w", binding.Namespace, err)
+		}
+		for _, resource := range rendered {
+			key := resource.Identity.Key()
+			if previous, exists := byIdentity[key]; exists {
+				if previous.Fingerprint != resource.Fingerprint {
+					return nil, fmt.Errorf("Helm chart renders different versions of %s %s/%s for different namespaces", resource.Identity.Kind, resource.Identity.Namespace, resource.Identity.Name)
+				}
+				continue
+			}
+			byIdentity[key] = resource
+			resources = append(resources, resource)
+			if len(resources) > maxRenderedResources {
+				return nil, errors.New("rendered output exceeds 10000 resources")
+			}
+		}
+	}
+	return resources, nil
+}
+
+func renderHelmNamespace(ctx context.Context, opts Options, chartPath string, binding core.Binding) ([]byte, error) {
+	args := []string{"template", "justcd", chartPath, "--include-crds", "--namespace", binding.Namespace}
+	appendValuesFile := func(filename string) error {
+		filename = strings.TrimSpace(filename)
+		if filename == "" {
+			return errors.New("Helm values file path cannot be empty")
+		}
+		valuesPath, pathErr := safeRepositoryPath(opts.RepositoryRoot, filename)
+		if pathErr != nil {
+			return fmt.Errorf("Helm values file %q: %w", filename, pathErr)
+		}
+		info, statErr := os.Stat(valuesPath)
+		if statErr != nil || !info.Mode().IsRegular() || info.Size() > maxManifestFileBytes {
+			return fmt.Errorf("Helm values file %q must be a regular file no larger than 2 MiB", filename)
+		}
+		args = append(args, "--values", valuesPath)
+		return nil
+	}
+	valuesDir := ""
+	cleanupValues := func() {}
+	defer func() { cleanupValues() }()
+	appendInlineValues := func(layer string) error {
+		layer = strings.TrimSpace(layer)
+		if layer == "" {
+			return nil
+		}
+		if len(layer) > maxManifestFileBytes {
+			return errors.New("Helm values YAML exceeds 2 MiB")
+		}
+		var values map[string]any
+		if err := yaml.Unmarshal([]byte(layer), &values); err != nil || values == nil {
+			return errors.New("Helm values must be a YAML mapping")
+		}
+		if valuesDir == "" {
+			var dirErr error
+			valuesDir, dirErr = os.MkdirTemp("", "justcd-helm-values-")
+			if dirErr != nil {
+				return dirErr
+			}
+			cleanupValues = func() { _ = os.RemoveAll(valuesDir) }
+		}
+		valuesPath := filepath.Join(valuesDir, fmt.Sprintf("values-%d.yaml", len(args)))
+		if err := os.WriteFile(valuesPath, []byte(layer), 0600); err != nil {
+			return err
+		}
+		args = append(args, "--values", valuesPath)
+		return nil
+	}
+	if err := appendValuesFiles(appendValuesFile, opts.HelmValuesFiles); err != nil {
+		return nil, err
+	}
+	if err := appendInlineValues(opts.HelmValuesYAML); err != nil {
+		return nil, err
+	}
+	if err := appendValuesFiles(appendValuesFile, opts.TargetHelmValuesFiles); err != nil {
+		return nil, err
+	}
+	if err := appendInlineValues(opts.TargetHelmValuesYAML); err != nil {
+		return nil, err
+	}
+	if namespaceValues, ok := opts.NamespaceHelmValues[binding.Namespace]; ok {
+		if err := appendValuesFiles(appendValuesFile, namespaceValues.Files); err != nil {
+			return nil, err
+		}
+		if err := appendInlineValues(namespaceValues.YAML); err != nil {
+			return nil, err
+		}
+	}
+	return runRenderer(ctx, "helm", args, opts.RepositoryRoot)
+}
+
+func appendValuesFiles(appendFile func(string) error, files []string) error {
+	for _, filename := range files {
+		if err := appendFile(filename); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // KustomizationNamespace reads only the selected application's overlay. Referenced
@@ -868,6 +994,89 @@ func projectListItems(desired, live map[string]interface{}, previous map[string]
 			live[key] = projectList(current, wantList, priorList)
 		}
 	}
+}
+
+func kustomizePathForNamespace(opts Options, namespace string) string {
+	if target := strings.TrimSpace(opts.NamespaceManifestPaths[namespace]); target != "" {
+		return target
+	}
+	if target := strings.TrimSpace(opts.TargetManifestPath); target != "" {
+		return target
+	}
+	return opts.ManifestPath
+}
+
+func renderKustomizeNamespaces(ctx context.Context, opts Options) ([]core.Resource, error) {
+	if len(opts.Namespaces) == 0 {
+		return nil, errors.New("Kustomize applications require at least one bound namespace")
+	}
+	resources := make([]core.Resource, 0)
+	byIdentity := make(map[string]core.Resource)
+	for _, binding := range opts.Namespaces {
+		selectedPath := kustomizePathForNamespace(opts, binding.Namespace)
+		manifestPath, err := safeRepositoryPath(opts.RepositoryRoot, selectedPath)
+		if err != nil {
+			return nil, fmt.Errorf("Kustomize path for namespace %q: %w", binding.Namespace, err)
+		}
+		if err := validateKustomizeSources(ctx, manifestPath, opts.RepositoryRoot, opts.KustomizeHelmEnabled); err != nil {
+			return nil, fmt.Errorf("Kustomize path for namespace %q: %w", binding.Namespace, err)
+		}
+		buildPath := manifestPath
+		if opts.KustomizeNamespaceOverride {
+			var cleanup func()
+			buildPath, cleanup, err = namespaceOverrideOverlay(opts.RepositoryRoot, manifestPath, binding.Namespace)
+			if err != nil {
+				return nil, err
+			}
+			output, renderErr := runKustomizeRenderer(ctx, buildPath, opts.RepositoryRoot, opts.KustomizeHelmEnabled)
+			cleanup()
+			if renderErr != nil {
+				return nil, fmt.Errorf("render Kustomize overlay for namespace %q: %w", binding.Namespace, renderErr)
+			}
+			namespaceOptions := opts
+			namespaceOptions.Namespaces = []core.Binding{binding}
+			rendered, parseErr := parseAndNormalize(output, namespaceOptions)
+			if parseErr != nil {
+				return nil, fmt.Errorf("render Kustomize overlay for namespace %q: %w", binding.Namespace, parseErr)
+			}
+			if err := appendNamespaceRender(&resources, byIdentity, rendered); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		output, err := runKustomizeRenderer(ctx, buildPath, opts.RepositoryRoot, opts.KustomizeHelmEnabled)
+		if err != nil {
+			return nil, fmt.Errorf("render Kustomize overlay for namespace %q: %w", binding.Namespace, err)
+		}
+		namespaceOptions := opts
+		namespaceOptions.Namespaces = []core.Binding{binding}
+		rendered, err := parseAndNormalize(output, namespaceOptions)
+		if err != nil {
+			return nil, fmt.Errorf("render Kustomize overlay for namespace %q: %w", binding.Namespace, err)
+		}
+		if err := appendNamespaceRender(&resources, byIdentity, rendered); err != nil {
+			return nil, err
+		}
+	}
+	return resources, nil
+}
+
+func appendNamespaceRender(resources *[]core.Resource, byIdentity map[string]core.Resource, rendered []core.Resource) error {
+	for _, resource := range rendered {
+		key := resource.Identity.Key()
+		if previous, exists := byIdentity[key]; exists {
+			if previous.Fingerprint != resource.Fingerprint {
+				return fmt.Errorf("Kustomize renders different versions of cluster resource %s/%s for different namespaces", resource.Identity.Kind, resource.Identity.Name)
+			}
+			continue
+		}
+		byIdentity[key] = resource
+		*resources = append(*resources, resource)
+		if len(*resources) > maxRenderedResources {
+			return errors.New("rendered output exceeds 10000 resources")
+		}
+	}
+	return nil
 }
 
 // Kubernetes commonly omits explicitly empty optional maps and lists from

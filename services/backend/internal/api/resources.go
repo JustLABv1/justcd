@@ -4,21 +4,143 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"github.com/justlab/justcd/services/backend/internal/gitops"
-	"github.com/justlab/justcd/services/backend/internal/render"
+	"fmt"
 	"net/http"
 	"net/url"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/justlab/justcd/services/backend/internal/core"
+	"github.com/justlab/justcd/services/backend/internal/gitops"
+	"github.com/justlab/justcd/services/backend/internal/render"
 	"github.com/justlab/justcd/services/backend/internal/security"
 	"github.com/justlab/justcd/services/backend/internal/store"
+
+	"sigs.k8s.io/yaml"
 )
 
 var resourceNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?$`)
 var namespaceNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+
+func validateHelmValuesInput(renderer string, files []string, valuesYAML string) ([]string, string, error) {
+	valuesYAML = strings.TrimSpace(valuesYAML)
+	if renderer != "helm" {
+		if len(files) > 0 || valuesYAML != "" {
+			return nil, "", errors.New("Helm values can only be set for Helm applications")
+		}
+		return nil, "", nil
+	}
+	if len(files) > 16 {
+		return nil, "", errors.New("at most 16 Helm values files may be configured")
+	}
+	cleanFiles := make([]string, 0, len(files))
+	seen := map[string]bool{}
+	for _, filename := range files {
+		filename = strings.TrimSpace(filename)
+		clean := path.Clean(filename)
+		if filename == "" || strings.ContainsRune(filename, '\x00') || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || path.IsAbs(clean) {
+			return nil, "", errors.New("Helm values file paths must be repository-relative")
+		}
+		if seen[clean] {
+			return nil, "", errors.New("Helm values file paths must be unique")
+		}
+		seen[clean] = true
+		cleanFiles = append(cleanFiles, clean)
+	}
+	if len(valuesYAML) > 2<<20 {
+		return nil, "", errors.New("Helm values YAML exceeds 2 MiB")
+	}
+	if valuesYAML != "" {
+		var values map[string]any
+		if err := yaml.Unmarshal([]byte(valuesYAML), &values); err != nil || values == nil {
+			return nil, "", errors.New("Helm values must be a YAML mapping")
+		}
+	}
+	return cleanFiles, valuesYAML, nil
+}
+
+func validateNamespaceHelmValuesInput(renderer string, namespaceValues map[string]core.HelmValuesOverride, namespaces []string) (map[string]core.HelmValuesOverride, error) {
+	if len(namespaceValues) == 0 {
+		return map[string]core.HelmValuesOverride{}, nil
+	}
+	if renderer != "helm" {
+		return nil, errors.New("namespace-specific values require the Helm renderer")
+	}
+	if len(namespaceValues) > 100 {
+		return nil, errors.New("namespace-specific values exceed 100 entries")
+	}
+	bound := make(map[string]bool, len(namespaces))
+	for _, namespace := range namespaces {
+		bound[strings.TrimSpace(namespace)] = true
+	}
+	validated := make(map[string]core.HelmValuesOverride, len(namespaceValues))
+	for namespace, values := range namespaceValues {
+		namespace = strings.TrimSpace(namespace)
+		if !namespaceNamePattern.MatchString(namespace) || !bound[namespace] {
+			return nil, fmt.Errorf("namespace-specific values require a selected namespace; %q is not bound to this application", namespace)
+		}
+		files, valuesYAML, err := validateHelmValuesInput(renderer, values.Files, values.YAML)
+		if err != nil {
+			return nil, fmt.Errorf("namespace %q: %w", namespace, err)
+		}
+		validated[namespace] = core.HelmValuesOverride{Files: files, YAML: valuesYAML}
+	}
+	return validated, nil
+}
+
+func validateKustomizeManifestPaths(renderer, targetPath string, namespacePaths map[string]string, namespaces []string) (string, map[string]string, error) {
+	cleanPath := func(value string) (string, error) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return "", nil
+		}
+		clean := path.Clean(value)
+		if strings.ContainsRune(value, '\x00') || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || path.IsAbs(clean) {
+			return "", errors.New("Kustomize paths must be repository-relative")
+		}
+		return clean, nil
+	}
+	targetPath, err := cleanPath(targetPath)
+	if err != nil {
+		return "", nil, err
+	}
+	if renderer != "kustomize" {
+		if targetPath != "" || len(namespacePaths) > 0 {
+			return "", nil, errors.New("Kustomize overlay paths require the Kustomize renderer")
+		}
+		return "", map[string]string{}, nil
+	}
+	if len(namespacePaths) > 100 {
+		return "", nil, errors.New("namespace Kustomize paths exceed 100 entries")
+	}
+	bound := make(map[string]bool, len(namespaces))
+	for _, namespace := range namespaces {
+		bound[strings.TrimSpace(namespace)] = true
+	}
+	validated := make(map[string]string, len(namespacePaths))
+	seen := make(map[string]bool, len(namespacePaths))
+	for namespace, value := range namespacePaths {
+		namespace = strings.TrimSpace(namespace)
+		if !namespaceNamePattern.MatchString(namespace) || !bound[namespace] {
+			return "", nil, fmt.Errorf("namespace Kustomize paths require a selected namespace; %q is not bound to this application", namespace)
+		}
+		if seen[namespace] {
+			return "", nil, fmt.Errorf("namespace Kustomize paths contain duplicate entries for %q", namespace)
+		}
+		seen[namespace] = true
+		clean, err := cleanPath(value)
+		if err != nil {
+			return "", nil, fmt.Errorf("namespace %q: %w", namespace, err)
+		}
+		if clean != "" {
+			validated[namespace] = clean
+		}
+	}
+	return targetPath, validated, nil
+}
 
 func (s *Server) listProjectMembers(w http.ResponseWriter, r *http.Request) {
 	projectID := r.PathValue("projectID")
@@ -611,12 +733,40 @@ func (s *Server) getApplicationKustomization(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	defer checkout.Close()
-	namespace, err := render.KustomizationNamespace(checkout.Root, app.ManifestPath)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+	manifestPaths := make([]string, 0, len(app.Namespaces))
+	seenPaths := map[string]bool{}
+	if len(app.Namespaces) == 0 {
+		manifestPaths = append(manifestPaths, app.ManifestPath)
+	} else {
+		for _, binding := range app.Namespaces {
+			manifestPath := app.ManifestPath
+			if targetPath := strings.TrimSpace(app.TargetManifestPath); targetPath != "" {
+				manifestPath = targetPath
+			}
+			if namespacePath := strings.TrimSpace(app.NamespaceManifestPaths[binding.Namespace]); namespacePath != "" {
+				manifestPath = namespacePath
+			}
+			if !seenPaths[manifestPath] {
+				seenPaths[manifestPath] = true
+				manifestPaths = append(manifestPaths, manifestPath)
+			}
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"namespace": namespace, "commit": checkout.Commit})
+	gitNamespaces := make([]string, 0, len(manifestPaths))
+	seenNamespaces := map[string]bool{}
+	for _, manifestPath := range manifestPaths {
+		namespace, err := render.KustomizationNamespace(checkout.Root, manifestPath)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if namespace != "" && !seenNamespaces[namespace] {
+			seenNamespaces[namespace] = true
+			gitNamespaces = append(gitNamespaces, namespace)
+		}
+	}
+	sort.Strings(gitNamespaces)
+	writeJSON(w, http.StatusOK, map[string]string{"namespace": strings.Join(gitNamespaces, ", "), "commit": checkout.Commit})
 }
 
 func (s *Server) updateApplicationRenderSettings(w http.ResponseWriter, r *http.Request) {
@@ -632,6 +782,10 @@ func (s *Server) updateApplicationRenderSettings(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, "render settings are only available for Kustomize applications")
 		return
 	}
+	if app.ApplicationGroupID != "" {
+		writeError(w, http.StatusConflict, "Kustomize render settings are managed by the deployment group")
+		return
+	}
 	var input struct {
 		KustomizeHelmEnabled       bool `json:"kustomizeHelmEnabled"`
 		KustomizeNamespaceOverride bool `json:"kustomizeNamespaceOverride"`
@@ -640,8 +794,8 @@ func (s *Server) updateApplicationRenderSettings(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if input.KustomizeNamespaceOverride && len(app.Namespaces) != 1 {
-		writeError(w, http.StatusBadRequest, "namespace override requires exactly one bound namespace")
+	if input.KustomizeNamespaceOverride && len(app.Namespaces) == 0 {
+		writeError(w, http.StatusBadRequest, "namespace transform requires at least one bound namespace")
 		return
 	}
 	if err := s.Store.SetApplicationRenderSettings(r.Context(), app.ID, input.KustomizeHelmEnabled, input.KustomizeNamespaceOverride); err != nil {
@@ -656,17 +810,25 @@ func (s *Server) updateApplicationRenderSettings(w http.ResponseWriter, r *http.
 
 func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		ProjectID            string   `json:"projectId"`
-		Name                 string   `json:"name"`
-		SourceID             string   `json:"sourceId"`
-		Revision             string   `json:"revision"`
-		ManifestPath         string   `json:"manifestPath"`
-		Renderer             string   `json:"renderer"`
-		KustomizeHelmEnabled bool     `json:"kustomizeHelmEnabled"`
-		ClusterID            string   `json:"clusterId"`
-		Namespaces           []string `json:"namespaces"`
-		SyncPolicy           string   `json:"syncPolicy"`
-		PollSeconds          int      `json:"pollSeconds"`
+		ProjectID                  string                             `json:"projectId"`
+		Name                       string                             `json:"name"`
+		SourceID                   string                             `json:"sourceId"`
+		Revision                   string                             `json:"revision"`
+		ManifestPath               string                             `json:"manifestPath"`
+		TargetManifestPath         string                             `json:"targetManifestPath"`
+		NamespaceManifestPaths     map[string]string                  `json:"namespaceManifestPaths"`
+		Renderer                   string                             `json:"renderer"`
+		KustomizeHelmEnabled       bool                               `json:"kustomizeHelmEnabled"`
+		KustomizeNamespaceOverride bool                               `json:"kustomizeNamespaceOverride"`
+		HelmValuesFiles            []string                           `json:"helmValuesFiles"`
+		HelmValuesYAML             string                             `json:"helmValuesYaml"`
+		TargetHelmValuesFiles      []string                           `json:"targetHelmValuesFiles"`
+		TargetHelmValuesYAML       string                             `json:"targetHelmValuesYaml"`
+		NamespaceHelmValues        map[string]core.HelmValuesOverride `json:"namespaceHelmValues"`
+		ClusterID                  string                             `json:"clusterId"`
+		Namespaces                 []string                           `json:"namespaces"`
+		SyncPolicy                 string                             `json:"syncPolicy"`
+		PollSeconds                int                                `json:"pollSeconds"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -697,6 +859,32 @@ func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Kustomize Helm can only be enabled for Kustomize applications")
 		return
 	}
+	if input.KustomizeNamespaceOverride && input.Renderer != "kustomize" {
+		writeError(w, http.StatusBadRequest, "Kustomize namespace transforms require the Kustomize renderer")
+		return
+	}
+	valuesFiles, valuesYAML, err := validateHelmValuesInput(input.Renderer, input.HelmValuesFiles, input.HelmValuesYAML)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	input.HelmValuesFiles, input.HelmValuesYAML = valuesFiles, valuesYAML
+	targetFiles, targetValues, err := validateHelmValuesInput(input.Renderer, input.TargetHelmValuesFiles, input.TargetHelmValuesYAML)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	input.TargetHelmValuesFiles, input.TargetHelmValuesYAML = targetFiles, targetValues
+	input.NamespaceHelmValues, err = validateNamespaceHelmValuesInput(input.Renderer, input.NamespaceHelmValues, input.Namespaces)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	input.TargetManifestPath, input.NamespaceManifestPaths, err = validateKustomizeManifestPaths(input.Renderer, input.TargetManifestPath, input.NamespaceManifestPaths, input.Namespaces)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if input.SyncPolicy == "" {
 		input.SyncPolicy = "manual"
 	}
@@ -724,10 +912,6 @@ func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "at least one namespace binding is required")
 		return
 	}
-	if input.Renderer == "helm" && len(input.Namespaces) != 1 {
-		writeError(w, http.StatusBadRequest, "Helm applications require exactly one namespace binding")
-		return
-	}
 	bindings := make([]store.NamespaceBinding, 0, len(input.Namespaces))
 	seen := map[string]bool{}
 	for _, namespace := range input.Namespaces {
@@ -744,12 +928,12 @@ func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 		}
 		bindings = append(bindings, binding)
 	}
-	app := store.Application{ID: store.NewID(), ProjectID: input.ProjectID, Name: input.Name, SourceID: input.SourceID, Revision: input.Revision, ManifestPath: input.ManifestPath, Renderer: input.Renderer, KustomizeHelmEnabled: input.KustomizeHelmEnabled, ClusterID: input.ClusterID, Namespaces: bindings, SyncPolicy: input.SyncPolicy, PollSeconds: input.PollSeconds, Health: "unknown"}
+	app := store.Application{ID: store.NewID(), ProjectID: input.ProjectID, Name: input.Name, SourceID: input.SourceID, Revision: input.Revision, ManifestPath: input.ManifestPath, TargetManifestPath: input.TargetManifestPath, NamespaceManifestPaths: input.NamespaceManifestPaths, Renderer: input.Renderer, KustomizeHelmEnabled: input.KustomizeHelmEnabled, KustomizeNamespaceOverride: input.KustomizeNamespaceOverride, HelmValuesFiles: input.HelmValuesFiles, HelmValuesYAML: input.HelmValuesYAML, TargetHelmValuesFiles: input.TargetHelmValuesFiles, TargetHelmValuesYAML: input.TargetHelmValuesYAML, NamespaceHelmValues: input.NamespaceHelmValues, ClusterID: input.ClusterID, Namespaces: bindings, SyncPolicy: input.SyncPolicy, PollSeconds: input.PollSeconds, Health: "unknown"}
 	if err := s.Store.CreateApplication(r.Context(), app); err != nil {
 		writeError(w, http.StatusConflict, "could not create application")
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "application.created", "application", app.ID, map[string]any{"projectId": app.ProjectID, "sourceId": app.SourceID, "clusterId": app.ClusterID, "renderer": app.Renderer})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "application.created", "application", app.ID, map[string]any{"projectId": app.ProjectID, "sourceId": app.SourceID, "clusterId": app.ClusterID, "renderer": app.Renderer, "helmValuesFiles": app.HelmValuesFiles, "helmValuesConfigured": app.HelmValuesYAML != ""})
 	writeJSON(w, http.StatusCreated, app)
 }
 

@@ -284,9 +284,16 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		}
 		app.SourceID = record.Plan.Rollback.Settings.SourceID
 		app.ManifestPath = record.Plan.Rollback.Settings.ManifestPath
+		app.TargetManifestPath = record.Plan.Rollback.Settings.TargetManifestPath
+		app.NamespaceManifestPaths = record.Plan.Rollback.Settings.NamespaceManifestPaths
 		app.Renderer = record.Plan.Rollback.Settings.Renderer
 		app.KustomizeHelmEnabled = record.Plan.Rollback.Settings.KustomizeHelmEnabled
 		app.KustomizeNamespaceOverride = record.Plan.Rollback.Settings.KustomizeNamespaceOverride
+		app.HelmValuesFiles = record.Plan.Rollback.Settings.HelmValuesFiles
+		app.HelmValuesYAML = record.Plan.Rollback.Settings.HelmValuesYAML
+		app.TargetHelmValuesFiles = record.Plan.Rollback.Settings.TargetHelmValuesFiles
+		app.TargetHelmValuesYAML = record.Plan.Rollback.Settings.TargetHelmValuesYAML
+		app.NamespaceHelmValues = record.Plan.Rollback.Settings.NamespaceHelmValues
 		if rollbackRevision != "" {
 			app.Revision = rollbackRevision
 		}

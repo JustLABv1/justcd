@@ -35,11 +35,14 @@ function ApplicationsContent() {
       <PageHeading
         title="Applications"
         description="Your deployments, from Git revision to running workload."
-        actions={
+        actions={<>
           <ActionLink href="/applications/new">
             <span aria-hidden="true">＋</span> New application
           </ActionLink>
-        }
+          <ActionLink href="/application-groups/new">
+            <span aria-hidden="true">＋</span> Deploy to multiple targets
+          </ActionLink>
+        </>}
       />
       {error ? (
         <LoadError error={error} retry={refresh} />

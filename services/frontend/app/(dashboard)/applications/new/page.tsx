@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { FormField, PageHeading, Panel } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
@@ -23,11 +24,17 @@ export default function NewApplicationPage() {
   const [bindings, setBindings] = useState<NamespaceBinding[]>([])
   const [sourceId, setSourceId] = useState("")
   const [namespaces, setNamespaces] = useState<string[]>([])
+  const [namespaceHelmValues, setNamespaceHelmValues] = useState<Record<string, { files: string[]; yaml: string }>>({})
+  const [namespaceManifestPaths, setNamespaceManifestPaths] = useState<Record<string, string>>({})
   const [name, setName] = useState("")
   const [revision, setRevision] = useState("main")
   const [manifestPath, setManifestPath] = useState("deploy/")
   const [renderer, setRenderer] = useState("yaml")
   const [kustomizeHelmEnabled, setKustomizeHelmEnabled] = useState(false)
+  const [kustomizeNamespaceOverride, setKustomizeNamespaceOverride] = useState(false)
+  const [targetManifestPath, setTargetManifestPath] = useState("")
+  const [helmValuesFiles, setHelmValuesFiles] = useState("")
+  const [helmValuesYaml, setHelmValuesYaml] = useState("")
   const [syncPolicy, setSyncPolicy] = useState("manual")
   const [pollSeconds, setPollSeconds] = useState("300")
   const [error, setError] = useState<unknown | null>(null)
@@ -61,6 +68,8 @@ export default function NewApplicationPage() {
     api<ListResponse<NamespaceBinding>>(`/api/v1/clusters/${encodeURIComponent(clusterId)}/bindings?projectId=${encodeURIComponent(projectId)}`).then((result) => {
       setBindings(result.items)
       setNamespaces((current) => current.filter((namespace) => result.items.some((item) => item.namespace === namespace)))
+      setNamespaceHelmValues((current) => Object.fromEntries(Object.entries(current).filter(([namespace]) => result.items.some((item) => item.namespace === namespace))))
+      setNamespaceManifestPaths((current) => Object.fromEntries(Object.entries(current).filter(([namespace]) => result.items.some((item) => item.namespace === namespace))))
     }).catch((cause) => setError(cause))
   }, [projectId, clusterId])
 
@@ -70,7 +79,21 @@ export default function NewApplicationPage() {
     event.preventDefault(); setBusy(true); setError(null)
     if (!projectId || !sourceId || !clusterId || !namespaces.length) { toast.error("Choose a project, Git source, cluster, and at least one namespace."); setBusy(false); return }
     try {
-      const app = await apiPost<Application>("/api/v1/applications", { projectId, name, sourceId, revision, manifestPath, renderer, kustomizeHelmEnabled: renderer === "kustomize" && kustomizeHelmEnabled, clusterId, namespaces, syncPolicy, pollSeconds: Number(pollSeconds) })
+      const app = await apiPost<Application>("/api/v1/applications", {
+        projectId, name, sourceId, revision, manifestPath, renderer,
+        kustomizeHelmEnabled: renderer === "kustomize" && kustomizeHelmEnabled,
+        kustomizeNamespaceOverride: renderer === "kustomize" && kustomizeNamespaceOverride,
+        targetManifestPath: renderer === "kustomize" ? targetManifestPath : "",
+        namespaceManifestPaths: renderer === "kustomize" ? Object.fromEntries(namespaces.reduce<[string, string][]>((entries, namespace) => {
+          const path = namespaceManifestPaths[namespace]?.trim() ?? ""
+          if (path) entries.push([namespace, path])
+          return entries
+        }, [])) : {},
+        helmValuesFiles: renderer === "helm" ? helmValuesFiles.split("\n").map((line) => line.trim()).filter(Boolean) : [],
+        helmValuesYaml: renderer === "helm" ? helmValuesYaml : "",
+        namespaceHelmValues: renderer === "helm" ? Object.fromEntries(namespaces.map((namespace) => [namespace, namespaceHelmValues[namespace] ?? { files: [], yaml: "" }])) : {},
+        clusterId, namespaces, syncPolicy, pollSeconds: Number(pollSeconds),
+      })
       toast.success("Application created.")
       router.push(`/applications/${app.id}`)
     } catch (cause) { toast.error(errorMessage(cause), cause) } finally { setBusy(false) }
@@ -82,17 +105,37 @@ export default function NewApplicationPage() {
     <form className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]" onSubmit={submit}>
       <div className="space-y-5">
         <Panel title="Source" description="Select the project repository and the exact Git path to render."><div className="grid gap-4 p-5 sm:grid-cols-2">
-          <FormField label="Project" htmlFor="project"><FormSelect id="project" value={projectId} onValueChange={setProjectId} placeholder="Select project" required items={projects.map((project) => ({ value: project.id, label: project.name }))} /></FormField>
+          <FormField label="Project" htmlFor="project"><FormSelect id="project" value={projectId} onValueChange={(value) => { setProjectId(value); setNamespaces([]); setNamespaceHelmValues({}); setNamespaceManifestPaths({}); setTargetManifestPath("") }} placeholder="Select project" required items={projects.map((project) => ({ value: project.id, label: project.name }))} /></FormField>
           <FormField label="Git source" htmlFor="source"><FormSelect id="source" value={sourceId} onValueChange={setSourceId} placeholder="Select source" required items={sources.map((source) => ({ value: source.id, label: `${source.name} · ${source.repositoryUrl}` }))} /></FormField>
           <FormField label="Application name" htmlFor="name" hint="Lowercase letters, numbers, dots, and dashes."><Input id="name" placeholder="billing-api" value={name} onChange={(event) => setName(event.target.value)} required pattern="[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?" /></FormField>
           <FormField label="Git revision" htmlFor="revision" hint="Branch, tag, or commit; JustCD pins the reviewed commit SHA."><Input id="revision" placeholder="main" value={revision} onChange={(event) => setRevision(event.target.value)} required /></FormField>
-          <FormField label="Manifest path" htmlFor="path" hint="Repository-relative directory or file."><Input id="path" placeholder="deploy/" value={manifestPath} onChange={(event) => setManifestPath(event.target.value)} required /></FormField>
+          <FormField label={renderer === "helm" ? "Chart path" : renderer === "kustomize" ? "Shared Kustomize path" : "Manifest path"} htmlFor="path" hint={renderer === "helm" ? "Repository-relative Helm chart directory." : renderer === "kustomize" ? "Fallback Kustomize entry point. Cluster and namespace paths can select complete overlays." : "Repository-relative directory or file."}><Input id="path" placeholder="deploy/" value={manifestPath} onChange={(event) => setManifestPath(event.target.value)} required /></FormField>
           <FormField label="Renderer" htmlFor="renderer"><FormSelect id="renderer" value={renderer} onValueChange={setRenderer} items={[{ value: "yaml", label: "Plain YAML / JSON" }, { value: "kustomize", label: "Kustomize build" }, { value: "helm", label: "Helm template" }]} /></FormField>
-          {renderer === "kustomize" && <label className="flex items-start gap-3 rounded-lg border p-3 text-xs sm:col-span-2"><Checkbox checked={kustomizeHelmEnabled} onCheckedChange={(checked) => setKustomizeHelmEnabled(Boolean(checked))} /><span><span className="block font-medium">Enable Helm charts in Kustomize</span><span className="mt-1 block text-muted-foreground">Allows helmCharts from the Git revision. Helm may download pinned charts from public HTTPS repositories during rendering.</span></span></label>}
+          {renderer === "kustomize" && <div className="space-y-3 sm:col-span-2">
+            <label className="flex items-start gap-3 rounded-lg border p-3 text-xs"><Checkbox checked={kustomizeNamespaceOverride} onCheckedChange={(checked) => setKustomizeNamespaceOverride(Boolean(checked))} /><span><span className="block font-medium">Apply namespace transform</span><span className="mt-1 block text-muted-foreground">Build once per selected namespace and set namespace metadata to that target.</span></span></label>
+            <label className="flex items-start gap-3 rounded-lg border p-3 text-xs"><Checkbox checked={kustomizeHelmEnabled} onCheckedChange={(checked) => setKustomizeHelmEnabled(Boolean(checked))} /><span><span className="block font-medium">Enable Helm charts in Kustomize</span><span className="mt-1 block text-muted-foreground">Allows helmCharts from the Git revision. Helm may download pinned charts from public HTTPS repositories during rendering.</span></span></label>
+          </div>}
+          {renderer === "helm" && <div className="space-y-4 sm:col-span-2"><FormField label="Helm values files" htmlFor="helm-values-files" hint="One repository-relative YAML path per line. Later files override earlier files."><Textarea id="helm-values-files" value={helmValuesFiles} onChange={(event) => setHelmValuesFiles(event.target.value)} placeholder={"values/common.yaml\nvalues/production.yaml"} className="font-mono text-xs" /></FormField><FormField label="Helm values overrides" htmlFor="helm-values-yaml" hint="Optional JustCD values applied after the Git files."><Textarea id="helm-values-yaml" value={helmValuesYaml} onChange={(event) => setHelmValuesYaml(event.target.value)} placeholder={"agent:\n  logLevel: info"} className="min-h-32 font-mono text-xs" spellCheck={false} /></FormField></div>}
         </div></Panel>
         <Panel title="Cluster target" description="Applications are restricted to the namespaces already bound to this project."><div className="space-y-5 p-5">
-          <FormField label="Cluster" htmlFor="cluster"><FormSelect id="cluster" value={clusterId} onValueChange={(value) => { setClusterId(value); setNamespaces([]) }} placeholder="Select cluster" required items={clusters.map((cluster) => ({ value: cluster.id, label: `${cluster.name} · ${cluster.apiServer}` }))} /></FormField>
-          <div><p className="mb-2 text-xs font-medium">Namespace bindings</p>{bindings.length ? <div className="grid gap-2 sm:grid-cols-2">{bindings.map((binding) => <label key={binding.namespace} className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-xs transition-colors ${namespaces.includes(binding.namespace) ? "border-primary/40 bg-primary/5" : "hover:bg-muted/40"}`}><Checkbox checked={namespaces.includes(binding.namespace)} onCheckedChange={(checked) => setNamespaces((current) => checked ? [...current, binding.namespace] : current.filter((namespace) => namespace !== binding.namespace))} /><span className="flex-1 font-medium">{binding.namespace}</span><span className="text-[10px] text-muted-foreground">{binding.credentialId ? "namespace credential" : "cluster default"}</span></label>)}</div> : <div className="rounded-lg border border-dashed px-4 py-5 text-xs text-muted-foreground">No namespaces are bound to this project on this cluster. <a href={`/projects/${projectId}/connections/namespaces`} className="font-medium text-primary hover:underline">Configure a binding</a></div>}</div>
+          <FormField label="Cluster" htmlFor="cluster"><FormSelect id="cluster" value={clusterId} onValueChange={(value) => { setClusterId(value); setNamespaces([]); setNamespaceHelmValues({}); setNamespaceManifestPaths({}); setTargetManifestPath("") }} placeholder="Select cluster" required items={clusters.map((cluster) => ({ value: cluster.id, label: `${cluster.name} · ${cluster.apiServer}` }))} /></FormField>
+          <div><p className="mb-2 text-xs font-medium">Namespace bindings</p>{bindings.length ? <div className="grid gap-2 sm:grid-cols-2">{bindings.map((binding) => <label key={binding.namespace} className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-xs transition-colors ${namespaces.includes(binding.namespace) ? "border-primary/40 bg-primary/5" : "hover:bg-muted/40"}`}><Checkbox checked={namespaces.includes(binding.namespace)} onCheckedChange={(checked) => {
+            if (checked) {
+              setNamespaces((current) => [...current, binding.namespace])
+              setNamespaceHelmValues((current) => ({ ...current, [binding.namespace]: current[binding.namespace] ?? { files: [], yaml: "" } }))
+              setNamespaceManifestPaths((current) => ({ ...current, [binding.namespace]: current[binding.namespace] ?? "" }))
+            } else {
+              setNamespaces((current) => current.filter((namespace) => namespace !== binding.namespace))
+              setNamespaceHelmValues((current) => { const next = { ...current }; delete next[binding.namespace]; return next })
+              setNamespaceManifestPaths((current) => { const next = { ...current }; delete next[binding.namespace]; return next })
+            }
+          }} /><span className="flex-1 font-medium">{binding.namespace}</span><span className="text-[10px] text-muted-foreground">{binding.credentialId ? "namespace credential" : "cluster default"}</span></label>)}</div> : <div className="rounded-lg border border-dashed px-4 py-5 text-xs text-muted-foreground">No namespaces are bound to this project on this cluster. <a href={`/projects/${projectId}/connections/namespaces`} className="font-medium text-primary hover:underline">Configure a binding</a></div>}</div>
+          {renderer === "kustomize" && <FormField label="Cluster overlay path" htmlFor="cluster-overlay-path" hint="Optional Kustomize path for this cluster; blank uses the shared path. This overlay should include its shared base."><Input id="cluster-overlay-path" value={targetManifestPath} onChange={(event) => setTargetManifestPath(event.target.value)} placeholder="overlays/clusters/prod-eu" /></FormField>}
+          {renderer === "helm" && namespaces.length > 0 && <div className="space-y-3 border-t pt-4"><p className="text-xs font-medium">Namespace Helm overrides</p>{namespaces.map((namespace) => {
+            const override = namespaceHelmValues[namespace] ?? { files: [], yaml: "" }
+            return <details key={namespace} className="rounded-lg border px-3 py-2.5"><summary className="cursor-pointer text-xs font-medium">{namespace} <span className="font-normal text-muted-foreground">· optional overrides</span></summary><div className="mt-3 space-y-3"><FormField label="Namespace values files" htmlFor={`new-ns-files-${namespace}`} hint="Repository-relative paths, applied after shared values."><Textarea id={`new-ns-files-${namespace}`} value={override.files.join("\n")} onChange={(event) => setNamespaceHelmValues((current) => ({ ...current, [namespace]: { ...override, files: event.target.value.split("\n").map((line) => line.trim()).filter(Boolean) } }))} className="min-h-14 font-mono text-xs" /></FormField><FormField label="Namespace JustCD overrides" htmlFor={`new-ns-yaml-${namespace}`} hint="Applied after namespace Git files. Use Kubernetes Secret references for sensitive values."><Textarea id={`new-ns-yaml-${namespace}`} value={override.yaml} onChange={(event) => setNamespaceHelmValues((current) => ({ ...current, [namespace]: { ...override, yaml: event.target.value } }))} className="min-h-20 font-mono text-xs" spellCheck={false} /></FormField></div></details>
+          })}</div>}
+          {renderer === "kustomize" && namespaces.length > 0 && <div className="space-y-3 border-t pt-4"><p className="text-xs font-medium">Namespace overlays</p>{namespaces.map((namespace) => <FormField key={namespace} label={`${namespace} overlay path`} htmlFor={`new-ns-overlay-${namespace}`} hint="Optional Kustomize path; blank uses the cluster path. Include the base and any cluster overlay this namespace needs."><Input id={`new-ns-overlay-${namespace}`} value={namespaceManifestPaths[namespace] ?? ""} onChange={(event) => setNamespaceManifestPaths((current) => ({ ...current, [namespace]: event.target.value }))} placeholder={`overlays/namespaces/${namespace}`} /></FormField>)}</div>}
         </div></Panel>
       </div>
       <div className="space-y-5">

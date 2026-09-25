@@ -84,6 +84,14 @@ export type Application = {
   renderer: "yaml" | "kustomize" | "helm"
   kustomizeHelmEnabled: boolean
   kustomizeNamespaceOverride: boolean
+  helmValuesFiles: string[]
+  helmValuesYaml: string
+  applicationGroupId?: string
+  targetManifestPath: string
+  namespaceManifestPaths: Record<string, string>
+  targetHelmValuesFiles: string[]
+  targetHelmValuesYaml: string
+  namespaceHelmValues: Record<string, { files: string[]; yaml: string }>
   clusterId: string
   namespaces: NamespaceBinding[]
   syncPolicy: "manual" | "auto-safe"
@@ -97,6 +105,29 @@ export type Application = {
   rollbackResumeRequiresRevision?: boolean
   approvalPolicyOverride?: ApprovalPolicyOverride
   createdAt: string
+}
+
+export type ApplicationGroup = {
+  id: string
+  projectId: string
+  name: string
+  sourceId: string
+  revision: string
+  manifestPath: string
+  renderer: "helm" | "kustomize"
+  kustomizeHelmEnabled: boolean
+  kustomizeNamespaceOverride: boolean
+  helmValuesFiles: string[]
+  helmValuesYaml: string
+  syncPolicy: "manual" | "auto-safe"
+  pollSeconds: number
+  createdAt: string
+  updatedAt: string
+}
+
+export type ApplicationGroupResponse = {
+  group: ApplicationGroup
+  applications: Application[]
 }
 
 export type Identity = {
@@ -176,7 +207,7 @@ export type Plan = {
     revision?: string
     createdAt?: string
     resourceCount?: number
-    settings: { sourceId: string; revision: string; manifestPath: string; renderer: string; kustomizeHelmEnabled: boolean; kustomizeNamespaceOverride: boolean; clusterId: string; namespaces: string[] }
+    settings: { sourceId: string; revision: string; manifestPath: string; targetManifestPath?: string; namespaceManifestPaths?: Record<string, string>; renderer: string; kustomizeHelmEnabled: boolean; kustomizeNamespaceOverride: boolean; clusterId: string; namespaces: string[] }
   }
   digest: string
 }

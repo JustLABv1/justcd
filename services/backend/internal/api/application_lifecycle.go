@@ -7,6 +7,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/justlab/justcd/services/backend/internal/core"
 	"github.com/justlab/justcd/services/backend/internal/store"
 )
 
@@ -111,17 +112,24 @@ func (s *Server) updateApplication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Name                       string   `json:"name"`
-		SourceID                   string   `json:"sourceId"`
-		Revision                   string   `json:"revision"`
-		ManifestPath               string   `json:"manifestPath"`
-		Renderer                   string   `json:"renderer"`
-		KustomizeHelmEnabled       bool     `json:"kustomizeHelmEnabled"`
-		KustomizeNamespaceOverride bool     `json:"kustomizeNamespaceOverride"`
-		ClusterID                  string   `json:"clusterId"`
-		Namespaces                 []string `json:"namespaces"`
-		SyncPolicy                 string   `json:"syncPolicy"`
-		PollSeconds                int      `json:"pollSeconds"`
+		Name                       string                             `json:"name"`
+		SourceID                   string                             `json:"sourceId"`
+		Revision                   string                             `json:"revision"`
+		ManifestPath               string                             `json:"manifestPath"`
+		TargetManifestPath         string                             `json:"targetManifestPath"`
+		NamespaceManifestPaths     map[string]string                  `json:"namespaceManifestPaths"`
+		Renderer                   string                             `json:"renderer"`
+		KustomizeHelmEnabled       bool                               `json:"kustomizeHelmEnabled"`
+		KustomizeNamespaceOverride bool                               `json:"kustomizeNamespaceOverride"`
+		HelmValuesFiles            []string                           `json:"helmValuesFiles"`
+		HelmValuesYAML             string                             `json:"helmValuesYaml"`
+		TargetHelmValuesFiles      []string                           `json:"targetHelmValuesFiles"`
+		TargetHelmValuesYAML       string                             `json:"targetHelmValuesYaml"`
+		NamespaceHelmValues        map[string]core.HelmValuesOverride `json:"namespaceHelmValues"`
+		ClusterID                  string                             `json:"clusterId"`
+		Namespaces                 []string                           `json:"namespaces"`
+		SyncPolicy                 string                             `json:"syncPolicy"`
+		PollSeconds                int                                `json:"pollSeconds"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -145,12 +153,26 @@ func (s *Server) updateApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Kustomize settings require the Kustomize renderer")
 		return
 	}
+	input.HelmValuesFiles, input.HelmValuesYAML, err = validateHelmValuesInput(input.Renderer, input.HelmValuesFiles, input.HelmValuesYAML)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	input.TargetHelmValuesFiles, input.TargetHelmValuesYAML, err = validateHelmValuesInput(input.Renderer, input.TargetHelmValuesFiles, input.TargetHelmValuesYAML)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if input.SyncPolicy != "manual" && input.SyncPolicy != "auto-safe" {
 		writeError(w, http.StatusBadRequest, "invalid sync policy")
 		return
 	}
 	if input.PollSeconds < 30 || input.PollSeconds > 86400 {
 		writeError(w, http.StatusBadRequest, "pollSeconds must be between 30 and 86400")
+		return
+	}
+	if app.ApplicationGroupID != "" && (input.SourceID != app.SourceID || input.Revision != app.Revision || input.ManifestPath != app.ManifestPath || input.Renderer != app.Renderer || input.KustomizeHelmEnabled != app.KustomizeHelmEnabled || input.KustomizeNamespaceOverride != app.KustomizeNamespaceOverride || strings.Join(input.HelmValuesFiles, "\x00") != strings.Join(app.HelmValuesFiles, "\x00") || input.HelmValuesYAML != app.HelmValuesYAML || input.SyncPolicy != app.SyncPolicy || input.PollSeconds != app.PollSeconds) {
+		writeError(w, http.StatusBadRequest, "edit shared source and values through the deployment group")
 		return
 	}
 	source, err := s.Store.GitSourceByID(r.Context(), input.SourceID)
@@ -162,7 +184,7 @@ func (s *Server) updateApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "cluster not found")
 		return
 	}
-	if len(input.Namespaces) == 0 || (input.Renderer == "helm" && len(input.Namespaces) != 1) || (input.KustomizeNamespaceOverride && len(input.Namespaces) != 1) {
+	if len(input.Namespaces) == 0 {
 		writeError(w, http.StatusBadRequest, "invalid namespace selection")
 		return
 	}
@@ -182,14 +204,28 @@ func (s *Server) updateApplication(w http.ResponseWriter, r *http.Request) {
 		}
 		bindings = append(bindings, binding)
 	}
+	input.NamespaceHelmValues, err = validateNamespaceHelmValuesInput(input.Renderer, input.NamespaceHelmValues, input.Namespaces)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	input.TargetManifestPath, input.NamespaceManifestPaths, err = validateKustomizeManifestPaths(input.Renderer, input.TargetManifestPath, input.NamespaceManifestPaths, input.Namespaces)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	app.Name, app.SourceID, app.Revision, app.ManifestPath, app.Renderer = input.Name, input.SourceID, input.Revision, input.ManifestPath, input.Renderer
+	app.TargetManifestPath, app.NamespaceManifestPaths = input.TargetManifestPath, input.NamespaceManifestPaths
 	app.KustomizeHelmEnabled, app.KustomizeNamespaceOverride, app.ClusterID, app.Namespaces = input.KustomizeHelmEnabled, input.KustomizeNamespaceOverride, input.ClusterID, bindings
+	app.HelmValuesFiles, app.HelmValuesYAML = input.HelmValuesFiles, input.HelmValuesYAML
+	app.TargetHelmValuesFiles, app.TargetHelmValuesYAML = input.TargetHelmValuesFiles, input.TargetHelmValuesYAML
+	app.NamespaceHelmValues = input.NamespaceHelmValues
 	app.SyncPolicy, app.PollSeconds = input.SyncPolicy, input.PollSeconds
 	if err := s.Store.UpdateApplication(r.Context(), app); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "application.updated", "application", app.ID, map[string]any{"name": app.Name, "sourceId": app.SourceID, "revision": app.Revision, "manifestPath": app.ManifestPath, "renderer": app.Renderer, "clusterId": app.ClusterID, "namespaces": input.Namespaces, "syncPolicy": app.SyncPolicy})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "application.updated", "application", app.ID, map[string]any{"name": app.Name, "sourceId": app.SourceID, "revision": app.Revision, "manifestPath": app.ManifestPath, "renderer": app.Renderer, "clusterId": app.ClusterID, "namespaces": input.Namespaces, "syncPolicy": app.SyncPolicy, "helmValuesFiles": app.HelmValuesFiles, "helmValuesConfigured": app.HelmValuesYAML != "", "targetHelmValuesFiles": app.TargetHelmValuesFiles, "targetHelmValuesConfigured": app.TargetHelmValuesYAML != ""})
 	writeJSON(w, http.StatusOK, app)
 }
 

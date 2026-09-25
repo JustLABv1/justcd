@@ -151,8 +151,18 @@ func (s *Server) getPlan(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) approvePlan(w http.ResponseWriter, r *http.Request) {
-	record, app, ok := s.authorizedPlan(w, r, "owner")
+	record, app, ok := s.authorizedPlan(w, r, "viewer")
 	if !ok {
+		return
+	}
+	required := core.RequiredApprovalCount(record.Plan)
+	if required == 0 {
+		writeError(w, http.StatusConflict, "this plan does not require approval")
+		return
+	}
+	role, roleErr := s.Store.ProjectRole(r.Context(), currentUser(r), app.ProjectID)
+	if roleErr != nil || role == "" || !core.ApprovalRoleAllows(record.Plan, role, currentUser(r).ID) {
+		writeError(w, http.StatusForbidden, "you are not an eligible approver for this plan")
 		return
 	}
 	fresh, err := s.Syncer.RecheckPlan(r.Context(), app, record)
@@ -169,6 +179,30 @@ func (s *Server) approvePlan(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "plan is stale; review the refreshed plan", "plan": toPlanView(refreshed)})
 		return
 	}
+	activeApprovals, err := s.Store.ListPlanApprovals(r.Context(), record.ID, record.Plan.Digest)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load existing approvals")
+		return
+	}
+	approvedActors := make(map[string]bool, len(activeApprovals))
+	for _, existing := range activeApprovals {
+		if existing.Approval.ActorID == currentUser(r).ID {
+			writeError(w, http.StatusConflict, "you have already approved this plan")
+			return
+		}
+		approver, userErr := s.Store.UserByID(r.Context(), existing.Approval.ActorID)
+		approverRole := ""
+		if userErr == nil {
+			approverRole, userErr = s.Store.ProjectRole(r.Context(), approver, app.ProjectID)
+		}
+		if userErr == nil && approverRole != "" && core.ApprovalRoleAllows(record.Plan, approverRole, existing.Approval.ActorID) {
+			approvedActors[existing.Approval.ActorID] = true
+		}
+	}
+	if len(approvedActors) >= required {
+		writeError(w, http.StatusConflict, "this plan already has all required approvals")
+		return
+	}
 	deletes := make([]core.Change, 0)
 	privileged := make([]core.Change, 0)
 	for _, change := range record.Plan.Changes {
@@ -179,10 +213,6 @@ func (s *Server) approvePlan(w http.ResponseWriter, r *http.Request) {
 			privileged = append(privileged, change)
 		}
 	}
-	if len(deletes) == 0 && len(privileged) == 0 {
-		writeError(w, http.StatusConflict, "this plan has no changes that require owner approval")
-		return
-	}
 	approvalID := store.NewID()
 	expires := time.Now().Add(10 * time.Minute)
 	if record.ExpiresAt.Before(expires) {
@@ -190,11 +220,84 @@ func (s *Server) approvePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	approval := core.DeletionApproval{PlanDigest: record.Plan.Digest, ActorID: currentUser(r).ID, Deletes: deletes, Privileged: privileged, ExpiresAt: expires}
 	if err := s.Store.CreateApproval(r.Context(), approvalID, record.ID, approval, expires); err != nil {
+		if strings.Contains(err.Error(), "already") || strings.Contains(err.Error(), "required approvals") {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		if strings.Contains(err.Error(), "eligible") {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
+		if strings.Contains(err.Error(), "plan is no longer current") {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "could not save approval")
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "plan.approved", "application", app.ID, map[string]any{"planId": record.ID, "approvalId": approvalID, "digest": record.Plan.Digest, "deletions": len(deletes), "privilegedChanges": len(privileged)})
-	writeJSON(w, http.StatusCreated, map[string]any{"id": approvalID, "planId": record.ID, "planDigest": record.Plan.Digest, "expiresAt": expires})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "plan.approved", "application", app.ID, map[string]any{"planId": record.ID, "approvalId": approvalID, "digest": record.Plan.Digest, "kind": record.Plan.ApprovalKind, "deletions": len(deletes), "privilegedChanges": len(privileged)})
+	writeJSON(w, http.StatusCreated, map[string]any{"id": approvalID, "planId": record.ID, "planDigest": record.Plan.Digest, "expiresAt": expires, "requiredApprovals": required, "approvedApprovals": len(approvedActors) + 1})
+}
+
+func (s *Server) listPlanApprovals(w http.ResponseWriter, r *http.Request) {
+	record, app, ok := s.authorizedPlan(w, r, "viewer")
+	if !ok {
+		return
+	}
+	required := core.RequiredApprovalCount(record.Plan)
+	items, err := s.Store.ListPlanApprovals(r.Context(), record.ID, record.Plan.Digest)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load plan approvals")
+		return
+	}
+	type approvalView struct {
+		ID          string    `json:"id"`
+		ActorID     string    `json:"actorId"`
+		DisplayName string    `json:"displayName"`
+		Email       string    `json:"email"`
+		Role        string    `json:"role,omitempty"`
+		Eligible    bool      `json:"eligible"`
+		ExpiresAt   time.Time `json:"expiresAt"`
+	}
+	approvals := make([]approvalView, 0, len(items))
+	approvedActors := make(map[string]bool, len(items))
+	currentUserApproved := false
+	for _, item := range items {
+		user, userErr := s.Store.UserByID(r.Context(), item.Approval.ActorID)
+		role := ""
+		if userErr == nil {
+			role, _ = s.Store.ProjectRole(r.Context(), user, app.ProjectID)
+		}
+		eligible := userErr == nil && role != "" && core.ApprovalRoleAllows(record.Plan, role, item.Approval.ActorID)
+		name, email := "Former project member", ""
+		if userErr == nil {
+			name, email = user.DisplayName, user.Email
+			if name == "" {
+				name = email
+			}
+		}
+		approvals = append(approvals, approvalView{ID: item.ID, ActorID: item.Approval.ActorID, DisplayName: name, Email: email, Role: role, Eligible: eligible, ExpiresAt: item.Approval.ExpiresAt})
+		if eligible {
+			approvedActors[item.Approval.ActorID] = true
+			if item.Approval.ActorID == currentUser(r).ID {
+				currentUserApproved = true
+			}
+		}
+	}
+	currentRole, roleErr := s.Store.ProjectRole(r.Context(), currentUser(r), app.ProjectID)
+	canApprove := required > 0 && record.Status == "current" && time.Now().Before(record.ExpiresAt) && roleErr == nil && currentRole != "" && core.ApprovalRoleAllows(record.Plan, currentRole, currentUser(r).ID) && !currentUserApproved && len(approvedActors) < required
+	writeJSON(w, http.StatusOK, map[string]any{
+		"planId":              record.ID,
+		"planDigest":          record.Plan.Digest,
+		"approvalKind":        record.Plan.ApprovalKind,
+		"requiredApprovals":   required,
+		"approvedApprovals":   len(approvedActors),
+		"approverRoles":       record.Plan.ApproverRoles,
+		"approverUserIds":     record.Plan.ApproverUserIDs,
+		"currentUserApproved": currentUserApproved,
+		"canApprove":          canApprove,
+		"approvals":           approvals,
+	})
 }
 
 func (s *Server) applyPlan(w http.ResponseWriter, r *http.Request) {
@@ -206,36 +309,29 @@ func (s *Server) applyPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		ApprovalID string `json:"approvalId"`
+		ApprovalIDs []string `json:"approvalIds"`
+		ApprovalID  string   `json:"approvalId"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if input.ApprovalID != "" {
-		approval, err := s.Store.ApprovalByID(r.Context(), input.ApprovalID)
-		if err != nil || approval.UsedAt != nil || approval.PlanID != record.ID {
-			writeError(w, http.StatusForbidden, "approval is unavailable or belongs to a different plan")
-			return
-		}
-		approver, err := s.Store.UserByID(r.Context(), approval.Approval.ActorID)
-		role := ""
-		if err == nil {
-			role, err = s.Store.ProjectRole(r.Context(), approver, app.ProjectID)
-		}
-		if err != nil || role != "owner" {
-			writeError(w, http.StatusForbidden, "approval is invalid because its owner is no longer a project owner")
-			return
-		}
+	if input.ApprovalID != "" && len(input.ApprovalIDs) > 0 {
+		writeError(w, http.StatusBadRequest, "use either approvalId or approvalIds")
+		return
 	}
-	operation, err := s.Syncer.Apply(r.Context(), record.ID, currentUser(r).ID, input.ApprovalID)
+	approvalIDs := input.ApprovalIDs
+	if input.ApprovalID != "" {
+		approvalIDs = []string{input.ApprovalID}
+	}
+	operation, err := s.Syncer.ApplyWithApprovals(r.Context(), record.ID, currentUser(r).ID, approvalIDs)
 	if err != nil {
 		var stale *syncer.StalePlanError
 		if errors.As(err, &stale) {
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "plan is stale; review the refreshed plan", "plan": toPlanView(stale.Fresh)})
 			return
 		}
-		if strings.Contains(err.Error(), "approval") || strings.Contains(err.Error(), "already has an active operation") || strings.Contains(err.Error(), "changed after approval") {
+		if strings.Contains(err.Error(), "approv") || strings.Contains(err.Error(), "already has an active operation") || strings.Contains(err.Error(), "changed after approval") {
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}

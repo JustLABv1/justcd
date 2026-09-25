@@ -319,7 +319,14 @@ func (s *Store) RemoveProjectMember(ctx context.Context, projectID, userID strin
 	return err
 }
 func (s *Store) ListProjectMembers(ctx context.Context, projectID string) ([]map[string]any, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT u.id,u.email,u.display_name,pm.role FROM project_memberships pm JOIN users u ON u.id=pm.user_id WHERE pm.project_id=$1 ORDER BY u.email`, projectID)
+	rows, err := s.DB.QueryContext(ctx, `WITH effective AS (
+		SELECT user_id,role FROM project_memberships WHERE project_id=$1
+		UNION ALL SELECT user_id,role FROM oidc_membership_grants WHERE project_id=$1
+	), ranked AS (
+		SELECT user_id,MAX(CASE role WHEN 'owner' THEN 3 WHEN 'deployer' THEN 2 ELSE 1 END) AS rank FROM effective GROUP BY user_id
+	)
+	SELECT u.id,u.email,u.display_name,CASE ranked.rank WHEN 3 THEN 'owner' WHEN 2 THEN 'deployer' ELSE 'viewer' END
+	FROM ranked JOIN users u ON u.id=ranked.user_id ORDER BY u.email`, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -336,11 +343,64 @@ func (s *Store) ListProjectMembers(ctx context.Context, projectID string) ([]map
 }
 
 type Project struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Role        string    `json:"role,omitempty"`
-	CreatedAt   time.Time `json:"createdAt"`
+	ID             string         `json:"id"`
+	Name           string         `json:"name"`
+	Description    string         `json:"description"`
+	Role           string         `json:"role,omitempty"`
+	ApprovalPolicy ApprovalPolicy `json:"approvalPolicy"`
+	CreatedAt      time.Time      `json:"createdAt"`
+}
+
+type ApprovalRule struct {
+	RequiredApprovals int      `json:"requiredApprovals"`
+	ApproverRoles     []string `json:"approverRoles"`
+	ApproverUserIDs   []string `json:"approverUserIds"`
+}
+
+type ApprovalPolicy struct {
+	Sync     ApprovalRule `json:"sync"`
+	Deletion ApprovalRule `json:"deletion"`
+}
+
+type ApprovalPolicyOverride struct {
+	Sync     *ApprovalRule `json:"sync,omitempty"`
+	Deletion *ApprovalRule `json:"deletion,omitempty"`
+}
+
+func ApprovalRuleAllows(rule ApprovalRule, role, userID string) bool {
+	for _, allowedID := range rule.ApproverUserIDs {
+		if allowedID == userID && userID != "" {
+			return true
+		}
+	}
+	rank := func(value string) int {
+		switch value {
+		case "owner":
+			return 3
+		case "deployer":
+			return 2
+		case "viewer":
+			return 1
+		default:
+			return 0
+		}
+	}
+	if len(rule.ApproverRoles) == 0 && len(rule.ApproverUserIDs) == 0 && rule.RequiredApprovals > 0 {
+		return role == "owner"
+	}
+	for _, allowedRole := range rule.ApproverRoles {
+		if rank(role) >= rank(allowedRole) && rank(role) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func DefaultApprovalPolicy() ApprovalPolicy {
+	return ApprovalPolicy{
+		Sync:     ApprovalRule{RequiredApprovals: 0, ApproverRoles: []string{"owner"}, ApproverUserIDs: []string{}},
+		Deletion: ApprovalRule{RequiredApprovals: 1, ApproverRoles: []string{"owner"}, ApproverUserIDs: []string{}},
+	}
 }
 
 func (s *Store) ListProjects(ctx context.Context, user User) ([]Project, error) {
@@ -351,7 +411,7 @@ func (s *Store) ListProjects(ctx context.Context, user User) ([]Project, error) 
 	), ranked AS (
 		SELECT project_id,MAX(CASE role WHEN 'owner' THEN 3 WHEN 'deployer' THEN 2 ELSE 1 END) AS rank FROM effective GROUP BY project_id
 	)
-	SELECT p.id,p.name,p.description,CASE COALESCE(ranked.rank,3) WHEN 3 THEN 'owner' WHEN 2 THEN 'deployer' ELSE 'viewer' END,p.created_at
+	SELECT p.id,p.name,p.description,CASE COALESCE(ranked.rank,3) WHEN 3 THEN 'owner' WHEN 2 THEN 'deployer' ELSE 'viewer' END,p.approval_policy,p.created_at
 	FROM projects p LEFT JOIN ranked ON ranked.project_id=p.id WHERE $2 OR ranked.project_id IS NOT NULL ORDER BY p.name`
 	rows, err := s.DB.QueryContext(ctx, query, user.ID, user.IsAdmin)
 	if err != nil {
@@ -361,12 +421,31 @@ func (s *Store) ListProjects(ctx context.Context, user User) ([]Project, error) 
 	projects := make([]Project, 0)
 	for rows.Next() {
 		var project Project
-		if err := rows.Scan(&project.ID, &project.Name, &project.Description, &project.Role, &project.CreatedAt); err != nil {
+		var rawPolicy []byte
+		if err := rows.Scan(&project.ID, &project.Name, &project.Description, &project.Role, &rawPolicy, &project.CreatedAt); err != nil {
+			return nil, err
+		}
+		project.ApprovalPolicy = DefaultApprovalPolicy()
+		if err := json.Unmarshal(rawPolicy, &project.ApprovalPolicy); err != nil {
 			return nil, err
 		}
 		projects = append(projects, project)
 	}
 	return projects, rows.Err()
+}
+
+func (s *Store) ProjectByID(ctx context.Context, id string) (Project, error) {
+	var project Project
+	var rawPolicy []byte
+	err := s.DB.QueryRowContext(ctx, `SELECT id,name,description,approval_policy,created_at FROM projects WHERE id=$1`, id).Scan(&project.ID, &project.Name, &project.Description, &rawPolicy, &project.CreatedAt)
+	if err != nil {
+		return Project{}, err
+	}
+	project.ApprovalPolicy = DefaultApprovalPolicy()
+	if err := json.Unmarshal(rawPolicy, &project.ApprovalPolicy); err != nil {
+		return Project{}, err
+	}
+	return project, nil
 }
 
 func (s *Store) CreateProject(ctx context.Context, project Project, ownerID string) error {
@@ -393,6 +472,29 @@ func (s *Store) UpdateProject(ctx context.Context, id, name, description string)
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+func (s *Store) UpdateProjectApprovalPolicy(ctx context.Context, id string, policy ApprovalPolicy) error {
+	encoded, err := json.Marshal(policy)
+	if err != nil {
+		return err
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var lockedID string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE id=$1 FOR UPDATE`, id).Scan(&lockedID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE projects SET approval_policy=$2,updated_at=NOW() WHERE id=$1`, id, encoded); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE status='current' AND application_id IN (SELECT id FROM applications WHERE project_id=$1)`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) DeleteProjectKeepingResources(ctx context.Context, id string, requireEmpty bool) (int, int, error) {
@@ -671,24 +773,25 @@ func (s *Store) ListGitSources(ctx context.Context, projectID string) ([]GitSour
 }
 
 type Application struct {
-	ID                         string             `json:"id"`
-	ProjectID                  string             `json:"projectId"`
-	Name                       string             `json:"name"`
-	SourceID                   string             `json:"sourceId"`
-	Revision                   string             `json:"revision"`
-	ManifestPath               string             `json:"manifestPath"`
-	Renderer                   string             `json:"renderer"`
-	KustomizeHelmEnabled       bool               `json:"kustomizeHelmEnabled"`
-	KustomizeNamespaceOverride bool               `json:"kustomizeNamespaceOverride"`
-	ClusterID                  string             `json:"clusterId"`
-	Namespaces                 []NamespaceBinding `json:"namespaces"`
-	SyncPolicy                 string             `json:"syncPolicy"`
-	PollSeconds                int                `json:"pollSeconds"`
-	LastCheckedAt              *time.Time         `json:"lastCheckedAt,omitempty"`
-	LastSyncedRevision         string             `json:"lastSyncedRevision,omitempty"`
-	Health                     string             `json:"health"`
-	Decommissioning            bool               `json:"decommissioning"`
-	CreatedAt                  time.Time          `json:"createdAt"`
+	ID                         string                  `json:"id"`
+	ProjectID                  string                  `json:"projectId"`
+	Name                       string                  `json:"name"`
+	SourceID                   string                  `json:"sourceId"`
+	Revision                   string                  `json:"revision"`
+	ManifestPath               string                  `json:"manifestPath"`
+	Renderer                   string                  `json:"renderer"`
+	KustomizeHelmEnabled       bool                    `json:"kustomizeHelmEnabled"`
+	KustomizeNamespaceOverride bool                    `json:"kustomizeNamespaceOverride"`
+	ClusterID                  string                  `json:"clusterId"`
+	Namespaces                 []NamespaceBinding      `json:"namespaces"`
+	SyncPolicy                 string                  `json:"syncPolicy"`
+	PollSeconds                int                     `json:"pollSeconds"`
+	LastCheckedAt              *time.Time              `json:"lastCheckedAt,omitempty"`
+	LastSyncedRevision         string                  `json:"lastSyncedRevision,omitempty"`
+	Health                     string                  `json:"health"`
+	Decommissioning            bool                    `json:"decommissioning"`
+	ApprovalPolicyOverride     *ApprovalPolicyOverride `json:"approvalPolicyOverride,omitempty"`
+	CreatedAt                  time.Time               `json:"createdAt"`
 }
 
 func (s *Store) CreateApplication(ctx context.Context, a Application) error {
@@ -702,15 +805,22 @@ func (s *Store) CreateApplication(ctx context.Context, a Application) error {
 
 func scanApplication(row interface{ Scan(...any) error }) (Application, error) {
 	var a Application
-	var namespaces []byte
-	err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.SourceID, &a.Revision, &a.ManifestPath, &a.Renderer, &a.KustomizeHelmEnabled, &a.KustomizeNamespaceOverride, &a.ClusterID, &namespaces, &a.SyncPolicy, &a.PollSeconds, &a.LastCheckedAt, &a.LastSyncedRevision, &a.Health, &a.Decommissioning, &a.CreatedAt)
+	var namespaces, rawApprovalOverride []byte
+	err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.SourceID, &a.Revision, &a.ManifestPath, &a.Renderer, &a.KustomizeHelmEnabled, &a.KustomizeNamespaceOverride, &a.ClusterID, &namespaces, &a.SyncPolicy, &a.PollSeconds, &a.LastCheckedAt, &a.LastSyncedRevision, &a.Health, &a.Decommissioning, &rawApprovalOverride, &a.CreatedAt)
 	if err == nil {
 		err = json.Unmarshal(namespaces, &a.Namespaces)
+	}
+	if err == nil && len(rawApprovalOverride) > 0 && string(rawApprovalOverride) != "null" {
+		var override ApprovalPolicyOverride
+		err = json.Unmarshal(rawApprovalOverride, &override)
+		if err == nil {
+			a.ApprovalPolicyOverride = &override
+		}
 	}
 	return a, err
 }
 
-const applicationColumns = `id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,COALESCE(last_synced_revision,''),health,decommissioning,created_at`
+const applicationColumns = `id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,COALESCE(last_synced_revision,''),health,decommissioning,approval_policy_override,created_at`
 
 func (s *Store) ApplicationByID(ctx context.Context, id string) (Application, error) {
 	return scanApplication(s.DB.QueryRowContext(ctx, `SELECT `+applicationColumns+` FROM applications WHERE id=$1`, id))
@@ -755,6 +865,53 @@ func (s *Store) UpdateApplication(ctx context.Context, app Application) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (s *Store) UpdateApplicationApprovalPolicyOverride(ctx context.Context, id string, override *ApprovalPolicyOverride) error {
+	var encoded any
+	if override != nil {
+		value, err := json.Marshal(override)
+		if err != nil {
+			return err
+		}
+		encoded = value
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var lockedID string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE id=$1 FOR UPDATE`, id).Scan(&lockedID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET approval_policy_override=$2,updated_at=NOW() WHERE id=$1`, id, encoded); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) EffectiveApprovalPolicy(ctx context.Context, app Application) (ApprovalPolicy, error) {
+	policy := DefaultApprovalPolicy()
+	var rawPolicy []byte
+	if err := s.DB.QueryRowContext(ctx, `SELECT approval_policy FROM projects WHERE id=$1`, app.ProjectID).Scan(&rawPolicy); err != nil {
+		return ApprovalPolicy{}, err
+	}
+	if err := json.Unmarshal(rawPolicy, &policy); err != nil {
+		return ApprovalPolicy{}, err
+	}
+	if app.ApprovalPolicyOverride != nil {
+		if app.ApprovalPolicyOverride.Sync != nil {
+			policy.Sync = *app.ApprovalPolicyOverride.Sync
+		}
+		if app.ApprovalPolicyOverride.Deletion != nil {
+			policy.Deletion = *app.ApprovalPolicyOverride.Deletion
+		}
+	}
+	return policy, nil
 }
 
 func (s *Store) DeleteApplicationKeepingResources(ctx context.Context, id string, requireEmpty bool) (int, error) {
@@ -925,6 +1082,14 @@ func (s *Store) SavePlan(ctx context.Context, record PlanRecord) error {
 	if err != nil {
 		return err
 	}
+	approverRoles, err := json.Marshal(record.Plan.ApproverRoles)
+	if err != nil {
+		return err
+	}
+	approverUserIDs, err := json.Marshal(record.Plan.ApproverUserIDs)
+	if err != nil {
+		return err
+	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -944,7 +1109,7 @@ func (s *Store) SavePlan(ctx context.Context, record PlanRecord) error {
 	if _, err = tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, record.Plan.ApplicationID); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO plans(id,application_id,revision,digest,bindings,changes,desired,created_by,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, record.ID, record.Plan.ApplicationID, record.Plan.Revision, record.Plan.Digest, bindings, changes, desired, record.CreatedBy, record.ExpiresAt, record.Status, ignored, selection, record.Plan.IgnoreRulesDigest, record.Plan.Decommission)
+	_, err = tx.ExecContext(ctx, `INSERT INTO plans(id,application_id,revision,digest,bindings,changes,desired,created_by,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`, record.ID, record.Plan.ApplicationID, record.Plan.Revision, record.Plan.Digest, bindings, changes, desired, record.CreatedBy, record.ExpiresAt, record.Status, ignored, selection, record.Plan.IgnoreRulesDigest, record.Plan.Decommission, record.Plan.ApprovalKind, record.Plan.RequiredApprovals, approverRoles, approverUserIDs)
 	if err != nil {
 		return err
 	}
@@ -958,8 +1123,8 @@ func (s *Store) SavePlan(ctx context.Context, record PlanRecord) error {
 
 func (s *Store) PlanByID(ctx context.Context, id string) (PlanRecord, error) {
 	var out PlanRecord
-	var bindings, changes, desired, ignored, selection []byte
-	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission FROM plans WHERE id=$1`, id).Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission)
+	var bindings, changes, desired, ignored, selection, approverRoles, approverUserIDs []byte
+	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids FROM plans WHERE id=$1`, id).Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission, &out.Plan.ApprovalKind, &out.Plan.RequiredApprovals, &approverRoles, &approverUserIDs)
 	if err != nil {
 		return PlanRecord{}, err
 	}
@@ -978,6 +1143,13 @@ func (s *Store) PlanByID(ctx context.Context, id string) (PlanRecord, error) {
 	if err = json.Unmarshal(desired, &out.Desired); err != nil {
 		return PlanRecord{}, err
 	}
+	if err = json.Unmarshal(approverRoles, &out.Plan.ApproverRoles); err != nil {
+		return PlanRecord{}, err
+	}
+	if err = json.Unmarshal(approverUserIDs, &out.Plan.ApproverUserIDs); err != nil {
+		return PlanRecord{}, err
+	}
+	out.Plan.RequiresApproval = core.RequiredApprovalCount(out.Plan) > 0
 	for _, change := range out.Plan.Changes {
 		if change.Kind == core.Delete || change.Identity.ClusterScoped {
 			out.Plan.RequiresApproval = true
@@ -991,7 +1163,7 @@ func (s *Store) ListPlans(ctx context.Context, applicationID string, limit int) 
 	if limit < 1 || limit > 100 {
 		limit = 20
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission FROM plans WHERE application_id=$1 ORDER BY created_at DESC LIMIT $2`, applicationID, limit)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids FROM plans WHERE application_id=$1 ORDER BY created_at DESC LIMIT $2`, applicationID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -999,8 +1171,8 @@ func (s *Store) ListPlans(ctx context.Context, applicationID string, limit int) 
 	items := make([]PlanRecord, 0)
 	for rows.Next() {
 		var out PlanRecord
-		var bindings, changes, desired, ignored, selection []byte
-		if err := rows.Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission); err != nil {
+		var bindings, changes, desired, ignored, selection, approverRoles, approverUserIDs []byte
+		if err := rows.Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission, &out.Plan.ApprovalKind, &out.Plan.RequiredApprovals, &approverRoles, &approverUserIDs); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(bindings, &out.Plan.Bindings); err != nil {
@@ -1015,9 +1187,16 @@ func (s *Store) ListPlans(ctx context.Context, applicationID string, limit int) 
 		if err := json.Unmarshal(selection, &out.Plan.Selection); err != nil {
 			return nil, err
 		}
+		if err := json.Unmarshal(approverRoles, &out.Plan.ApproverRoles); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(approverUserIDs, &out.Plan.ApproverUserIDs); err != nil {
+			return nil, err
+		}
 		if err := json.Unmarshal(desired, &out.Desired); err != nil {
 			return nil, err
 		}
+		out.Plan.RequiresApproval = core.RequiredApprovalCount(out.Plan) > 0
 		for _, change := range out.Plan.Changes {
 			if change.Kind == core.Delete || change.Identity.ClusterScoped {
 				out.Plan.RequiresApproval = true
@@ -1183,21 +1362,117 @@ func (s *Store) CreateApproval(ctx context.Context, id, planID string, approval 
 	if err != nil {
 		return err
 	}
-	_, err = s.DB.ExecContext(ctx, `INSERT INTO deletion_approvals(id,plan_id,actor_id,plan_digest,deletes,expires_at) VALUES($1,$2,$3,$4,$5,$6)`, id, planID, approval.ActorID, approval.PlanDigest, payload, expires)
-	return err
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var status, digest string
+	var projectID string
+	var planExpires time.Time
+	var required int
+	var changesRaw, approverRolesRaw, approverUserIDsRaw []byte
+	if err := tx.QueryRowContext(ctx, `SELECT p.status,p.digest,p.expires_at,p.required_approvals,p.changes,p.approver_roles,p.approver_user_ids,a.project_id FROM plans p JOIN applications a ON a.id=p.application_id WHERE p.id=$1 FOR UPDATE OF p`, planID).Scan(&status, &digest, &planExpires, &required, &changesRaw, &approverRolesRaw, &approverUserIDsRaw, &projectID); err != nil {
+		return err
+	}
+	if status != "current" || digest != approval.PlanDigest || !time.Now().Before(planExpires) {
+		return errors.New("plan is no longer current or has expired")
+	}
+	var operationActive bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM operations WHERE plan_id=$1 AND status IN ('queued','running'))`, planID).Scan(&operationActive); err != nil {
+		return err
+	}
+	if operationActive {
+		return errors.New("application already has an active operation")
+	}
+	var duplicate bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM deletion_approvals WHERE plan_id=$1 AND plan_digest=$2 AND actor_id=$3 AND used_at IS NULL AND expires_at>NOW())`, planID, approval.PlanDigest, approval.ActorID).Scan(&duplicate); err != nil {
+		return err
+	}
+	if duplicate {
+		return errors.New("member has already approved this plan")
+	}
+	if required == 0 {
+		var changes []core.Change
+		if err := json.Unmarshal(changesRaw, &changes); err != nil {
+			return err
+		}
+		for _, change := range changes {
+			if change.Kind == core.Delete || change.Identity.ClusterScoped {
+				required = 1
+				break
+			}
+		}
+	}
+	var rule ApprovalRule
+	if err := json.Unmarshal(approverRolesRaw, &rule.ApproverRoles); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(approverUserIDsRaw, &rule.ApproverUserIDs); err != nil {
+		return err
+	}
+	rule.RequiredApprovals = required
+	projectRole := func(actorID string) (string, error) {
+		var role string
+		err := tx.QueryRowContext(ctx, `SELECT CASE WHEN u.is_admin THEN 'owner' ELSE COALESCE((SELECT member_roles.role FROM (
+			SELECT role FROM project_memberships WHERE project_id=$1 AND user_id=u.id
+			UNION ALL SELECT role FROM oidc_membership_grants WHERE project_id=$1 AND user_id=u.id
+		) member_roles ORDER BY CASE member_roles.role WHEN 'owner' THEN 3 WHEN 'deployer' THEN 2 ELSE 1 END DESC LIMIT 1),'') END FROM users u WHERE u.id=$2`, projectID, actorID).Scan(&role)
+		return role, err
+	}
+	currentRole, err := projectRole(approval.ActorID)
+	if err != nil || currentRole == "" || !ApprovalRuleAllows(rule, currentRole, approval.ActorID) {
+		return errors.New("approver is no longer eligible for this plan")
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT actor_id FROM deletion_approvals WHERE plan_id=$1 AND plan_digest=$2 AND used_at IS NULL AND expires_at>NOW()`, planID, approval.PlanDigest)
+	if err != nil {
+		return err
+	}
+	actors := make([]string, 0)
+	for rows.Next() {
+		var actorID string
+		if err := rows.Scan(&actorID); err != nil {
+			rows.Close()
+			return err
+		}
+		actors = append(actors, actorID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	eligibleApprovals := 0
+	for _, actorID := range actors {
+		role, err := projectRole(actorID)
+		if err != nil {
+			return err
+		}
+		if role != "" && ApprovalRuleAllows(rule, role, actorID) {
+			eligibleApprovals++
+		}
+	}
+	if required == 0 || eligibleApprovals >= required {
+		return errors.New("this plan already has all required approvals")
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO deletion_approvals(id,plan_id,actor_id,plan_digest,deletes,expires_at) VALUES($1,$2,$3,$4,$5,$6)`, id, planID, approval.ActorID, approval.PlanDigest, payload, expires); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 type ApprovalRecord struct {
-	ID       string
-	PlanID   string
-	Approval core.DeletionApproval
-	UsedAt   *time.Time
+	ID        string
+	PlanID    string
+	Approval  core.DeletionApproval
+	UsedAt    *time.Time
+	CreatedAt time.Time
 }
 
 func (s *Store) ApprovalByID(ctx context.Context, id string) (ApprovalRecord, error) {
 	var out ApprovalRecord
 	var payload []byte
-	err := s.DB.QueryRowContext(ctx, `SELECT id,plan_id,actor_id,plan_digest,deletes,expires_at,used_at FROM deletion_approvals WHERE id=$1`, id).Scan(&out.ID, &out.PlanID, &out.Approval.ActorID, &out.Approval.PlanDigest, &payload, &out.Approval.ExpiresAt, &out.UsedAt)
+	err := s.DB.QueryRowContext(ctx, `SELECT id,plan_id,actor_id,plan_digest,deletes,expires_at,used_at,created_at FROM deletion_approvals WHERE id=$1`, id).Scan(&out.ID, &out.PlanID, &out.Approval.ActorID, &out.Approval.PlanDigest, &payload, &out.Approval.ExpiresAt, &out.UsedAt, &out.CreatedAt)
 	if err != nil {
 		return ApprovalRecord{}, err
 	}
@@ -1211,6 +1486,33 @@ func (s *Store) ApprovalByID(ctx context.Context, id string) (ApprovalRecord, er
 	out.Approval.Deletes = values.Deletes
 	out.Approval.Privileged = values.Privileged
 	return out, nil
+}
+
+func (s *Store) ListPlanApprovals(ctx context.Context, planID, digest string) ([]ApprovalRecord, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,plan_id,actor_id,plan_digest,deletes,expires_at,used_at,created_at FROM deletion_approvals WHERE plan_id=$1 AND plan_digest=$2 AND used_at IS NULL AND expires_at>NOW() ORDER BY created_at,id`, planID, digest)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]ApprovalRecord, 0)
+	for rows.Next() {
+		var item ApprovalRecord
+		var payload []byte
+		if err := rows.Scan(&item.ID, &item.PlanID, &item.Approval.ActorID, &item.Approval.PlanDigest, &payload, &item.Approval.ExpiresAt, &item.UsedAt, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		var values struct {
+			Deletes    []core.Change `json:"deletes"`
+			Privileged []core.Change `json:"privileged"`
+		}
+		if err := json.Unmarshal(payload, &values); err != nil {
+			return nil, err
+		}
+		item.Approval.Deletes = values.Deletes
+		item.Approval.Privileged = values.Privileged
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func (s *Store) ConsumeApproval(ctx context.Context, id, planID, digest string) (bool, error) {
@@ -1322,6 +1624,7 @@ type Operation struct {
 	PlanID        *string           `json:"planId,omitempty"`
 	ActorID       *string           `json:"actorId,omitempty"`
 	ApprovalID    string            `json:"-"`
+	ApprovalIDs   []string          `json:"-"`
 	Status        string            `json:"status"`
 	Message       string            `json:"message"`
 	Progress      OperationProgress `json:"progress"`
@@ -1336,7 +1639,7 @@ type OperationProgress struct {
 	Current   *core.Identity  `json:"current,omitempty"`
 }
 
-func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actorID, approvalID, planDigest string, lease time.Duration, progress OperationProgress) (Operation, error) {
+func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actorID string, approvalIDs []string, planDigest string, lease time.Duration, progress OperationProgress) (Operation, error) {
 	encoded, err := json.Marshal(progress)
 	if err != nil {
 		return Operation{}, err
@@ -1365,7 +1668,12 @@ func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actor
 	if active {
 		return Operation{}, errors.New("application already has an active operation")
 	}
-	if approvalID != "" {
+	seen := make(map[string]bool, len(approvalIDs))
+	for _, approvalID := range approvalIDs {
+		if approvalID == "" || seen[approvalID] {
+			return Operation{}, errors.New("approval IDs must be unique and non-empty")
+		}
+		seen[approvalID] = true
 		result, err := tx.ExecContext(ctx, `UPDATE deletion_approvals SET used_at=NOW() WHERE id=$1 AND plan_id=$2 AND plan_digest=$3 AND used_at IS NULL AND expires_at>NOW()`, approvalID, planID, planDigest)
 		if err != nil {
 			return Operation{}, err
@@ -1380,10 +1688,14 @@ func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actor
 	}
 	id := NewID()
 	var approval any
-	if approvalID != "" {
-		approval = approvalID
+	if len(approvalIDs) > 0 {
+		approval = approvalIDs[0]
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO operations(id,application_id,plan_id,actor_id,approval_id,status,message,progress) VALUES($1,$2,$3,NULLIF($4,''),$5,'queued','Sync queued',$6)`, id, applicationID, planID, actorID, approval, encoded)
+	encodedApprovalIDs, err := json.Marshal(approvalIDs)
+	if err != nil {
+		return Operation{}, err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO operations(id,application_id,plan_id,actor_id,approval_id,approval_ids,status,message,progress) VALUES($1,$2,$3,NULLIF($4,''),$5,$6,'queued','Sync queued',$7)`, id, applicationID, planID, actorID, approval, encodedApprovalIDs, encoded)
 	if err != nil {
 		return Operation{}, err
 	}
@@ -1394,7 +1706,11 @@ func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actor
 		return Operation{}, err
 	}
 	plan, actor := planID, actorID
-	return Operation{ID: id, ApplicationID: applicationID, PlanID: &plan, ActorID: &actor, ApprovalID: approvalID, Status: "queued", Progress: progress, StartedAt: time.Now().UTC(), Message: "Sync queued"}, nil
+	firstApprovalID := ""
+	if len(approvalIDs) > 0 {
+		firstApprovalID = approvalIDs[0]
+	}
+	return Operation{ID: id, ApplicationID: applicationID, PlanID: &plan, ActorID: &actor, ApprovalID: firstApprovalID, ApprovalIDs: append([]string(nil), approvalIDs...), Status: "queued", Progress: progress, StartedAt: time.Now().UTC(), Message: "Sync queued"}, nil
 }
 
 // ClaimQueuedOperation atomically claims one durable queue entry. It never
@@ -1407,7 +1723,8 @@ func (s *Store) ClaimQueuedOperation(ctx context.Context, lease time.Duration) (
 	defer tx.Rollback()
 	var operation Operation
 	var progress []byte
-	err = tx.QueryRowContext(ctx, `SELECT id,application_id,plan_id,actor_id,approval_id,status,message,progress,started_at,finished_at FROM operations WHERE status='queued' ORDER BY started_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`).Scan(&operation.ID, &operation.ApplicationID, &operation.PlanID, &operation.ActorID, &operation.ApprovalID, &operation.Status, &operation.Message, &progress, &operation.StartedAt, &operation.FinishedAt)
+	var rawApprovalIDs []byte
+	err = tx.QueryRowContext(ctx, `SELECT id,application_id,plan_id,actor_id,approval_id,approval_ids,status,message,progress,started_at,finished_at FROM operations WHERE status='queued' ORDER BY started_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`).Scan(&operation.ID, &operation.ApplicationID, &operation.PlanID, &operation.ActorID, &operation.ApprovalID, &rawApprovalIDs, &operation.Status, &operation.Message, &progress, &operation.StartedAt, &operation.FinishedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Operation{}, false, nil
 	}
@@ -1416,6 +1733,12 @@ func (s *Store) ClaimQueuedOperation(ctx context.Context, lease time.Duration) (
 	}
 	if err := json.Unmarshal(progress, &operation.Progress); err != nil {
 		return Operation{}, false, err
+	}
+	if err := json.Unmarshal(rawApprovalIDs, &operation.ApprovalIDs); err != nil {
+		return Operation{}, false, err
+	}
+	if len(operation.ApprovalIDs) == 0 && operation.ApprovalID != "" {
+		operation.ApprovalIDs = []string{operation.ApprovalID}
 	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO operation_leases(application_id,operation_id,expires_at) VALUES($1,$2,NOW()+($3 * INTERVAL '1 second')) ON CONFLICT(application_id) DO UPDATE SET operation_id=EXCLUDED.operation_id,expires_at=EXCLUDED.expires_at WHERE operation_leases.expires_at<=NOW() OR operation_leases.operation_id=EXCLUDED.operation_id`, operation.ApplicationID, operation.ID, int64(lease.Seconds()))
 	if err != nil {

@@ -19,7 +19,7 @@ import { ErrorNotice } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
 import { APIError, api, apiDelete, apiPost, errorMessage } from "@/lib/api"
 import { diffJsonLines } from "@/lib/line-diff"
-import type { Application, Change, FieldExclusion, Identity, IgnoreRule, IgnoreSelector, ListResponse, ManagedResource, Operation, PlanRecord, Project, ResourceTopology } from "@/lib/types"
+import type { Application, Change, FieldExclusion, Identity, IgnoreRule, IgnoreSelector, ListResponse, ManagedResource, Operation, PlanApprovalSummary, PlanRecord, Project, ProjectMember, ResourceTopology } from "@/lib/types"
 
 function diffId(identity: Identity) {
   return `diff-${[identity.clusterId ?? "", identity.apiVersion, identity.kind, identity.namespace, identity.name].map(encodeURIComponent).join("-")}`
@@ -49,6 +49,7 @@ export default function ApplicationDetailPage() {
   const [kustomization, setKustomization] = useState<{ namespace: string; commit: string } | null>(null)
   const [kustomizationError, setKustomizationError] = useState<unknown | null>(null)
   const [project, setProject] = useState<Project | null>(null)
+  const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([])
   const [plans, setPlans] = useState<PlanRecord[]>([])
   const [activePlan, setActivePlan] = useState<PlanRecord | null>(null)
   const [resources, setResources] = useState<ManagedResource[]>([])
@@ -68,7 +69,7 @@ export default function ApplicationDetailPage() {
   const [deletePolicy, setDeletePolicy] = useState("keep")
   const [selectionDraft, setSelectionDraft] = useState<{ planId: string; resources: Identity[]; fields: FieldExclusion[] } | null>(null)
   const [ignoreReasons, setIgnoreReasons] = useState<Record<string, string>>({})
-  const [approvalId, setApprovalId] = useState("")
+  const [approvalSummary, setApprovalSummary] = useState<PlanApprovalSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [pendingAction, setPendingAction] = useState("")
@@ -113,8 +114,9 @@ export default function ApplicationDetailPage() {
 
   async function loadData() {
     const app = await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`)
-    const [projectList, planList, inventory, operationList, topologyResult, ignoreRuleList, selectorList, kustomizationResult] = await Promise.all([
+    const [projectList, memberList, planList, inventory, operationList, topologyResult, ignoreRuleList, selectorList, kustomizationResult] = await Promise.all([
       api<ListResponse<Project>>("/api/v1/projects"),
+      api<ListResponse<ProjectMember>>(`/api/v1/projects/${encodeURIComponent(app.projectId)}/members`).catch(() => ({ items: [] as ProjectMember[] })),
       api<ListResponse<PlanRecord>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/plans`),
       api<ListResponse<ManagedResource>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/resources`),
       api<ListResponse<Operation>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/operations`),
@@ -130,6 +132,7 @@ export default function ApplicationDetailPage() {
     setKustomization(kustomizationResult.value)
     setKustomizationError(kustomizationResult.error)
     setProject(projectList.items.find((item) => item.id === app.projectId) ?? null)
+    setProjectMembers(memberList.items)
     setPlans(planList.items)
     setActivePlan((current) => current ? planList.items.find((item) => item.id === current.id) ?? planList.items[0] ?? null : planList.items[0] ?? null)
     setResources(inventory.items)
@@ -148,6 +151,22 @@ export default function ApplicationDetailPage() {
   }, [applicationID])
 
   const hasPendingOperation = operations.some((operation) => operation.status === "queued" || operation.status === "running")
+  const activePlanId = activePlan?.id
+  const activePlanRequiresApproval = activePlan?.plan.requiresApproval ?? false
+  useEffect(() => {
+    if (!activePlanId || !activePlanRequiresApproval) {
+      setApprovalSummary(null)
+      return
+    }
+    let active = true
+    const refreshApprovals = () => api<PlanApprovalSummary>(`/api/v1/plans/${encodeURIComponent(activePlanId)}/approvals`)
+      .then((summary) => { if (active) setApprovalSummary(summary) })
+      .catch(() => { if (active) setApprovalSummary(null) })
+    void refreshApprovals()
+    const timer = window.setInterval(() => void refreshApprovals(), 5000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [activePlanId, activePlanRequiresApproval])
+
   useEffect(() => {
     if (!busy && !hasPendingOperation) return
     const timer = window.setInterval(() => {
@@ -168,7 +187,7 @@ export default function ApplicationDetailPage() {
   }, [applicationID, busy, hasPendingOperation])
 
   async function createPlan() {
-    setBusy(true); setPendingAction("create-plan"); setError(null); setApprovalId("")
+    setBusy(true); setPendingAction("create-plan"); setError(null); setApprovalSummary(null)
     try {
       const plan = await apiPost<PlanRecord>(`/api/v1/applications/${encodeURIComponent(applicationID)}/plans`)
       setActivePlan(plan)
@@ -184,7 +203,7 @@ export default function ApplicationDetailPage() {
     setBusy(true); setPendingAction("render-settings"); setError(null)
     try {
       await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}/render-settings`, { method: "PUT", body: JSON.stringify({ kustomizeHelmEnabled: kustomizeHelmDraft, kustomizeNamespaceOverride: namespaceOverrideDraft }) })
-      setApprovalId("")
+      setApprovalSummary(null)
       await loadData()
       toast.success("Render setting saved. Earlier plans are stale; create and review a new plan before syncing.")
     } catch (cause) { toast.error(errorMessage(cause), cause) }
@@ -196,21 +215,21 @@ export default function ApplicationDetailPage() {
     const refreshed = (cause.payload as { plan: PlanRecord }).plan
     setActivePlan(refreshed)
     setPlans((current) => [refreshed, ...current.filter((item) => item.id !== refreshed.id)])
-    setApprovalId("")
+    setApprovalSummary(null)
     toast.error("The plan changed since it was reviewed. A fresh snapshot is shown; review it before continuing.", cause)
     return true
   }
 
   function toggleResourceExclusion(identity: Identity) {
     setSelectionResources((current) => current.some((item) => sameIdentity(item, identity)) ? current.filter((item) => !sameIdentity(item, identity)) : [...current, identity])
-    setApprovalId("")
+    setApprovalSummary(null)
   }
 
   function toggleFieldExclusion(identity: Identity, path: string) {
     setSelectionFields((current) => current.some((item) => sameIdentity(item.identity, identity) && item.path === path)
       ? current.filter((item) => !(sameIdentity(item.identity, identity) && item.path === path))
       : [...current, { identity, path }])
-    setApprovalId("")
+    setApprovalSummary(null)
   }
 
   const selectionDirty = (() => {
@@ -224,7 +243,7 @@ export default function ApplicationDetailPage() {
 
   async function savePlanSelection() {
     if (!activePlan || !selectionDirty) return
-    setBusy(true); setPendingAction("selection"); setError(null); setApprovalId("")
+    setBusy(true); setPendingAction("selection"); setError(null); setApprovalSummary(null)
     try {
       const plan = await apiPost<PlanRecord>(`/api/v1/plans/${encodeURIComponent(activePlan.id)}/selections`, { resources: selectionResources, fields: selectionFields })
       setActivePlan(plan)
@@ -237,7 +256,7 @@ export default function ApplicationDetailPage() {
   function invalidatePlans() {
     setPlans((current) => current.map((record) => record.status === "current" ? { ...record, status: "stale" } : record))
     setActivePlan((current) => current?.status === "current" ? { ...current, status: "stale" } : current)
-    setApprovalId("")
+    setApprovalSummary(null)
   }
 
   async function saveIgnoreRule(identity: Identity, path: string, reason: string) {
@@ -299,7 +318,7 @@ export default function ApplicationDetailPage() {
       setActivePlan(result.plan)
       setPlans((current) => [result.plan!, ...current.filter((item) => item.id !== result.plan!.id)])
       setApplication((current) => current ? { ...current, decommissioning: true } : current)
-      setApprovalId("")
+      setApprovalSummary(null)
       toast.success(`Deletion plan ready for ${result.plan.plan.changes.length} managed resources. Review and approve it before applying.`)
       selectTab("changes")
     }
@@ -330,9 +349,10 @@ export default function ApplicationDetailPage() {
     if (!activePlan || selectionDirty) return
     setBusy(true); setPendingAction("approve-plan"); setError(null)
     try {
-      const approval = await apiPost<{ id: string; expiresAt: string }>(`/api/v1/plans/${encodeURIComponent(activePlan.id)}/approvals`)
-      setApprovalId(approval.id)
-      toast.success(`Owner approval recorded. It expires at ${new Date(approval.expiresAt).toLocaleTimeString()}.`)
+      await apiPost<{ id: string; expiresAt: string }>(`/api/v1/plans/${encodeURIComponent(activePlan.id)}/approvals`)
+      const summary = await api<PlanApprovalSummary>(`/api/v1/plans/${encodeURIComponent(activePlan.id)}/approvals`)
+      setApprovalSummary(summary)
+      toast.success(`Approval recorded: ${summary.approvedApprovals} of ${summary.requiredApprovals} required.`)
     } catch (cause) { if (!acceptRefreshedPlan(cause)) toast.error(errorMessage(cause), cause) } finally { setBusy(false); setPendingAction("") }
   }
 
@@ -340,9 +360,10 @@ export default function ApplicationDetailPage() {
     if (!activePlan || selectionDirty) return
     setBusy(true); setPendingAction("apply-plan"); setError(null)
     try {
-      const result = await apiPost<{ operation: Operation }>(`/api/v1/plans/${encodeURIComponent(activePlan.id)}/apply`, { approvalId })
+      const approvalIds = currentApprovalSummary?.approvals.filter((item) => item.eligible).map((item) => item.id) ?? []
+      const result = await apiPost<{ operation: Operation }>(`/api/v1/plans/${encodeURIComponent(activePlan.id)}/apply`, { approvalIds })
       toast.success(result.operation.message || "Sync queued.")
-      setApprovalId("")
+      setApprovalSummary(null)
       await loadData()
     } catch (cause) {
       if (!acceptRefreshedPlan(cause)) toast.error(errorMessage(cause), cause)
@@ -352,6 +373,18 @@ export default function ApplicationDetailPage() {
   const changeCounts = activePlan?.plan.changes.reduce((acc, item) => ({ ...acc, [item.kind]: acc[item.kind] + 1 }), { create: 0, update: 0, delete: 0 })
   const canDeploy = project?.role === "owner" || project?.role === "deployer"
   const canApprove = project?.role === "owner"
+  const requiredApprovals = activePlan ? activePlan.plan.requiredApprovals ?? (activePlan.plan.requiresApproval ? 1 : 0) : 0
+  const currentApprovalSummary = approvalSummary?.planId === activePlan?.id ? approvalSummary : null
+  const approvedApprovals = currentApprovalSummary?.approvedApprovals ?? 0
+  const approvalsComplete = approvedApprovals >= requiredApprovals
+  const approverRoles = activePlan?.plan.approverRoles ?? []
+  const approverUserIds = activePlan?.plan.approverUserIds ?? []
+  const displayedApproverRoles = approverRoles.length > 0 || approverUserIds.length > 0 || requiredApprovals === 0 ? approverRoles : ["owner"]
+  const displayedApproverMembers = approverUserIds.map((userId) => {
+    const member = projectMembers.find((item) => item.id === userId)
+    return { id: userId, label: member?.displayName || member?.email || `Former member (${userId.slice(0, 8)})` }
+  })
+  const deletionApprovalCount = application?.approvalPolicyOverride?.deletion?.requiredApprovals ?? project?.approvalPolicy.deletion.requiredApprovals ?? 1
   const latestOperation = operations[0]
   const visibleOperation = operations.find((operation) => operation.status === "queued" || operation.status === "running") ?? (latestOperation?.status === "failed" ? latestOperation : null)
   const latestPlan = plans[0]
@@ -401,7 +434,7 @@ export default function ApplicationDetailPage() {
             <Panel title="Delivery state" description="The current Git-to-cluster picture, without opening the full diff.">
               <div className="space-y-5 p-5">
                 <div className="grid grid-cols-3 gap-2"><ChangeCount label="Create" count={latestCounts?.create ?? 0} color="text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/40" /><ChangeCount label="Update" count={latestCounts?.update ?? 0} color="text-blue-700 bg-blue-50 dark:text-blue-300 dark:bg-blue-950/40" /><ChangeCount label="Delete" count={latestCounts?.delete ?? 0} color="text-rose-700 bg-rose-50 dark:text-rose-300 dark:bg-rose-950/40" /></div>
-                {latestPlan?.plan.requiresApproval && <p className="rounded-lg border border-amber-300/70 bg-amber-50/70 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">Owner approval required before this plan can be applied.</p>}
+                {latestPlan?.plan.requiresApproval && <p className="rounded-lg border border-amber-300/70 bg-amber-50/70 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">{latestPlan.plan.requiredApprovals ?? 1} eligible approval{(latestPlan.plan.requiredApprovals ?? 1) === 1 ? "" : "s"} required before this plan can be applied.</p>}
                 <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4"><span className="text-xs text-muted-foreground">{latestPlan ? `Plan ${latestPlan.status} · expires ${new Date(latestPlan.expiresAt).toLocaleTimeString()}` : "Create a plan to compare Git with the cluster."}</span><Button size="sm" variant="outline" onClick={() => selectTab("changes")}>Review plan →</Button></div>
               </div>
             </Panel>
@@ -429,7 +462,7 @@ export default function ApplicationDetailPage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="changes" className="max-w-6xl outline-none">
-          <Panel title={activePlan?.plan.decommission ? "Deletion plan & diff" : "Plan & diff"} description={activePlan?.plan.decommission ? "Every managed resource below will be checked again before it is deleted." : "A reviewed plan is a snapshot of the desired Git commit and live cluster state."} action={plans.length > 0 && <FormSelect ariaLabel="Select plan" value={activePlan?.id ?? ""} onValueChange={(id) => { setApprovalId(""); setActivePlan(plans.find((plan) => plan.id === id) ?? null) }} className="h-8 max-w-[220px] text-xs" items={plans.map((plan) => ({ value: plan.id, label: `${new Date(plan.createdAt).toLocaleString()} · ${plan.plan.decommission ? "deletion · " : ""}${plan.status}` }))} />}>
+          <Panel title={activePlan?.plan.decommission ? "Deletion plan & diff" : "Plan & diff"} description={activePlan?.plan.decommission ? "Every managed resource below will be checked again before it is deleted." : "A reviewed plan is a snapshot of the desired Git commit and live cluster state."} action={plans.length > 0 && <FormSelect ariaLabel="Select plan" value={activePlan?.id ?? ""} onValueChange={(id) => { setApprovalSummary(null); setActivePlan(plans.find((plan) => plan.id === id) ?? null) }} className="h-8 max-w-[220px] text-xs" items={plans.map((plan) => ({ value: plan.id, label: `${new Date(plan.createdAt).toLocaleString()} · ${plan.plan.decommission ? "deletion · " : ""}${plan.status}` }))} />}>
             {!activePlan ? <EmptyState title="No review plan yet" description="Build a plan to render Git manifests and compare them with live, app-owned resources." /> : <div className="p-4 sm:p-5">
               <div className="mb-4 flex flex-wrap items-center gap-2"><StatusBadge status={activePlan.status} /><span className="font-mono text-[10px] text-muted-foreground">{activePlan.plan.revision.slice(0, 12)}</span><span className="text-[10px] text-muted-foreground">· expires {new Date(activePlan.expiresAt).toLocaleTimeString()}</span><span className="ml-auto font-mono text-[9px] text-muted-foreground">{activePlan.plan.digest.slice(0, 16)}</span></div>
               <div className="mb-5 grid grid-cols-3 gap-2"><ChangeCount label="Create" count={changeCounts?.create ?? 0} color="text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/40" /><ChangeCount label="Update" count={changeCounts?.update ?? 0} color="text-blue-700 bg-blue-50 dark:text-blue-300 dark:bg-blue-950/40" /><ChangeCount label="Delete" count={changeCounts?.delete ?? 0} color="text-rose-700 bg-rose-50 dark:text-rose-300 dark:bg-rose-950/40" /></div>
@@ -437,12 +470,12 @@ export default function ApplicationDetailPage() {
               {activePlan.plan.changes.length ? <div className="space-y-3">{activePlan.plan.changes.map((change, index) => <DiffCard key={`${change.identity.apiVersion}/${change.identity.kind}/${change.identity.namespace}/${change.identity.name}/${index}`} change={change} canSelect={canDeploy && !activePlan.plan.decommission} canManageIgnores={canApprove && !activePlan.plan.decommission} excluded={selectionResources.some((identity) => sameIdentity(identity, change.identity))} excludedPaths={selectionFields.filter((field) => sameIdentity(field.identity, change.identity)).map((field) => field.path)} permanentResourceIgnore={ignoreRules.some((rule) => !rule.path && sameIdentity(rule.identity, change.identity))} permanentFieldIgnores={ignoreRules.filter((rule) => Boolean(rule.path) && sameIdentity(rule.identity, change.identity)).map((rule) => rule.path!)} reason={ignoreReasons[diffId(change.identity)] ?? ""} onReasonChange={(reason) => setIgnoreReasons((current) => ({ ...current, [diffId(change.identity)]: reason }))} onToggleResource={() => toggleResourceExclusion(change.identity)} onToggleField={(path) => toggleFieldExclusion(change.identity, path)} onSaveIgnore={(path) => void saveIgnoreRule(change.identity, path, ignoreReasons[diffId(change.identity)] ?? "")} busy={busy} />)}</div> : <div className="rounded-lg border border-dashed px-4 py-8 text-center"><span className="text-emerald-600">✓</span><p className="mt-2 text-sm font-medium">No changes to apply</p><p className="mt-1 text-xs text-muted-foreground">Git and the managed cluster fields are in sync, or every difference is excluded below.</p></div>}
               {(activePlan.plan.ignored?.length ?? 0) > 0 && <section className="mt-6 space-y-3"><div className="flex items-end justify-between gap-3"><div><h3 className="text-sm font-semibold">Excluded from this sync</h3><p className="mt-1 text-xs text-muted-foreground">These differences stay visible and will appear again in a later plan unless covered by a permanent rule.</p></div><span className="text-xs tabular-nums text-muted-foreground">{activePlan.plan.ignored?.length} excluded</span></div>{activePlan.plan.ignored?.map((change, index) => <DiffCard key={`ignored-${change.identity.kind}-${change.identity.namespace}-${change.identity.name}-${index}`} change={change} canSelect={canDeploy} canManageIgnores={canApprove} excluded={selectionResources.some((identity) => sameIdentity(identity, change.identity))} excludedPaths={selectionFields.filter((field) => sameIdentity(field.identity, change.identity)).map((field) => field.path)} permanentResourceIgnore={ignoreRules.some((rule) => !rule.path && sameIdentity(rule.identity, change.identity))} permanentFieldIgnores={ignoreRules.filter((rule) => Boolean(rule.path) && sameIdentity(rule.identity, change.identity)).map((rule) => rule.path!)} reason={ignoreReasons[diffId(change.identity)] ?? ""} onReasonChange={(reason) => setIgnoreReasons((current) => ({ ...current, [diffId(change.identity)]: reason }))} onToggleResource={() => toggleResourceExclusion(change.identity)} onToggleField={(path) => toggleFieldExclusion(change.identity, path)} onSaveIgnore={(path) => void saveIgnoreRule(change.identity, path, ignoreReasons[diffId(change.identity)] ?? "")} busy={busy} ignored />)}</section>}
               {selectionDirty && <div className="mt-5 flex flex-wrap items-center gap-3 rounded-lg border border-primary/20 bg-primary/5 p-3"><p className="min-w-0 flex-1 text-xs text-muted-foreground">Exclusions are drafts until you save. Saving creates a new immutable plan and clears any earlier approval.</p><Button size="sm" variant="outline" onClick={() => { setSelectionResources(activePlan.plan.selection?.resources ?? []); setSelectionFields(activePlan.plan.selection?.fields ?? []) }} disabled={busy}>Reset</Button><Button size="sm" loading={pendingAction === "selection"} loadingText="Recalculating…" onClick={() => void savePlanSelection()} disabled={busy}>Create selected plan</Button></div>}
-              {activePlan.plan.requiresApproval && <div className="mt-5 rounded-lg border border-amber-300/70 bg-amber-50/70 p-3.5 text-xs leading-5 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><strong>Owner approval required.</strong> {changeCounts?.delete ? "Deletion is never automatic. Review the exact targets above; an owner must approve this plan before the sync button is enabled." : "Cluster-scoped changes need explicit owner approval."}</div>}
+              {activePlan.plan.requiresApproval && <div className="mt-5 rounded-lg border border-amber-300/70 bg-amber-50/70 p-3.5 text-xs leading-5 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><strong>{requiredApprovals} distinct approval{requiredApprovals === 1 ? "" : "s"} required.</strong> {activePlan.plan.approvalKind === "deletion" ? "Review the exact resources being removed." : "Review the cluster-scoped or sync changes."} {approvedApprovals} of {requiredApprovals} approved.<p className="mt-2"><strong>Eligible approvers:</strong> {displayedApproverRoles.length ? displayedApproverRoles.map((role) => role[0].toUpperCase() + role.slice(1)).join(", ") : "selected members only"}{displayedApproverMembers.length ? `; ${displayedApproverMembers.map((member) => member.label).join(", ")}` : ""}. {displayedApproverRoles.length ? "Higher project roles also qualify." : "Only the selected members qualify."}</p>{currentApprovalSummary?.approvals.length ? <ul className="mt-2 space-y-1">{currentApprovalSummary.approvals.map((approval) => <li key={approval.id}>{approval.displayName || approval.email}{approval.role ? ` · ${approval.role}` : ""}{approval.eligible ? " · approved" : " · no longer eligible"}</li>)}</ul> : null}</div>}
               <div className="mt-5 flex flex-wrap justify-end gap-2 border-t pt-4">
-                {activePlan.plan.requiresApproval && <ConfirmDisclosure trigger={approvalId ? "Approved ✓" : "Approve reviewed changes"} triggerVariant="outline" title="Approve this exact plan?" description={`${activePlan.plan.changes.filter((change) => change.kind === "delete").length} resource deletions and ${activePlan.plan.changes.filter((change) => change.identity.clusterScoped).length} cluster-scoped changes will be authorized for this short-lived plan only.`} confirmLabel="Approve plan" onConfirm={approvePlan} disabled={busy || selectionDirty || !canApprove || activePlan.status !== "current"}><ul className="max-h-36 space-y-1 overflow-y-auto text-xs text-muted-foreground">{activePlan.plan.changes.filter((change) => change.kind === "delete").map((change) => <li key={diffId(change.identity)}>{change.identity.kind} {change.identity.namespace}/{change.identity.name}</li>)}</ul></ConfirmDisclosure>}
-                <Button loading={pendingAction === "apply-plan"} loadingText="Starting sync…" onClick={() => void applyPlan()} disabled={busy || selectionDirty || !canDeploy || (activePlan.plan.decommission && !canApprove) || activePlan.status !== "current" || activePlan.plan.changes.length === 0 || (activePlan.plan.requiresApproval && !approvalId)}>{activePlan.plan.decommission ? "Delete approved resources" : activePlan.plan.requiresApproval ? "Apply approved plan" : "Sync application"}</Button>
+                {activePlan.plan.requiresApproval && <ConfirmDisclosure trigger={currentApprovalSummary?.currentUserApproved ? "Approval recorded ✓" : approvalsComplete ? "Approvals complete" : "Add approval"} triggerVariant="outline" title="Approve this exact plan?" description={`${requiredApprovals} distinct eligible project members must approve this exact plan before it can be applied.`} confirmLabel="Approve plan" onConfirm={approvePlan} disabled={busy || hasPendingOperation || selectionDirty || !currentApprovalSummary?.canApprove || activePlan.status !== "current"}><ul className="max-h-36 space-y-1 overflow-y-auto text-xs text-muted-foreground">{activePlan.plan.changes.filter((change) => change.kind === "delete").map((change) => <li key={diffId(change.identity)}>{change.identity.kind} {change.identity.namespace}/{change.identity.name}</li>)}</ul></ConfirmDisclosure>}
+                <Button loading={pendingAction === "apply-plan"} loadingText="Starting sync…" onClick={() => void applyPlan()} disabled={busy || hasPendingOperation || selectionDirty || !canDeploy || (activePlan.plan.decommission && !canApprove) || activePlan.status !== "current" || activePlan.plan.changes.length === 0 || (activePlan.plan.requiresApproval && !approvalsComplete)}>{activePlan.plan.decommission ? "Delete approved resources" : activePlan.plan.requiresApproval ? "Apply approved plan" : "Sync application"}</Button>
               </div>
-              {!canApprove && activePlan.plan.requiresApproval && <p className="mt-2 text-right text-[10px] text-muted-foreground">Only a project owner can approve this plan.</p>}
+              {!currentApprovalSummary?.canApprove && activePlan.plan.requiresApproval && !approvalsComplete && <p className="mt-2 text-right text-[10px] text-muted-foreground">Approvals can be added by project members eligible under this plan&apos;s approval rule.</p>}
             </div>}
           </Panel>
         </Tabs.Panel>
@@ -488,7 +521,7 @@ export default function ApplicationDetailPage() {
               {(ignoreSelectors.length > 0 || ignoreRules.length > 0) && <div className="divide-y rounded-lg border">{ignoreSelectors.map((rule) => <div key={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-xs"><span className="min-w-0 flex-1"><strong>{rule.kind ? `${rule.apiVersion} · ${rule.kind}` : "Any kind"}</strong>{rule.labelKey && <span className="ml-2 font-mono text-muted-foreground">{rule.labelKey}={rule.labelValue}</span>}<span className="mt-1 block text-muted-foreground">{rule.reason}</span></span>{canApprove && <ConfirmDisclosure trigger="Remove" title="Remove exclusion?" description="Future plans may manage matching resources again." confirmLabel="Remove exclusion" onConfirm={() => removeIgnoreSelector(rule)} disabled={busy || hasPendingOperation} />}</div>)}{ignoreRules.map((rule) => <div key={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-xs"><span className="min-w-0 flex-1"><strong>{rule.identity.kind} {rule.identity.namespace}/{rule.identity.name}</strong><span className="ml-2 font-mono text-muted-foreground">{rule.path || "whole resource"}</span><span className="mt-1 block text-muted-foreground">{rule.reason}</span></span>{canApprove && <ConfirmDisclosure trigger="Remove" title="Remove ignore rule?" description="Future plans may manage this resource again." confirmLabel="Remove rule" onConfirm={async () => { await removeIgnoreRule(rule) }} disabled={busy || hasPendingOperation} />}</div>)}</div>}
             </div>
           </Panel>
-          {canApprove && <Panel title="Delete application" description="Choose whether JustCD keeps or removes the resources it manages."><div className="flex flex-wrap items-center justify-between gap-3 p-5"><p className="text-xs text-muted-foreground">{`${resources.length} managed resource${resources.length === 1 ? "" : "s"} currently recorded.`} Keeping them removes ownership tracking from JustCD.</p><ConfirmDisclosure trigger="Delete application" title={`Delete ${application.name}?`} description="Removing this application from JustCD cannot be undone. Choose what happens to its managed Kubernetes resources." confirmLabel="Delete application" onConfirm={deleteApplication} disabled={busy || hasPendingOperation}><FormField label="Managed cluster resources" htmlFor="application-delete-policy"><FormSelect id="application-delete-policy" value={deletePolicy} onValueChange={setDeletePolicy} items={[{ value: "keep", label: "Keep resources in Kubernetes" }, { value: "delete", label: "Delete resources through a reviewed plan" }]} /></FormField>{deletePolicy === "delete" && resources.length > 0 && <p className="mt-2 text-xs text-muted-foreground">A deletion plan and owner approval are required before this application can be removed.</p>}</ConfirmDisclosure></div></Panel>}
+          {canApprove && <Panel title="Delete application" description="Choose whether JustCD keeps or removes the resources it manages."><div className="flex flex-wrap items-center justify-between gap-3 p-5"><p className="text-xs text-muted-foreground">{`${resources.length} managed resource${resources.length === 1 ? "" : "s"} currently recorded.`} Keeping them removes ownership tracking from JustCD.</p><ConfirmDisclosure trigger="Delete application" title={`Delete ${application.name}?`} description="Removing this application from JustCD cannot be undone. Choose what happens to its managed Kubernetes resources." confirmLabel="Delete application" onConfirm={deleteApplication} disabled={busy || hasPendingOperation}><FormField label="Managed cluster resources" htmlFor="application-delete-policy"><FormSelect id="application-delete-policy" value={deletePolicy} onValueChange={setDeletePolicy} items={[{ value: "keep", label: "Keep resources in Kubernetes" }, { value: "delete", label: "Delete resources through a reviewed plan" }]} /></FormField>{deletePolicy === "delete" && resources.length > 0 && <p className="mt-2 text-xs text-muted-foreground">A deletion plan must receive {deletionApprovalCount} approval{deletionApprovalCount === 1 ? "" : "s"} from eligible project members before the resources can be removed.</p>}</ConfirmDisclosure></div></Panel>}
         </Tabs.Panel>
       </Tabs.Root>
     </>}

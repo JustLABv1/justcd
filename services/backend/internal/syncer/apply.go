@@ -22,6 +22,14 @@ type StalePlanError struct{ Fresh store.PlanRecord }
 func (e *StalePlanError) Error() string { return "plan changed and requires a new review" }
 
 func (s *Service) Apply(ctx context.Context, planID, actorID, approvalID string) (store.Operation, error) {
+	var approvalIDs []string
+	if approvalID != "" {
+		approvalIDs = []string{approvalID}
+	}
+	return s.ApplyWithApprovals(ctx, planID, actorID, approvalIDs)
+}
+
+func (s *Service) ApplyWithApprovals(ctx context.Context, planID, actorID string, approvalIDs []string) (store.Operation, error) {
 	record, err := s.Store.PlanByID(ctx, planID)
 	if err != nil {
 		return store.Operation{}, err
@@ -41,27 +49,45 @@ func (s *Service) Apply(ctx context.Context, planID, actorID, approvalID string)
 		}
 		return store.Operation{}, &StalePlanError{Fresh: newRecord}
 	}
-	var approval *core.DeletionApproval
-	if record.Plan.RequiresApproval {
-		if approvalID == "" {
-			return store.Operation{}, errors.New("plan requires an owner approval")
+	required := core.RequiredApprovalCount(record.Plan)
+	if required > 0 {
+		if len(approvalIDs) < required {
+			return store.Operation{}, fmt.Errorf("plan requires %d eligible approval(s)", required)
 		}
-		stored, err := s.Store.ApprovalByID(ctx, approvalID)
-		if err != nil || stored.UsedAt != nil {
-			return store.Operation{}, errors.New("approval is expired, already used, or unavailable")
+		approvals := make([]core.DeletionApproval, 0, len(approvalIDs))
+		seenIDs := make(map[string]bool, len(approvalIDs))
+		seenActors := make(map[string]bool, len(approvalIDs))
+		for _, approvalID := range approvalIDs {
+			if approvalID == "" || seenIDs[approvalID] {
+				return store.Operation{}, errors.New("approval IDs must be unique and non-empty")
+			}
+			seenIDs[approvalID] = true
+			stored, err := s.Store.ApprovalByID(ctx, approvalID)
+			if err != nil || stored.UsedAt != nil || stored.PlanID != record.ID {
+				return store.Operation{}, errors.New("approval is expired, already used, or unavailable")
+			}
+			if seenActors[stored.Approval.ActorID] {
+				return store.Operation{}, errors.New("approvals must come from distinct project members")
+			}
+			seenActors[stored.Approval.ActorID] = true
+			approver, err := s.Store.UserByID(ctx, stored.Approval.ActorID)
+			role := ""
+			if err == nil {
+				role, err = s.Store.ProjectRole(ctx, approver, app.ProjectID)
+			}
+			if err != nil || role == "" || !core.ApprovalRoleAllows(record.Plan, role, stored.Approval.ActorID) {
+				return store.Operation{}, errors.New("approver is no longer eligible for this plan")
+			}
+			approvals = append(approvals, stored.Approval)
 		}
-		if stored.PlanID != record.ID {
-			return store.Operation{}, errors.New("approval is for a different plan")
-		}
-		approval = &stored.Approval
-		if err := core.AuthorizeApply(record.Plan, approval, time.Now()); err != nil {
+		if err := core.AuthorizeApplyMany(record.Plan, approvals, time.Now()); err != nil {
 			return store.Operation{}, err
 		}
-	} else if approvalID != "" {
+	} else if len(approvalIDs) > 0 {
 		return store.Operation{}, errors.New("this plan does not require an approval")
 	}
 	progress := store.OperationProgress{Phase: "queued", Total: len(record.Plan.Changes), Completed: []core.Identity{}}
-	return s.Store.QueueOperation(ctx, app.ID, record.ID, actorID, approvalID, record.Plan.Digest, 90*time.Second, progress)
+	return s.Store.QueueOperation(ctx, app.ID, record.ID, actorID, approvalIDs, record.Plan.Digest, 90*time.Second, progress)
 }
 
 func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Operation) (store.Operation, error) {
@@ -107,20 +133,36 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 			return finishFailure(errors.New("decommission requires a project owner"), "failed")
 		}
 	}
-	if record.Plan.RequiresApproval {
-		stored, err := s.Store.ApprovalByID(ctx, operation.ApprovalID)
-		if err != nil || stored.PlanID != record.ID || stored.UsedAt == nil {
-			return finishFailure(errors.New("queued approval is unavailable"), "failed")
+	if required := core.RequiredApprovalCount(record.Plan); required > 0 {
+		approvalIDs := operation.ApprovalIDs
+		if len(approvalIDs) == 0 && operation.ApprovalID != "" {
+			approvalIDs = []string{operation.ApprovalID}
 		}
-		approver, err := s.Store.UserByID(ctx, stored.Approval.ActorID)
-		role := ""
-		if err == nil {
-			role, err = s.Store.ProjectRole(ctx, approver, app.ProjectID)
+		if len(approvalIDs) < required {
+			return finishFailure(fmt.Errorf("queued operation has %d of %d required approvals", len(approvalIDs), required), "failed")
 		}
-		if err != nil || role != "owner" {
-			return finishFailure(errors.New("approval is invalid because its owner is no longer a project owner"), "failed")
+		approvals := make([]core.DeletionApproval, 0, len(approvalIDs))
+		seenActors := make(map[string]bool, len(approvalIDs))
+		for _, approvalID := range approvalIDs {
+			stored, err := s.Store.ApprovalByID(ctx, approvalID)
+			if err != nil || stored.PlanID != record.ID || stored.UsedAt == nil {
+				return finishFailure(errors.New("queued approval is unavailable"), "failed")
+			}
+			if seenActors[stored.Approval.ActorID] {
+				return finishFailure(errors.New("queued approvals are not from distinct project members"), "failed")
+			}
+			seenActors[stored.Approval.ActorID] = true
+			approver, err := s.Store.UserByID(ctx, stored.Approval.ActorID)
+			role := ""
+			if err == nil {
+				role, err = s.Store.ProjectRole(ctx, approver, app.ProjectID)
+			}
+			if err != nil || role == "" || !core.ApprovalRoleAllows(record.Plan, role, stored.Approval.ActorID) {
+				return finishFailure(errors.New("approver is no longer eligible for this plan"), "failed")
+			}
+			approvals = append(approvals, stored.Approval)
 		}
-		if err := core.AuthorizeApply(record.Plan, &stored.Approval, time.Now()); err != nil {
+		if err := core.AuthorizeApplyMany(record.Plan, approvals, time.Now()); err != nil {
 			return finishFailure(err, "failed")
 		}
 	}

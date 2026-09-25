@@ -11,8 +11,27 @@ export type Project = {
   name: string
   description: string
   role: "owner" | "deployer" | "viewer"
+  approvalPolicy: ApprovalPolicy
   createdAt: string
 }
+
+export type ApprovalRule = {
+  requiredApprovals: number
+  approverRoles: string[]
+  approverUserIds: string[]
+}
+
+export type ApprovalPolicy = {
+  sync: ApprovalRule
+  deletion: ApprovalRule
+}
+
+export type ApprovalPolicyOverride = {
+  sync?: ApprovalRule
+  deletion?: ApprovalRule
+}
+
+export type ProjectMember = { id: string; email: string; displayName: string; role: string }
 
 export type Credential = {
   id: string
@@ -63,6 +82,7 @@ export type Application = {
   lastSyncedRevision?: string
   health: string
   decommissioning: boolean
+  approvalPolicyOverride?: ApprovalPolicyOverride
   createdAt: string
 }
 
@@ -122,7 +142,34 @@ export type Plan = {
   selection?: PlanSelection
   ignoreRulesDigest?: string
   requiresApproval: boolean
+  approvalKind?: "sync" | "deletion" | string
+  requiredApprovals?: number
+  approverRoles?: string[]
+  approverUserIds?: string[]
   digest: string
+}
+
+export type PlanApproval = {
+  id: string
+  actorId: string
+  displayName: string
+  email: string
+  role?: string
+  eligible: boolean
+  expiresAt: string
+}
+
+export type PlanApprovalSummary = {
+  planId: string
+  planDigest: string
+  approvalKind: string
+  requiredApprovals: number
+  approvedApprovals: number
+  approverRoles: string[]
+  approverUserIds: string[]
+  currentUserApproved: boolean
+  canApprove: boolean
+  approvals: PlanApproval[]
 }
 
 export type PlanRecord = {

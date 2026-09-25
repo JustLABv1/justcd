@@ -120,7 +120,11 @@ func (s *Service) CalculateDecommissionPlan(ctx context.Context, app store.Appli
 		return core.Plan{}, err
 	}
 	plan.Decommission = true
-	plan.RequiresApproval = len(plan.Changes) > 0
+	policy, err := s.Store.EffectiveApprovalPolicy(ctx, app)
+	if err != nil {
+		return core.Plan{}, err
+	}
+	setApprovalRule(&plan, "deletion", policy.Deletion)
 	if err := core.RefreshDigest(&plan); err != nil {
 		return core.Plan{}, err
 	}
@@ -325,17 +329,44 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 			}
 		}
 	}
-	plan.RequiresApproval = false
+	policy, err := s.Store.EffectiveApprovalPolicy(ctx, app)
+	if err != nil {
+		return core.Plan{}, nil, err
+	}
+	kind := "sync"
+	rule := policy.Sync
+	hasDeletes, hasClusterScoped := false, false
 	for _, change := range plan.Changes {
-		if change.Kind == core.Delete || change.Identity.ClusterScoped {
-			plan.RequiresApproval = true
-			break
+		if change.Kind == core.Delete {
+			hasDeletes = true
+		}
+		if change.Identity.ClusterScoped {
+			hasClusterScoped = true
 		}
 	}
+	if hasDeletes {
+		kind, rule = "deletion", policy.Deletion
+	} else if hasClusterScoped && rule.RequiredApprovals == 0 {
+		// Cluster-scoped changes keep the existing explicit owner approval
+		// safeguard even when ordinary sync approvals are disabled.
+		rule = store.ApprovalRule{RequiredApprovals: 1, ApproverRoles: []string{"owner"}, ApproverUserIDs: []string{}}
+	}
+	setApprovalRule(&plan, kind, rule)
 	if err := core.RefreshDigest(&plan); err != nil {
 		return core.Plan{}, nil, err
 	}
 	return plan, desired, nil
+}
+
+func setApprovalRule(plan *core.Plan, kind string, rule store.ApprovalRule) {
+	plan.ApprovalKind = kind
+	plan.RequiredApprovals = 0
+	plan.ApproverRoles = append([]string{}, rule.ApproverRoles...)
+	plan.ApproverUserIDs = append([]string{}, rule.ApproverUserIDs...)
+	if len(plan.Changes) > 0 {
+		plan.RequiredApprovals = rule.RequiredApprovals
+	}
+	plan.RequiresApproval = plan.RequiredApprovals > 0
 }
 
 func normalizeSelection(selection core.PlanSelection) core.PlanSelection {

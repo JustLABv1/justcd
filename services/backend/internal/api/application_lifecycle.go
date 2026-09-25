@@ -37,7 +37,13 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "project.updated", "project", id, map[string]string{"name": input.Name})
-	writeJSON(w, http.StatusOK, store.Project{ID: id, Name: input.Name, Description: input.Description, Role: "owner"})
+	project, err := s.Store.ProjectByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "project updated but could not reload it")
+		return
+	}
+	project.Role = "owner"
+	writeJSON(w, http.StatusOK, project)
 }
 
 func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {

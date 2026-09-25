@@ -68,6 +68,7 @@ func (s *Server) routes() {
 	s.Mux.Handle("GET /api/v1/projects", s.requireAuth(http.HandlerFunc(s.listProjects)))
 	s.Mux.Handle("POST /api/v1/projects", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createProject))))
 	s.Mux.Handle("PUT /api/v1/projects/{projectID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateProject))))
+	s.Mux.Handle("PUT /api/v1/projects/{projectID}/approval-policy", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateProjectApprovalPolicy))))
 	s.Mux.Handle("DELETE /api/v1/projects/{projectID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.deleteProject))))
 	s.Mux.Handle("GET /api/v1/projects/{projectID}/members", s.requireAuth(http.HandlerFunc(s.listProjectMembers)))
 	s.Mux.Handle("POST /api/v1/projects/{projectID}/members", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.setProjectMember))))
@@ -92,6 +93,7 @@ func (s *Server) routes() {
 	s.Mux.Handle("POST /api/v1/applications", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createApplication))))
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}", s.requireAuth(http.HandlerFunc(s.getApplication)))
 	s.Mux.Handle("PUT /api/v1/applications/{applicationID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateApplication))))
+	s.Mux.Handle("PUT /api/v1/applications/{applicationID}/approval-policy", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateApplicationApprovalPolicy))))
 	s.Mux.Handle("DELETE /api/v1/applications/{applicationID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.deleteApplication))))
 	s.Mux.Handle("POST /api/v1/applications/{applicationID}/cancel-decommission", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.cancelApplicationDecommission))))
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}/kustomization", s.requireAuth(http.HandlerFunc(s.getApplicationKustomization)))
@@ -109,6 +111,7 @@ func (s *Server) routes() {
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}/operations", s.requireAuth(http.HandlerFunc(s.listApplicationOperations)))
 	s.Mux.Handle("GET /api/v1/plans/{planID}", s.requireAuth(http.HandlerFunc(s.getPlan)))
 	s.Mux.Handle("POST /api/v1/plans/{planID}/approvals", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.approvePlan))))
+	s.Mux.Handle("GET /api/v1/plans/{planID}/approvals", s.requireAuth(http.HandlerFunc(s.listPlanApprovals)))
 	s.Mux.Handle("POST /api/v1/plans/{planID}/selections", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createPlanSelection))))
 	s.Mux.Handle("POST /api/v1/plans/{planID}/apply", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.applyPlan))))
 	s.Mux.Handle("GET /api/v1/audit", s.requireAuth(http.HandlerFunc(s.listAudit)))
@@ -262,7 +265,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "project name is required and must be at most 100 characters")
 		return
 	}
-	project := store.Project{ID: store.NewID(), Name: input.Name, Description: strings.TrimSpace(input.Description)}
+	project := store.Project{ID: store.NewID(), Name: input.Name, Description: strings.TrimSpace(input.Description), ApprovalPolicy: store.DefaultApprovalPolicy()}
 	user := currentUser(r)
 	if err := s.Store.CreateProject(r.Context(), project, user.ID); err != nil {
 		writeError(w, http.StatusConflict, "could not create project")

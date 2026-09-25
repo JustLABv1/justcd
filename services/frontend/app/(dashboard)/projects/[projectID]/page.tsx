@@ -10,11 +10,12 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
 import { ApplicationCollection } from "@/components/application-collection"
+import { ApprovalRuleEditor } from "@/components/approval-rule-editor"
 import { ActionLink, CollectionSkeleton, ErrorNotice } from "@/components/workspace-ui"
 import { FormField, PageHeading, Panel } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
 import { api, apiPost, errorMessage } from "@/lib/api"
-import type { Application, ListResponse, Project } from "@/lib/types"
+import type { ApprovalPolicy, Application, ListResponse, Project, ProjectMember } from "@/lib/types"
 
 export default function ProjectDetailPage() {
   const { projectID } = useParams<{ projectID: string }>()
@@ -22,7 +23,11 @@ export default function ProjectDetailPage() {
   const toast = useToast()
   const [project, setProject] = useState<Project | null>(null)
   const [applications, setApplications] = useState<Application[]>([])
-  const [members, setMembers] = useState<{ id: string; email: string; displayName: string; role: string }[]>([])
+  const [members, setMembers] = useState<ProjectMember[]>([])
+  const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy>({
+    sync: { requiredApprovals: 0, approverRoles: ["owner"], approverUserIds: [] },
+    deletion: { requiredApprovals: 1, approverRoles: ["owner"], approverUserIds: [] },
+  })
   const [error, setError] = useState<unknown | null>(null)
   const [loading, setLoading] = useState(true)
   const [memberEmail, setMemberEmail] = useState("")
@@ -31,6 +36,7 @@ export default function ProjectDetailPage() {
   const [editName, setEditName] = useState("")
   const [editDescription, setEditDescription] = useState("")
   const [projectBusy, setProjectBusy] = useState(false)
+  const [approvalPolicyBusy, setApprovalPolicyBusy] = useState(false)
   const [deletePolicy, setDeletePolicy] = useState("keep")
   const [deletionPlans, setDeletionPlans] = useState<{ applicationId: string; applicationName: string; managedResources: number }[]>([])
   const [activeTab, setActiveTab] = useState("applications")
@@ -60,11 +66,12 @@ export default function ProjectDetailPage() {
         const [projects, apps, projectMembers] = await Promise.all([
           api<ListResponse<Project>>("/api/v1/projects"),
           api<ListResponse<Application>>(`/api/v1/applications?projectId=${encodeURIComponent(projectID)}`),
-          api<ListResponse<{ id: string; email: string; displayName: string; role: string }>>(`/api/v1/projects/${encodeURIComponent(projectID)}/members`),
+          api<ListResponse<ProjectMember>>(`/api/v1/projects/${encodeURIComponent(projectID)}/members`),
         ])
         if (!active) return
         const selected = projects.items.find((item) => item.id === projectID) ?? null
         setProject(selected)
+        if (selected) setApprovalPolicy(selected.approvalPolicy)
         setEditName(selected?.name ?? "")
         setEditDescription(selected?.description ?? "")
         setApplications(apps.items)
@@ -96,6 +103,17 @@ export default function ProjectDetailPage() {
       toast.success("Project settings saved.")
     } catch (cause) { toast.error(errorMessage(cause), cause) }
     finally { setProjectBusy(false) }
+  }
+
+  async function saveApprovalPolicy(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setApprovalPolicyBusy(true)
+    try {
+      const result = await api<{ approvalPolicy: ApprovalPolicy }>(`/api/v1/projects/${encodeURIComponent(projectID)}/approval-policy`, { method: "PUT", body: JSON.stringify(approvalPolicy) })
+      setApprovalPolicy(result.approvalPolicy)
+      setProject((current) => current ? { ...current, approvalPolicy: result.approvalPolicy } : current)
+      toast.success("Project approval rules saved. Existing plans are stale.")
+    } catch (cause) { toast.error(errorMessage(cause), cause) }
+    finally { setApprovalPolicyBusy(false) }
   }
 
   async function deleteProject() {
@@ -142,6 +160,13 @@ export default function ProjectDetailPage() {
       </Tabs.Panel>}
       {project?.role === "owner" && <Tabs.Panel value="settings" className="max-w-3xl space-y-5 outline-none">
         <Panel title="Project settings" description="Change the project name or remove this delivery scope."><div className="space-y-5 p-5"><form className="space-y-3" onSubmit={saveProject}><FormField label="Project name" htmlFor="edit-project-name"><Input id="edit-project-name" value={editName} onChange={(event) => setEditName(event.target.value)} required maxLength={100} /></FormField><FormField label="Description" htmlFor="edit-project-description"><Textarea id="edit-project-description" value={editDescription} onChange={(event) => setEditDescription(event.target.value)} maxLength={500} /></FormField><Button size="sm" type="submit" loading={projectBusy} loadingText="Saving project…">Save project</Button></form><div className="border-t pt-4"><p className="mb-3 text-xs text-muted-foreground">Deleting this project removes its applications and project-scoped connections from JustCD.</p><ConfirmDisclosure trigger="Delete project" title={`Delete ${project.name}?`} description="Choose what happens to resources managed by applications in this project. This cannot be undone in JustCD." confirmLabel="Continue" onConfirm={deleteProject}><FormField label="Managed cluster resources" htmlFor="project-delete-policy"><FormSelect id="project-delete-policy" value={deletePolicy} onValueChange={setDeletePolicy} items={[{ value: "keep", label: "Keep resources in Kubernetes" }, { value: "delete", label: "Delete resources through reviewed plans" }]} /></FormField>{deletePolicy === "delete" && <p className="mt-2 text-xs text-muted-foreground">JustCD prepares deletion plans for each application with managed resources. The project is removed only after all plans have been approved, applied, and the inventory is empty.</p>}</ConfirmDisclosure></div></div></Panel>
+        <Panel title="Approval rules" description="Set project defaults for syncs and application deletion. Application settings can override either rule.">
+          <form className="space-y-4 p-5" onSubmit={saveApprovalPolicy}>
+            <ApprovalRuleEditor id="project-sync-approvals" title="Sync approvals" rule={approvalPolicy.sync} members={members} disabled={approvalPolicyBusy} onChange={(sync) => setApprovalPolicy((current) => ({ ...current, sync }))} />
+            <ApprovalRuleEditor id="project-deletion-approvals" title="Application deletion approvals" rule={approvalPolicy.deletion} members={members} deletion disabled={approvalPolicyBusy} onChange={(deletion) => setApprovalPolicy((current) => ({ ...current, deletion }))} />
+            <div className="flex justify-end"><Button size="sm" type="submit" loading={approvalPolicyBusy} loadingText="Saving rules…">Save approval rules</Button></div>
+          </form>
+        </Panel>
         <div className="rounded-xl border bg-card p-5"><p className="text-xs font-semibold">Scoped by design</p><p className="mt-2 text-xs leading-5 text-muted-foreground">Git credentials, cluster targets, and namespace bindings are attached to this project. Applications cannot deploy outside those namespace bindings.</p><button type="button" onClick={() => selectTab("connections")} className="mt-3 text-xs font-medium text-primary hover:underline">Review project connections →</button></div>
       </Tabs.Panel>}
     </Tabs.Root>

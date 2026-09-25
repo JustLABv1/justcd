@@ -5,13 +5,14 @@ import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { ApprovalRuleEditor } from "@/components/approval-rule-editor"
 import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
 import { FormField, PageHeading, Panel } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
 import { api, errorMessage } from "@/lib/api"
-import type { Application, Cluster, GitSource, ListResponse, NamespaceBinding, Project } from "@/lib/types"
+import type { Application, ApprovalPolicyOverride, Cluster, GitSource, ListResponse, NamespaceBinding, Project, ProjectMember } from "@/lib/types"
 
 export default function EditApplicationPage() {
   const { applicationID } = useParams<{ applicationID: string }>()
@@ -22,8 +23,11 @@ export default function EditApplicationPage() {
   const [sources, setSources] = useState<GitSource[]>([])
   const [clusters, setClusters] = useState<Cluster[]>([])
   const [bindings, setBindings] = useState<NamespaceBinding[]>([])
+  const [members, setMembers] = useState<ProjectMember[]>([])
   const [namespaces, setNamespaces] = useState<string[]>([])
+  const [approvalPolicyOverride, setApprovalPolicyOverride] = useState<ApprovalPolicyOverride>({})
   const [busy, setBusy] = useState(false)
+  const [approvalBusy, setApprovalBusy] = useState(false)
   const [error, setError] = useState<unknown | null>(null)
 
   useEffect(() => {
@@ -31,7 +35,7 @@ export default function EditApplicationPage() {
     Promise.all([api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`), api<ListResponse<Project>>( "/api/v1/projects"), api<ListResponse<Cluster>>( "/api/v1/clusters")])
       .then(([application, projects, clusterList]) => {
         if (!active) return
-        setApp(application); setNamespaces(application.namespaces.map((item) => item.namespace))
+        setApp(application); setNamespaces(application.namespaces.map((item) => item.namespace)); setApprovalPolicyOverride(application.approvalPolicyOverride ?? {})
         setProject(projects.items.find((item) => item.id === application.projectId) ?? null)
         setClusters(clusterList.items)
       }).catch((cause) => active && setError(cause))
@@ -46,7 +50,8 @@ export default function EditApplicationPage() {
     Promise.all([
       api<ListResponse<GitSource>>(`/api/v1/git-sources?projectId=${encodeURIComponent(projectId)}`),
       api<ListResponse<NamespaceBinding>>(`/api/v1/clusters/${encodeURIComponent(clusterId)}/bindings?projectId=${encodeURIComponent(projectId)}`),
-    ]).then(([sourceList, bindingList]) => { if (active) { setSources(sourceList.items); setBindings(bindingList.items) } }).catch((cause) => active && setError(cause))
+      api<ListResponse<ProjectMember>>(`/api/v1/projects/${encodeURIComponent(projectId)}/members`),
+    ]).then(([sourceList, bindingList, memberList]) => { if (active) { setSources(sourceList.items); setBindings(bindingList.items); setMembers(memberList.items) } }).catch((cause) => active && setError(cause))
     return () => { active = false }
   }, [projectId, clusterId])
 
@@ -67,6 +72,31 @@ export default function EditApplicationPage() {
     finally { setBusy(false) }
   }
 
+  async function saveApprovalOverrides() {
+    setApprovalBusy(true); setError(null)
+    try {
+      const override = Object.values(approvalPolicyOverride).some(Boolean) ? approvalPolicyOverride : null
+      const result = await api<{ approvalPolicyOverride: ApprovalPolicyOverride | null }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/approval-policy`, { method: "PUT", body: JSON.stringify({ override }) })
+      setApprovalPolicyOverride(result.approvalPolicyOverride ?? {})
+      setApp((current) => current ? { ...current, approvalPolicyOverride: result.approvalPolicyOverride ?? undefined } : current)
+      toast.success("Application approval rules saved. Existing plans are stale.")
+    } catch (cause) { toast.error(errorMessage(cause), cause) }
+    finally { setApprovalBusy(false) }
+  }
+
+  function toggleOverride(kind: "sync" | "deletion", enabled: boolean) {
+    setApprovalPolicyOverride((current) => {
+      const next = { ...current }
+      if (enabled) {
+        const inherited = project?.approvalPolicy[kind]
+        if (inherited) next[kind] ??= { ...inherited, approverRoles: [...inherited.approverRoles], approverUserIds: [...inherited.approverUserIds] }
+      } else {
+        delete next[kind]
+      }
+      return next
+    })
+  }
+
   return <>
     <PageHeading title={app ? `Edit ${app.name}` : "Edit application"} description="Changes invalidate existing plans. Review a fresh plan before the next sync." />
     {error && <ErrorNotice error={error} />}
@@ -84,6 +114,19 @@ export default function EditApplicationPage() {
         <div><p className="mb-2 text-xs font-medium">Namespaces</p><div className="grid gap-2 sm:grid-cols-2">{bindings.map((binding) => <label key={binding.namespace} className="flex items-center gap-2 rounded-lg border p-3 text-xs"><Checkbox checked={namespaces.includes(binding.namespace)} onCheckedChange={(checked) => setNamespaces((current) => checked ? [...current, binding.namespace] : current.filter((item) => item !== binding.namespace))} />{binding.namespace}</label>)}</div></div>
       </div></Panel>
       <Panel title="Reconciliation"><div className="grid gap-4 p-5 sm:grid-cols-2"><FormField label="Sync policy" htmlFor="edit-app-policy"><FormSelect id="edit-app-policy" value={app.syncPolicy} onValueChange={(value) => setApp({ ...app, syncPolicy: value as Application["syncPolicy"] })} items={[{ value: "manual", label: "Manual" }, { value: "auto-safe", label: "Auto-safe" }]} /></FormField><FormField label="Poll interval (seconds)" htmlFor="edit-app-poll"><Input id="edit-app-poll" type="number" min={30} max={86400} value={app.pollSeconds} onChange={(event) => setApp({ ...app, pollSeconds: Number(event.target.value) })} /></FormField></div></Panel>
+      <Panel title="Approval rules" description="Each rule inherits the project default until you turn on an application override.">
+        <div className="space-y-4 p-5">
+          <div className="space-y-3">
+            <label className="flex items-center gap-2 text-xs font-medium"><Checkbox checked={Boolean(approvalPolicyOverride.sync)} disabled={approvalBusy} onCheckedChange={(checked) => toggleOverride("sync", Boolean(checked))} />Override project sync rule</label>
+            {approvalPolicyOverride.sync && project && <ApprovalRuleEditor id="application-sync-approvals" title="Application sync approvals" rule={approvalPolicyOverride.sync} members={members} disabled={approvalBusy} onChange={(sync) => setApprovalPolicyOverride((current) => ({ ...current, sync }))} />}
+          </div>
+          <div className="space-y-3 border-t pt-4">
+            <label className="flex items-center gap-2 text-xs font-medium"><Checkbox checked={Boolean(approvalPolicyOverride.deletion)} disabled={approvalBusy} onCheckedChange={(checked) => toggleOverride("deletion", Boolean(checked))} />Override project deletion rule</label>
+            {approvalPolicyOverride.deletion && project && <ApprovalRuleEditor id="application-deletion-approvals" title="Application deletion approvals" rule={approvalPolicyOverride.deletion} members={members} deletion disabled={approvalBusy} onChange={(deletion) => setApprovalPolicyOverride((current) => ({ ...current, deletion }))} />}
+          </div>
+          <div className="flex justify-end"><Button type="button" size="sm" variant="outline" loading={approvalBusy} loadingText="Saving rules…" onClick={() => void saveApprovalOverrides()}>Save approval overrides</Button></div>
+        </div>
+      </Panel>
       <div className="flex justify-end gap-2"><Link href={`/applications/${applicationID}`}><Button type="button" variant="outline">Cancel</Button></Link><Button type="submit" loading={busy} loadingText="Saving application…" disabled={namespaces.length === 0}>Save application</Button></div>
     </form>}
   </>

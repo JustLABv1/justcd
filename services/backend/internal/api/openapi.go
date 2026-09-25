@@ -79,6 +79,12 @@ paths:
       summary: Add a member or update a project role (owner only)
       responses:
         '200': { description: Membership updated }
+  /projects/{projectID}/approval-policy:
+    put:
+      summary: Set project sync and application deletion approval rules (owner only)
+      responses:
+        '200': { description: Saved project approval rules }
+        '400': { description: Invalid approval count or approver selection }
   /credentials:
     get:
       summary: List credential metadata for a project
@@ -158,6 +164,12 @@ paths:
           schema: { type: string }
       responses:
         '200': { description: Application }
+  /applications/{applicationID}/approval-policy:
+    put:
+      summary: Set or clear independent approval rule overrides (owner only)
+      responses:
+        '200': { description: Saved application approval overrides }
+        '400': { description: Invalid approval count or approver selection }
   /applications/{applicationID}/plans:
     get:
       summary: List recent plans and their sanitized diffs
@@ -210,14 +222,18 @@ paths:
       responses:
         '200': { description: Review plan }
   /plans/{planID}/approvals:
-    post:
-      summary: Approve the exact deletion or cluster-scope set (project owner only)
+    get:
+      summary: List active approvals and the current user's eligibility for this plan
       responses:
-        '201': { description: Single-use approval }
-        '409': { description: Plan is stale or does not need owner approval }
+        '200': { description: Approval rule, count, and current approvals }
+    post:
+      summary: Approve the exact plan as an eligible project member
+      responses:
+        '201': { description: Single-use plan approval }
+        '409': { description: Plan is stale or has enough approvals }
   /plans/{planID}/apply:
     post:
-      summary: Recheck plan freshness and enqueue approved changes for background sync
+      summary: Recheck plan freshness and enqueue changes after required approvals
       responses:
         '202': { description: Sync operation queued with durable progress tracking }
         '409': { description: Plan or live state changed after review }

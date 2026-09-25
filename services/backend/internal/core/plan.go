@@ -128,6 +128,10 @@ type Plan struct {
 	Selection         PlanSelection `json:"selection,omitempty"`
 	IgnoreRulesDigest string        `json:"ignoreRulesDigest,omitempty"`
 	RequiresApproval  bool          `json:"requiresApproval"`
+	ApprovalKind      string        `json:"approvalKind,omitempty"`
+	RequiredApprovals int           `json:"requiredApprovals,omitempty"`
+	ApproverRoles     []string      `json:"approverRoles,omitempty"`
+	ApproverUserIDs   []string      `json:"approverUserIds,omitempty"`
 	Digest            string        `json:"digest"`
 }
 
@@ -275,10 +279,62 @@ type DeletionApproval struct {
 	ExpiresAt  time.Time `json:"expiresAt"`
 }
 
-// AuthorizeApply rejects any deletion unless the exact plan's deletion set was
-// approved. The executor must also verify plan freshness, ownership and UID
-// against Kubernetes immediately before mutating a resource.
+// AuthorizeApply preserves the single-approval entry point for callers that
+// have not migrated to policy-based approval lists. The executor must also
+// verify plan freshness, membership and resource UID before mutating anything.
 func AuthorizeApply(plan Plan, approval *DeletionApproval, now time.Time) error {
+	if approval == nil {
+		return AuthorizeApplyMany(plan, nil, now)
+	}
+	return AuthorizeApplyMany(plan, []DeletionApproval{*approval}, now)
+}
+
+// RequiredApprovalCount preserves the one-owner approval behavior for plans
+// written before approval policies were added.
+func RequiredApprovalCount(plan Plan) int {
+	if plan.RequiredApprovals > 0 {
+		return plan.RequiredApprovals
+	}
+	if plan.RequiresApproval {
+		return 1
+	}
+	return 0
+}
+
+// ApprovalRoleAllows checks the snapshotted project role or explicit member
+// list for a plan. A higher project role satisfies a lower role requirement.
+func ApprovalRoleAllows(plan Plan, role, userID string) bool {
+	for _, selected := range plan.ApproverUserIDs {
+		if selected != "" && selected == userID {
+			return true
+		}
+	}
+	rank := func(value string) int {
+		switch value {
+		case "owner":
+			return 3
+		case "deployer":
+			return 2
+		case "viewer":
+			return 1
+		default:
+			return 0
+		}
+	}
+	if len(plan.ApproverRoles) == 0 && len(plan.ApproverUserIDs) == 0 && RequiredApprovalCount(plan) > 0 {
+		return role == "owner"
+	}
+	for _, allowed := range plan.ApproverRoles {
+		if rank(role) > 0 && rank(role) >= rank(allowed) {
+			return true
+		}
+	}
+	return false
+}
+
+// AuthorizeApplyMany rejects plans whose exact change set lacks the required
+// number of distinct, current approvals.
+func AuthorizeApplyMany(plan Plan, approvals []DeletionApproval, now time.Time) error {
 	var deletes []Change
 	var privileged []Change
 	for _, change := range plan.Changes {
@@ -289,17 +345,31 @@ func AuthorizeApply(plan Plan, approval *DeletionApproval, now time.Time) error 
 			privileged = append(privileged, change)
 		}
 	}
-	if len(deletes) == 0 && len(privileged) == 0 {
+	required := RequiredApprovalCount(plan)
+	if required == 0 && len(deletes) == 0 && len(privileged) == 0 {
 		return nil
 	}
-	if approval == nil || approval.ActorID == "" || approval.PlanDigest != plan.Digest || !now.Before(approval.ExpiresAt) {
-		return errors.New("deletion requires a current approval for this plan")
+	if required == 0 {
+		required = 1
 	}
-	if !reflect.DeepEqual(deletes, approval.Deletes) {
-		return errors.New("approval does not match the exact deletion set")
+	if len(approvals) < required {
+		return fmt.Errorf("plan requires %d current approval(s)", required)
 	}
-	if !reflect.DeepEqual(privileged, approval.Privileged) {
-		return errors.New("approval does not match the exact cluster-scoped change set")
+	actors := make(map[string]struct{}, len(approvals))
+	for _, approval := range approvals {
+		if approval.ActorID == "" || approval.PlanDigest != plan.Digest || !now.Before(approval.ExpiresAt) {
+			return errors.New("approval is expired or does not match this plan")
+		}
+		if _, exists := actors[approval.ActorID]; exists {
+			return errors.New("approvals must come from distinct project members")
+		}
+		actors[approval.ActorID] = struct{}{}
+		if len(deletes) != len(approval.Deletes) || (len(deletes) > 0 && !reflect.DeepEqual(deletes, approval.Deletes)) {
+			return errors.New("approval does not match the exact deletion set")
+		}
+		if len(privileged) != len(approval.Privileged) || (len(privileged) > 0 && !reflect.DeepEqual(privileged, approval.Privileged)) {
+			return errors.New("approval does not match the exact cluster-scoped change set")
+		}
 	}
 	return nil
 }

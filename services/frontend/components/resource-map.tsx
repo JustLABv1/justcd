@@ -1,31 +1,29 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useId, useMemo, useRef, useState } from "react"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { Layers01Icon, Settings02Icon, Globe02Icon, DatabaseIcon, CubeIcon } from "@hugeicons/core-free-icons"
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { identityKey, observed, workload, relatedNodes, syncState, topologyLayout, nodeWidth, nodeHeight, type SyncState } from "@/lib/topology-view"
 import type { Application, Identity, ManagedResource, Operation, PlanRecord, ResourceTopology, TopologyNode } from "@/lib/types"
 
-type Status = "syncing" | "applied" | "failed" | "create" | "update" | "delete" | "synced" | "unknown"
-type Mode = "all" | "changes" | "observed"
-const labels: Record<Status, string> = { syncing: "Syncing", applied: "Applied", failed: "Failed", create: "To create", update: "Out of sync", delete: "To delete", synced: "In sync", unknown: "Not checked" }
-const tones: Record<Status, string> = { syncing:"bg-blue-500", applied:"bg-emerald-500", failed:"bg-rose-500", create:"bg-emerald-500", update:"bg-amber-500", delete:"bg-rose-500", synced:"bg-emerald-500", unknown:"bg-slate-400" }
-const nodeWidth = 210, nodeHeight = 68, columnGap = 42, rowGap = 22, inset = 24
-const observed = (node: TopologyNode) => node.source === "sample" || node.source === "kubernetes"
-const shortKind = (kind: string) => ({ HorizontalPodAutoscaler: "Autoscaler", PersistentVolumeClaim: "Volume claim", ServiceAccount: "Service account", ReplicaSet: "Replica set" })[kind as "HorizontalPodAutoscaler" | "PersistentVolumeClaim" | "ServiceAccount" | "ReplicaSet"] ?? kind
-const identityKey = (identity: Identity) => JSON.stringify([identity.clusterId ?? "", identity.apiVersion, identity.kind, identity.namespace, identity.name])
-function column(kind: string) {
-  if (["Ingress", "HTTPRoute", "Gateway"].includes(kind)) return 0
-  if (kind === "Service") return 1
-  if (["Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob"].includes(kind)) return 2
-  if (kind === "ReplicaSet") return 3
-  if (kind === "Pod") return 4
-  return 5
+const labels: Record<SyncState, string> = { syncing: "Applying", applied: "Deployed · health separate", failed: "Failed", create: "Will be created", update: "Out of sync", delete: "Will be destroyed", synced: "Deployed", unknown: "State unknown", observed: "Observed" }
+const tones: Record<SyncState, string> = { syncing: "border-blue-300 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-200", applied: "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200", failed: "border-rose-300 bg-rose-50 text-rose-800 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200", create: "border-blue-300 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-200", update: "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200", delete: "border-rose-300 bg-rose-50 text-rose-800 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200", synced: "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200", unknown: "border-border bg-muted/50 text-muted-foreground", observed: "border-border bg-muted/50 text-muted-foreground" }
+const stateDot: Record<SyncState, string> = { syncing: "bg-blue-600", applied: "bg-emerald-600", failed: "bg-rose-600", create: "bg-blue-600", update: "bg-amber-500", delete: "bg-rose-600", synced: "bg-emerald-600", unknown: "bg-muted-foreground", observed: "bg-muted-foreground" }
+const iconFor = (kind: string) => ["Ingress", "Service", "HTTPRoute", "Gateway"].includes(kind) ? Globe02Icon : ["PersistentVolumeClaim", "PersistentVolume"].includes(kind) ? DatabaseIcon : ["Pod", "ReplicaSet"].includes(kind) ? CubeIcon : ["Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob"].includes(kind) ? Layers01Icon : Settings02Icon
+function health(node: TopologyNode) {
+  if (node.source === "sample") return `Sample · ${node.readiness || node.phase || "unknown"}`
+  if (node.readiness) return node.readiness
+  if (node.phase) return `Phase: ${node.phase}`
+  return node.uid ? "Health not reported" : "Not observed in cluster"
 }
 function fallback(plan: PlanRecord | null, inventory: ManagedResource[]): ResourceTopology {
   const nodes = new Map<string, TopologyNode>()
   for (const identity of plan?.resources ?? []) nodes.set(identityKey(identity), { id: identityKey(identity), identity, source: "desired" })
   for (const item of inventory) nodes.set(identityKey(item.identity), { id: identityKey(item.identity), identity: item.identity, source: nodes.has(identityKey(item.identity)) ? "desired" : "managed", uid: item.uid, resourceVersion: item.resourceVersion })
   for (const change of plan?.plan.changes ?? []) if (!nodes.has(identityKey(change.identity))) nodes.set(identityKey(change.identity), { id: identityKey(change.identity), identity: change.identity, source: "desired" })
-  return { planId: plan?.id, nodes: [...nodes.values()], edges: [], warnings: ["Topology API unavailable. Restart the backend to show links and observed Pods."] }
+  return { nodes: [...nodes.values()], edges: [], warnings: ["Topology unavailable. Showing inventory without inferred relationships."] }
 }
 
 export function ResourceMap({ application, plan, inventory, operations, topology, onViewDiff, onRefresh, refreshing }: {
@@ -34,110 +32,144 @@ export function ResourceMap({ application, plan, inventory, operations, topology
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [query, setQuery] = useState("")
-  const [mode, setMode] = useState<Mode>("all")
+  const [mode, setMode] = useState("all")
   const [focus, setFocus] = useState(false)
-  const [zoom, setZoom] = useState(0.85)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [zoom, setZoom] = useState(1)
+  const [fullscreen, setFullscreen] = useState(false)
+  const [notice, setNotice] = useState("")
+  const root = useRef<HTMLElement>(null)
   const viewport = useRef<HTMLDivElement>(null)
-  const graph = topology ?? fallback(plan, inventory)
-  const latestOperation = operations.find((item) => item.planId === plan?.id)
-  const running = latestOperation?.status === "running" || latestOperation?.status === "queued" ? latestOperation : null
-  const completed = new Set(running?.progress?.completed?.map(identityKey) ?? [])
-  const current = running?.progress?.current ? identityKey(running.progress.current) : null
-  const failed = latestOperation?.status === "failed" && latestOperation.progress?.current ? identityKey(latestOperation.progress.current) : null
-  const changes = new Map(plan?.plan.changes.map((change) => [identityKey(change.identity), change]) ?? [])
-  const stateFor = (node: TopologyNode): Status => {
-    if (observed(node)) return "unknown"
-    const key = identityKey(node.identity)
-    if (current === key) return "syncing"
-    if (failed === key) return "failed"
-    if (completed.has(key)) return "applied"
-    const change = changes.get(key)
-    if (plan?.status === "applied" && node.uid) return "synced"
-    if (change && (plan?.status === "current" || plan?.status === "failed")) return change.kind
-    if (plan?.status === "current" && node.uid) return "synced"
-    return "unknown"
-  }
-  const shown = useMemo(() => {
-    const base = graph.nodes.filter((node) => mode === "all" || (mode === "observed" ? observed(node) : ["create", "update", "delete", "failed", "syncing"].includes(stateFor(node))))
-    if (mode === "all" && !focus) return base
-    const ids = new Set(base.map((node) => node.id))
-    if (focus && selectedId) { ids.clear(); ids.add(selectedId) }
-    for (const edge of graph.edges) if (ids.has(edge.from) || ids.has(edge.to)) { ids.add(edge.from); ids.add(edge.to) }
-    return graph.nodes.filter((node) => ids.has(node.id))
-  // State is derived from the current plan and operations.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topology, plan, inventory, operations, mode, focus, selectedId])
-  const layout = useMemo(() => {
-    const counts = [0, 0, 0, 0, 0, 0]
-    const positions = new Map<string, { x: number; y: number }>()
-    const ordered = [...shown].sort((a, b) => column(a.identity.kind) - column(b.identity.kind) || a.identity.namespace.localeCompare(b.identity.namespace) || a.identity.name.localeCompare(b.identity.name))
-    for (const node of ordered) {
-      const col = column(node.identity.kind)
-      positions.set(node.id, { x: inset + col * (nodeWidth + columnGap), y: inset + counts[col] * (nodeHeight + rowGap) })
-      counts[col]++
-    }
-    return { positions, width: inset * 2 + 6 * nodeWidth + 5 * columnGap, height: Math.max(270, inset * 2 + Math.max(...counts) * (nodeHeight + rowGap) - rowGap) }
-  }, [shown])
+  const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null)
+  const marker = useId().replaceAll(":", "")
+  const graph = useMemo(() => topology ?? fallback(plan, inventory), [topology, plan, inventory])
+  const operation = operations.find((item) => item.planId === plan?.id)
+  const running = operation && ["running", "queued"].includes(operation.status)
+  const stateFor = (node: TopologyNode) => syncState(node, plan, operation)
   const selected = graph.nodes.find((node) => node.id === selectedId)
-  const connections = selected ? graph.edges.filter((edge) => edge.from === selected.id || edge.to === selected.id) : []
+  const related = useMemo(() => selectedId ? relatedNodes(graph, selectedId) : new Set<string>(), [graph, selectedId])
+  const children = useMemo(() => {
+    const result = new Map<string, TopologyNode[]>()
+    for (const anchor of graph.nodes.filter(workload)) {
+      const ids = new Set([anchor.id]), queue = [anchor.id]
+      for (let i = 0; i < queue.length; i++) for (const edge of graph.edges) if (edge.from === queue[i] && edge.relation === "owns" && !ids.has(edge.to)) { ids.add(edge.to); queue.push(edge.to) }
+      result.set(anchor.id, graph.nodes.filter((node) => ids.has(node.id) && observed(node) && ["Pod", "ReplicaSet"].includes(node.identity.kind)))
+    }
+    return result
+  }, [graph])
+  const hidden = new Set([...children].flatMap(([id, nodes]) => expanded.has(id) || query.trim() || mode === "observed" ? [] : nodes.filter((node) => node.id !== selectedId).map((node) => node.id)))
   const matches = new Set(graph.nodes.filter((node) => `${node.identity.kind} ${node.identity.namespace} ${node.identity.name}`.toLowerCase().includes(query.toLowerCase())).map((node) => node.id))
-  const changedCount = graph.nodes.filter((node) => ["create", "update", "delete", "failed"].includes(stateFor(node))).length
-  const observedCount = graph.nodes.filter(observed).length
-  const sampleCount = graph.nodes.filter((node) => node.source === "sample").length
-  const fit = () => setZoom(Math.max(0.45, Math.min(1, (viewport.current?.clientWidth ?? 1100) / layout.width)))
+  const shown = graph.nodes.filter((node) => !hidden.has(node.id) && (!focus || !selectedId || related.has(node.id)) && (mode === "all" || (mode === "observed" ? observed(node) : ["create", "update", "delete", "failed", "syncing"].includes(stateFor(node)))))
+  const layout = topologyLayout(graph, shown)
+  function center(id: string, scale = zoom) {
+    const point = layout.positions.get(id), el = viewport.current
+    if (point && el) el.scrollTo({ left: Math.max(0, (point.x + nodeWidth / 2) * scale - el.clientWidth / 2), top: Math.max(0, (point.y + nodeHeight / 2) * scale - el.clientHeight / 2) })
+  }
+  function fit() {
+    const el = viewport.current
+    if (!el) return
+    setZoom(Math.max(0.15, Math.min(1, (el.clientWidth - 24) / layout.width, (el.clientHeight - 24) / layout.height)))
+    el.scrollTo({ left: 0, top: 0 })
+  }
+  async function toggleFullscreen() {
+    try { if (document.fullscreenElement === root.current) await document.exitFullscreen(); else await root.current?.requestFullscreen() }
+    catch { setNotice("Fullscreen is unavailable in this browser.") }
+  }
+  useEffect(() => {
+    const update = () => setFullscreen(document.fullscreenElement === root.current)
+    document.addEventListener("fullscreenchange", update)
+    return () => document.removeEventListener("fullscreenchange", update)
+  }, [])
   useEffect(() => {
     if (!query.trim()) return
-    const match = [...layout.positions].find(([id]) => matches.has(id))
-    if (match) viewport.current?.scrollTo({ left: Math.max(0, match[1].x * zoom - 24), top: Math.max(0, match[1].y * zoom - 24), behavior: "smooth" })
-  // Search should move to the first matching node in the current view.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, layout, zoom])
+    const match = shown.find((node) => matches.has(node.id))
+    if (match) center(match.id)
+    // Search pans to an actual visible match without changing the selected resource.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query])
+  const connections = selected ? graph.edges.filter((edge) => edge.from === selected.id || edge.to === selected.id) : []
+  const changedCount = graph.nodes.filter((node) => ["create", "update", "delete", "failed"].includes(stateFor(node))).length
 
-  return <section aria-label="Application resource topology" className="mb-6 min-w-0 overflow-hidden rounded-xl border bg-card">
-    <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
-      <div><h2 className="text-sm font-semibold">Resource topology</h2><p className="mt-1 text-xs text-muted-foreground">Traffic, workloads, and dependencies for {application.name}</p></div>
-      <div className="flex flex-wrap items-center gap-2 text-[11px]"><span className="rounded-full border px-2.5 py-1 tabular-nums">{graph.nodes.length} resources</span><span className="rounded-full border px-2.5 py-1 tabular-nums">{graph.edges.length} links</span><span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">{changedCount} changes</span><span className="rounded-full border px-2.5 py-1 tabular-nums">{sampleCount ? `${sampleCount} sample Pods/replicas` : `${observedCount} observed`}</span><button type="button" onClick={onRefresh} disabled={refreshing} className="rounded-md border px-2.5 py-1 font-medium hover:bg-muted/50 disabled:opacity-50">{refreshing ? "Refreshing…" : sampleCount ? "Refresh map" : "Refresh cluster"}</button></div>
-    </div>
-    <div className="flex flex-wrap items-center gap-2 border-b px-5 py-3">
-      <Input aria-label="Search resources" value={query} onChange={(event) => { setQuery(event.target.value); if (event.target.value.trim()) { setMode("all"); setFocus(false) } }} placeholder="Find a resource…" className="h-8 min-w-0 flex-1 text-xs sm:max-w-60" />
-      {query.trim() && <span role="status" className="text-[11px] text-muted-foreground">{matches.size} {matches.size === 1 ? "match" : "matches"}</span>}
-      <div role="group" aria-label="Topology view" className="flex rounded-md border p-0.5">{(["all", "changes", "observed"] as const).map((item) => <button type="button" key={item} aria-pressed={mode === item} onClick={() => setMode(item)} className={`rounded px-2.5 py-1.5 text-[11px] capitalize focus-visible:outline-2 focus-visible:outline-primary ${mode === item ? "bg-muted font-semibold" : "text-muted-foreground hover:text-foreground"}`}>{item}</button>)}</div>
-      <button type="button" aria-pressed={focus} disabled={!selected} onClick={() => setFocus(!focus)} className="h-8 rounded-md border px-2.5 text-[11px] disabled:opacity-40">{focus ? "Show all links" : "Focus links"}</button>
-      <div role="group" aria-label="Zoom" className="ml-auto flex rounded-md border"><button type="button" aria-label="Zoom out" onClick={() => setZoom(Math.max(0.45, +(zoom - 0.1).toFixed(2)))} className="h-8 w-8 border-r text-sm">−</button><button type="button" onClick={fit} className="h-8 min-w-12 border-r px-1 text-[11px] tabular-nums" title="Fit to width">{Math.round(zoom * 100)}%</button><button type="button" aria-label="Zoom in" onClick={() => setZoom(Math.min(1.4, +(zoom + 0.1).toFixed(2)))} className="h-8 w-8 text-sm">+</button></div>
-    </div>
-    {running && <div role="status" className="mx-5 mt-4 flex flex-wrap justify-between gap-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200"><span>Sync in progress</span><span className="tabular-nums">{running.progress?.completed?.length ?? 0} / {running.progress?.total ?? plan?.plan.changes.length ?? 0} applied</span></div>}
-    {graph.warnings.length > 0 && <div role="status" className="mx-5 mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">{graph.warnings.join(" · ")}</div>}
-    {graph.nodes.length ? <>
-      <div ref={viewport} className="h-[520px] min-w-0 overflow-auto bg-[radial-gradient(circle_at_center,var(--border)_0.7px,transparent_0.7px)] bg-size-[18px_18px]" aria-label="Scrollable topology canvas">
-        <div style={{ width: layout.width * zoom, height: layout.height * zoom, position: "relative" }}><div style={{ width: layout.width, height: layout.height, transform: `scale(${zoom})`, transformOrigin: "top left", position: "relative" }}>
-          <svg aria-hidden="true" className="pointer-events-none absolute inset-0" width={layout.width} height={layout.height}><defs><marker id="topology-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M 0 0 L 7 3.5 L 0 7 z" fill="currentColor" className="text-border" /></marker></defs>{graph.edges.map((edge, index) => {
-            const a = layout.positions.get(edge.from), b = layout.positions.get(edge.to)
-            if (!a || !b) return null
-            const forward = b.x > a.x
-            const x1 = forward ? a.x + nodeWidth : a.x, x2 = forward ? b.x : b.x + nodeWidth
-            const y1 = a.y + nodeHeight / 2, y2 = b.y + nodeHeight / 2
-            const bend = Math.max(50, Math.abs(x2 - x1) * 0.48)
-            const path = `M ${x1} ${y1} C ${x1 + (forward ? bend : -bend)} ${y1}, ${x2 - (forward ? bend : -bend)} ${y2}, ${x2} ${y2}`
-            const active = selectedId && (edge.from === selectedId || edge.to === selectedId)
-            return <path key={`${edge.from}-${edge.to}-${index}`} d={path} fill="none" stroke={active ? "var(--primary)" : "var(--border)"} strokeWidth={active ? 2.5 : 1.5} opacity={selectedId && !active ? 0.45 : 1} markerEnd="url(#topology-arrow)" />
-          })}</svg>
-          {shown.map((node) => {
-            const position = layout.positions.get(node.id)!
-            const state = stateFor(node), isObserved = observed(node)
-            const dimmed = query.length > 0 && !matches.has(node.id)
-            const related = selectedId && graph.edges.some((edge) => (edge.from === selectedId && edge.to === node.id) || (edge.to === selectedId && edge.from === node.id))
-            return <button key={node.id} type="button" aria-pressed={selectedId === node.id} onClick={() => setSelectedId(node.id === selectedId ? null : node.id)} style={{ position: "absolute", left: position.x, top: position.y, width: nodeWidth, height: nodeHeight }} className={`min-w-0 rounded-lg border bg-card px-3 py-2 text-left shadow-sm transition-[border-color,opacity,box-shadow] hover:border-primary/60 hover:shadow-md focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${isObserved ? "border-dashed" : ""} ${selectedId === node.id ? "z-10 border-primary ring-2 ring-primary/20" : related ? "border-primary/50" : "border-border"} ${dimmed ? "opacity-35" : ""}`}>
-              <div className="flex min-w-0 items-center justify-between gap-2"><span className="truncate text-[10px] font-semibold uppercase tracking-wide text-muted-foreground" title={node.identity.kind}>{shortKind(node.identity.kind)}</span><span className={`size-2 shrink-0 rounded-full ${isObserved ? (node.readiness === "Ready" ? "bg-emerald-500" : node.readiness === "Not ready" ? "bg-rose-500" : "bg-slate-400") : tones[state]}`} /></div>
-              <p className="mt-1 truncate text-xs font-semibold" title={node.identity.name}>{node.identity.name}</p>
-              <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{isObserved ? `${node.source === "sample" ? "Sample · " : ""}${node.readiness || node.phase || "Observed"}` : labels[state]}</p>
-            </button>
-          })}
-        </div></div>
+  return <section ref={root} aria-label="Application resource topology" className="mb-6 min-w-0 overflow-hidden rounded-xl border bg-card fullscreen:overflow-auto fullscreen:rounded-none">
+    <header className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
+      <div><h2 className="text-base font-semibold">Resource topology</h2><p className="mt-1 text-sm text-muted-foreground">{application.name} · {graph.nodes.length} resources · {changedCount} changes · {graph.nodes.filter(observed).length} observed</p></div>
+      <div className="flex gap-2"><Button type="button" variant="outline" onClick={onRefresh} loading={refreshing} loadingText="Refreshing…">Refresh cluster</Button><Button type="button" variant="outline" onClick={() => void toggleFullscreen()}>{fullscreen ? "Exit fullscreen" : "Fullscreen"}</Button></div>
+    </header>
+    <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
+      <Input aria-label="Search resources" placeholder="Find a resource…" className="w-full sm:w-56" value={query} onChange={(event) => { setQuery(event.target.value); setMode("all"); setFocus(false) }} />
+      <div role="group" aria-label="Topology filter" className="flex gap-1">{["all", "changes", "observed"].map((value) => <Button type="button" key={value} variant={mode === value ? "secondary" : "ghost"} aria-pressed={mode === value} onClick={() => setMode(value)} className="capitalize">{value}</Button>)}</div>
+      <Button type="button" variant="outline" disabled={!selected} aria-pressed={focus} onClick={() => setFocus(!focus)}>{focus ? "Show all resources" : "Focus selection"}</Button>
+      <div className="ml-auto flex flex-wrap items-center gap-1">
+        <Button type="button" variant="outline" onClick={fit}>Fit all</Button>
+        <Button type="button" variant="outline" disabled={!selected || !layout.positions.has(selected.id)} onClick={() => selected && center(selected.id)}>Center selection</Button>
+        <Button type="button" variant="ghost" aria-label="Zoom out" onClick={() => setZoom(Math.max(.15, zoom - .1))}>−</Button>
+        <Button type="button" variant="ghost" aria-label="Reset zoom to 100 percent" onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</Button>
+        <Button type="button" variant="ghost" aria-label="Zoom in" onClick={() => setZoom(Math.min(1.6, zoom + .1))}>+</Button>
       </div>
-      {selected && <div className="border-t bg-muted/10 px-5 py-4"><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="text-sm font-semibold">{selected.identity.kind} / {selected.identity.name}</p><p className="mt-1 break-all text-[11px] text-muted-foreground">{selected.identity.namespace || "Cluster scope"} · {selected.identity.apiVersion} · {selected.source === "sample" ? "Sample observation" : selected.source === "kubernetes" ? "Observed in cluster" : "Helm/plan resource"}{selected.resourceVersion ? ` · version ${selected.resourceVersion}` : ""}</p></div><div className="flex items-center gap-2">{!observed(selected) && <span className="text-[11px] text-muted-foreground">{labels[stateFor(selected)]}</span>}{changes.has(identityKey(selected.identity)) && <button type="button" onClick={() => onViewDiff(selected.identity)} className="rounded-md border px-2.5 py-1.5 text-[11px] font-medium text-primary hover:bg-muted/50">View diff →</button>}</div></div>
-        {connections.length > 0 && <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px]"><span className="mr-1 text-muted-foreground">Connected:</span>{connections.map((edge, index) => { const other = graph.nodes.find((node) => node.id === (edge.from === selected.id ? edge.to : edge.from)); return other ? <button type="button" key={index} onClick={() => setSelectedId(other.id)} className="rounded-md border bg-background px-2 py-1 hover:border-primary/50">{edge.from === selected.id ? edge.relation : `${edge.relation} by`} · {other.identity.kind}/{other.identity.name}</button> : null })}</div>}
-      </div>}
-    </> : <div className="px-5 py-12 text-center"><p className="text-sm font-medium">No resources to map yet</p><p className="mt-1 text-xs text-muted-foreground">Build a plan to render this application’s resources.</p></div>}
-    <div className="border-t px-5 py-2.5 text-[10px] leading-4 text-muted-foreground">Links between solid nodes come from desired manifests; dashed ReplicaSets and Pods {sampleCount ? "are explicitly seeded samples in this demo" : "come from read-only Kubernetes discovery"}. Sync state and Pod readiness are separate signals. Scroll, search, or select a node to inspect its links.</div>
+    </div>
+    {query && <p role="status" className="px-5 py-2 text-sm text-muted-foreground">{matches.size} matching resources</p>}
+    {(running || operation?.status === "failed") && <div role="status" className="border-b bg-muted/30 px-5 py-3 text-sm"><strong>{operation?.type === "rollback" ? "Rollback" : "Sync"} {operation?.status === "failed" ? "stopped" : operation?.status === "queued" ? "queued" : "running"}</strong> · {operation?.progress?.completed.length ?? 0}/{operation?.progress?.total ?? 0} resource steps completed{operation?.progress?.current ? ` · ${operation.progress.current.kind}/${operation.progress.current.name}` : ""}<span className="mt-1 block text-muted-foreground">Applied does not mean Healthy. {operation?.status === "failed" ? operation.message : ""}</span></div>}
+    {(notice || graph.warnings.length > 0) && <p role="status" className="border-b px-5 py-3 text-sm text-amber-700 dark:text-amber-300">{[notice, ...graph.warnings].filter(Boolean).join(" · ")}</p>}
+    <div className={`grid min-w-0 ${selected ? "xl:grid-cols-[minmax(0,1fr)_320px]" : ""}`}>
+      <div ref={viewport} tabIndex={0} aria-label="Topology canvas. Drag empty space to pan; use arrow keys to scroll." className="relative h-[min(72svh,900px)] min-h-96 min-w-0 touch-pan-x touch-pan-y overflow-auto bg-muted/10 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary fullscreen:h-[80svh]" onPointerDown={(event) => {
+        if (event.button !== 0 || event.pointerType === "touch" || (event.target as HTMLElement).closest("button")) return
+        const el = event.currentTarget
+        drag.current = { x: event.clientX, y: event.clientY, left: el.scrollLeft, top: el.scrollTop }
+        el.setPointerCapture(event.pointerId); el.style.cursor = "grabbing"
+      }} onPointerMove={(event) => { if (drag.current) { event.currentTarget.scrollLeft = drag.current.left - event.clientX + drag.current.x; event.currentTarget.scrollTop = drag.current.top - event.clientY + drag.current.y } }} onPointerUp={(event) => { drag.current = null; event.currentTarget.style.cursor = ""; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) }} onPointerCancel={() => { drag.current = null }}>
+        {!shown.length ? <p className="p-12 text-center text-sm text-muted-foreground">{graph.nodes.length ? "No resources match this view." : "Build a plan to discover resources."}</p> : <div style={{ width: layout.width * zoom, height: layout.height * zoom }}><div className="relative origin-top-left" style={{ width: layout.width, height: layout.height, transform: `scale(${zoom})` }}>
+          {layout.bands.map((band) => <div key={band.id} className="absolute rounded-xl border border-dashed bg-card/60" style={{ left: 16, top: band.y, width: layout.width - 32, height: band.height }}><h3 className="px-5 py-3 text-sm font-semibold text-muted-foreground">{band.label}</h3></div>)}
+          <svg aria-hidden="true" className="pointer-events-none absolute inset-0" width={layout.width} height={layout.height}>
+            <defs><marker id={marker} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0L7 3.5L0 7Z" fill="context-stroke" /></marker></defs>
+            {graph.edges.map((edge, index) => {
+              const a = layout.positions.get(edge.from), b = layout.positions.get(edge.to)
+              if (!a || !b) return null
+              const forward = b.x > a.x, sameColumn = a.x === b.x
+              const x1 = a.x + (forward || sameColumn ? nodeWidth : 0), x2 = b.x + (forward ? 0 : nodeWidth), y1 = a.y + nodeHeight / 2, y2 = b.y + nodeHeight / 2
+              const siblingFrom = graph.edges.filter((candidate) => candidate.from === edge.from)
+              const siblingTo = graph.edges.filter((candidate) => candidate.to === edge.to)
+              const sourceLane = siblingFrom.indexOf(edge) - (siblingFrom.length - 1) / 2
+              const targetLane = siblingTo.indexOf(edge) - (siblingTo.length - 1) / 2
+              const lane = Math.max(-14, Math.min(14, (sourceLane + targetLane) * 4))
+              const arc = Math.abs(y2 - y1) < 32 ? -10 : 0
+              const controlY1 = y1 + (y2 - y1) * .22 + arc + lane
+              const controlY2 = y2 - (y2 - y1) * .22 + arc + lane
+              const bend = sameColumn ? 28 : Math.min(48, Math.max(12, Math.abs(x2 - x1) * .34))
+              const active = selectedId && related.has(edge.from) && related.has(edge.to)
+              const direction = forward || sameColumn ? 1 : -1
+              const path = sameColumn
+                ? `M${x1} ${y1} C${x1 + bend} ${controlY1},${x2 + bend} ${controlY2},${x2} ${y2}`
+                : `M${x1} ${y1} C${x1 + direction * bend} ${controlY1},${x2 - direction * bend} ${controlY2},${x2} ${y2}`
+              return <g key={index} opacity={selectedId && !active ? .2 : 1}><path d={path} fill="none" stroke={active ? "var(--primary)" : "var(--muted-foreground)"} strokeOpacity={active ? 1 : .5} strokeWidth={active ? 2.5 : 1.75} markerEnd={`url(#${marker})`} />{active && <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 8} textAnchor="middle" fontSize="12" fill="var(--primary)" stroke="var(--card)" strokeWidth="5" paintOrder="stroke">{edge.relation}</text>}</g>
+            })}
+          </svg>
+          {shown.map((node) => {
+            const point = layout.positions.get(node.id)!, state = stateFor(node)
+            const descendants = children.get(node.id) ?? [], pods = descendants.filter((n) => n.identity.kind === "Pod"), replicas = descendants.filter((n) => n.identity.kind === "ReplicaSet")
+            const dimmed = (query && !matches.has(node.id)) || (selectedId && !related.has(node.id))
+            return <div key={node.id} style={{ left: point.x, top: point.y, width: nodeWidth, height: nodeHeight }} className={`absolute rounded-lg border bg-card shadow-sm ${observed(node) ? "border-dashed" : ""} ${node.id === selectedId ? "border-primary ring-2 ring-primary/25" : state === "syncing" ? "border-blue-500 ring-2 ring-blue-500/20" : state === "failed" || state === "delete" ? "border-rose-400 dark:border-rose-800" : state === "update" ? "border-amber-400 dark:border-amber-800" : state === "create" ? "border-blue-300 dark:border-blue-900" : state === "synced" || state === "applied" ? "border-emerald-300 dark:border-emerald-900" : "border-border"} ${dimmed ? "opacity-30" : ""}`}>
+              <button type="button" aria-pressed={node.id === selectedId} onClick={() => setSelectedId(node.id === selectedId ? null : node.id)} className="block w-full rounded-lg p-3 text-left focus-visible:outline-2 focus-visible:outline-primary">
+                <span className="flex items-center gap-2 text-xs text-muted-foreground"><HugeiconsIcon icon={iconFor(node.identity.kind)} className="size-4 shrink-0" aria-hidden="true" />{node.identity.kind}</span>
+                <span className="mt-1 block truncate text-sm font-semibold" title={node.identity.name}>{node.identity.name}</span>
+                <span className={`mt-1 inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-semibold ${tones[state]}`}><span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${stateDot[state]}`} />{labels[state]}</span>
+                <span className={`mt-1 block truncate text-xs ${node.source !== "sample" && node.readiness === "Ready" ? "font-medium text-emerald-700 dark:text-emerald-300" : node.readiness === "Not ready" ? "font-medium text-rose-600 dark:text-rose-300" : "text-muted-foreground"}`}>{health(node)}</span>
+              </button>
+              {descendants.length > 0 && <button type="button" aria-expanded={expanded.has(node.id)} onClick={() => setExpanded((old) => { const next = new Set(old); if (next.has(node.id)) next.delete(node.id); else next.add(node.id); return next })} className="absolute bottom-1 left-3 right-3 rounded text-left text-xs font-medium text-primary focus-visible:outline-2 focus-visible:outline-primary">{expanded.has(node.id) ? "−" : "+"} Pods {pods.filter((n) => n.readiness === "Ready" && n.source !== "sample").length}/{pods.filter((n) => n.source !== "sample").length} ready · {replicas.length} ReplicaSets{descendants.some((n) => n.source === "sample") ? " · samples" : ""}</button>}
+            </div>
+          })}
+        </div></div>}
+      </div>
+      {selected && <aside aria-label="Resource details" className="min-w-0 space-y-5 border-t bg-card p-5 xl:h-[min(72svh,900px)] xl:overflow-auto xl:border-t-0 xl:border-l">
+        <div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="text-xs text-muted-foreground">{selected.identity.kind}</p><h3 className="mt-1 break-all text-base font-semibold">{selected.identity.name}</h3></div><Button type="button" variant="ghost" aria-label="Close resource details" onClick={() => { setSelectedId(null); setFocus(false) }}>×</Button></div>
+        <dl className="space-y-3 text-sm">{[["Namespace", selected.identity.namespace || "Cluster scope"], ["Sync", labels[stateFor(selected)]], ["Health", health(selected)], ["API version", selected.identity.apiVersion], ["Source", selected.source], ["Last observed", selected.observedAt ? new Date(selected.observedAt).toLocaleString() : "Not available"], ["Resource version", selected.resourceVersion || "Not available"]].map(([key, value]) => <div key={key}><dt className="text-xs text-muted-foreground">{key}</dt><dd className="mt-1 break-all">{value}</dd></div>)}</dl>
+        {operation && <p className="text-xs text-muted-foreground">Plan operation: {operation.status} · {new Date(operation.finishedAt || operation.startedAt).toLocaleString()}</p>}
+        {plan?.plan.changes.some((change) => identityKey(change.identity) === identityKey(selected.identity)) && <Button type="button" variant="outline" onClick={async () => { if (document.fullscreenElement === root.current) await document.exitFullscreen(); onViewDiff(selected.identity) }}>View diff →</Button>}
+        <div><h4 className="text-sm font-semibold">Relationships ({connections.length})</h4><div className="mt-2 space-y-2">{connections.map((edge, i) => {
+          const other = graph.nodes.find((node) => node.id === (edge.from === selected.id ? edge.to : edge.from))
+          return other ? <Button type="button" key={i} variant="outline" className="h-auto w-full justify-start whitespace-normal py-2 text-left text-xs" onClick={() => { setSelectedId(other.id); setMode("all") }}><span>{edge.from === selected.id ? `${edge.relation} →` : `← ${edge.relation} from`}<span className="mt-1 block break-all font-medium">{other.identity.kind}/{other.identity.name}</span></span></Button> : null
+        })}{!connections.length && <p className="text-sm text-muted-foreground">No relationship detected in available manifests or observations.</p>}</div></div>
+      </aside>}
+    </div>
+    <footer className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t px-5 py-3 text-xs text-muted-foreground" aria-label="Topology status legend"><span className="font-medium text-foreground">Sync state</span><span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-2 rounded-full bg-emerald-600" />Deployed</span><span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-2 rounded-full bg-amber-500" />Out of sync</span><span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-2 rounded-full bg-blue-600" />Will be created / applying</span><span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-2 rounded-full bg-rose-600" />Will be destroyed / failed</span><span className="mx-1 hidden h-4 border-l sm:block" /><span><i aria-hidden="true" className="mr-1 inline-block size-2 rounded-full bg-emerald-600" />Pod Ready is health; deployed resources without reported health say so explicitly.</span></footer>
   </section>
 }

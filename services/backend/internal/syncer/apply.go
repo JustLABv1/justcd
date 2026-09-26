@@ -9,8 +9,11 @@ import (
 	"time"
 
 	"github.com/justlab/justcd/services/backend/internal/core"
+	"github.com/justlab/justcd/services/backend/internal/observability"
 	"github.com/justlab/justcd/services/backend/internal/render"
 	"github.com/justlab/justcd/services/backend/internal/store"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -97,11 +100,23 @@ func (s *Service) ApplyWithApprovals(ctx context.Context, planID, actorID string
 		return store.Operation{}, errors.New("this plan does not require an approval")
 	}
 	progress := store.OperationProgress{Phase: "queued", Total: len(record.Plan.Changes), Completed: []core.Identity{}}
-	return s.Store.QueueOperation(ctx, app.ID, record.ID, actorID, approvalIDs, record.Plan.Digest, 90*time.Second, progress)
+	return s.Store.QueueOperation(ctx, app.ID, record.ID, actorID, approvalIDs, record.Plan.Digest, observability.TraceParent(ctx), 90*time.Second, progress)
 }
 
 func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Operation) (store.Operation, error) {
+	ctx, span := otel.Tracer("justcd/syncer").Start(ctx, "operation.apply")
+	defer span.End()
+	attributes := []attribute.KeyValue{
+		attribute.String("operation.id", operation.ID),
+		attribute.String("application.id", operation.ApplicationID),
+		attribute.String("operation.type", operation.Type),
+	}
+	if operation.PlanID != nil {
+		attributes = append(attributes, attribute.String("plan.id", *operation.PlanID))
+	}
+	span.SetAttributes(attributes...)
 	if operation.PlanID == nil {
+		observability.MarkError(span, errors.New("queued operation has no plan"))
 		return operation, errors.New("queued operation has no plan")
 	}
 	operationID, planID := operation.ID, *operation.PlanID

@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/justlab/justcd/services/backend/internal/core"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -66,6 +68,9 @@ func (e *RendererError) Retryable() bool   { return e.retryable }
 func (e *RendererError) ErrorCode() string { return e.code }
 
 func Render(ctx context.Context, opts Options) ([]core.Resource, error) {
+	ctx, span := otel.Tracer("justcd/renderer").Start(ctx, "renderer.render")
+	defer span.End()
+	span.SetAttributes(attribute.String("renderer", opts.Renderer), attribute.String("application.id", opts.ApplicationID))
 	if opts.RepositoryRoot == "" || opts.ManifestPath == "" || opts.ApplicationID == "" || opts.ClusterID == "" || opts.Mapper == nil {
 		return nil, errors.New("render target and discovery mapper are required")
 	}

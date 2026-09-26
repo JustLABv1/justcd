@@ -128,7 +128,7 @@ func (s *Server) createPlan(w http.ResponseWriter, r *http.Request) {
 			}, map[string]any{"conflict": conflict})
 			return
 		}
-		s.Logger.Warn("plan calculation failed", "applicationId", app.ID, "error", err)
+		s.Logger.WarnContext(r.Context(), "plan calculation failed", "applicationId", app.ID, "error", err)
 		writePlanFailure(w, http.StatusUnprocessableEntity, "could not calculate a safe plan", app.ID, err)
 		return
 	}
@@ -281,6 +281,11 @@ func (s *Server) approvePlan(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, "could not save approval")
 		return
 	}
+	approvalState := "pending"
+	if len(approvedActors)+1 >= required {
+		approvalState = "threshold_met"
+	}
+	s.Metrics.RecordApproval(approvalState)
 	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "plan.approved", "application", app.ID, map[string]any{"planId": record.ID, "approvalId": approvalID, "digest": record.Plan.Digest, "kind": record.Plan.ApprovalKind, "deletions": len(deletes), "privilegedChanges": len(privileged), "comment": input.Comment})
 	writeJSON(w, http.StatusCreated, map[string]any{"id": approvalID, "planId": record.ID, "planDigest": record.Plan.Digest, "expiresAt": expires, "requiredApprovals": required, "approvedApprovals": len(approvedActors) + 1, "comment": input.Comment})
 }
@@ -407,7 +412,7 @@ func (s *Server) applyPlan(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
-		s.Logger.Error("plan apply failed", "applicationId", app.ID, "planId", record.ID, "error", err)
+		s.Logger.ErrorContext(r.Context(), "plan apply failed", "applicationId", app.ID, "planId", record.ID, "error", err)
 		writeClassifiedError(w, http.StatusBadGateway, "sync failed", apiErrorMetadata{
 			code:        "sync.apply_failed",
 			category:    "kubernetes",
@@ -416,6 +421,7 @@ func (s *Server) applyPlan(w http.ResponseWriter, r *http.Request) {
 		}, map[string]any{"applicationId": app.ID, "operation": operation})
 		return
 	}
+	s.Logger.InfoContext(r.Context(), "deployment operation queued", "applicationId", app.ID, "planId", record.ID, "operationId", operation.ID, "operationType", operation.Type)
 	writeJSON(w, http.StatusAccepted, map[string]any{"operation": operation})
 }
 

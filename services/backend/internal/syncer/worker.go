@@ -6,7 +6,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/justlab/justcd/services/backend/internal/observability"
 	"github.com/justlab/justcd/services/backend/internal/store"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const operationWorkerCount = 20
@@ -93,7 +97,19 @@ type operationJob struct {
 
 func (s *Service) executeOperationJob(ctx context.Context, job operationJob, logger *slog.Logger) {
 	operation := job.operation
-	opCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+	parent := observability.ContextFromTraceParent(ctx, operation.TraceParent)
+	spanOptions := []trace.SpanStartOption{trace.WithSpanKind(trace.SpanKindConsumer), trace.WithAttributes(
+		attribute.String("operation.id", operation.ID),
+		attribute.String("application.id", operation.ApplicationID),
+		attribute.String("operation.type", operation.Type),
+	)}
+	if operation.PlanID != nil {
+		spanOptions = append(spanOptions, trace.WithAttributes(attribute.String("plan.id", *operation.PlanID)))
+	}
+	parent, span := otel.Tracer("justcd/worker").Start(parent, "operation.execute", spanOptions...)
+	defer span.End()
+	started := time.Now()
+	opCtx, cancel := context.WithTimeout(parent, 30*time.Minute)
 	heartbeatDone := make(chan struct{})
 	go func() {
 		defer close(heartbeatDone)
@@ -116,13 +132,17 @@ func (s *Service) executeOperationJob(ctx context.Context, job operationJob, log
 	cancel()
 	<-heartbeatDone
 	if executeErr == nil {
+		s.Metrics.RecordOperation(operation.Type, result.Status, time.Since(started))
+		logger.InfoContext(parent, "JustCD operation completed", "operationId", operation.ID, "applicationId", operation.ApplicationID, "planId", operation.PlanID, "operationType", operation.Type, "status", result.Status)
 		return
 	}
 	if result.Status == "" || result.Status == "running" || result.Status == "queued" {
 		s.markClaimedOperationInterrupted(operation, logger)
 		result.Status = "failed"
 	}
-	logger.Warn("JustCD sync operation failed", "operationId", operation.ID, "applicationId", operation.ApplicationID, "status", result.Status, "error", executeErr)
+	observability.MarkError(span, executeErr)
+	s.Metrics.RecordOperation(operation.Type, result.Status, time.Since(started))
+	logger.WarnContext(parent, "JustCD sync operation failed", "operationId", operation.ID, "applicationId", operation.ApplicationID, "planId", operation.PlanID, "operationType", operation.Type, "status", result.Status, "error", executeErr)
 }
 
 func (s *Service) markClaimedOperationInterrupted(operation store.Operation, logger *slog.Logger) {

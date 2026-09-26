@@ -14,8 +14,11 @@ import (
 	"github.com/justlab/justcd/services/backend/internal/core"
 	"github.com/justlab/justcd/services/backend/internal/gitops"
 	"github.com/justlab/justcd/services/backend/internal/kube"
+	"github.com/justlab/justcd/services/backend/internal/observability"
 	"github.com/justlab/justcd/services/backend/internal/render"
 	"github.com/justlab/justcd/services/backend/internal/store"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -25,6 +28,7 @@ import (
 type Service struct {
 	Store         *store.Store
 	EncryptionKey []byte
+	Metrics       *observability.Metrics
 }
 
 type planStageError struct {
@@ -104,8 +108,12 @@ func (s *Service) BuildPlan(ctx context.Context, applicationID, actorID string) 
 }
 
 func (s *Service) BuildPlanWithSelection(ctx context.Context, app store.Application, actorID string, selection core.PlanSelection) (store.PlanRecord, error) {
+	ctx, span := otel.Tracer("justcd/planner").Start(ctx, "plan.build")
+	defer span.End()
+	span.SetAttributes(attribute.String("application.id", app.ID))
 	plan, desired, err := s.CalculatePlanWithSelection(ctx, app, selection)
 	if err != nil {
+		observability.MarkError(span, err)
 		if ctx.Err() == nil {
 			var stageErr *planStageError
 			issues := []store.ApplicationStatusIssue{statusIssue("check", time.Now().UTC())}
@@ -125,10 +133,13 @@ func (s *Service) BuildPlanWithSelection(ctx context.Context, app store.Applicat
 	}
 	now := time.Now().UTC()
 	record := store.PlanRecord{ID: store.NewID(), Plan: plan, Desired: desired, CreatedBy: actorID, CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute), Status: "current"}
+	span.SetAttributes(attribute.String("plan.id", record.ID), attribute.Int("plan.change_count", len(plan.Changes)), attribute.Bool("plan.requires_approval", plan.RequiresApproval))
 	if err := s.Store.SavePlan(ctx, record); err != nil {
+		observability.MarkError(span, err)
 		return store.PlanRecord{}, err
 	}
 	if _, err := s.Store.DB.ExecContext(ctx, `UPDATE applications SET health=$2,status_issues='[]'::jsonb,last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, app.ID, healthForPlan(plan)); err != nil {
+		observability.MarkError(span, err)
 		return store.PlanRecord{}, err
 	}
 	_ = s.Store.Audit(ctx, actorID, "plan.created", "application", app.ID, map[string]any{"planId": record.ID, "revision": plan.Revision, "digest": plan.Digest, "changes": len(plan.Changes)})
@@ -220,6 +231,9 @@ func (s *Service) CalculatePlan(ctx context.Context, app store.Application) (cor
 }
 
 func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Application, selection core.PlanSelection) (core.Plan, []core.Resource, error) {
+	ctx, span := otel.Tracer("justcd/planner").Start(ctx, "plan.calculate")
+	defer span.End()
+	span.SetAttributes(attribute.String("application.id", app.ID), attribute.String("renderer", app.Renderer))
 	if app.Decommissioning {
 		return core.Plan{}, nil, errors.New("application is being decommissioned; cancel deletion before normal sync")
 	}
@@ -262,6 +276,7 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 	}
 	desired, err := render.Render(ctx, render.Options{RepositoryRoot: checkout.Root, ManifestPath: app.ManifestPath, TargetManifestPath: app.TargetManifestPath, NamespaceManifestPaths: app.NamespaceManifestPaths, Renderer: app.Renderer, KustomizeHelmEnabled: app.KustomizeHelmEnabled, KustomizeNamespaceOverride: app.KustomizeNamespaceOverride, HelmValuesFiles: app.HelmValuesFiles, HelmValuesYAML: app.HelmValuesYAML, TargetHelmValuesFiles: app.TargetHelmValuesFiles, TargetHelmValuesYAML: app.TargetHelmValuesYAML, NamespaceHelmValues: app.NamespaceHelmValues, ApplicationID: app.ID, ClusterID: app.ClusterID, Namespaces: namespaceBindings, Mapper: input.Mapper.Mapper, IgnoredResources: ignoredResources, IgnoredSelectors: selectors})
 	if err != nil {
+		observability.MarkError(span, err)
 		return core.Plan{}, nil, &planStageError{stage: "render", err: err}
 	}
 	for _, resource := range desired {
@@ -275,6 +290,7 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 	}
 	plan, err := core.BuildPlan(app.ID, checkout.Commit, input.Bindings, desired, live)
 	if err != nil {
+		observability.MarkError(span, err)
 		return core.Plan{}, nil, err
 	}
 	managed, err := s.Store.ManagedResources(ctx, app.ID)

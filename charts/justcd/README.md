@@ -73,3 +73,38 @@ not install PostgreSQL or create credentials for target clusters. Set
 `cookieSecure: false` only for a local HTTP installation. Both images expose
 `/healthz` for Kubernetes probes; the backend's endpoint reports process
 availability after startup, not the health of every external connection.
+
+## Metrics and traces
+
+Prometheus metrics and OpenTelemetry tracing are disabled by default. Enable
+Prometheus scraping on the cluster-internal backend Service with:
+
+```yaml
+backend:
+  observability:
+    metrics:
+      enabled: true
+```
+
+When enabled, the Service receives standard Prometheus scrape annotations and
+the backend serves `/metrics` on its existing HTTP port. The Ingress continues
+to route only to the frontend.
+
+Send traces to an OTLP/HTTP collector with:
+
+```yaml
+backend:
+  observability:
+    tracing:
+      enabled: true
+      endpoint: http://otel-collector.observability.svc:4318
+      sampleRatio: 0.1
+      headersSecret: justcd-otel-headers
+      headersSecretKey: OTEL_EXPORTER_OTLP_HEADERS
+```
+
+The optional Secret key should contain the OTLP exporter header string, for
+example `Authorization=Bearer <token>`. Store exporter credentials in a Secret;
+do not put them in Helm values or commit them. See
+[`docs/observability.md`](../../docs/observability.md) for metric names,
+cardinality limits, the starter Grafana dashboard, and alert recommendations.

@@ -1,9 +1,25 @@
 package core
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
+
+func TestPlanDigestIgnoresManifestKeyOrderAfterDatabaseRoundTrip(t *testing.T) {
+	plan := Plan{ApplicationID: "app", Revision: "commit", Bindings: []Binding{{ClusterID: "cluster", Namespace: "demo", CredentialRef: "credential"}}, Changes: []Change{{Kind: Create, Identity: Identity{APIVersion: "v1", Kind: "ConfigMap", Namespace: "demo", Name: "example"}, After: json.RawMessage(`{"apiVersion":"v1","data":{"mode":"desired"},"kind":"ConfigMap","metadata":{"name":"example","namespace":"demo"}}`)}}}
+	if err := RefreshDigest(&plan); err != nil {
+		t.Fatal(err)
+	}
+	original := plan.Digest
+	plan.Changes[0].After = json.RawMessage(`{"metadata":{"namespace":"demo","name":"example"},"kind":"ConfigMap","data":{"mode":"desired"},"apiVersion":"v1"}`)
+	if err := RefreshDigest(&plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.Digest != original {
+		t.Fatal("JSONB key ordering changed the immutable plan digest")
+	}
+}
 
 func TestRollbackPlanRequiresOwnerAndDistinctApprovals(t *testing.T) {
 	plan := Plan{Digest: "rollback-digest", RequiredApprovals: 2, RequiresApproval: true, ApproverRoles: []string{"owner"}, Rollback: &RollbackTarget{Kind: "successful_sync", ID: "snapshot-1", Revision: "abc123"}}

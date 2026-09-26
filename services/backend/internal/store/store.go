@@ -3004,7 +3004,7 @@ func (s *Store) ClaimQueuedOperation(ctx context.Context, lease time.Duration) (
 	var rawApprovalIDs []byte
 	var clusterID string
 	var maxConcurrent, operationsPerMinute int
-	err = tx.QueryRowContext(ctx, `SELECT o.id,o.application_id,o.plan_id,o.actor_id,o.approval_id,o.approval_ids,o.operation_type,COALESCE(o.rollback_checkpoint_id,''),o.status,o.message,o.progress,o.attempt_count,o.error_code,o.next_retry_at,o.terminal_reason,o.started_at,o.finished_at,a.cluster_id,c.max_concurrent_operations,c.operations_per_minute
+	err = tx.QueryRowContext(ctx, `SELECT o.id,o.application_id,o.plan_id,o.actor_id,COALESCE(o.approval_id,''),o.approval_ids,o.operation_type,COALESCE(o.rollback_checkpoint_id,''),o.status,o.message,o.progress,o.attempt_count,o.error_code,o.next_retry_at,o.terminal_reason,o.started_at,o.finished_at,a.cluster_id,c.max_concurrent_operations,c.operations_per_minute
 		FROM operations o
 		JOIN applications a ON a.id=o.application_id
 		JOIN clusters c ON c.id=a.cluster_id
@@ -3181,7 +3181,7 @@ func (s *Store) FinishOperationWithRetry(ctx context.Context, id, applicationID,
 func (s *Store) OperationByID(ctx context.Context, id string) (Operation, error) {
 	var item Operation
 	var rawProgress, rawApprovalIDs []byte
-	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,plan_id,actor_id,approval_id,approval_ids,operation_type,COALESCE(rollback_checkpoint_id,''),status,message,progress,attempt_count,error_code,next_retry_at,terminal_reason,started_at,finished_at FROM operations WHERE id=$1`, id).
+	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,plan_id,actor_id,COALESCE(approval_id,''),approval_ids,operation_type,COALESCE(rollback_checkpoint_id,''),status,message,progress,attempt_count,error_code,next_retry_at,terminal_reason,started_at,finished_at FROM operations WHERE id=$1`, id).
 		Scan(&item.ID, &item.ApplicationID, &item.PlanID, &item.ActorID, &item.ApprovalID, &rawApprovalIDs, &item.Type, &item.RollbackCheckpointID, &item.Status, &item.Message, &rawProgress, &item.AttemptCount, &item.ErrorCode, &item.NextRetryAt, &item.TerminalReason, &item.StartedAt, &item.FinishedAt)
 	if err != nil {
 		return Operation{}, err

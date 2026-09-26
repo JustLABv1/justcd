@@ -20,6 +20,8 @@ import type {
   Cluster,
   Credential,
   GitSource,
+  KubernetesPermissionReport,
+  KubernetesPermissionTest,
   ListResponse,
   NamespaceBinding,
   OIDCProvider,
@@ -1064,17 +1066,29 @@ function ClusterPanel({
   async function test(cluster: Cluster) {
     if (!project) return
     setTestingClusterId(cluster.id)
-    try { await action(
-      () => apiPost<{
-          status: string
-          serverVersion: string
-          namespace: string
-          canReadPods: boolean
-        }>(`/api/v1/clusters/${encodeURIComponent(cluster.id)}/test`, {
-          projectId: project.id,
-        }),
-      (result) => `${cluster.name}: Kubernetes ${result.serverVersion} authenticated; ${result.canReadPods ? "can" : "cannot"} read Pods in ${result.namespace}`
-    ) } finally { setTestingClusterId("") }
+    try {
+      await action(
+        () =>
+          apiPost<KubernetesPermissionReport>(
+            `/api/v1/clusters/${encodeURIComponent(cluster.id)}/test`,
+            {
+              projectId: project.id,
+            }
+          ),
+        (result) => {
+          const missing = result.checks.filter(
+            (check) => check.status === "missing"
+          ).length
+          return result.status === "passed"
+            ? `${cluster.name}: all Kubernetes permissions passed in ${result.namespace}.`
+            : result.status === "partial"
+              ? `${cluster.name}: ${missing} Kubernetes permission${missing === 1 ? "" : "s"} missing in ${result.namespace}.`
+              : `${cluster.name}: ${result.failure?.message ?? "Kubernetes permission test failed."}`
+        }
+      )
+    } finally {
+      setTestingClusterId("")
+    }
   }
   return (
     <div className="space-y-6">
@@ -1188,7 +1202,10 @@ function ClusterPanel({
             Save project credential
           </Button>
           {credentialLoadError != null && (
-            <div role="alert" className="flex flex-wrap items-center justify-between gap-3 text-sm text-destructive">
+            <div
+              role="alert"
+              className="flex flex-wrap items-center justify-between gap-3 text-sm text-destructive"
+            >
               <span>{errorMessage(credentialLoadError)}</span>
               <ErrorDetailsButton error={credentialLoadError} />
             </div>
@@ -1323,7 +1340,12 @@ function ClusterPanel({
             </div>
           </details>
           <div className="flex gap-2">
-            <Button size="sm" type="submit" loading={busy} loadingText={editing ? "Saving cluster…" : "Adding cluster…"}>
+            <Button
+              size="sm"
+              type="submit"
+              loading={busy}
+              loadingText={editing ? "Saving cluster…" : "Adding cluster…"}
+            >
               {editing ? "Save cluster" : "Add cluster"}
             </Button>
             {editing && (
@@ -1581,7 +1603,7 @@ function NamespacePanel({
   busy: boolean
   action: <T>(
     work: () => Promise<T>,
-    success: string,
+    success: string | ((result: T) => string),
     after?: (value: T) => void
   ) => Promise<void>
   onCreated: (value: NamespaceBinding) => void
@@ -1591,6 +1613,11 @@ function NamespacePanel({
   const [credentialId, setCredentialId] = useState("")
   const [editing, setEditing] = useState<NamespaceBinding | null>(null)
   const [projectDefault, setProjectDefault] = useState(false)
+  const [reports, setReports] = useState<
+    Record<string, KubernetesPermissionTest>
+  >({})
+  const [testingNamespace, setTestingNamespace] = useState("")
+  const [includeClusterScope, setIncludeClusterScope] = useState(false)
   useEffect(() => {
     if (!project || !cluster) return
     api<{ credentialId: string | null }>(
@@ -1599,77 +1626,195 @@ function NamespacePanel({
       .then((result) => setProjectDefault(!!result.credentialId))
       .catch(() => setProjectDefault(false))
   }, [project, cluster])
+  useEffect(() => {
+    if (!project || !cluster) return
+    let active = true
+    api<ListResponse<KubernetesPermissionTest>>(
+      `/api/v1/clusters/${encodeURIComponent(cluster.id)}/tests?projectId=${encodeURIComponent(project.id)}`
+    )
+      .then((result) => {
+        if (active) {
+          setReports(
+            Object.fromEntries(
+              result.items.map((item) => [item.namespace, item])
+            )
+          )
+        }
+      })
+      .catch(() => {
+        if (active) setReports({})
+      })
+    return () => {
+      active = false
+    }
+  }, [project, cluster])
+  async function runSelfTest(targetNamespace: string, clusterScope = false) {
+    if (!project || !cluster) return
+    setTestingNamespace(targetNamespace)
+    try {
+      await action(
+        () =>
+          apiPost<KubernetesPermissionReport>(
+            `/api/v1/clusters/${encodeURIComponent(cluster.id)}/test`,
+            {
+              projectId: project.id,
+              namespace: targetNamespace,
+              includeClusterScope: clusterScope,
+            }
+          ),
+        (report) =>
+          report.status === "passed"
+            ? `Kubernetes permissions passed in ${report.namespace}.`
+            : (report.failure?.message ??
+              `Kubernetes permission checks are ${report.status} in ${report.namespace}.`),
+        (report) =>
+          setReports((current) => ({
+            ...current,
+            [report.namespace]: {
+              projectId: project.id,
+              clusterId: cluster.id,
+              namespace: report.namespace,
+              report,
+              checkedAt: report.checkedAt,
+            },
+          }))
+      )
+    } finally {
+      setTestingNamespace("")
+    }
+  }
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!project || !cluster) return
+    if (editing) {
+      const updatedNamespace = editing.namespace
+      let updatedBinding = false
+      await action(
+        async () => {
+          const binding = await api<NamespaceBinding>(
+            `/api/v1/clusters/${encodeURIComponent(cluster.id)}/bindings/${encodeURIComponent(editing.namespace)}`,
+            {
+              method: "PUT",
+              body: JSON.stringify({
+                projectId: project.id,
+                credentialId: credentialId || null,
+              }),
+            }
+          )
+          setNamespace("")
+          setCredentialId("")
+          setEditing(null)
+          return binding
+        },
+        "Namespace credential updated.",
+        (binding) => {
+          updatedBinding = true
+          onUpdated(binding)
+        }
+      )
+      if (updatedBinding) await runSelfTest(updatedNamespace)
+      return
+    }
+    let createdBinding: NamespaceBinding | undefined
     await action(
       async () => {
-        const binding = editing
-          ? await api<NamespaceBinding>(
-              `/api/v1/clusters/${encodeURIComponent(cluster.id)}/bindings/${encodeURIComponent(editing.namespace)}`,
-              {
-                method: "PUT",
-                body: JSON.stringify({
-                  projectId: project.id,
-                  credentialId: credentialId || null,
-                }),
-              }
-            )
-          : await apiPost<NamespaceBinding>(
-              `/api/v1/clusters/${encodeURIComponent(cluster.id)}/bindings`,
-              {
-                projectId: project.id,
-                namespace,
-                credentialId: credentialId || undefined,
-              }
-            )
+        const binding = await apiPost<NamespaceBinding>(
+          `/api/v1/clusters/${encodeURIComponent(cluster.id)}/bindings`,
+          {
+            projectId: project.id,
+            namespace,
+            credentialId: credentialId || undefined,
+          }
+        )
         setNamespace("")
         setCredentialId("")
-        setEditing(null)
         return binding
       },
-      editing
-        ? "Namespace credential updated."
-        : "Namespace access binding added.",
-      editing ? onUpdated : onCreated
+      "Namespace access binding added.",
+      (binding) => {
+        createdBinding = binding
+        onCreated(binding)
+      }
     )
+    if (createdBinding) await runSelfTest(createdBinding.namespace)
   }
   return (
     <div className="space-y-6">
       <SettingsInventory title="Allowed namespaces" count={bindings.length}>
         {bindings.length ? (
           <div className="divide-y border-b">
-            {bindings.map((binding) => (
-              <div
-                key={binding.namespace}
-                className="flex flex-wrap items-center justify-between gap-3 px-6 py-2.5"
-              >
-                <span className="font-mono text-xs">{binding.namespace}</span>
-                <span className="text-[10px] text-muted-foreground">
-                  {binding.credentialId
-                    ? credentials.find(
-                        (item) => item.id === binding.credentialId
-                      )?.name || "namespace credential"
-                    : projectDefault
-                      ? "Project credential"
-                      : "Cluster default"}
-                </span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  type="button"
-                  disabled={busy || project?.role !== "owner"}
-                  onClick={() => {
-                    setEditing(binding)
-                    setNamespace(binding.namespace)
-                    setCredentialId(binding.credentialId ?? "")
-                    focusSettingsEditor("namespace-credential")
-                  }}
+            {bindings.map((binding) => {
+              const record = reports[binding.namespace]
+              const report = record?.report
+              return (
+                <div
+                  key={binding.namespace}
+                  className="flex flex-wrap items-center justify-between gap-3 px-6 py-3"
                 >
-                  Edit
-                </Button>
-              </div>
-            ))}
+                  <span className="font-mono text-xs">{binding.namespace}</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    {binding.credentialId
+                      ? credentials.find(
+                          (item) => item.id === binding.credentialId
+                        )?.name || "namespace credential"
+                      : projectDefault
+                        ? "Project credential"
+                        : "Cluster default"}
+                  </span>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      type="button"
+                      loading={testingNamespace === binding.namespace}
+                      loadingText="Testing…"
+                      disabled={busy || !project || !cluster}
+                      onClick={() =>
+                        void runSelfTest(binding.namespace, includeClusterScope)
+                      }
+                    >
+                      Run self-test
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      type="button"
+                      disabled={busy || project?.role !== "owner"}
+                      onClick={() => {
+                        setEditing(binding)
+                        setNamespace(binding.namespace)
+                        setCredentialId(binding.credentialId ?? "")
+                        focusSettingsEditor("namespace-credential")
+                      }}
+                    >
+                      Edit
+                    </Button>
+                  </div>
+                  <div className="basis-full text-[10px] text-muted-foreground">
+                    {record ? (
+                      <>
+                        Latest self-test:{" "}
+                        <span className="font-medium text-foreground">
+                          {report?.status}
+                        </span>
+                        {" · "}
+                        {new Date(record.checkedAt).toLocaleString()}
+                        <details className="mt-2 rounded-lg border bg-muted/20 p-3 text-xs">
+                          <summary className="cursor-pointer font-medium">
+                            View permission checks and suggested RBAC
+                          </summary>
+                          {report && (
+                            <PermissionReportDetails report={report} />
+                          )}
+                        </details>
+                      </>
+                    ) : (
+                      "No permission self-test saved yet. New namespace bindings are tested automatically."
+                    )}
+                  </div>
+                </div>
+              )
+            })}
           </div>
         ) : null}
         {!bindings.length && (
@@ -1678,6 +1823,42 @@ function NamespacePanel({
           </p>
         )}
       </SettingsInventory>
+      <div className="rounded-xl border bg-card px-5 py-4">
+        <label className="flex items-start gap-3 text-xs">
+          <Checkbox
+            checked={includeClusterScope}
+            disabled={
+              busy ||
+              project?.role !== "owner" ||
+              !cluster?.clusterScopeCredentialId
+            }
+            onCheckedChange={(checked) =>
+              setIncludeClusterScope(Boolean(checked))
+            }
+          />
+          <span>
+            <span className="block font-medium">
+              Include optional cluster-wide checks
+            </span>
+            <span className="mt-1 block text-muted-foreground">
+              Uses the separate cluster-scope credential to check namespace get,
+              list, create, apply, and delete permissions. No namespaces are
+              changed.
+            </span>
+          </span>
+        </label>
+        {!cluster?.clusterScopeCredentialId && (
+          <p className="mt-2 pl-7 text-[10px] text-muted-foreground">
+            Configure a cluster-scope credential in cluster settings to enable
+            these checks.
+          </p>
+        )}
+        {project?.role !== "owner" && (
+          <p className="mt-2 pl-7 text-[10px] text-muted-foreground">
+            Only project owners can request cluster-wide permission checks.
+          </p>
+        )}
+      </div>
       <form
         className="settings-editor space-y-5 rounded-2xl border bg-card p-6"
         onSubmit={submit}
@@ -1762,6 +1943,95 @@ function NamespacePanel({
   )
 }
 
+function PermissionReportDetails({
+  report,
+}: {
+  report: KubernetesPermissionReport
+}) {
+  const checks = [...report.checks, ...(report.clusterScope?.checks ?? [])]
+  const suggestions = [
+    ["Role", report.suggestions.roleYaml],
+    ["RoleBinding", report.suggestions.roleBindingYaml],
+    ["ClusterRole", report.suggestions.clusterRoleYaml],
+    ["ClusterRoleBinding", report.suggestions.clusterRoleBindingYaml],
+  ].filter((item): item is [string, string] => Boolean(item[1]))
+  return (
+    <div className="mt-3 space-y-3">
+      <p className="text-[10px] text-muted-foreground">
+        {report.serverVersion ? `Kubernetes ${report.serverVersion} · ` : ""}
+        Checks use SelfSubjectAccessReview and do not touch deployment
+        resources.
+      </p>
+      {report.failure && (
+        <div className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-[11px]">
+          <p className="font-medium">
+            {report.failure.category}: {report.failure.message}
+          </p>
+          <p className="mt-1 text-muted-foreground">
+            {report.failure.remediation}
+          </p>
+        </div>
+      )}
+      {report.clusterScope?.failure && (
+        <div className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-[11px]">
+          <p className="font-medium">
+            Cluster-scope check: {report.clusterScope.failure.message}
+          </p>
+          <p className="mt-1 text-muted-foreground">
+            {report.clusterScope.failure.remediation}
+          </p>
+        </div>
+      )}
+      {report.clusterScope?.status === "not_configured" && (
+        <p className="text-[11px] text-muted-foreground">
+          Cluster-scope checks were requested, but no cluster-scope credential
+          is configured.
+        </p>
+      )}
+      <ul className="grid gap-1 sm:grid-cols-2">
+        {checks.map((check) => (
+          <li
+            key={`${check.scope}-${check.id}`}
+            className="flex items-center justify-between gap-3 rounded-md bg-muted/40 px-2 py-1.5 text-[10px]"
+          >
+            <span>{check.title}</span>
+            <span
+              className={
+                check.status === "passed"
+                  ? "font-medium text-emerald-700"
+                  : check.status === "missing"
+                    ? "font-medium text-amber-700"
+                    : "text-muted-foreground"
+              }
+            >
+              {check.status}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {suggestions.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-[11px] font-medium">
+            Suggested RBAC for missing permissions
+          </p>
+          {suggestions.map(([title, value]) => (
+            <div key={title}>
+              <p className="mb-1 text-[10px] text-muted-foreground">{title}</p>
+              <pre className="overflow-x-auto rounded-md bg-muted p-3 text-[10px]">
+                {value}
+              </pre>
+            </div>
+          ))}
+          <p className="text-[10px] text-muted-foreground">
+            Review and replace the placeholder subject before applying these
+            suggestions.
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function OIDCPanel({
   providers,
   projects,
@@ -1788,24 +2058,30 @@ function OIDCPanel({
   const [projectId, setProjectId] = useState("")
   const [groupName, setGroupName] = useState("")
   const [groupRole, setGroupRole] = useState("viewer")
-  const [oidcPending, setOidcPending] = useState<"provider" | "group" | null>(null)
+  const [oidcPending, setOidcPending] = useState<"provider" | "group" | null>(
+    null
+  )
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setOidcPending("provider")
-    try { await action(
-      async () => {
-        const provider = await apiPost<OIDCProvider>(
-          "/api/v1/admin/oidc-providers",
-          { name, issuer, clientId, clientSecret, groupsClaim }
-        )
-        setName("")
-        setClientId("")
-        setClientSecret("")
-        return provider
-      },
-      "OIDC provider added. Verify the callback URL in your identity provider.",
-      onCreated
-    ) } finally { setOidcPending(null) }
+    try {
+      await action(
+        async () => {
+          const provider = await apiPost<OIDCProvider>(
+            "/api/v1/admin/oidc-providers",
+            { name, issuer, clientId, clientSecret, groupsClaim }
+          )
+          setName("")
+          setClientId("")
+          setClientSecret("")
+          return provider
+        },
+        "OIDC provider added. Verify the callback URL in your identity provider.",
+        onCreated
+      )
+    } finally {
+      setOidcPending(null)
+    }
   }
   async function mapGroup(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -1813,15 +2089,19 @@ function OIDCPanel({
     const selectedProject = projectId || projects[0]?.id
     if (!selectedProvider || !selectedProject) return
     setOidcPending("group")
-    try { await action(
-      () =>
-        apiPost(
-          `/api/v1/admin/oidc-providers/${encodeURIComponent(selectedProvider)}/groups`,
-          { group: groupName, projectId: selectedProject, role: groupRole }
-        ),
-      "OIDC group mapping saved.",
-      () => setGroupName("")
-    ) } finally { setOidcPending(null) }
+    try {
+      await action(
+        () =>
+          apiPost(
+            `/api/v1/admin/oidc-providers/${encodeURIComponent(selectedProvider)}/groups`,
+            { group: groupName, projectId: selectedProject, role: groupRole }
+          ),
+        "OIDC group mapping saved.",
+        () => setGroupName("")
+      )
+    } finally {
+      setOidcPending(null)
+    }
   }
   return (
     <div className="space-y-6">
@@ -1922,7 +2202,13 @@ function OIDCPanel({
           </code>
           . It is available after the provider is created.
         </p>
-        <Button size="sm" type="submit" loading={oidcPending === "provider"} loadingText="Adding provider…" disabled={busy}>
+        <Button
+          size="sm"
+          type="submit"
+          loading={oidcPending === "provider"}
+          loadingText="Adding provider…"
+          disabled={busy}
+        >
           Add OIDC provider
         </Button>
       </form>
@@ -1985,7 +2271,13 @@ function OIDCPanel({
               />
             </FormField>
           </div>
-          <Button size="sm" type="submit" loading={oidcPending === "group"} loadingText="Saving mapping…" disabled={busy || !groupName}>
+          <Button
+            size="sm"
+            type="submit"
+            loading={oidcPending === "group"}
+            loadingText="Saving mapping…"
+            disabled={busy || !groupName}
+          >
             Save group mapping
           </Button>
         </form>
@@ -2021,19 +2313,38 @@ function PlatformUsersPanel({
   const [mutatingUserId, setMutatingUserId] = useState<string | null>(null)
   const [usersLoading, setUsersLoading] = useState(true)
   const [usersError, setUsersError] = useState<unknown | null>(null)
+  const fetchUsers = useCallback(
+    () => api<ListResponse<User>>("/api/v1/admin/users"),
+    []
+  )
   const loadUsers = useCallback(async () => {
     setUsersLoading(true)
     setUsersError(null)
     try {
-      const result = await api<ListResponse<User>>("/api/v1/admin/users")
+      const result = await fetchUsers()
       setUsers(result.items)
     } catch (cause) {
       setUsersError(cause)
     } finally {
       setUsersLoading(false)
     }
-  }, [])
-  useEffect(() => { void loadUsers() }, [loadUsers])
+  }, [fetchUsers])
+  useEffect(() => {
+    let active = true
+    fetchUsers()
+      .then((result) => {
+        if (active) setUsers(result.items)
+      })
+      .catch((cause) => {
+        if (active) setUsersError(cause)
+      })
+      .finally(() => {
+        if (active) setUsersLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [fetchUsers])
 
   function startEditing(user: User) {
     setEditingUserId(user.id)

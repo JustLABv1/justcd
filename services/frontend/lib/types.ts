@@ -65,6 +65,57 @@ export type Cluster = {
 
 export type NamespaceBinding = { namespace: string; credentialId?: string }
 
+export type KubernetesPermissionCheck = {
+  id: string
+  title: string
+  scope: string
+  namespace?: string
+  apiGroup: string
+  resource: string
+  verb: string
+  status: "passed" | "missing" | "unknown" | "failed"
+  allowed: boolean
+}
+
+export type KubernetesPermissionFailure = {
+  code: string
+  category: string
+  message: string
+  remediation: string
+  retryable: boolean
+}
+
+export type KubernetesPermissionScope = {
+  status: string
+  checks: KubernetesPermissionCheck[]
+  failure?: KubernetesPermissionFailure
+}
+
+export type KubernetesPermissionReport = {
+  status: string
+  namespace: string
+  serverVersion?: string
+  canReadPods: boolean
+  checkedAt: string
+  checks: KubernetesPermissionCheck[]
+  clusterScope?: KubernetesPermissionScope
+  suggestions: {
+    roleYaml?: string
+    roleBindingYaml?: string
+    clusterRoleYaml?: string
+    clusterRoleBindingYaml?: string
+  }
+  failure?: KubernetesPermissionFailure
+}
+
+export type KubernetesPermissionTest = {
+  projectId: string
+  clusterId: string
+  namespace: string
+  report: KubernetesPermissionReport
+  checkedAt: string
+}
+
 export type GitSource = {
   id: string
   projectId: string

@@ -34,6 +34,64 @@ func TestGitHubWebhookVerification(t *testing.T) {
 	}
 }
 
+func TestGitHubPushWebhook(t *testing.T) {
+	secret := "example-webhook-secret-123"
+	body := []byte(`{"ref":"refs/heads/main","after":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repository":{"full_name":"team/app"}}`)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	header := http.Header{"X-Hub-Signature-256": {"sha256=" + hex.EncodeToString(mac.Sum(nil))}, "X-Github-Event": {"push"}, "X-Github-Delivery": {"push-1"}}
+	event, err := VerifyAndParse("github", secret, header, body, time.Now())
+	if err != nil || event.Kind != "push" || event.Ref != "refs/heads/main" || event.HeadSHA != strings.Repeat("a", 40) {
+		t.Fatalf("unexpected push: %+v, %v", event, err)
+	}
+	header.Set("X-Hub-Signature-256", "sha256="+strings.Repeat("0", 64))
+	if _, err := VerifyAndParse("github", secret, header, body, time.Now()); err == nil {
+		t.Fatal("tampered push accepted")
+	}
+}
+
+func TestGitLabPushWebhook(t *testing.T) {
+	secret := "example-gitlab-secret-123"
+	body := []byte(`{"object_kind":"push","ref":"refs/heads/release/1","after":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","project":{"path_with_namespace":"group/app"}}`)
+	header := http.Header{"X-Gitlab-Token": {secret}, "X-Gitlab-Event": {"Push Hook"}, "X-Gitlab-Event-Uuid": {"push-2"}}
+	event, err := VerifyAndParse("gitlab", secret, header, body, time.Now())
+	if err != nil || event.Kind != "push" || event.Ref != "refs/heads/release/1" {
+		t.Fatalf("unexpected push: %+v, %v", event, err)
+	}
+	header.Del("X-Gitlab-Token")
+	if _, err := VerifyAndParse("gitlab", secret, header, body, time.Now()); err == nil {
+		t.Fatal("unsigned push accepted")
+	}
+	header.Set("X-Gitlab-Token", secret)
+	deleted := []byte(`{"object_kind":"push","ref":"refs/heads/release/1","after":"0000000000000000000000000000000000000000","project":{"path_with_namespace":"group/app"}}`)
+	if _, err := VerifyAndParse("gitlab", secret, header, deleted, time.Now()); err == nil || err.Error() != "event ignored" {
+		t.Fatalf("deleted branch was not ignored: %v", err)
+	}
+}
+
+func TestGenericPushWebhook(t *testing.T) {
+	secret := "generic-webhook-secret-123"
+	body := []byte(`{"ref":"refs/heads/main","after":"cccccccccccccccccccccccccccccccccccccccc"}`)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	header := http.Header{"X-Justcd-Signature-256": {"sha256=" + hex.EncodeToString(mac.Sum(nil))}, "X-Justcd-Delivery": {"generic-1"}}
+	event, err := VerifyGenericPush(secret, header, body)
+	if err != nil || event.Kind != "push" || event.DeliveryID != "generic-1" {
+		t.Fatalf("unexpected generic push: %+v, %v", event, err)
+	}
+	bad := []byte(`{"ref":"refs/heads/other","after":"cccccccccccccccccccccccccccccccccccccccc"}`)
+	if _, err := VerifyGenericPush(secret, header, bad); err == nil {
+		t.Fatal("modified body accepted")
+	}
+	tag := []byte(`{"ref":"refs/tags/v1","after":"cccccccccccccccccccccccccccccccccccccccc"}`)
+	tagMAC := hmac.New(sha256.New, []byte(secret))
+	tagMAC.Write(tag)
+	header.Set("X-JustCD-Signature-256", "sha256="+hex.EncodeToString(tagMAC.Sum(nil)))
+	if _, err := VerifyGenericPush(secret, header, tag); err == nil {
+		t.Fatal("tag push accepted")
+	}
+}
+
 func TestGitLabLegacyAndSignedWebhooks(t *testing.T) {
 	secret := "example-gitlab-secret-123"
 	body := []byte(`{"object_kind":"merge_request","project":{"path_with_namespace":"group/app"},"object_attributes":{"action":"update","state":"opened","iid":7,"url":"https://gitlab.example.com/group/app/-/merge_requests/7","updated_at":"2026-09-26T07:00:00Z","source_project_id":2,"target_project_id":1,"last_commit":{"id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}}`)

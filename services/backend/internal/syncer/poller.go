@@ -2,6 +2,8 @@ package syncer
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"log/slog"
 	"time"
 )
@@ -37,6 +39,11 @@ func (s *Service) reconcileDue(ctx context.Context, logger *slog.Logger) {
 		if ctx.Err() != nil {
 			return
 		}
+		trigger, triggerErr := s.Store.GitPushTrigger(ctx, app.ID)
+		if triggerErr != nil && !errors.Is(triggerErr, sql.ErrNoRows) {
+			logger.Error("could not read Git push trigger", "applicationId", app.ID, "error", triggerErr)
+			continue
+		}
 		record, err := s.BuildPlan(ctx, app.ID, systemActorID)
 		if err != nil {
 			logger.Warn("automatic JustCD plan failed", "applicationId", app.ID, "error", err)
@@ -59,6 +66,16 @@ func (s *Service) reconcileDue(ctx context.Context, logger *slog.Logger) {
 			}
 			_ = s.Store.Audit(ctx, systemActorID, "auto_sync.plan_failed", "application", app.ID, map[string]any{"message": "automatic drift check failed; see server logs", "attempt": decision.AttemptCount, "errorCode": decision.ErrorCode, "nextRetryAt": decision.NextRetryAt, "terminalReason": decision.TerminalReason})
 			continue
+		}
+		if triggerErr == nil {
+			if err := s.Store.AttachGitPushTrigger(ctx, record.ID, trigger); err != nil {
+				logger.Error("could not attach Git push trigger to plan", "applicationId", app.ID, "planId", record.ID, "error", err)
+				continue
+			}
+			_ = s.Store.Audit(ctx, systemActorID, "plan.webhook_triggered", "application", app.ID, map[string]any{"planId": record.ID, "provider": trigger.Provider, "sourceKey": trigger.SourceKey, "deliveryId": trigger.DeliveryID, "ref": trigger.Ref, "reportedCommit": trigger.ReportedSHA, "resolvedCommit": record.Plan.Revision})
+			if err := s.Store.CompleteGitPushTrigger(ctx, trigger); err != nil {
+				logger.Error("could not complete Git push trigger", "applicationId", app.ID, "error", err)
+			}
 		}
 		if healthErr := s.RefreshApplicationHealth(ctx, app); healthErr != nil && ctx.Err() == nil {
 			logger.Warn("could not fully refresh Kubernetes application health", "applicationId", app.ID, "error", healthErr)

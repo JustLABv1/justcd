@@ -1760,7 +1760,7 @@ func (s *Store) DueApplications(ctx context.Context, limit int) ([]Application, 
 	if limit < 1 || limit > 100 {
 		limit = 25
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+applicationColumns+` FROM applications a WHERE NOT a.decommissioning AND NOT a.auto_sync_paused AND a.retry_terminal_reason='' AND ((a.retry_next_at IS NOT NULL AND a.retry_next_at<=NOW()) OR (a.retry_next_at IS NULL AND (a.last_checked_at IS NULL OR a.last_checked_at<=NOW()-(a.poll_seconds * INTERVAL '1 second')))) AND NOT EXISTS (SELECT 1 FROM operation_leases l WHERE l.application_id=a.id AND l.expires_at>NOW()) ORDER BY COALESCE(a.retry_next_at,a.last_checked_at) ASC NULLS FIRST LIMIT $1`, limit)
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+applicationColumns+` FROM applications a WHERE NOT a.decommissioning AND NOT a.auto_sync_paused AND a.retry_terminal_reason='' AND ((a.retry_next_at IS NOT NULL AND a.retry_next_at<=NOW()) OR (a.retry_next_at IS NULL AND (a.last_checked_at IS NULL OR a.last_checked_at<=NOW()-(a.poll_seconds * INTERVAL '1 second')))) OR (a.retry_next_at IS NULL AND EXISTS (SELECT 1 FROM git_push_triggers t WHERE t.application_id=a.id))) AND NOT EXISTS (SELECT 1 FROM operation_leases l WHERE l.application_id=a.id AND l.expires_at>NOW()) ORDER BY COALESCE(a.retry_next_at,a.last_checked_at) ASC NULLS FIRST LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -2121,6 +2121,7 @@ func (s *Store) Audit(ctx context.Context, actorID, action, resourceType, resour
 type PlanRecord struct {
 	ID        string          `json:"id"`
 	Plan      core.Plan       `json:"plan"`
+	Trigger   *GitPushTrigger `json:"trigger,omitempty"`
 	Desired   []core.Resource `json:"desired"`
 	CreatedBy string          `json:"createdBy"`
 	CreatedAt time.Time       `json:"createdAt"`
@@ -2273,10 +2274,16 @@ func (s *Store) SavePlan(ctx context.Context, record PlanRecord) error {
 
 func (s *Store) PlanByID(ctx context.Context, id string) (PlanRecord, error) {
 	var out PlanRecord
-	var bindings, changes, desired, ignored, selection, approverRoles, approverUserIDs, rollbackTarget []byte
-	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target FROM plans WHERE id=$1`, id).Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission, &out.Plan.ApprovalKind, &out.Plan.RequiredApprovals, &approverRoles, &approverUserIDs, &rollbackTarget)
+	var bindings, changes, desired, ignored, selection, approverRoles, approverUserIDs, rollbackTarget, triggerInfo []byte
+	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target,trigger_info FROM plans WHERE id=$1`, id).Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission, &out.Plan.ApprovalKind, &out.Plan.RequiredApprovals, &approverRoles, &approverUserIDs, &rollbackTarget, &triggerInfo)
 	if err != nil {
 		return PlanRecord{}, err
+	}
+	if len(triggerInfo) > 0 {
+		out.Trigger = &GitPushTrigger{}
+		if err = json.Unmarshal(triggerInfo, out.Trigger); err != nil {
+			return PlanRecord{}, err
+		}
 	}
 	if err = json.Unmarshal(bindings, &out.Plan.Bindings); err != nil {
 		return PlanRecord{}, err
@@ -2320,7 +2327,7 @@ func (s *Store) ListPlans(ctx context.Context, applicationID string, limit int) 
 	if limit < 1 || limit > 100 {
 		limit = 20
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target FROM plans WHERE application_id=$1 ORDER BY created_at DESC LIMIT $2`, applicationID, limit)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target,trigger_info FROM plans WHERE application_id=$1 ORDER BY created_at DESC LIMIT $2`, applicationID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -2328,9 +2335,15 @@ func (s *Store) ListPlans(ctx context.Context, applicationID string, limit int) 
 	items := make([]PlanRecord, 0)
 	for rows.Next() {
 		var out PlanRecord
-		var bindings, changes, desired, ignored, selection, approverRoles, approverUserIDs, rollbackTarget []byte
-		if err := rows.Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission, &out.Plan.ApprovalKind, &out.Plan.RequiredApprovals, &approverRoles, &approverUserIDs, &rollbackTarget); err != nil {
+		var bindings, changes, desired, ignored, selection, approverRoles, approverUserIDs, rollbackTarget, triggerInfo []byte
+		if err := rows.Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission, &out.Plan.ApprovalKind, &out.Plan.RequiredApprovals, &approverRoles, &approverUserIDs, &rollbackTarget, &triggerInfo); err != nil {
 			return nil, err
+		}
+		if len(triggerInfo) > 0 {
+			out.Trigger = &GitPushTrigger{}
+			if err := json.Unmarshal(triggerInfo, out.Trigger); err != nil {
+				return nil, err
+			}
 		}
 		if err := json.Unmarshal(bindings, &out.Plan.Bindings); err != nil {
 			return nil, err

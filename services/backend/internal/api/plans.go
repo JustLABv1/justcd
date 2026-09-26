@@ -15,13 +15,14 @@ import (
 )
 
 type planView struct {
-	ID        string          `json:"id"`
-	Plan      core.Plan       `json:"plan"`
-	Resources []core.Identity `json:"resources"`
-	CreatedBy string          `json:"createdBy"`
-	CreatedAt time.Time       `json:"createdAt"`
-	ExpiresAt time.Time       `json:"expiresAt"`
-	Status    string          `json:"status"`
+	ID        string                `json:"id"`
+	Plan      core.Plan             `json:"plan"`
+	Trigger   *store.GitPushTrigger `json:"trigger,omitempty"`
+	Resources []core.Identity       `json:"resources"`
+	CreatedBy string                `json:"createdBy"`
+	CreatedAt time.Time             `json:"createdAt"`
+	ExpiresAt time.Time             `json:"expiresAt"`
+	Status    string                `json:"status"`
 }
 
 func toPlanView(record store.PlanRecord) planView {
@@ -38,7 +39,7 @@ func toPlanView(record store.PlanRecord) planView {
 		plan.Ignored[index].Before = redactManifest(plan.Ignored[index].Before)
 		plan.Ignored[index].After = redactManifest(plan.Ignored[index].After)
 	}
-	return planView{ID: record.ID, Plan: plan, Resources: resources, CreatedBy: record.CreatedBy, CreatedAt: record.CreatedAt, ExpiresAt: record.ExpiresAt, Status: record.Status}
+	return planView{ID: record.ID, Plan: plan, Trigger: record.Trigger, Resources: resources, CreatedBy: record.CreatedBy, CreatedAt: record.CreatedAt, ExpiresAt: record.ExpiresAt, Status: record.Status}
 }
 
 func redactManifest(raw json.RawMessage) json.RawMessage {

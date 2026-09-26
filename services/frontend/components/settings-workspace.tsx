@@ -1424,6 +1424,28 @@ function GitSourcePanel({
   const [credentialId, setCredentialId] = useState("")
   const [editing, setEditing] = useState<GitSource | null>(null)
   const [testingSourceId, setTestingSourceId] = useState("")
+  const [webhookSource, setWebhookSource] = useState<GitSource | null>(null)
+  const [webhookInfo, setWebhookInfo] = useState<{ configured: boolean; webhookUrl: string } | null>(null)
+  const [webhookSecret, setWebhookSecret] = useState("")
+  async function openWebhook(source: GitSource) {
+    setWebhookSource(source)
+    setWebhookInfo(null)
+    setWebhookSecret("")
+    await action(
+      () => api<{ configured: boolean; webhookUrl: string }>(`/api/v1/git-sources/${encodeURIComponent(source.id)}/push-webhook`),
+      "Webhook settings loaded.",
+      setWebhookInfo
+    )
+  }
+  async function saveWebhook(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!webhookSource) return
+    await action(
+      () => api<{ configured: boolean; webhookUrl: string }>(`/api/v1/git-sources/${encodeURIComponent(webhookSource.id)}/push-webhook`, { method: "PUT", body: JSON.stringify({ secret: webhookSecret }) }),
+      "Push webhook configured.",
+      (value) => { setWebhookInfo(value); setWebhookSecret("") }
+    )
+  }
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     await action(
@@ -1508,6 +1530,7 @@ function GitSourcePanel({
                 >
                   Edit
                 </Button>
+                <Button size="sm" variant="outline" type="button" disabled={busy || project?.role !== "owner"} onClick={() => void openWebhook(source)}>Push webhook</Button>
               </div>
             ))}
           </div>
@@ -1518,6 +1541,12 @@ function GitSourcePanel({
           </p>
         )}
       </SettingsInventory>
+      {webhookSource && <form className="rounded-2xl border bg-card p-6" onSubmit={(event) => void saveWebhook(event)}>
+        <div className="flex items-start justify-between gap-3"><div><h2 className="text-base font-semibold">Push webhook · {webhookSource.name}</h2><p className="mt-1 text-sm text-muted-foreground">Use this for native GitHub/GitLab push events or a generic Git provider. An existing PR webhook already accepts pushes too.</p></div><Button size="sm" variant="outline" type="button" onClick={() => setWebhookSource(null)}>Close</Button></div>
+        {webhookInfo && <div className="mt-4 rounded-lg border bg-muted/30 p-3 text-xs"><p>{webhookInfo.configured ? "Configured" : "Not configured"}</p><code className="mt-1 block break-all">{webhookInfo.webhookUrl}</code><p className="mt-2 text-muted-foreground">For GitHub/GitLab, enable push events with this secret. For other senders, POST JSON with ref and after (commit SHA), sign the raw body with HMAC-SHA256 in X-JustCD-Signature-256, and send a unique X-JustCD-Delivery ID.</p></div>}
+        <div className="mt-4"><FormField label={webhookInfo?.configured ? "Rotate webhook secret" : "Webhook secret"} htmlFor="generic-push-secret" hint="At least 16 characters. The value is never shown again."><Input id="generic-push-secret" type="password" minLength={16} required value={webhookSecret} onChange={(event) => setWebhookSecret(event.target.value)} autoComplete="new-password" /></FormField></div>
+        <Button className="mt-4" size="sm" type="submit" disabled={busy || !webhookInfo || webhookSecret.length < 16}>Save push webhook</Button>
+      </form>}
       <form
         className="settings-editor space-y-5 rounded-2xl border bg-card p-6"
         onSubmit={submit}

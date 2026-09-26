@@ -65,6 +65,7 @@ func (s *Server) routes() {
 	s.Mux.HandleFunc("GET /api/v1/auth/oidc/{providerID}/start", s.oidcStart)
 	s.Mux.HandleFunc("GET /api/v1/auth/oidc/{providerID}/callback", s.oidcCallback)
 	s.Mux.HandleFunc("POST /api/v1/webhooks/source-control/{connectionID}", s.sourceControlWebhook)
+	s.Mux.HandleFunc("POST /api/v1/webhooks/git-sources/{sourceID}", s.genericGitPushWebhook)
 
 	s.Mux.Handle("GET /api/v1/auth/session", s.requireAuth(http.HandlerFunc(s.session)))
 	s.Mux.Handle("POST /api/v1/auth/logout", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.logout))))
@@ -93,6 +94,8 @@ func (s *Server) routes() {
 	s.Mux.Handle("GET /api/v1/git-sources", s.requireAuth(http.HandlerFunc(s.listGitSources)))
 	s.Mux.Handle("POST /api/v1/git-sources", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createGitSource))))
 	s.Mux.Handle("PUT /api/v1/git-sources/{sourceID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateGitSource))))
+	s.Mux.Handle("GET /api/v1/git-sources/{sourceID}/push-webhook", s.requireAuth(http.HandlerFunc(s.getGitPushWebhook)))
+	s.Mux.Handle("PUT /api/v1/git-sources/{sourceID}/push-webhook", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.putGitPushWebhook))))
 	s.Mux.Handle("POST /api/v1/git-sources/{sourceID}/test", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.testGitSource))))
 	s.Mux.Handle("GET /api/v1/applications", s.requireAuth(http.HandlerFunc(s.listApplications)))
 	s.Mux.Handle("POST /api/v1/application-groups", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createApplicationGroup))))

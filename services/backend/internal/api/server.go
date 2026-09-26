@@ -64,6 +64,7 @@ func (s *Server) routes() {
 	s.Mux.HandleFunc("POST /api/v1/auth/login", s.login)
 	s.Mux.HandleFunc("GET /api/v1/auth/oidc/{providerID}/start", s.oidcStart)
 	s.Mux.HandleFunc("GET /api/v1/auth/oidc/{providerID}/callback", s.oidcCallback)
+	s.Mux.HandleFunc("POST /api/v1/webhooks/source-control/{connectionID}", s.sourceControlWebhook)
 
 	s.Mux.Handle("GET /api/v1/auth/session", s.requireAuth(http.HandlerFunc(s.session)))
 	s.Mux.Handle("POST /api/v1/auth/logout", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.logout))))
@@ -98,6 +99,9 @@ func (s *Server) routes() {
 	s.Mux.Handle("GET /api/v1/application-groups/{groupID}", s.requireAuth(http.HandlerFunc(s.getApplicationGroup)))
 	s.Mux.Handle("PUT /api/v1/application-groups/{groupID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateApplicationGroup))))
 	s.Mux.Handle("POST /api/v1/applications", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createApplication))))
+	s.Mux.Handle("GET /api/v1/applications/{applicationID}/source-control", s.requireAuth(http.HandlerFunc(s.getSourceControl)))
+	s.Mux.Handle("PUT /api/v1/applications/{applicationID}/source-control", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.putSourceControl))))
+	s.Mux.Handle("GET /api/v1/applications/{applicationID}/pull-requests", s.requireAuth(http.HandlerFunc(s.listPullRequestReviews)))
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}", s.requireAuth(http.HandlerFunc(s.getApplication)))
 	s.Mux.Handle("PUT /api/v1/applications/{applicationID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateApplication))))
 	s.Mux.Handle("PUT /api/v1/applications/{applicationID}/approval-policy", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateApplicationApprovalPolicy))))

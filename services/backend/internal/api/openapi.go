@@ -227,6 +227,31 @@ paths:
           schema: { type: string }
       responses:
         '200': { description: Application }
+  /applications/{applicationID}/source-control:
+    get:
+      summary: Read the application Git source's inferred PR provider and optional PR connection without returning secrets
+      responses:
+        '200': { description: Inferred source details, nullable connection, preview profile, and webhook URL }
+    put:
+      summary: Configure PR reporting for the application's existing Git source (project owner)
+      description: Provider and repository are derived from the Git source; unknown hosts require explicit self-hosted GitLab confirmation. A webhook secret and status API token are required on creation. Empty secret fields preserve existing encrypted values on update. A preview profile is optional and disabled by default.
+      responses:
+        '200': { description: Connection saved }
+        '400': { description: Provider, repository, credential, or preview profile is invalid }
+        '409': { description: Active previews prevent configuration changes }
+  /applications/{applicationID}/pull-requests:
+    get:
+      summary: List review-only PR plans and optional preview deployment states
+      responses:
+        '200': { description: Redacted review plans, status errors, and preview application links }
+  /webhooks/source-control/{connectionID}:
+    post:
+      summary: Receive verified GitHub pull request or GitLab merge request events
+      description: Public webhook endpoint. GitHub uses X-Hub-Signature-256. GitLab supports Standard Webhooks HMAC signatures and legacy X-Gitlab-Token for older self hosted instances.
+      responses:
+        '202': { description: Event stored for reconciliation }
+        '204': { description: Event type ignored }
+        '401': { description: Webhook verification failed }
   /applications/{applicationID}/approval-policy:
     put:
       summary: Set or clear independent approval rule overrides (owner only)

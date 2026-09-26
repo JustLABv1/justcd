@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import styles from "./app-shell.module.css"
 import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
@@ -82,17 +83,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-svh bg-[#f7f8f8] text-foreground dark:bg-background">
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-[224px] flex-col border-r bg-card lg:flex">
-        <Link href="/" className="flex h-[64px] items-center gap-3 border-b px-6">
+      <aside className="fixed bottom-3 left-3 top-3 z-20 hidden w-[224px] flex-col overflow-hidden rounded-[24px] border border-border/70 bg-card shadow-[0_8px_32px_-16px_rgb(0_0_0_/_0.2)] lg:flex">
+        <Link href="/" className="flex shrink-0 items-center gap-3 px-5 pb-7 pt-6">
           <span className="grid size-9 place-items-center rounded-xl bg-primary text-sm font-bold text-primary-foreground">J</span>
           <span>
             <span className="block text-[15px] font-semibold tracking-tight">JustCD</span>
             <span className="block text-[11px] text-muted-foreground">continuous delivery</span>
           </span>
         </Link>
-        <div className="px-4 pt-6">
-          <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">Workspace</p>
-          <nav className="space-y-1">
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-5">
+          <p className="px-4 pb-2 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">Workspace</p>
+          <nav aria-label="Workspace" className="space-y-1">
             {navigation.filter((item) => !item.adminOnly).map((item) => {
               const selected = isSelected(item.href, pathname)
               return (
@@ -100,7 +101,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   key={item.href}
                   href={item.href}
                   aria-current={selected ? "page" : undefined}
-                  className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-colors ${selected ? "bg-primary/8 font-semibold text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                  className={styles.navItem}
                 >
                   <HugeiconsIcon icon={item.icon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />
                   {item.label}
@@ -109,32 +110,30 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             })}
           </nav>
           {user.isAdmin && <>
-            <p className="px-3 pb-2 pt-6 text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">Administration</p>
+            <p className="px-4 pb-2 pt-7 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">Administration</p>
             <nav aria-label="Administration" className="space-y-1">
               {navigation.filter((item) => item.adminOnly).map((item) => {
                 const selected = isSelected(item.href, pathname)
-                return <Link key={item.href} href={item.href} aria-current={selected ? "page" : undefined} className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-colors ${selected ? "bg-primary/8 font-semibold text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}><HugeiconsIcon icon={item.icon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />{item.label}</Link>
+                return <Link key={item.href} href={item.href} aria-current={selected ? "page" : undefined} className={styles.navItem}><HugeiconsIcon icon={item.icon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />{item.label}</Link>
               })}
             </nav>
           </>}
         </div>
-        <div className="mt-auto border-t p-4">
-          <div className="flex items-center gap-3 rounded-lg px-2 py-2">
-            <span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-xs font-semibold uppercase">
-              {(user.displayName || user.email).slice(0, 2)}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-xs font-medium">{user.displayName || user.email}</span>
-              <span className="block truncate text-[11px] text-muted-foreground">{user.isAdmin ? "Instance administrator" : user.email}</span>
-            </span>
-          </div>
-          <Button variant="ghost" size="sm" className="mt-1 w-full justify-start text-muted-foreground" onClick={signOut}>
-            <HugeiconsIcon icon={Logout01Icon} strokeWidth={1.8} className="size-4" aria-hidden="true" /> Sign out
+        <div className="mx-3 mb-3 flex shrink-0 items-center gap-2 rounded-2xl bg-muted/50 p-2.5">
+          <span className="grid size-9 shrink-0 place-items-center rounded-full border border-border/60 bg-background text-xs font-semibold uppercase">
+            {(user.displayName || user.email).slice(0, 2)}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-xs font-medium" title={user.displayName || user.email}>{user.displayName || user.email}</span>
+            <span className="mt-0.5 block truncate text-[10px] text-muted-foreground" title={user.isAdmin ? "Instance administrator" : user.email}>{user.isAdmin ? "Administrator" : user.email}</span>
+          </span>
+          <Button variant="ghost" size="icon" className="size-8 shrink-0 rounded-full text-muted-foreground" aria-label="Sign out" title="Sign out" onClick={signOut}>
+            <HugeiconsIcon icon={Logout01Icon} strokeWidth={1.8} className="size-4" aria-hidden="true" />
           </Button>
         </div>
       </aside>
 
-      <div className="lg:pl-[224px]">
+      <div className="lg:pl-[248px]">
         <header className="sticky top-0 z-10 flex h-[64px] items-center justify-between border-b bg-background/90 px-5 backdrop-blur-md sm:px-8">
           <div className="flex min-w-0 items-center gap-3">
             <Link href="/" className="flex items-center gap-2 lg:hidden">
@@ -159,10 +158,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <Button variant="ghost" size="sm" className="hidden text-muted-foreground sm:inline-flex lg:hidden" onClick={signOut}>Sign out</Button>
           </div>
         </header>
-        <nav className="flex gap-1 overflow-x-auto border-b bg-background px-4 py-2 lg:hidden">
+        <nav aria-label="Main navigation" className="mx-4 mt-3 flex gap-1 overflow-x-auto rounded-2xl border border-border/70 bg-card p-1.5 shadow-sm lg:hidden">
           {navigation.filter((item) => !item.adminOnly || user.isAdmin).map((item) => {
             const selected = isSelected(item.href, pathname)
-            return <Link key={item.href} href={item.href} className={`shrink-0 rounded-md px-3 py-1.5 text-[11px] ${selected ? "bg-primary/8 font-semibold text-primary" : "text-muted-foreground hover:bg-muted"}`}>{item.label}</Link>
+            return <Link key={item.href} href={item.href} aria-current={selected ? "page" : undefined} className={`${styles.navItem} shrink-0 !px-3 !py-2 !text-xs`}>{item.label}</Link>
           })}
         </nav>
         <main className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") ? "max-w-none" : "max-w-[1440px]"} px-5 py-7 sm:px-8 sm:py-9 ${pathname === "/audit" ? "lg:flex lg:h-[calc(100dvh-64px)] lg:flex-col lg:overflow-hidden" : ""}`}>{children}</main>

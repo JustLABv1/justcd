@@ -12,9 +12,11 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/justlab/justcd/services/backend/internal/apphealth"
 	"github.com/justlab/justcd/services/backend/internal/core"
+	"go.opentelemetry.io/otel"
 )
 
 //go:embed migrations/*.sql
@@ -23,10 +25,12 @@ var migrationFiles embed.FS
 type Store struct{ DB *sql.DB }
 
 func Open(ctx context.Context, connectionString string) (*Store, error) {
-	db, err := sql.Open("pgx", connectionString)
+	connectionConfig, err := pgx.ParseConfig(connectionString)
 	if err != nil {
-		return nil, fmt.Errorf("open PostgreSQL connection: %w", err)
+		return nil, errors.New("open PostgreSQL connection")
 	}
+	connectionConfig.Tracer = NewQueryTracer(otel.GetTracerProvider())
+	db := stdlib.OpenDB(*connectionConfig)
 	db.SetMaxOpenConns(20)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(30 * time.Minute)
@@ -2885,6 +2889,7 @@ type Operation struct {
 	TerminalReason       string            `json:"terminalReason,omitempty"`
 	StartedAt            time.Time         `json:"startedAt"`
 	FinishedAt           *time.Time        `json:"finishedAt,omitempty"`
+	TraceParent          string            `json:"-"`
 }
 
 type OperationProgress struct {
@@ -2894,7 +2899,7 @@ type OperationProgress struct {
 	Current   *core.Identity  `json:"current,omitempty"`
 }
 
-func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actorID string, approvalIDs []string, planDigest string, lease time.Duration, progress OperationProgress) (Operation, error) {
+func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actorID string, approvalIDs []string, planDigest, traceParent string, lease time.Duration, progress OperationProgress) (Operation, error) {
 	encoded, err := json.Marshal(progress)
 	if err != nil {
 		return Operation{}, err
@@ -2963,7 +2968,7 @@ func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actor
 	if rollback {
 		operationType, message = "rollback", "Rollback queued"
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO operations(id,application_id,plan_id,actor_id,approval_id,approval_ids,operation_type,status,message,progress,attempt_count) VALUES($1,$2,$3,NULLIF($4,''),$5,$6,$7,'queued',$8,$9,$10)`, id, applicationID, planID, actorID, approval, encodedApprovalIDs, operationType, message, encoded, attemptCount)
+	_, err = tx.ExecContext(ctx, `INSERT INTO operations(id,application_id,plan_id,actor_id,approval_id,approval_ids,operation_type,status,message,progress,attempt_count,traceparent) VALUES($1,$2,$3,NULLIF($4,''),$5,$6,$7,'queued',$8,$9,$10,$11)`, id, applicationID, planID, actorID, approval, encodedApprovalIDs, operationType, message, encoded, attemptCount, traceParent)
 	if err != nil {
 		return Operation{}, err
 	}
@@ -2988,7 +2993,7 @@ func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actor
 	if len(approvalIDs) > 0 {
 		firstApprovalID = approvalIDs[0]
 	}
-	return Operation{ID: id, ApplicationID: applicationID, PlanID: &plan, ActorID: &actor, ApprovalID: firstApprovalID, ApprovalIDs: append([]string(nil), approvalIDs...), Status: "queued", Type: operationType, Progress: progress, AttemptCount: attemptCount, StartedAt: time.Now().UTC(), Message: message}, nil
+	return Operation{ID: id, ApplicationID: applicationID, PlanID: &plan, ActorID: &actor, ApprovalID: firstApprovalID, ApprovalIDs: append([]string(nil), approvalIDs...), Status: "queued", Type: operationType, Progress: progress, AttemptCount: attemptCount, StartedAt: time.Now().UTC(), Message: message, TraceParent: traceParent}, nil
 }
 
 // ClaimQueuedOperation atomically claims one durable queue entry. It never
@@ -3004,7 +3009,7 @@ func (s *Store) ClaimQueuedOperation(ctx context.Context, lease time.Duration) (
 	var rawApprovalIDs []byte
 	var clusterID string
 	var maxConcurrent, operationsPerMinute int
-	err = tx.QueryRowContext(ctx, `SELECT o.id,o.application_id,o.plan_id,o.actor_id,COALESCE(o.approval_id,''),o.approval_ids,o.operation_type,COALESCE(o.rollback_checkpoint_id,''),o.status,o.message,o.progress,o.attempt_count,o.error_code,o.next_retry_at,o.terminal_reason,o.started_at,o.finished_at,a.cluster_id,c.max_concurrent_operations,c.operations_per_minute
+	err = tx.QueryRowContext(ctx, `SELECT o.id,o.application_id,o.plan_id,o.actor_id,COALESCE(o.approval_id,''),o.approval_ids,o.operation_type,COALESCE(o.rollback_checkpoint_id,''),o.status,o.message,o.progress,o.attempt_count,o.error_code,o.next_retry_at,o.terminal_reason,o.started_at,o.finished_at,COALESCE(o.traceparent,''),a.cluster_id,c.max_concurrent_operations,c.operations_per_minute
 		FROM operations o
 		JOIN applications a ON a.id=o.application_id
 		JOIN clusters c ON c.id=a.cluster_id
@@ -3014,7 +3019,7 @@ func (s *Store) ClaimQueuedOperation(ctx context.Context, lease time.Duration) (
 			JOIN applications running_app ON running_app.id=running.application_id
 			JOIN operation_leases active_lease ON active_lease.operation_id=running.id
 			WHERE running.status='running' AND active_lease.expires_at>NOW() AND running_app.cluster_id=a.cluster_id) < c.max_concurrent_operations
-		ORDER BY o.started_at,o.id LIMIT 1 FOR UPDATE OF o,g SKIP LOCKED`).Scan(&operation.ID, &operation.ApplicationID, &operation.PlanID, &operation.ActorID, &operation.ApprovalID, &rawApprovalIDs, &operation.Type, &operation.RollbackCheckpointID, &operation.Status, &operation.Message, &progress, &operation.AttemptCount, &operation.ErrorCode, &operation.NextRetryAt, &operation.TerminalReason, &operation.StartedAt, &operation.FinishedAt, &clusterID, &maxConcurrent, &operationsPerMinute)
+		ORDER BY o.started_at,o.id LIMIT 1 FOR UPDATE OF o,g SKIP LOCKED`).Scan(&operation.ID, &operation.ApplicationID, &operation.PlanID, &operation.ActorID, &operation.ApprovalID, &rawApprovalIDs, &operation.Type, &operation.RollbackCheckpointID, &operation.Status, &operation.Message, &progress, &operation.AttemptCount, &operation.ErrorCode, &operation.NextRetryAt, &operation.TerminalReason, &operation.StartedAt, &operation.FinishedAt, &operation.TraceParent, &clusterID, &maxConcurrent, &operationsPerMinute)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Operation{}, false, nil
 	}
@@ -3181,8 +3186,8 @@ func (s *Store) FinishOperationWithRetry(ctx context.Context, id, applicationID,
 func (s *Store) OperationByID(ctx context.Context, id string) (Operation, error) {
 	var item Operation
 	var rawProgress, rawApprovalIDs []byte
-	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,plan_id,actor_id,COALESCE(approval_id,''),approval_ids,operation_type,COALESCE(rollback_checkpoint_id,''),status,message,progress,attempt_count,error_code,next_retry_at,terminal_reason,started_at,finished_at FROM operations WHERE id=$1`, id).
-		Scan(&item.ID, &item.ApplicationID, &item.PlanID, &item.ActorID, &item.ApprovalID, &rawApprovalIDs, &item.Type, &item.RollbackCheckpointID, &item.Status, &item.Message, &rawProgress, &item.AttemptCount, &item.ErrorCode, &item.NextRetryAt, &item.TerminalReason, &item.StartedAt, &item.FinishedAt)
+	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,plan_id,actor_id,COALESCE(approval_id,''),approval_ids,operation_type,COALESCE(rollback_checkpoint_id,''),status,message,progress,attempt_count,error_code,next_retry_at,terminal_reason,started_at,finished_at,COALESCE(traceparent,'') FROM operations WHERE id=$1`, id).
+		Scan(&item.ID, &item.ApplicationID, &item.PlanID, &item.ActorID, &item.ApprovalID, &rawApprovalIDs, &item.Type, &item.RollbackCheckpointID, &item.Status, &item.Message, &rawProgress, &item.AttemptCount, &item.ErrorCode, &item.NextRetryAt, &item.TerminalReason, &item.StartedAt, &item.FinishedAt, &item.TraceParent)
 	if err != nil {
 		return Operation{}, err
 	}
@@ -3199,7 +3204,7 @@ func (s *Store) OperationByID(ctx context.Context, id string) (Operation, error)
 }
 
 func (s *Store) ListOperations(ctx context.Context, applicationID string, limit int) ([]Operation, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,plan_id,actor_id,operation_type,COALESCE(rollback_checkpoint_id,''),status,message,progress,attempt_count,error_code,next_retry_at,terminal_reason,started_at,finished_at FROM operations WHERE application_id=$1 ORDER BY started_at DESC LIMIT $2`, applicationID, limit)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,plan_id,actor_id,operation_type,COALESCE(rollback_checkpoint_id,''),status,message,progress,attempt_count,error_code,next_retry_at,terminal_reason,started_at,finished_at,COALESCE(traceparent,'') FROM operations WHERE application_id=$1 ORDER BY started_at DESC LIMIT $2`, applicationID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -3208,7 +3213,7 @@ func (s *Store) ListOperations(ctx context.Context, applicationID string, limit 
 	for rows.Next() {
 		var item Operation
 		var rawProgress []byte
-		if err := rows.Scan(&item.ID, &item.ApplicationID, &item.PlanID, &item.ActorID, &item.Type, &item.RollbackCheckpointID, &item.Status, &item.Message, &rawProgress, &item.AttemptCount, &item.ErrorCode, &item.NextRetryAt, &item.TerminalReason, &item.StartedAt, &item.FinishedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.ApplicationID, &item.PlanID, &item.ActorID, &item.Type, &item.RollbackCheckpointID, &item.Status, &item.Message, &rawProgress, &item.AttemptCount, &item.ErrorCode, &item.NextRetryAt, &item.TerminalReason, &item.StartedAt, &item.FinishedAt, &item.TraceParent); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(rawProgress, &item.Progress); err != nil {

@@ -54,6 +54,25 @@ spec:
               value: {{ .Values.cookieSecure | quote }}
             - name: JUSTCD_SESSION_LIFETIME
               value: {{ .Values.sessionLifetime | quote }}
+            - name: JUSTCD_METRICS_ENABLED
+              value: {{ .Values.backend.observability.metrics.enabled | quote }}
+            - name: JUSTCD_OTEL_ENABLED
+              value: {{ .Values.backend.observability.tracing.enabled | quote }}
+            - name: JUSTCD_OTEL_TRACE_SAMPLE_RATIO
+              value: {{ .Values.backend.observability.tracing.sampleRatio | quote }}
+            {{- if .Values.backend.observability.tracing.enabled }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ required "Set backend.observability.tracing.endpoint when tracing is enabled" .Values.backend.observability.tracing.endpoint | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: justcd-backend
+            {{- if .Values.backend.observability.tracing.headersSecret }}
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.observability.tracing.headersSecret | quote }}
+                  key: {{ required "Set backend.observability.tracing.headersSecretKey when headersSecret is set" .Values.backend.observability.tracing.headersSecretKey | quote }}
+            {{- end }}
+            {{- end }}
             - name: JUSTCD_DATABASE_URL
               valueFrom:
                 secretKeyRef:

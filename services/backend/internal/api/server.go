@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/justlab/justcd/services/backend/internal/config"
+	"github.com/justlab/justcd/services/backend/internal/observability"
 	"github.com/justlab/justcd/services/backend/internal/security"
 	"github.com/justlab/justcd/services/backend/internal/store"
 	"github.com/justlab/justcd/services/backend/internal/syncer"
@@ -31,6 +32,7 @@ type Server struct {
 	Config        config.Config
 	EncryptionKey []byte
 	Logger        *slog.Logger
+	Metrics       *observability.Metrics
 	Syncer        *syncer.Service
 	dummyHash     string
 	loginMu       sync.Mutex

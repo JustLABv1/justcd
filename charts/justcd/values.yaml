@@ -33,6 +33,15 @@ backend:
   existingSecret: ""
   service:
     port: 8080
+  observability:
+    metrics:
+      enabled: false
+    tracing:
+      enabled: false
+      endpoint: ""
+      sampleRatio: 0.1
+      headersSecret: ""
+      headersSecretKey: OTEL_EXPORTER_OTLP_HEADERS
   resources:
     requests:
       cpu: 100m

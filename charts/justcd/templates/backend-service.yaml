@@ -5,6 +5,12 @@ metadata:
   labels:
     {{- include "justcd.labels" . | nindent 4 }}
     app.kubernetes.io/component: backend
+  {{- if .Values.backend.observability.metrics.enabled }}
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: "/metrics"
+    prometheus.io/port: {{ .Values.backend.service.port | quote }}
+  {{- end }}
 spec:
   type: ClusterIP
   ports:

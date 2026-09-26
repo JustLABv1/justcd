@@ -35,7 +35,7 @@ export function relatedNodes(graph: ResourceTopology, selected: string): Set<str
   return result
 }
 
-export const nodeWidth = 260, nodeHeight = 144
+export const nodeWidth = 280, nodeHeight = 124
 export function topologyLayout(graph: ResourceTopology, nodes: TopologyNode[]) {
   const anchors = graph.nodes.filter(workload).sort((a, b) => a.id.localeCompare(b.id))
   const owners = new Map<string, Set<string>>()
@@ -57,12 +57,12 @@ export function topologyLayout(graph: ResourceTopology, nodes: TopologyNode[]) {
     const counts = new Map<number, number>()
     for (const node of [...members].sort((a, b) => a.identity.kind.localeCompare(b.identity.kind) || a.identity.name.localeCompare(b.identity.name))) {
       const col = ranks.indexOf(rank(node)), row = counts.get(col) ?? 0
-      positions.set(node.id, { x: 40 + col * 370, y: y + 48 + row * 164 }); counts.set(col, row + 1)
+      positions.set(node.id, { x: 28 + col * 352, y: y + 44 + row * 148 }); counts.set(col, row + 1)
     }
-    const height = 64 + Math.max(...counts.values()) * 164
+    const height = 44 + Math.max(...counts.values()) * 148
     const anchor = graph.nodes.find((node) => node.id === id)
     bands.push({ id, label: id === "shared" ? "Shared resources" : id === "unconnected" ? "No detected relationships" : `${anchor?.identity.name} · ${anchor?.identity.namespace || "cluster"}`, y, height })
-    width = Math.max(width, 80 + ranks.length * 370 - 110); y += height + 20
+    width = Math.max(width, 56 + ranks.length * 352 - 72); y += height + 16
   }
   return { positions, bands, width, height: Math.max(320, y) }
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Layers01Icon, Settings02Icon, Globe02Icon, DatabaseIcon, CubeIcon } from "@hugeicons/core-free-icons"
+import { Layers01Icon, Settings02Icon, Globe02Icon, DatabaseIcon, CubeIcon, Router02Icon, ServerStack01Icon, Files01Icon, FileTextIcon, Key01Icon, Shield01Icon, Clock01Icon, PlayIcon, Route01Icon, WorkflowSquare04Icon, Folder01Icon } from "@hugeicons/core-free-icons"
 import { Button } from "@/components/ui/button"
 import { StatusBadge } from "@/components/ui-kit"
 import { Input } from "@/components/ui/input"
@@ -10,9 +10,18 @@ import { identityKey, observed, workload, relatedNodes, syncState, topologyLayou
 import type { Application, Identity, ManagedResource, Operation, PlanRecord, ResourceTopology, TopologyNode } from "@/lib/types"
 
 const labels: Record<SyncState, string> = { syncing: "Applying", applied: "Deployed · health separate", failed: "Failed", create: "Will be created", update: "Out of sync", delete: "Will be destroyed", synced: "Deployed", unknown: "State unknown", observed: "Observed" }
-const tones: Record<SyncState, string> = { syncing: "border-blue-300 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-200", applied: "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200", failed: "border-rose-300 bg-rose-50 text-rose-800 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200", create: "border-blue-300 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-200", update: "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200", delete: "border-rose-300 bg-rose-50 text-rose-800 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200", synced: "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200", unknown: "border-border bg-muted/50 text-muted-foreground", observed: "border-border bg-muted/50 text-muted-foreground" }
 const stateDot: Record<SyncState, string> = { syncing: "bg-blue-600", applied: "bg-emerald-600", failed: "bg-rose-600", create: "bg-blue-600", update: "bg-amber-500", delete: "bg-rose-600", synced: "bg-emerald-600", unknown: "bg-muted-foreground", observed: "bg-muted-foreground" }
-const iconFor = (kind: string) => ["Ingress", "Service", "HTTPRoute", "Gateway"].includes(kind) ? Globe02Icon : ["PersistentVolumeClaim", "PersistentVolume"].includes(kind) ? DatabaseIcon : ["Pod", "ReplicaSet"].includes(kind) ? CubeIcon : ["Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob"].includes(kind) ? Layers01Icon : Settings02Icon
+const resourceIcons: Record<string, typeof CubeIcon> = {
+  Service: Router02Icon, Pod: CubeIcon, Deployment: Layers01Icon,
+  ReplicaSet: Files01Icon, StatefulSet: ServerStack01Icon, DaemonSet: WorkflowSquare04Icon,
+  Ingress: Globe02Icon, Gateway: Globe02Icon, HTTPRoute: Route01Icon,
+  ConfigMap: FileTextIcon, Secret: Key01Icon,
+  PersistentVolumeClaim: DatabaseIcon, PersistentVolume: DatabaseIcon,
+  Job: PlayIcon, CronJob: Clock01Icon, Namespace: Folder01Icon,
+  ServiceAccount: Shield01Icon, Role: Shield01Icon, RoleBinding: Shield01Icon,
+  ClusterRole: Shield01Icon, ClusterRoleBinding: Shield01Icon, NetworkPolicy: Shield01Icon,
+}
+const iconFor = (kind: string) => resourceIcons[kind] ?? Settings02Icon
 function health(node: TopologyNode) {
   if (node.source === "sample") return `Sample · ${node.readiness || node.phase || "unknown"}`
   if (node.readiness) return node.readiness
@@ -132,7 +141,7 @@ export function ResourceMap({ application, plan, inventory, operations, topology
         el.setPointerCapture(event.pointerId); el.style.cursor = "grabbing"
       }} onPointerMove={(event) => { if (drag.current) { event.currentTarget.scrollLeft = drag.current.left - event.clientX + drag.current.x; event.currentTarget.scrollTop = drag.current.top - event.clientY + drag.current.y } }} onPointerUp={(event) => { drag.current = null; event.currentTarget.style.cursor = ""; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) }} onPointerCancel={() => { drag.current = null }}>
         {!shown.length ? <p className="p-12 text-center text-sm text-muted-foreground">{graph.nodes.length ? "No resources match this view." : "Build a plan to discover resources."}</p> : <div style={{ width: layout.width * zoom, height: layout.height * zoom }}><div className="relative origin-top-left" style={{ width: layout.width, height: layout.height, transform: `scale(${zoom})` }}>
-          {layout.bands.map((band) => <div key={band.id} className="absolute rounded-xl border border-dashed bg-card/60" style={{ left: 16, top: band.y, width: layout.width - 32, height: band.height }}><h3 className="px-5 py-3 text-sm font-semibold text-muted-foreground">{band.label}</h3></div>)}
+          {layout.bands.map((band) => <div key={band.id} className="pointer-events-none absolute border-t border-border/60" style={{ left: 28, top: band.y, width: layout.width - 56, height: band.height }}><h3 className="py-3 text-xs font-medium text-muted-foreground">{band.label}</h3></div>)}
           <svg aria-hidden="true" className="pointer-events-none absolute inset-0" width={layout.width} height={layout.height}>
             <defs><marker id={marker} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0L7 3.5L0 7Z" fill="context-stroke" /></marker></defs>
             {graph.edges.map((edge, index) => {
@@ -154,21 +163,23 @@ export function ResourceMap({ application, plan, inventory, operations, topology
               const path = sameColumn
                 ? `M${x1} ${y1} C${x1 + bend} ${controlY1},${x2 + bend} ${controlY2},${x2} ${y2}`
                 : `M${x1} ${y1} C${x1 + direction * bend} ${controlY1},${x2 - direction * bend} ${controlY2},${x2} ${y2}`
-              return <g key={index} opacity={selectedId && !active ? .2 : 1}><path d={path} fill="none" stroke={active ? "var(--primary)" : "var(--muted-foreground)"} strokeOpacity={active ? 1 : .5} strokeWidth={active ? 2.5 : 1.75} markerEnd={`url(#${marker})`} />{active && <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 8} textAnchor="middle" fontSize="12" fill="var(--primary)" stroke="var(--card)" strokeWidth="5" paintOrder="stroke">{edge.relation}</text>}</g>
+              return <g key={index} opacity={selectedId && !active ? .2 : 1}><path d={path} fill="none" stroke={active ? "var(--foreground)" : "var(--muted-foreground)"} strokeOpacity={active ? .65 : .3} strokeWidth={active ? 1.5 : 1} markerEnd={`url(#${marker})`} />{active && <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 8} textAnchor="middle" fontSize="11" fill="var(--muted-foreground)" stroke="var(--card)" strokeWidth="5" paintOrder="stroke">{edge.relation}</text>}</g>
             })}
           </svg>
           {shown.map((node) => {
             const point = layout.positions.get(node.id)!, state = stateFor(node)
             const descendants = children.get(node.id) ?? [], pods = descendants.filter((n) => n.identity.kind === "Pod"), replicas = descendants.filter((n) => n.identity.kind === "ReplicaSet")
             const dimmed = (query && !matches.has(node.id)) || (selectedId && !related.has(node.id))
-            return <div key={node.id} style={{ left: point.x, top: point.y, width: nodeWidth, height: nodeHeight }} className={`absolute rounded-lg border bg-card shadow-sm ${observed(node) ? "border-dashed" : ""} ${node.id === selectedId ? "border-primary ring-2 ring-primary/25" : state === "syncing" ? "border-blue-500 ring-2 ring-blue-500/20" : state === "failed" || state === "delete" ? "border-rose-400 dark:border-rose-800" : state === "update" ? "border-amber-400 dark:border-amber-800" : state === "create" ? "border-blue-300 dark:border-blue-900" : state === "synced" || state === "applied" ? "border-emerald-300 dark:border-emerald-900" : "border-border"} ${dimmed ? "opacity-30" : ""}`}>
-              <button type="button" aria-pressed={node.id === selectedId} onClick={() => setSelectedId(node.id === selectedId ? null : node.id)} className="block w-full rounded-lg p-3 text-left focus-visible:outline-2 focus-visible:outline-primary">
-                <span className="flex items-center gap-2 text-xs text-muted-foreground"><HugeiconsIcon icon={iconFor(node.identity.kind)} className="size-4 shrink-0" aria-hidden="true" />{node.identity.kind}</span>
-                <span className="mt-1 block truncate text-sm font-semibold" title={node.identity.name}>{node.identity.name}</span>
-                <span className={`mt-1 inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-semibold ${tones[state]}`}><span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${stateDot[state]}`} />{labels[state]}</span>
-                <span className={`mt-1 block truncate text-xs ${node.source === "sample" ? "text-muted-foreground" : healthTone(node)}`}>{health(node)}</span>
+            return <div key={node.id} style={{ left: point.x, top: point.y, width: nodeWidth, height: nodeHeight }} className={`absolute overflow-hidden rounded-lg border bg-card ${node.id === selectedId ? "border-foreground/40 ring-2 ring-foreground/10" : "border-border hover:border-foreground/25"} ${dimmed ? "opacity-30" : ""}`}>
+              <button type="button" aria-pressed={node.id === selectedId} onClick={() => setSelectedId(node.id === selectedId ? null : node.id)} className={`block w-full rounded-lg px-3.5 py-3 text-left focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary ${descendants.length ? "h-[98px]" : "h-full"}`}>
+                <span className="flex items-center gap-3">
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted/70 text-foreground/70"><HugeiconsIcon icon={iconFor(node.identity.kind)} strokeWidth={1.6} className="size-5" aria-hidden="true" /></span>
+                  <span className="min-w-0"><span className="block text-[11px] leading-4 text-muted-foreground">{node.identity.kind}</span><span className="block truncate text-[13px] font-medium leading-5" title={node.identity.name}>{node.identity.name}</span></span>
+                </span>
+                <span className="mt-2.5 flex items-center gap-1.5 text-[11px] leading-4 text-foreground/80"><span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${stateDot[state]}`} />{labels[state]}</span>
+                <span title={health(node)} className={`block truncate pl-3 text-[11px] leading-4 ${node.source === "sample" ? "text-muted-foreground" : healthTone(node)}`}>{health(node)}</span>
               </button>
-              {descendants.length > 0 && <button type="button" aria-expanded={expanded.has(node.id)} onClick={() => setExpanded((old) => { const next = new Set(old); if (next.has(node.id)) next.delete(node.id); else next.add(node.id); return next })} className="absolute bottom-1 left-3 right-3 rounded text-left text-xs font-medium text-primary focus-visible:outline-2 focus-visible:outline-primary">{expanded.has(node.id) ? "−" : "+"} Pods {pods.filter((n) => n.readiness === "Ready" && n.source !== "sample").length}/{pods.filter((n) => n.source !== "sample").length} ready · {replicas.length} ReplicaSets{descendants.some((n) => n.source === "sample") ? " · samples" : ""}</button>}
+              {descendants.length > 0 && <button type="button" aria-expanded={expanded.has(node.id)} onClick={() => setExpanded((old) => { const next = new Set(old); if (next.has(node.id)) next.delete(node.id); else next.add(node.id); return next })} className="absolute inset-x-0 bottom-0 border-t bg-muted/20 px-3.5 py-1 text-left text-[10px] font-medium text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary">{expanded.has(node.id) ? "−" : "+"} Pods {pods.filter((n) => n.readiness === "Ready" && n.source !== "sample").length}/{pods.filter((n) => n.source !== "sample").length} ready · {replicas.length} ReplicaSets{descendants.some((n) => n.source === "sample") ? " · samples" : ""}</button>}
             </div>
           })}
         </div></div>}

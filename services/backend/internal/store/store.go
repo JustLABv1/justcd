@@ -2510,7 +2510,7 @@ func (s *Store) SetPlanStatus(ctx context.Context, id, status string) error {
 	return err
 }
 
-func (s *Store) CreateApproval(ctx context.Context, id, planID string, approval core.DeletionApproval, expires time.Time) error {
+func (s *Store) CreateApproval(ctx context.Context, id, planID string, approval core.DeletionApproval, expires time.Time, comment string) error {
 	deletes, err := json.Marshal(approval.Deletes)
 	if err != nil {
 		return err
@@ -2619,13 +2619,14 @@ func (s *Store) CreateApproval(ctx context.Context, id, planID string, approval 
 	if required == 0 || eligibleApprovals >= required {
 		return errors.New("this plan already has all required approvals")
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO deletion_approvals(id,plan_id,actor_id,plan_digest,deletes,expires_at) VALUES($1,$2,$3,$4,$5,$6)`, id, planID, approval.ActorID, approval.PlanDigest, payload, expires); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO deletion_approvals(id,plan_id,actor_id,plan_digest,deletes,expires_at,comment) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, planID, approval.ActorID, approval.PlanDigest, payload, expires, comment); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
 type ApprovalRecord struct {
+	Comment   string
 	ID        string
 	PlanID    string
 	Approval  core.DeletionApproval
@@ -2636,7 +2637,7 @@ type ApprovalRecord struct {
 func (s *Store) ApprovalByID(ctx context.Context, id string) (ApprovalRecord, error) {
 	var out ApprovalRecord
 	var payload []byte
-	err := s.DB.QueryRowContext(ctx, `SELECT id,plan_id,actor_id,plan_digest,deletes,expires_at,used_at,created_at FROM deletion_approvals WHERE id=$1`, id).Scan(&out.ID, &out.PlanID, &out.Approval.ActorID, &out.Approval.PlanDigest, &payload, &out.Approval.ExpiresAt, &out.UsedAt, &out.CreatedAt)
+	err := s.DB.QueryRowContext(ctx, `SELECT id,plan_id,actor_id,plan_digest,deletes,expires_at,used_at,created_at,comment FROM deletion_approvals WHERE id=$1`, id).Scan(&out.ID, &out.PlanID, &out.Approval.ActorID, &out.Approval.PlanDigest, &payload, &out.Approval.ExpiresAt, &out.UsedAt, &out.CreatedAt, &out.Comment)
 	if err != nil {
 		return ApprovalRecord{}, err
 	}
@@ -2653,7 +2654,7 @@ func (s *Store) ApprovalByID(ctx context.Context, id string) (ApprovalRecord, er
 }
 
 func (s *Store) ListPlanApprovals(ctx context.Context, planID, digest string) ([]ApprovalRecord, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,plan_id,actor_id,plan_digest,deletes,expires_at,used_at,created_at FROM deletion_approvals WHERE plan_id=$1 AND plan_digest=$2 AND used_at IS NULL AND expires_at>NOW() ORDER BY created_at,id`, planID, digest)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,plan_id,actor_id,plan_digest,deletes,expires_at,used_at,created_at,comment FROM deletion_approvals WHERE plan_id=$1 AND plan_digest=$2 AND used_at IS NULL AND expires_at>NOW() ORDER BY created_at,id`, planID, digest)
 	if err != nil {
 		return nil, err
 	}
@@ -2662,7 +2663,7 @@ func (s *Store) ListPlanApprovals(ctx context.Context, planID, digest string) ([
 	for rows.Next() {
 		var item ApprovalRecord
 		var payload []byte
-		if err := rows.Scan(&item.ID, &item.PlanID, &item.Approval.ActorID, &item.Approval.PlanDigest, &payload, &item.Approval.ExpiresAt, &item.UsedAt, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.PlanID, &item.Approval.ActorID, &item.Approval.PlanDigest, &payload, &item.Approval.ExpiresAt, &item.UsedAt, &item.CreatedAt, &item.Comment); err != nil {
 			return nil, err
 		}
 		var values struct {

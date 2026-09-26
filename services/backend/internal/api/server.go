@@ -128,6 +128,8 @@ func (s *Server) routes() {
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}/topology", s.requireAuth(http.HandlerFunc(s.applicationTopology)))
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}/health-history", s.requireAuth(http.HandlerFunc(s.applicationHealthHistory)))
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}/operations", s.requireAuth(http.HandlerFunc(s.listApplicationOperations)))
+	s.Mux.Handle("GET /api/v1/approval-inbox", s.requireAuth(http.HandlerFunc(s.listApprovalInbox)))
+	s.Mux.Handle("POST /api/v1/approval-inbox/batch", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.batchApprovePlans))))
 	s.Mux.Handle("GET /api/v1/plans/{planID}", s.requireAuth(http.HandlerFunc(s.getPlan)))
 	s.Mux.Handle("POST /api/v1/plans/{planID}/approvals", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.approvePlan))))
 	s.Mux.Handle("GET /api/v1/plans/{planID}/approvals", s.requireAuth(http.HandlerFunc(s.listPlanApprovals)))

@@ -363,6 +363,57 @@ paths:
       summary: List recent sync operations, including retry attempt and outcome metadata
       responses:
         '200': { description: Operation history and next retry time or terminal reason }
+  /approval-inbox:
+    get:
+      summary: List current plans requiring this user's approval
+      parameters:
+        - in: query
+          name: projectId
+          schema: { type: string }
+        - in: query
+          name: applicationId
+          schema: { type: string }
+        - in: query
+          name: risk
+          schema: { type: string, enum: [deletion, cluster, takeover, sync] }
+        - in: query
+          name: age
+          schema: { type: string, enum: [24h, 7d, older7d] }
+        - in: query
+          name: expiry
+          schema: { type: string, enum: [1h, 24h, later] }
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200': { description: Authorized, actionable requests with risk summaries and pagination metadata }
+  /approval-inbox/batch:
+    post:
+      summary: Independently recheck and approve up to 20 reviewed plans
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                comment: { type: string, maxLength: 1000 }
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 20
+                  items:
+                    type: object
+                    required: [planId, planDigest]
+                    properties:
+                      planId: { type: string }
+                      planDigest: { type: string }
+      responses:
+        '200': { description: One success or failure result for each plan; partial success is possible }
   /plans/{planID}:
     get:
       summary: Get a sanitized immutable plan
@@ -375,6 +426,14 @@ paths:
         '200': { description: Approval rule, count, and current approvals }
     post:
       summary: Approve the exact plan as an eligible project member
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                comment: { type: string, maxLength: 1000 }
+                planDigest: { type: string, description: Digest reviewed by the approver }
       responses:
         '201': { description: Single-use plan approval }
         '409': { description: Plan is stale or has enough approvals }

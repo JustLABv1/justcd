@@ -1,0 +1,58 @@
+.scene {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  min-height: 100svh;
+  flex-direction: column;
+  overflow: clip;
+  background: var(--background);
+  color: var(--foreground);
+}
+.header { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; padding: 24px 32px; }
+.brand { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 650; letter-spacing: -.4px; }
+.logo { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: var(--primary); color: var(--primary-foreground); }
+.brandCaption { margin-left: 8px; padding-left: 18px; border-left: 1px solid var(--border); color: var(--muted-foreground); font-size: 11px; font-weight: 400; letter-spacing: 0; }
+.backdrop { position: absolute; inset: 0; z-index: -1; pointer-events: none; background-image: radial-gradient(color-mix(in srgb, var(--primary) 14%, transparent) .7px, transparent .7px); background-size: 24px 24px; mask-image: linear-gradient(transparent, black 20%, black 80%, transparent); }
+.backdrop::before { content: ""; position: absolute; inset: 0; background: radial-gradient(ellipse at center, color-mix(in srgb, var(--primary) 10%, transparent), transparent 65%); }
+.diagram { position: absolute; width: max(100%, 1150px); height: 100%; min-height: 800px; left: 50%; top: 50%; transform: translate(-50%, -50%); color: color-mix(in srgb, var(--primary) 52%, var(--muted-foreground)); }
+.diagram text { fill: currentColor; font-family: var(--font-code); font-size: 11px; }
+.diagram .caption { font-size: 9px; letter-spacing: 2px; opacity: .7; }
+.node { fill: var(--background); stroke: color-mix(in srgb, var(--primary) 22%, var(--border)); stroke-width: 1; }
+.routes { stroke: color-mix(in srgb, var(--primary) 20%, transparent); stroke-width: 1; }
+.packets { stroke: var(--primary); stroke-width: 2; stroke-linecap: round; opacity: .5; }
+.packets path { stroke-dasharray: 18 1600; animation: sync 16s linear infinite; }
+.packets path:nth-child(2) { animation-delay: -4s; }
+.packets path:nth-child(3) { animation-delay: -8s; }
+.clusterLight { fill: var(--primary); animation: glow 6s ease-in-out infinite; }
+.ports { fill: var(--background); stroke: var(--primary); stroke-width: 1.5; }
+.content { position: relative; display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; padding: 36px 20px 90px; }
+.card { width: 100%; max-width: 440px; padding: 32px; border: 1px solid color-mix(in srgb, var(--primary) 12%, var(--border)); border-radius: 20px; background: var(--card); box-shadow: 0 24px 80px -24px rgb(0 0 0 / .24), 0 4px 16px -8px rgb(0 0 0 / .12); }
+.cardMark { display: grid; place-items: center; width: 44px; height: 44px; margin: 0 auto 24px; color: var(--primary); background: color-mix(in srgb, var(--primary) 9%, var(--card)); border: 1px solid color-mix(in srgb, var(--primary) 18%, transparent); border-radius: 13px; }
+.cardMark svg { width: 23px; height: 23px; }
+.eyebrow { text-align: center; color: var(--primary); font-size: 10px; font-weight: 600; letter-spacing: .15em; text-transform: uppercase; }
+.title { margin-top: 8px; text-align: center; font-size: 26px; line-height: 1.25; font-weight: 600; letter-spacing: -.9px; text-wrap: balance; }
+.description { margin: 12px auto 0; text-align: center; font-size: 13px; line-height: 1.7; color: var(--muted-foreground); text-wrap: pretty; }
+.card input { height: 42px; border-radius: 8px; background: color-mix(in srgb, var(--muted) 35%, var(--card)); }
+.card button[type="submit"] { min-height: 42px; margin-top: 8px; border-radius: 8px; }
+.tagline { margin-top: 24px; font-size: 11px; letter-spacing: .04em; color: var(--muted-foreground); }
+.motionControl { position: absolute; bottom: 20px; right: 28px; display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: 6px; color: var(--muted-foreground); font-size: 11px; }
+.motionControl:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+.scene[data-paused="true"] .packets path, .scene[data-paused="true"] .clusterLight { animation-play-state: paused; }
+@keyframes sync { from { stroke-dashoffset: 18; } to { stroke-dashoffset: -1600; } }
+@keyframes glow { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+/* Below this width the nodes would be clipped, leaving disconnected wires. */
+@media (max-width: 1000px) {
+  .diagram, .motionControl { display: none; }
+}
+@media (max-width: 640px) {
+  .header { padding: 20px; }
+  .brandCaption { display: none; }
+  .content { padding-top: 20px; padding-bottom: 72px; }
+  .card { padding: 28px 24px; }
+  .diagram { opacity: .45; }
+  .motionControl { right: 16px; bottom: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .packets path, .clusterLight { animation: none; }
+  .motionControl { display: none; }
+}

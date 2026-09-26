@@ -181,6 +181,35 @@ cd services/backend && go test ./...
 cd services/frontend && pnpm typecheck && pnpm lint && pnpm build
 ```
 
+The isolated integration smoke suite checks upgrades from each of the three
+most recent migration versions, preserves existing data, reruns migrations to
+check idempotence, and exercises the reconciliation poller's SQL query:
+
+```sh
+bash scripts/integration.sh smoke
+```
+
+The full suite also creates a disposable kind cluster and runs YAML,
+Kustomize, and Helm delivery workflows through the real Kubernetes API:
+
+```sh
+# Install kind first; if installed with `go install`, add $(go env GOPATH)/bin to PATH.
+bash scripts/integration.sh full
+```
+
+Both commands need Docker or Podman and keep logs in `artifacts/e2e/`. They
+create and remove only their own PostgreSQL container and kind cluster. The
+full suite is run on pull requests by [integration.yml](.github/workflows/integration.yml).
+
+Database migrations run forward when the backend starts. Before upgrading a
+deployed instance, take a PostgreSQL backup and keep the previous application
+image. To recover from a failed upgrade, stop the backend and workers, restore
+the backup into a new database, point the previous image at that database, and
+start it. Do not delete migration ledger rows or run an older image against a
+schema that a newer image has already migrated. The integration suite verifies
+forward upgrades; disaster recovery depends on a tested backup and restore
+procedure for your deployment.
+
 The backend API is documented at `/api/v1/openapi.yaml` and health checks are
 available at `/api/v1/health`.
 

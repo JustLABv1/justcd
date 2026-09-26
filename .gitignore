@@ -7,6 +7,7 @@ services/frontend/.pnp.js
 
 # testing
 services/frontend/coverage
+/artifacts/e2e/
 
 # next.js
 services/frontend/.next/

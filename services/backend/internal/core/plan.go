@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -292,14 +293,41 @@ func BuildPlan(applicationID, revision string, bindings []Binding, desired, live
 }
 
 func RefreshDigest(plan *Plan) error {
-	plan.Digest = ""
-	encoded, err := json.Marshal(plan)
+	canonical := *plan
+	canonical.Digest = ""
+	canonical.Changes = append([]Change(nil), plan.Changes...)
+	canonical.Ignored = append([]Change(nil), plan.Ignored...)
+	for _, changes := range [][]Change{canonical.Changes, canonical.Ignored} {
+		for i := range changes {
+			var err error
+			if changes[i].Before, err = canonicalManifest(changes[i].Before); err != nil {
+				return err
+			}
+			if changes[i].After, err = canonicalManifest(changes[i].After); err != nil {
+				return err
+			}
+		}
+	}
+	encoded, err := json.Marshal(&canonical)
 	if err != nil {
 		return err
 	}
 	sum := sha256.Sum256(encoded)
 	plan.Digest = hex.EncodeToString(sum[:])
 	return nil
+}
+
+func canonicalManifest(raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 {
+		return raw, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	return json.Marshal(value)
 }
 
 func resourceInBindings(identity Identity, allowed map[string]struct{}) bool {

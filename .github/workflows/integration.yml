@@ -1,0 +1,39 @@
+name: Integration workflows
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  delivery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: services/backend/go.mod
+          cache-dependency-path: services/backend/go.sum
+      - name: Install kind
+        run: |
+          go install sigs.k8s.io/kind@v0.33.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Run migration and Kubernetes workflows
+        run: bash scripts/integration.sh full
+      - name: Keep failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-diagnostics
+          path: artifacts/e2e/
+          if-no-files-found: ignore
+          retention-days: 7

@@ -18,17 +18,17 @@ func (s *Server) applicationTopology(w http.ResponseWriter, r *http.Request) {
 	}
 	plans, err := s.Store.ListPlans(r.Context(), app.ID, 1)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load application plan")
+		writeStoreError(w, "could not load application plan")
 		return
 	}
 	managed, err := s.Store.ManagedResources(r.Context(), app.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load managed resources")
+		writeStoreError(w, "could not load managed resources")
 		return
 	}
 	observed, err := s.Store.ObservedResources(r.Context(), app.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load observed resources")
+		writeStoreError(w, "could not load observed resources")
 		return
 	}
 	warning := ""
@@ -41,7 +41,7 @@ func (s *Server) applicationTopology(w http.ResponseWriter, r *http.Request) {
 	}
 	if !hasSample && len(managed) == 0 && len(observed) > 0 {
 		if err := s.Store.ReplaceObservedResources(r.Context(), app.ID, nil); err != nil {
-			writeError(w, http.StatusInternalServerError, "could not clear stale resource observations")
+			writeStoreError(w, "could not clear stale resource observations")
 			return
 		}
 		observed = nil

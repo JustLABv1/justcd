@@ -100,7 +100,7 @@ func (s *Server) updateCredential(w http.ResponseWriter, r *http.Request) {
 		c.ExpiresAt = &expires
 	}
 	if err := s.Store.UpdateCredential(r.Context(), c); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not update credential")
+		writeStoreError(w, "could not update credential")
 		return
 	}
 	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "credential.updated", "credential", c.ID, map[string]any{"name": c.Name, "secretRotated": input.Secret != nil})
@@ -194,7 +194,7 @@ func (s *Server) updateNamespaceBinding(w http.ResponseWriter, r *http.Request) 
 	} else {
 		projectID, err := s.Store.ProjectClusterCredential(r.Context(), input.ProjectID, clusterID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "could not load project cluster credential")
+			writeStoreError(w, "could not load project cluster credential")
 			return
 		}
 		if projectID == nil && cluster.DefaultCredentialID == nil {
@@ -203,7 +203,7 @@ func (s *Server) updateNamespaceBinding(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if err := s.Store.UpdateNamespaceBinding(r.Context(), input.ProjectID, clusterID, namespace, input.CredentialID); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not update namespace binding")
+		writeStoreError(w, "could not update namespace binding")
 		return
 	}
 	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "namespace_binding.updated", "cluster", clusterID, map[string]string{"projectId": input.ProjectID, "namespace": namespace, "credentialId": valueOf(input.CredentialID)})
@@ -221,7 +221,13 @@ func (s *Server) testGitSource(w http.ResponseWriter, r *http.Request) {
 	}
 	checkout, err := gitops.Fetch(r.Context(), s.Store, s.EncryptionKey, source, "HEAD")
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "Git source connection failed: "+err.Error())
+		writeClassifiedError(w, http.StatusUnprocessableEntity, "Git source connection failed", apiErrorMetadata{
+			code:           "git.connection_failed",
+			category:       "git",
+			retryable:      true,
+			remediation:    "Check the repository URL, selected revision, credentials, and Git provider availability.",
+			remediationURL: "/settings/connections",
+		}, nil)
 		return
 	}
 	defer checkout.Close()
@@ -303,7 +309,7 @@ func (s *Server) testCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	credentialID, err := s.Store.ProjectClusterCredential(r.Context(), input.ProjectID, cluster.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load project cluster credential")
+		writeStoreError(w, "could not load project cluster credential")
 		return
 	}
 	if input.Namespace != "" {
@@ -318,7 +324,7 @@ func (s *Server) testCluster(w http.ResponseWriter, r *http.Request) {
 	} else if credentialID == nil && cluster.DefaultCredentialID == nil {
 		bindings, err := s.Store.ListNamespaceBindings(r.Context(), input.ProjectID, cluster.ID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "could not load namespace bindings")
+			writeStoreError(w, "could not load namespace bindings")
 			return
 		}
 		for _, binding := range bindings {
@@ -331,12 +337,24 @@ func (s *Server) testCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	client, err := kube.ForBinding(r.Context(), s.Store, s.EncryptionKey, cluster, credentialID, false)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "cluster credential could not be used: "+err.Error())
+		writeClassifiedError(w, http.StatusUnprocessableEntity, "Cluster credential could not be used", apiErrorMetadata{
+			code:           "kubernetes.credential_unusable",
+			category:       "kubernetes",
+			retryable:      false,
+			remediation:    "Check the credential type, expiration, cluster selection, and namespace binding.",
+			remediationURL: "/settings/connections",
+		}, nil)
 		return
 	}
 	version, err := client.Discovery.ServerVersion()
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "Kubernetes API connection failed")
+		writeClassifiedError(w, http.StatusUnprocessableEntity, "Kubernetes API connection failed", apiErrorMetadata{
+			code:           "kubernetes.connection_failed",
+			category:       "kubernetes",
+			retryable:      true,
+			remediation:    "Check the API endpoint, TLS trust configuration, network path, and credential permissions.",
+			remediationURL: "/settings/connections",
+		}, nil)
 		return
 	}
 	namespace := input.Namespace
@@ -346,7 +364,13 @@ func (s *Server) testCluster(w http.ResponseWriter, r *http.Request) {
 	review := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "authorization.k8s.io/v1", "kind": "SelfSubjectAccessReview", "spec": map[string]any{"resourceAttributes": map[string]any{"namespace": namespace, "verb": "get", "resource": "pods"}}}}
 	result, err := client.Dynamic.Resource(schema.GroupVersionResource{Group: "authorization.k8s.io", Version: "v1", Resource: "selfsubjectaccessreviews"}).Create(r.Context(), review, metav1.CreateOptions{})
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "Kubernetes authentication check failed")
+		writeClassifiedError(w, http.StatusUnprocessableEntity, "Kubernetes authentication check failed", apiErrorMetadata{
+			code:           "kubernetes.permission_check_failed",
+			category:       "kubernetes",
+			retryable:      false,
+			remediation:    "Allow the credential to create SelfSubjectAccessReview requests, then run the connection test again.",
+			remediationURL: "/settings/connections",
+		}, nil)
 		return
 	}
 	allowed, _, _ := unstructured.NestedBool(result.Object, "status", "allowed")

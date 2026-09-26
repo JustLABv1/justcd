@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react"
 import { Toast } from "@base-ui/react/toast"
-import { ErrorDetailsButton } from "@/components/error-details"
+import { ErrorDetailsButton, ErrorGuidance } from "@/components/error-details"
 
 type ToastKind = "success" | "error" | "info" | "warning"
 type ToastData = { kind: ToastKind; error?: unknown }
@@ -115,7 +115,8 @@ function ToastList() {
             <Toast.Title className="font-medium" />
             <Toast.Description className="mt-0.5 break-words leading-5 text-muted-foreground" />
             {toast.data?.error !== undefined && (
-              <div className="mt-2">
+              <div className="mt-2 space-y-2">
+                <ErrorGuidance error={toast.data.error} />
                 <ErrorDetailsButton error={toast.data.error} />
               </div>
             )}

@@ -11,7 +11,7 @@ import {
   ServerStack01Icon,
 } from "@hugeicons/core-free-icons"
 import { buttonVariants } from "@/components/ui/button"
-import { ErrorDetailsButton } from "@/components/error-details"
+import { ErrorDetailsButton, ErrorGuidance } from "@/components/error-details"
 import { errorMessage } from "@/lib/api"
 import type { Project } from "@/lib/types"
 
@@ -104,6 +104,9 @@ export function LoadError({
           Try again
         </button>
       </div>
+      <div className="basis-full">
+        <ErrorGuidance error={error} />
+      </div>
     </div>
   )
 }
@@ -116,6 +119,9 @@ export function ErrorNotice({ error }: { error: unknown }) {
     >
       <span className="min-w-0 flex-1">{errorMessage(error)}</span>
       <ErrorDetailsButton error={error} />
+      <div className="basis-full">
+        <ErrorGuidance error={error} />
+      </div>
     </div>
   )
 }

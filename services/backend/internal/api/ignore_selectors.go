@@ -22,7 +22,7 @@ func (s *Server) listIgnoreSelectors(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.Store.IgnoreSelectors(r.Context(), app.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load ignore selectors")
+		writeStoreError(w, "could not load ignore selectors")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})

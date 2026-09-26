@@ -32,8 +32,9 @@ type planStageError struct {
 	err   error
 }
 
-func (e *planStageError) Error() string { return e.err.Error() }
-func (e *planStageError) Unwrap() error { return e.err }
+func (e *planStageError) Error() string      { return e.err.Error() }
+func (e *planStageError) Unwrap() error      { return e.err }
+func (e *planStageError) ErrorStage() string { return e.stage }
 
 func statusIssue(stage string, at time.Time) store.ApplicationStatusIssue {
 	summary := "Application check failed. Review the plan error for details."

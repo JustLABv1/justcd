@@ -16,7 +16,7 @@ func (s *Server) listRollbackTargets(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.Syncer.RollbackTargets(r.Context(), app.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load rollback targets")
+		writeStoreError(w, "could not load rollback targets")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -44,10 +44,15 @@ func (s *Server) createRollbackPlan(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.Logger.Warn("rollback plan calculation failed", "applicationId", app.ID, "targetKind", input.Kind, "error", err)
 		if strings.Contains(err.Error(), "no longer available") {
-			writeError(w, http.StatusConflict, err.Error())
+			writeClassifiedError(w, http.StatusConflict, err.Error(), apiErrorMetadata{
+				code:        "rollback.target_unavailable",
+				category:    "plan",
+				retryable:   false,
+				remediation: "Refresh the rollback targets and choose a deployment that is still available.",
+			}, nil)
 			return
 		}
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "could not calculate a safe rollback plan"})
+		writePlanFailure(w, http.StatusUnprocessableEntity, "could not calculate a safe rollback plan", app.ID, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, toPlanView(record))
@@ -87,20 +92,32 @@ func (s *Server) updateRollbackState(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		if strings.Contains(err.Error(), "select and verify") {
-			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
+			writeClassifiedError(w, http.StatusUnprocessableEntity, err.Error(), apiErrorMetadata{
+				code:           "git.revision_invalid",
+				category:       "git",
+				retryable:      false,
+				remediation:    "Choose a Git revision that exists in the configured repository and is accessible to this credential.",
+				remediationURL: "/settings/connections",
+			}, nil)
 			return
 		}
 		if strings.Contains(err.Error(), "Git") || strings.Contains(err.Error(), "revision") {
-			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "could not verify the selected Git revision"})
+			writeClassifiedError(w, http.StatusUnprocessableEntity, "could not verify the selected Git revision", apiErrorMetadata{
+				code:           "git.revision_invalid",
+				category:       "git",
+				retryable:      false,
+				remediation:    "Choose a Git revision that exists in the configured repository and is accessible to this credential.",
+				remediationURL: "/settings/connections",
+			}, nil)
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "could not update rollback tracking state")
+		writeStoreError(w, "could not update rollback tracking state")
 		return
 	}
 	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "application.rollback_tracking_updated", "application", app.ID, map[string]any{"action": input.Action, "revisionSelected": strings.TrimSpace(input.Revision) != ""})
 	updated, err := s.Store.ApplicationByID(r.Context(), app.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "rollback tracking state was saved but application could not be reloaded")
+		writeStoreError(w, "rollback tracking state was saved but application could not be reloaded")
 		return
 	}
 	writeJSON(w, http.StatusOK, updated)

@@ -110,7 +110,7 @@ func (s *Server) adoptApplicationResource(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
 			s.Logger.Warn("resource adoption failed", "applicationId", app.ID, "error", err)
-			writeError(w, http.StatusInternalServerError, "could not finish recording the resource claim; refresh the conflict before retrying")
+			writeStoreError(w, "could not finish recording the resource claim; refresh the conflict before retrying")
 		}
 		return
 	}

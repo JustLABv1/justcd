@@ -253,14 +253,10 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
-func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
-}
-
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	items, err := s.Store.ListProjects(r.Context(), currentUser(r))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load projects")
+		writeStoreError(w, "could not load projects")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -307,7 +303,7 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.Store.ListAuditEvents(r.Context(), 51, before)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load audit events")
+		writeStoreError(w, "could not load audit events")
 		return
 	}
 	hasMore := len(items) > 50
@@ -319,7 +315,7 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 	items, err := s.Store.ListUsers(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load users")
+		writeStoreError(w, "could not load users")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -432,7 +428,7 @@ func writeAdminUserError(w http.ResponseWriter, err error) {
 			writeError(w, http.StatusConflict, "that email address is already in use")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "could not update user")
+		writeStoreError(w, "could not update user")
 	}
 }
 

@@ -4,7 +4,7 @@ const openAPISpec = `openapi: 3.1.0
 info:
   title: JustCD API
   version: 1.0.0
-  description: JustCD control-plane API. Kubernetes and Git credential material is never returned.
+  description: JustCD control-plane API. Kubernetes and Git credential material is never returned. API errors use the versioned ErrorResponse schema and retain the legacy error string.
 servers:
   - url: /api/v1
 paths:
@@ -328,6 +328,23 @@ paths:
       responses:
         '201': { description: Created provider; secret is not echoed }
 components:
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [schemaVersion, error, code, category, retryable, remediation]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        error: { type: string, description: Stable user-facing message retained for v1 clients }
+        code: { type: string, description: Stable machine-readable error code }
+        category: { type: string, description: Error domain such as validation, authorization, git, kubernetes, render, database, or internal }
+        retryable: { type: boolean, description: Whether retrying may succeed without changing the request }
+        remediation: { type: string, description: Safe operator guidance }
+        remediationUrl: { type: string, description: Optional same-origin path to related settings or context }
+        details:
+          type: object
+          description: Safe structured diagnostics. Some v1-specific fields are also retained at the top level for compatibility.
+          additionalProperties: true
+      additionalProperties: true
   securitySchemes:
     sessionCookie:
       type: apiKey

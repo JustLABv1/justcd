@@ -54,6 +54,17 @@ type Options struct {
 	IgnoredSelectors           []core.IgnoreSelector
 }
 
+type RendererError struct {
+	renderer  string
+	code      string
+	message   string
+	retryable bool
+}
+
+func (e *RendererError) Error() string     { return e.message }
+func (e *RendererError) Retryable() bool   { return e.retryable }
+func (e *RendererError) ErrorCode() string { return e.code }
+
 func Render(ctx context.Context, opts Options) ([]core.Resource, error) {
 	if opts.RepositoryRoot == "" || opts.ManifestPath == "" || opts.ApplicationID == "" || opts.ClusterID == "" || opts.Mapper == nil {
 		return nil, errors.New("render target and discovery mapper are required")
@@ -432,10 +443,21 @@ func runRenderer(parent context.Context, name string, args []string, repositoryR
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
-		if ctx.Err() != nil {
-			return nil, fmt.Errorf("%s renderer timed out", name)
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, &RendererError{renderer: name, code: "render.timeout", message: fmt.Sprintf("%s renderer timed out", name), retryable: true}
 		}
-		return nil, fmt.Errorf("%s renderer failed", name)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		output := strings.ToLower(stderr.String())
+		transient := false
+		for _, marker := range []string{"connection timed out", "connection reset", "connection refused", "connection aborted", "network is unreachable", "temporary failure", "temporarily unavailable", "could not resolve host", "tls handshake timeout", "i/o timeout", "service unavailable", "unexpected eof", "returned error: 502", "returned error: 503", "returned error: 504"} {
+			if strings.Contains(output, marker) {
+				transient = true
+				break
+			}
+		}
+		return nil, &RendererError{renderer: name, code: "render.command_failed", message: fmt.Sprintf("%s renderer failed", name), retryable: transient}
 	}
 	return stdout.Bytes(), nil
 }

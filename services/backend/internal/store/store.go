@@ -993,28 +993,32 @@ func (s *Store) ListCredentials(ctx context.Context, projectID string) ([]Creden
 }
 
 type Cluster struct {
-	ID                     string    `json:"id"`
-	Name                   string    `json:"name"`
-	APIServer              string    `json:"apiServer"`
-	CAData                 []byte    `json:"-"`
-	InsecureSkipVerify     bool      `json:"insecureSkipVerify"`
-	DefaultCredentialID    *string   `json:"defaultCredentialId,omitempty"`
-	ClusterScopeCredential *string   `json:"clusterScopeCredentialId,omitempty"`
-	CreatedAt              time.Time `json:"createdAt"`
+	ID                      string    `json:"id"`
+	Name                    string    `json:"name"`
+	APIServer               string    `json:"apiServer"`
+	CAData                  []byte    `json:"-"`
+	InsecureSkipVerify      bool      `json:"insecureSkipVerify"`
+	DefaultCredentialID     *string   `json:"defaultCredentialId,omitempty"`
+	ClusterScopeCredential  *string   `json:"clusterScopeCredentialId,omitempty"`
+	MaxConcurrentOperations int       `json:"maxConcurrentOperations"`
+	OperationsPerMinute     int       `json:"operationsPerMinute"`
+	CreatedAt               time.Time `json:"createdAt"`
 }
 
 func (s *Store) CreateCluster(ctx context.Context, c Cluster) error {
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO clusters(id,name,api_server,ca_data,insecure_skip_verify,default_credential_id,cluster_scope_credential_id) VALUES($1,$2,$3,$4,$5,$6,$7)`, c.ID, c.Name, c.APIServer, c.CAData, c.InsecureSkipVerify, c.DefaultCredentialID, c.ClusterScopeCredential)
+	c = normalizeClusterLimits(c)
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO clusters(id,name,api_server,ca_data,insecure_skip_verify,default_credential_id,cluster_scope_credential_id,max_concurrent_operations,operations_per_minute) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, c.ID, c.Name, c.APIServer, c.CAData, c.InsecureSkipVerify, c.DefaultCredentialID, c.ClusterScopeCredential, c.MaxConcurrentOperations, c.OperationsPerMinute)
 	return err
 }
 
 func (s *Store) CreateClusterWithProjectCredential(ctx context.Context, c Cluster, projectID, credentialID string) error {
+	c = normalizeClusterLimits(c)
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO clusters(id,name,api_server,ca_data,insecure_skip_verify,default_credential_id,cluster_scope_credential_id) VALUES($1,$2,$3,$4,$5,$6,$7)`, c.ID, c.Name, c.APIServer, c.CAData, c.InsecureSkipVerify, c.DefaultCredentialID, c.ClusterScopeCredential); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO clusters(id,name,api_server,ca_data,insecure_skip_verify,default_credential_id,cluster_scope_credential_id,max_concurrent_operations,operations_per_minute) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, c.ID, c.Name, c.APIServer, c.CAData, c.InsecureSkipVerify, c.DefaultCredentialID, c.ClusterScopeCredential, c.MaxConcurrentOperations, c.OperationsPerMinute); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO project_cluster_credentials(project_id,cluster_id,credential_id) VALUES($1,$2,$3)`, projectID, c.ID, credentialID); err != nil {
@@ -1045,11 +1049,11 @@ func (s *Store) SetProjectClusterCredential(ctx context.Context, projectID, clus
 }
 func (s *Store) ClusterByID(ctx context.Context, id string) (Cluster, error) {
 	var c Cluster
-	err := s.DB.QueryRowContext(ctx, `SELECT id,name,api_server,ca_data,insecure_skip_verify,default_credential_id,cluster_scope_credential_id,created_at FROM clusters WHERE id=$1`, id).Scan(&c.ID, &c.Name, &c.APIServer, &c.CAData, &c.InsecureSkipVerify, &c.DefaultCredentialID, &c.ClusterScopeCredential, &c.CreatedAt)
+	err := s.DB.QueryRowContext(ctx, `SELECT id,name,api_server,ca_data,insecure_skip_verify,default_credential_id,cluster_scope_credential_id,max_concurrent_operations,operations_per_minute,created_at FROM clusters WHERE id=$1`, id).Scan(&c.ID, &c.Name, &c.APIServer, &c.CAData, &c.InsecureSkipVerify, &c.DefaultCredentialID, &c.ClusterScopeCredential, &c.MaxConcurrentOperations, &c.OperationsPerMinute, &c.CreatedAt)
 	return c, err
 }
 func (s *Store) ListClusters(ctx context.Context) ([]Cluster, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,name,api_server,insecure_skip_verify,default_credential_id,cluster_scope_credential_id,created_at FROM clusters ORDER BY name`)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,name,api_server,insecure_skip_verify,default_credential_id,cluster_scope_credential_id,max_concurrent_operations,operations_per_minute,created_at FROM clusters ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -1057,7 +1061,7 @@ func (s *Store) ListClusters(ctx context.Context) ([]Cluster, error) {
 	out := make([]Cluster, 0)
 	for rows.Next() {
 		var c Cluster
-		if err := rows.Scan(&c.ID, &c.Name, &c.APIServer, &c.InsecureSkipVerify, &c.DefaultCredentialID, &c.ClusterScopeCredential, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.APIServer, &c.InsecureSkipVerify, &c.DefaultCredentialID, &c.ClusterScopeCredential, &c.MaxConcurrentOperations, &c.OperationsPerMinute, &c.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -1066,7 +1070,18 @@ func (s *Store) ListClusters(ctx context.Context) ([]Cluster, error) {
 }
 
 func (s *Store) UpdateCluster(ctx context.Context, c Cluster) error {
-	return s.updateConnectionAndInvalidate(ctx, `UPDATE clusters SET name=$2,api_server=$3,ca_data=$4,insecure_skip_verify=$5,default_credential_id=$6,cluster_scope_credential_id=$7,updated_at=NOW() WHERE id=$1`, c.ID, c.Name, c.APIServer, c.CAData, c.InsecureSkipVerify, c.DefaultCredentialID, c.ClusterScopeCredential)
+	c = normalizeClusterLimits(c)
+	return s.updateConnectionAndInvalidate(ctx, `UPDATE clusters SET name=$2,api_server=$3,ca_data=$4,insecure_skip_verify=$5,default_credential_id=$6,cluster_scope_credential_id=$7,max_concurrent_operations=$8,operations_per_minute=$9,updated_at=NOW() WHERE id=$1`, c.ID, c.Name, c.APIServer, c.CAData, c.InsecureSkipVerify, c.DefaultCredentialID, c.ClusterScopeCredential, c.MaxConcurrentOperations, c.OperationsPerMinute)
+}
+
+func normalizeClusterLimits(c Cluster) Cluster {
+	if c.MaxConcurrentOperations == 0 {
+		c.MaxConcurrentOperations = 2
+	}
+	if c.OperationsPerMinute == 0 {
+		c.OperationsPerMinute = 30
+	}
+	return c
 }
 
 func (s *Store) CreateNamespaceBinding(ctx context.Context, projectID, clusterID, namespace string, credentialID *string) error {
@@ -1178,6 +1193,41 @@ func (s *Store) ListGitSources(ctx context.Context, projectID string) ([]GitSour
 	return out, rows.Err()
 }
 
+type RetryPolicy struct {
+	Enabled             bool `json:"enabled"`
+	MaxAttempts         int  `json:"maxAttempts"`
+	InitialDelaySeconds int  `json:"initialDelaySeconds"`
+	MaxDelaySeconds     int  `json:"maxDelaySeconds"`
+	JitterPercent       int  `json:"jitterPercent"`
+}
+
+func DefaultRetryPolicy() RetryPolicy {
+	return RetryPolicy{Enabled: true, MaxAttempts: 5, InitialDelaySeconds: 5, MaxDelaySeconds: 300, JitterPercent: 20}
+}
+
+func NormalizeRetryPolicy(policy RetryPolicy) RetryPolicy {
+	if policy.MaxAttempts == 0 && policy.InitialDelaySeconds == 0 && policy.MaxDelaySeconds == 0 {
+		return DefaultRetryPolicy()
+	}
+	return policy
+}
+
+func (policy RetryPolicy) Validate() error {
+	if policy.MaxAttempts < 1 || policy.MaxAttempts > 20 {
+		return errors.New("retry maxAttempts must be between 1 and 20")
+	}
+	if policy.InitialDelaySeconds < 1 || policy.InitialDelaySeconds > 3600 {
+		return errors.New("retry initialDelaySeconds must be between 1 and 3600")
+	}
+	if policy.MaxDelaySeconds < policy.InitialDelaySeconds || policy.MaxDelaySeconds > 86400 {
+		return errors.New("retry maxDelaySeconds must be at least the initial delay and no more than 86400")
+	}
+	if policy.JitterPercent < 0 || policy.JitterPercent > 50 {
+		return errors.New("retry jitterPercent must be between 0 and 50")
+	}
+	return nil
+}
+
 type Application struct {
 	ID                             string                             `json:"id"`
 	ProjectID                      string                             `json:"projectId"`
@@ -1210,6 +1260,11 @@ type Application struct {
 	RollbackResumeRequiresRevision bool                               `json:"rollbackResumeRequiresRevision"`
 	RollbackResumeState            *ApplicationRollbackState          `json:"-"`
 	ApprovalPolicyOverride         *ApprovalPolicyOverride            `json:"approvalPolicyOverride,omitempty"`
+	RetryPolicy                    RetryPolicy                        `json:"retryPolicy"`
+	RetryAttemptCount              int                                `json:"retryAttemptCount"`
+	RetryNextAt                    *time.Time                         `json:"retryNextAt,omitempty"`
+	RetryTerminalReason            string                             `json:"retryTerminalReason,omitempty"`
+	RetryLastErrorCode             string                             `json:"retryLastErrorCode,omitempty"`
 	CreatedAt                      time.Time                          `json:"createdAt"`
 }
 
@@ -1260,6 +1315,10 @@ type ApplicationRollbackState struct {
 }
 
 func (s *Store) CreateApplication(ctx context.Context, a Application) error {
+	a.RetryPolicy = NormalizeRetryPolicy(a.RetryPolicy)
+	if err := a.RetryPolicy.Validate(); err != nil {
+		return err
+	}
 	namespaces, err := json.Marshal(a.Namespaces)
 	if err != nil {
 		return err
@@ -1286,14 +1345,14 @@ func (s *Store) CreateApplication(ctx context.Context, a Application) error {
 	if a.NamespaceHelmValues == nil {
 		namespaceValues = []byte(`{}`)
 	}
-	_, err = s.DB.ExecContext(ctx, `INSERT INTO applications(id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,application_group_id,target_manifest_path,namespace_manifest_paths,target_helm_values_files,target_helm_values_yaml,namespace_helm_values,cluster_id,namespaces,sync_policy,poll_seconds) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,''),$13,$14,$15,$16,$17,$18,$19,$20,$21)`, a.ID, a.ProjectID, a.Name, a.SourceID, a.Revision, a.ManifestPath, a.Renderer, a.KustomizeHelmEnabled, a.KustomizeNamespaceOverride, valuesFiles, a.HelmValuesYAML, a.ApplicationGroupID, a.TargetManifestPath, namespaceManifestPaths, targetValuesFiles, a.TargetHelmValuesYAML, namespaceValues, a.ClusterID, namespaces, a.SyncPolicy, a.PollSeconds)
+	_, err = s.DB.ExecContext(ctx, `INSERT INTO applications(id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,application_group_id,target_manifest_path,namespace_manifest_paths,target_helm_values_files,target_helm_values_yaml,namespace_helm_values,cluster_id,namespaces,sync_policy,poll_seconds,retry_enabled,retry_max_attempts,retry_initial_delay_seconds,retry_max_delay_seconds,retry_jitter_percent) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,''),$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`, a.ID, a.ProjectID, a.Name, a.SourceID, a.Revision, a.ManifestPath, a.Renderer, a.KustomizeHelmEnabled, a.KustomizeNamespaceOverride, valuesFiles, a.HelmValuesYAML, a.ApplicationGroupID, a.TargetManifestPath, namespaceManifestPaths, targetValuesFiles, a.TargetHelmValuesYAML, namespaceValues, a.ClusterID, namespaces, a.SyncPolicy, a.PollSeconds, a.RetryPolicy.Enabled, a.RetryPolicy.MaxAttempts, a.RetryPolicy.InitialDelaySeconds, a.RetryPolicy.MaxDelaySeconds, a.RetryPolicy.JitterPercent)
 	return err
 }
 
 func scanApplication(row interface{ Scan(...any) error }) (Application, error) {
 	var a Application
 	var namespaces, helmValuesFiles, namespaceManifestPaths, targetValuesFiles, namespaceValues, rawApprovalOverride, rawRollbackState, rawStatusIssues []byte
-	err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.SourceID, &a.Revision, &a.ManifestPath, &a.Renderer, &a.KustomizeHelmEnabled, &a.KustomizeNamespaceOverride, &helmValuesFiles, &a.HelmValuesYAML, &a.ApplicationGroupID, &a.TargetManifestPath, &namespaceManifestPaths, &targetValuesFiles, &a.TargetHelmValuesYAML, &namespaceValues, &a.ClusterID, &namespaces, &a.SyncPolicy, &a.PollSeconds, &a.LastCheckedAt, &a.LastSyncedRevision, &a.Health, &rawStatusIssues, &a.Decommissioning, &rawApprovalOverride, &a.AutoSyncPaused, &rawRollbackState, &a.RollbackResumeRequiresRevision, &a.CreatedAt)
+	err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.SourceID, &a.Revision, &a.ManifestPath, &a.Renderer, &a.KustomizeHelmEnabled, &a.KustomizeNamespaceOverride, &helmValuesFiles, &a.HelmValuesYAML, &a.ApplicationGroupID, &a.TargetManifestPath, &namespaceManifestPaths, &targetValuesFiles, &a.TargetHelmValuesYAML, &namespaceValues, &a.ClusterID, &namespaces, &a.SyncPolicy, &a.PollSeconds, &a.LastCheckedAt, &a.LastSyncedRevision, &a.Health, &rawStatusIssues, &a.Decommissioning, &rawApprovalOverride, &a.AutoSyncPaused, &rawRollbackState, &a.RollbackResumeRequiresRevision, &a.CreatedAt, &a.RetryPolicy.Enabled, &a.RetryPolicy.MaxAttempts, &a.RetryPolicy.InitialDelaySeconds, &a.RetryPolicy.MaxDelaySeconds, &a.RetryPolicy.JitterPercent, &a.RetryAttemptCount, &a.RetryNextAt, &a.RetryTerminalReason, &a.RetryLastErrorCode)
 	if err == nil {
 		err = json.Unmarshal(rawStatusIssues, &a.StatusIssues)
 	}
@@ -1342,16 +1401,21 @@ func scanApplication(row interface{ Scan(...any) error }) (Application, error) {
 			a.RollbackResumeAvailable = true
 		}
 	}
+	a.RetryPolicy = NormalizeRetryPolicy(a.RetryPolicy)
 	return a, err
 }
 
-const applicationColumns = `id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,COALESCE(application_group_id,''),target_manifest_path,namespace_manifest_paths,target_helm_values_files,target_helm_values_yaml,namespace_helm_values,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,COALESCE(last_synced_revision,''),health,status_issues,decommissioning,approval_policy_override,auto_sync_paused,rollback_resume_state,rollback_resume_requires_revision,created_at`
+const applicationColumns = `id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,COALESCE(application_group_id,''),target_manifest_path,namespace_manifest_paths,target_helm_values_files,target_helm_values_yaml,namespace_helm_values,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,COALESCE(last_synced_revision,''),health,status_issues,decommissioning,approval_policy_override,auto_sync_paused,rollback_resume_state,rollback_resume_requires_revision,created_at,retry_enabled,retry_max_attempts,retry_initial_delay_seconds,retry_max_delay_seconds,retry_jitter_percent,retry_attempt_count,retry_next_at,retry_terminal_reason,retry_last_error_code`
 
 func (s *Store) ApplicationByID(ctx context.Context, id string) (Application, error) {
 	return scanApplication(s.DB.QueryRowContext(ctx, `SELECT `+applicationColumns+` FROM applications WHERE id=$1`, id))
 }
 
 func (s *Store) UpdateApplication(ctx context.Context, app Application) error {
+	app.RetryPolicy = NormalizeRetryPolicy(app.RetryPolicy)
+	if err := app.RetryPolicy.Validate(); err != nil {
+		return err
+	}
 	namespaces, err := json.Marshal(app.Namespaces)
 	if err != nil {
 		return err
@@ -1414,7 +1478,7 @@ func (s *Store) UpdateApplication(ctx context.Context, app Application) error {
 			return errors.New("a deployment group can have only one application per cluster")
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE applications SET name=$2,source_id=$3,revision=$4,manifest_path=$5,renderer=$6,kustomize_helm_enabled=$7,kustomize_namespace_override=$8,helm_values_files=$9,helm_values_yaml=$10,target_manifest_path=$11,namespace_manifest_paths=$12,target_helm_values_files=$13,target_helm_values_yaml=$14,namespace_helm_values=$15,cluster_id=$16,namespaces=$17,sync_policy=$18,poll_seconds=$19,last_checked_at=NULL,health='unknown',status_issues='[]'::jsonb,updated_at=NOW() WHERE id=$1`, app.ID, app.Name, app.SourceID, app.Revision, app.ManifestPath, app.Renderer, app.KustomizeHelmEnabled, app.KustomizeNamespaceOverride, valuesFiles, app.HelmValuesYAML, app.TargetManifestPath, namespaceManifestPaths, targetValuesFiles, app.TargetHelmValuesYAML, namespaceValues, app.ClusterID, namespaces, app.SyncPolicy, app.PollSeconds); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET name=$2,source_id=$3,revision=$4,manifest_path=$5,renderer=$6,kustomize_helm_enabled=$7,kustomize_namespace_override=$8,helm_values_files=$9,helm_values_yaml=$10,target_manifest_path=$11,namespace_manifest_paths=$12,target_helm_values_files=$13,target_helm_values_yaml=$14,namespace_helm_values=$15,cluster_id=$16,namespaces=$17,sync_policy=$18,poll_seconds=$19,retry_enabled=$20,retry_max_attempts=$21,retry_initial_delay_seconds=$22,retry_max_delay_seconds=$23,retry_jitter_percent=$24,retry_attempt_count=0,retry_next_at=NULL,retry_terminal_reason='',retry_last_error_code='',last_checked_at=NULL,health='unknown',status_issues='[]'::jsonb,updated_at=NOW() WHERE id=$1`, app.ID, app.Name, app.SourceID, app.Revision, app.ManifestPath, app.Renderer, app.KustomizeHelmEnabled, app.KustomizeNamespaceOverride, valuesFiles, app.HelmValuesYAML, app.TargetManifestPath, namespaceManifestPaths, targetValuesFiles, app.TargetHelmValuesYAML, namespaceValues, app.ClusterID, namespaces, app.SyncPolicy, app.PollSeconds, app.RetryPolicy.Enabled, app.RetryPolicy.MaxAttempts, app.RetryPolicy.InitialDelaySeconds, app.RetryPolicy.MaxDelaySeconds, app.RetryPolicy.JitterPercent); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, app.ID); err != nil {
@@ -1666,7 +1730,7 @@ func (s *Store) DueApplications(ctx context.Context, limit int) ([]Application, 
 	if limit < 1 || limit > 100 {
 		limit = 25
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+applicationColumns+` FROM applications a WHERE NOT a.decommissioning AND NOT a.auto_sync_paused AND (a.last_checked_at IS NULL OR a.last_checked_at<=NOW()-(a.poll_seconds * INTERVAL '1 second')) AND NOT EXISTS (SELECT 1 FROM operation_leases l WHERE l.application_id=a.id AND l.expires_at>NOW()) ORDER BY a.last_checked_at ASC NULLS FIRST LIMIT $1`, limit)
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+applicationColumns+` FROM applications a WHERE NOT a.decommissioning AND NOT a.auto_sync_paused AND a.retry_terminal_reason='' AND ((a.retry_next_at IS NOT NULL AND a.retry_next_at<=NOW()) OR (a.retry_next_at IS NULL AND (a.last_checked_at IS NULL OR a.last_checked_at<=NOW()-(a.poll_seconds * INTERVAL '1 second')))) AND NOT EXISTS (SELECT 1 FROM operation_leases l WHERE l.application_id=a.id AND l.expires_at>NOW()) ORDER BY COALESCE(a.retry_next_at,a.last_checked_at) ASC NULLS FIRST LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1698,16 +1762,32 @@ func (s *Store) SetApplicationStatusIssues(ctx context.Context, id string, issue
 }
 func (s *Store) MarkApplicationSynced(ctx context.Context, id, revision, health string) error {
 	if revision == "" {
-		_, err := s.DB.ExecContext(ctx, `UPDATE applications SET health=$2,status_issues='[]'::jsonb,last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, id, health)
+		_, err := s.DB.ExecContext(ctx, `UPDATE applications SET health=$2,status_issues='[]'::jsonb,retry_attempt_count=0,retry_next_at=NULL,retry_terminal_reason='',retry_last_error_code='',last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, id, health)
 		return err
 	}
-	_, err := s.DB.ExecContext(ctx, `UPDATE applications SET last_synced_revision=$2,health=$3,status_issues='[]'::jsonb,last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, id, revision, health)
+	_, err := s.DB.ExecContext(ctx, `UPDATE applications SET last_synced_revision=$2,health=$3,status_issues='[]'::jsonb,retry_attempt_count=0,retry_next_at=NULL,retry_terminal_reason='',retry_last_error_code='',last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, id, revision, health)
 	return err
 }
 
 func (s *Store) PauseAutoSync(ctx context.Context, id string) error {
 	_, err := s.DB.ExecContext(ctx, `UPDATE applications SET auto_sync_paused=TRUE,health='degraded',last_checked_at=NOW(),updated_at=NOW() WHERE id=$1 AND sync_policy='auto-safe'`, id)
 	return err
+}
+
+func (s *Store) RecordApplicationRetry(ctx context.Context, id string, attempt int, errorCode string, nextRetryAt *time.Time, terminalReason string) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE applications SET retry_attempt_count=$2,retry_last_error_code=$3,retry_next_at=$4,retry_terminal_reason=$5,health='degraded',last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, id, attempt, errorCode, nextRetryAt, terminalReason)
+	return err
+}
+
+func (s *Store) ResetApplicationRetry(ctx context.Context, id string) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE applications SET retry_attempt_count=0,retry_next_at=NULL,retry_terminal_reason='',retry_last_error_code='',updated_at=NOW() WHERE id=$1`, id)
+	return err
+}
+
+func (s *Store) ApplicationHasActiveOperation(ctx context.Context, id string) (bool, error) {
+	var active bool
+	err := s.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM operation_leases WHERE application_id=$1)`, id).Scan(&active)
+	return active, err
 }
 
 // PinApplicationForRollback switches the saved source/render settings to the
@@ -2629,6 +2709,10 @@ type Operation struct {
 	RollbackCheckpointID string            `json:"rollbackCheckpointId,omitempty"`
 	Message              string            `json:"message"`
 	Progress             OperationProgress `json:"progress"`
+	AttemptCount         int               `json:"attemptCount"`
+	ErrorCode            string            `json:"errorCode,omitempty"`
+	NextRetryAt          *time.Time        `json:"nextRetryAt,omitempty"`
+	TerminalReason       string            `json:"terminalReason,omitempty"`
 	StartedAt            time.Time         `json:"startedAt"`
 	FinishedAt           *time.Time        `json:"finishedAt,omitempty"`
 }
@@ -2650,15 +2734,23 @@ func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actor
 		return Operation{}, err
 	}
 	defer tx.Rollback()
-	var lockedApplicationID string
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE id=$1 FOR UPDATE`, applicationID).Scan(&lockedApplicationID); err != nil {
+	var lockedApplicationID, priorTerminalReason string
+	var priorAttemptCount int
+	if err := tx.QueryRowContext(ctx, `SELECT id,retry_attempt_count,retry_terminal_reason FROM applications WHERE id=$1 FOR UPDATE`, applicationID).Scan(&lockedApplicationID, &priorAttemptCount, &priorTerminalReason); err != nil {
 		return Operation{}, err
+	}
+	attemptCount := priorAttemptCount + 1
+	if priorTerminalReason != "" {
+		attemptCount = 1
 	}
 	var status, storedDigest string
 	var rollback bool
 	var expires time.Time
 	if err := tx.QueryRowContext(ctx, `SELECT status,digest,expires_at,rollback_target IS NOT NULL FROM plans WHERE id=$1 AND application_id=$2 FOR UPDATE`, planID, applicationID).Scan(&status, &storedDigest, &expires, &rollback); err != nil {
 		return Operation{}, err
+	}
+	if rollback {
+		attemptCount = 1
 	}
 	if status != "current" || storedDigest != planDigest || !time.Now().Before(expires) {
 		return Operation{}, errors.New("plan is no longer current or has expired")
@@ -2701,11 +2793,14 @@ func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actor
 	if rollback {
 		operationType, message = "rollback", "Rollback queued"
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO operations(id,application_id,plan_id,actor_id,approval_id,approval_ids,operation_type,status,message,progress) VALUES($1,$2,$3,NULLIF($4,''),$5,$6,$7,'queued',$8,$9)`, id, applicationID, planID, actorID, approval, encodedApprovalIDs, operationType, message, encoded)
+	_, err = tx.ExecContext(ctx, `INSERT INTO operations(id,application_id,plan_id,actor_id,approval_id,approval_ids,operation_type,status,message,progress,attempt_count) VALUES($1,$2,$3,NULLIF($4,''),$5,$6,$7,'queued',$8,$9,$10)`, id, applicationID, planID, actorID, approval, encodedApprovalIDs, operationType, message, encoded, attemptCount)
 	if err != nil {
 		return Operation{}, err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO operation_leases(application_id,operation_id,expires_at) VALUES($1,$2,NOW()+($3 * INTERVAL '1 second'))`, applicationID, id, int64(lease.Seconds())); err != nil {
+		return Operation{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE applications SET retry_next_at=NULL,retry_terminal_reason='',retry_last_error_code='',updated_at=NOW() WHERE id=$1`, applicationID); err != nil {
 		return Operation{}, err
 	}
 	auditDetails, err := json.Marshal(map[string]any{"operationId": id, "planId": planID, "digest": planDigest, "approvalIds": approvalIDs})
@@ -2723,7 +2818,7 @@ func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actor
 	if len(approvalIDs) > 0 {
 		firstApprovalID = approvalIDs[0]
 	}
-	return Operation{ID: id, ApplicationID: applicationID, PlanID: &plan, ActorID: &actor, ApprovalID: firstApprovalID, ApprovalIDs: append([]string(nil), approvalIDs...), Status: "queued", Type: operationType, Progress: progress, StartedAt: time.Now().UTC(), Message: message}, nil
+	return Operation{ID: id, ApplicationID: applicationID, PlanID: &plan, ActorID: &actor, ApprovalID: firstApprovalID, ApprovalIDs: append([]string(nil), approvalIDs...), Status: "queued", Type: operationType, Progress: progress, AttemptCount: attemptCount, StartedAt: time.Now().UTC(), Message: message}, nil
 }
 
 // ClaimQueuedOperation atomically claims one durable queue entry. It never
@@ -2737,7 +2832,19 @@ func (s *Store) ClaimQueuedOperation(ctx context.Context, lease time.Duration) (
 	var operation Operation
 	var progress []byte
 	var rawApprovalIDs []byte
-	err = tx.QueryRowContext(ctx, `SELECT id,application_id,plan_id,actor_id,approval_id,approval_ids,operation_type,COALESCE(rollback_checkpoint_id,''),status,message,progress,started_at,finished_at FROM operations WHERE status='queued' ORDER BY started_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`).Scan(&operation.ID, &operation.ApplicationID, &operation.PlanID, &operation.ActorID, &operation.ApprovalID, &rawApprovalIDs, &operation.Type, &operation.RollbackCheckpointID, &operation.Status, &operation.Message, &progress, &operation.StartedAt, &operation.FinishedAt)
+	var clusterID string
+	var maxConcurrent, operationsPerMinute int
+	err = tx.QueryRowContext(ctx, `SELECT o.id,o.application_id,o.plan_id,o.actor_id,o.approval_id,o.approval_ids,o.operation_type,COALESCE(o.rollback_checkpoint_id,''),o.status,o.message,o.progress,o.attempt_count,o.error_code,o.next_retry_at,o.terminal_reason,o.started_at,o.finished_at,a.cluster_id,c.max_concurrent_operations,c.operations_per_minute
+		FROM operations o
+		JOIN applications a ON a.id=o.application_id
+		JOIN clusters c ON c.id=a.cluster_id
+		JOIN cluster_operation_gates g ON g.cluster_id=c.id
+		WHERE o.status='queued' AND (o.next_retry_at IS NULL OR o.next_retry_at<=NOW()) AND g.next_operation_at<=NOW()
+		AND (SELECT COUNT(*) FROM operations running
+			JOIN applications running_app ON running_app.id=running.application_id
+			JOIN operation_leases active_lease ON active_lease.operation_id=running.id
+			WHERE running.status='running' AND active_lease.expires_at>NOW() AND running_app.cluster_id=a.cluster_id) < c.max_concurrent_operations
+		ORDER BY o.started_at,o.id LIMIT 1 FOR UPDATE OF o,g SKIP LOCKED`).Scan(&operation.ID, &operation.ApplicationID, &operation.PlanID, &operation.ActorID, &operation.ApprovalID, &rawApprovalIDs, &operation.Type, &operation.RollbackCheckpointID, &operation.Status, &operation.Message, &progress, &operation.AttemptCount, &operation.ErrorCode, &operation.NextRetryAt, &operation.TerminalReason, &operation.StartedAt, &operation.FinishedAt, &clusterID, &maxConcurrent, &operationsPerMinute)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Operation{}, false, nil
 	}
@@ -2753,6 +2860,13 @@ func (s *Store) ClaimQueuedOperation(ctx context.Context, lease time.Duration) (
 	if len(operation.ApprovalIDs) == 0 && operation.ApprovalID != "" {
 		operation.ApprovalIDs = []string{operation.ApprovalID}
 	}
+	var activeForCluster int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM operations running JOIN applications running_app ON running_app.id=running.application_id JOIN operation_leases active_lease ON active_lease.operation_id=running.id WHERE running.status='running' AND active_lease.expires_at>NOW() AND running_app.cluster_id=$1`, clusterID).Scan(&activeForCluster); err != nil {
+		return Operation{}, false, err
+	}
+	if activeForCluster >= maxConcurrent {
+		return Operation{}, false, nil
+	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO operation_leases(application_id,operation_id,expires_at) VALUES($1,$2,NOW()+($3 * INTERVAL '1 second')) ON CONFLICT(application_id) DO UPDATE SET operation_id=EXCLUDED.operation_id,expires_at=EXCLUDED.expires_at WHERE operation_leases.expires_at<=NOW() OR operation_leases.operation_id=EXCLUDED.operation_id`, operation.ApplicationID, operation.ID, int64(lease.Seconds()))
 	if err != nil {
 		return Operation{}, false, err
@@ -2763,6 +2877,9 @@ func (s *Store) ClaimQueuedOperation(ctx context.Context, lease time.Duration) (
 	}
 	if count != 1 {
 		return Operation{}, false, nil
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE cluster_operation_gates SET next_operation_at=NOW()+($2::double precision * INTERVAL '1 second') WHERE cluster_id=$1`, clusterID, 60.0/float64(operationsPerMinute)); err != nil {
+		return Operation{}, false, err
 	}
 	message := "Sync in progress"
 	if operation.Type == "rollback" {
@@ -2783,7 +2900,7 @@ func (s *Store) ClaimQueuedOperation(ctx context.Context, lease time.Duration) (
 // queued jobs remain eligible for normal processing after a restart.
 func (s *Store) RecoverInterruptedOperations(ctx context.Context) error {
 	_, err := s.DB.ExecContext(ctx, `WITH interrupted AS (
-		UPDATE operations o SET status='failed',message=CASE WHEN o.operation_type='rollback' THEN 'Rollback interrupted by backend restart or worker loss; partial changes remain and the operation will not resume automatically. Review cluster state and any available checkpoint.' ELSE 'Sync interrupted by backend restart or worker loss; review the plan before retrying.' END,finished_at=NOW()
+		UPDATE operations o SET status='failed',message=CASE WHEN o.operation_type='rollback' THEN 'Rollback interrupted by backend restart or worker loss; partial changes remain and the operation will not resume automatically. Review cluster state and any available checkpoint.' ELSE 'Sync interrupted by backend restart or worker loss; review the plan before retrying.' END,error_code='operation.interrupted',next_retry_at=NULL,terminal_reason='interrupted_requires_review',finished_at=NOW()
 		WHERE o.status='running' AND NOT EXISTS (SELECT 1 FROM operation_leases l WHERE l.operation_id=o.id AND l.expires_at>NOW())
 		RETURNING o.id,o.actor_id,o.application_id,o.plan_id,o.operation_type,o.message
 	) INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details)
@@ -2791,7 +2908,7 @@ func (s *Store) RecoverInterruptedOperations(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.DB.ExecContext(ctx, `UPDATE applications a SET auto_sync_paused=TRUE,health='degraded',updated_at=NOW() WHERE a.sync_policy='auto-safe' AND EXISTS (SELECT 1 FROM operations o WHERE o.application_id=a.id AND o.status='failed' AND o.message LIKE '%interrupted by backend restart%')`); err != nil {
+	if _, err := s.DB.ExecContext(ctx, `UPDATE applications a SET auto_sync_paused=TRUE,health='degraded',retry_next_at=NULL,retry_terminal_reason='interrupted_requires_review',retry_last_error_code='operation.interrupted',updated_at=NOW() WHERE a.sync_policy='auto-safe' AND EXISTS (SELECT 1 FROM operations o WHERE o.application_id=a.id AND o.status='failed' AND o.terminal_reason='interrupted_requires_review')`); err != nil {
 		return err
 	}
 	_, err = s.DB.ExecContext(ctx, `DELETE FROM operation_leases l USING operations o WHERE l.operation_id=o.id AND l.expires_at<=NOW() AND o.status<>'queued'`)
@@ -2872,8 +2989,47 @@ func (s *Store) FinishOperation(ctx context.Context, id, status, message string)
 	}
 	return tx.Commit()
 }
+
+func (s *Store) FinishOperationWithRetry(ctx context.Context, id, applicationID, message string, attempt int, errorCode string, nextRetryAt *time.Time, terminalReason string) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE operations SET status='failed',message=$2,finished_at=NOW(),attempt_count=$3,error_code=$4,next_retry_at=$5,terminal_reason=$6 WHERE id=$1`, id, message, attempt, errorCode, nextRetryAt, terminalReason); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET retry_attempt_count=$2,retry_last_error_code=$3,retry_next_at=$4,retry_terminal_reason=$5,health='degraded',last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, applicationID, attempt, errorCode, nextRetryAt, terminalReason); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM operation_leases WHERE operation_id=$1`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) OperationByID(ctx context.Context, id string) (Operation, error) {
+	var item Operation
+	var rawProgress, rawApprovalIDs []byte
+	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,plan_id,actor_id,approval_id,approval_ids,operation_type,COALESCE(rollback_checkpoint_id,''),status,message,progress,attempt_count,error_code,next_retry_at,terminal_reason,started_at,finished_at FROM operations WHERE id=$1`, id).
+		Scan(&item.ID, &item.ApplicationID, &item.PlanID, &item.ActorID, &item.ApprovalID, &rawApprovalIDs, &item.Type, &item.RollbackCheckpointID, &item.Status, &item.Message, &rawProgress, &item.AttemptCount, &item.ErrorCode, &item.NextRetryAt, &item.TerminalReason, &item.StartedAt, &item.FinishedAt)
+	if err != nil {
+		return Operation{}, err
+	}
+	if err := json.Unmarshal(rawApprovalIDs, &item.ApprovalIDs); err != nil {
+		return Operation{}, err
+	}
+	if err := json.Unmarshal(rawProgress, &item.Progress); err != nil {
+		return Operation{}, err
+	}
+	if len(item.ApprovalIDs) == 0 && item.ApprovalID != "" {
+		item.ApprovalIDs = []string{item.ApprovalID}
+	}
+	return item, nil
+}
+
 func (s *Store) ListOperations(ctx context.Context, applicationID string, limit int) ([]Operation, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,plan_id,actor_id,operation_type,COALESCE(rollback_checkpoint_id,''),status,message,progress,started_at,finished_at FROM operations WHERE application_id=$1 ORDER BY started_at DESC LIMIT $2`, applicationID, limit)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,plan_id,actor_id,operation_type,COALESCE(rollback_checkpoint_id,''),status,message,progress,attempt_count,error_code,next_retry_at,terminal_reason,started_at,finished_at FROM operations WHERE application_id=$1 ORDER BY started_at DESC LIMIT $2`, applicationID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -2882,7 +3038,7 @@ func (s *Store) ListOperations(ctx context.Context, applicationID string, limit 
 	for rows.Next() {
 		var item Operation
 		var rawProgress []byte
-		if err := rows.Scan(&item.ID, &item.ApplicationID, &item.PlanID, &item.ActorID, &item.Type, &item.RollbackCheckpointID, &item.Status, &item.Message, &rawProgress, &item.StartedAt, &item.FinishedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.ApplicationID, &item.PlanID, &item.ActorID, &item.Type, &item.RollbackCheckpointID, &item.Status, &item.Message, &rawProgress, &item.AttemptCount, &item.ErrorCode, &item.NextRetryAt, &item.TerminalReason, &item.StartedAt, &item.FinishedAt); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(rawProgress, &item.Progress); err != nil {

@@ -51,3 +51,24 @@ func TestGitHTTPSUsernameLegacyFallback(t *testing.T) {
 		t.Fatalf("legacy username = %q", username)
 	}
 }
+
+func TestValidClusterOperationLimits(t *testing.T) {
+	tests := []struct {
+		maxConcurrent int
+		perMinute     int
+		want          bool
+	}{
+		{maxConcurrent: 0, perMinute: 0, want: true},
+		{maxConcurrent: 1, perMinute: 1, want: true},
+		{maxConcurrent: 20, perMinute: 1000, want: true},
+		{maxConcurrent: 21, perMinute: 30, want: false},
+		{maxConcurrent: 2, perMinute: 1001, want: false},
+		{maxConcurrent: 0, perMinute: 1, want: true},
+		{maxConcurrent: 2, perMinute: 0, want: true},
+	}
+	for _, test := range tests {
+		if got := validClusterOperationLimits(test.maxConcurrent, test.perMinute); got != test.want {
+			t.Errorf("validClusterOperationLimits(%d, %d) = %t, want %t", test.maxConcurrent, test.perMinute, got, test.want)
+		}
+	}
+}

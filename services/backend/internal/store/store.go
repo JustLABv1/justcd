@@ -1760,7 +1760,19 @@ func (s *Store) DueApplications(ctx context.Context, limit int) ([]Application, 
 	if limit < 1 || limit > 100 {
 		limit = 25
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+applicationColumns+` FROM applications a WHERE NOT a.decommissioning AND NOT a.auto_sync_paused AND a.retry_terminal_reason='' AND ((a.retry_next_at IS NOT NULL AND a.retry_next_at<=NOW()) OR (a.retry_next_at IS NULL AND (a.last_checked_at IS NULL OR a.last_checked_at<=NOW()-(a.poll_seconds * INTERVAL '1 second')))) OR (a.retry_next_at IS NULL AND EXISTS (SELECT 1 FROM git_push_triggers t WHERE t.application_id=a.id))) AND NOT EXISTS (SELECT 1 FROM operation_leases l WHERE l.application_id=a.id AND l.expires_at>NOW()) ORDER BY COALESCE(a.retry_next_at,a.last_checked_at) ASC NULLS FIRST LIMIT $1`, limit)
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+applicationColumns+`
+		FROM applications a
+		WHERE NOT a.decommissioning
+		  AND NOT a.auto_sync_paused
+		  AND a.retry_terminal_reason=''
+		  AND (
+		    (a.retry_next_at IS NOT NULL AND a.retry_next_at<=NOW())
+		    OR (a.retry_next_at IS NULL AND (a.last_checked_at IS NULL OR a.last_checked_at<=NOW()-(a.poll_seconds * INTERVAL '1 second')))
+		    OR (a.retry_next_at IS NULL AND EXISTS (SELECT 1 FROM git_push_triggers t WHERE t.application_id=a.id))
+		  )
+		  AND NOT EXISTS (SELECT 1 FROM operation_leases l WHERE l.application_id=a.id AND l.expires_at>NOW())
+		ORDER BY COALESCE(a.retry_next_at,a.last_checked_at) ASC NULLS FIRST
+		LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}

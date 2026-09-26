@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
 import { useEffect, useMemo, useRef, useState } from "react"
+import { Dialog } from "@base-ui/react/dialog"
 import { Tabs } from "@base-ui/react/tabs"
 import { Button } from "@/components/ui/button"
 import { ApplicationDetailSkeleton } from "@/components/application-detail-skeleton"
@@ -611,16 +612,46 @@ export default function ApplicationDetailPage() {
 
   return <>
     <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.renderer} · ${application.manifestPath} · ${application.revision}` : ""} badge={application && <StatusBadge status={application.health} />} actions={application && <>{pendingData.project && <span role="status" className="text-xs text-muted-foreground">Loading permissions…</span>}{canApprove && !application.decommissioning && <Link href={`/applications/${applicationID}/edit`}><Button variant="outline">Edit application</Button></Link>}<Button variant="outline" loading={pendingAction === "create-plan"} loadingText="Calculating plan…" onClick={() => void createPlan()} disabled={application.decommissioning || !canDeploy || busy || (namespaceMismatch && !application.kustomizeNamespaceOverride)} title={namespaceMismatch && !application.kustomizeNamespaceOverride ? "Choose a namespace override before refreshing the plan" : undefined}><span aria-hidden="true">↻</span> Refresh plan</Button></>} />
-    {error && <ErrorNotice error={error} />}
-    {application && application.statusIssues?.length > 0 && <section role="alert" className="mb-5 rounded-xl border border-destructive/30 bg-destructive/5 p-4"><h2 className="text-sm font-semibold">Application check failed</h2><p className="mt-1 text-xs text-muted-foreground">JustCD could not verify the current state. The last successful sync does not confirm that Git or Kubernetes is reachable now.</p><ul className="mt-3 space-y-2">{application.statusIssues.map((issue) => <li key={issue.source} className="text-sm"><strong>{issue.source === "git" ? "Git repository" : issue.source === "cluster" ? "Target cluster" : "Application"}:</strong> {issue.summary}</li>)}</ul><p className="mt-3 text-xs text-muted-foreground">Checked {application.lastCheckedAt ? new Date(application.lastCheckedAt).toLocaleString() : "recently"}. Refresh the plan after maintenance to recheck both connections.</p></section>}
-    {application && <section aria-labelledby="runtime-health-title" className="mb-5 rounded-xl border bg-card p-4 sm:p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="runtime-health-title" className="text-sm font-semibold">Runtime health</h2><p className="mt-1 text-xs text-muted-foreground">Kubernetes workload health is separate from Git sync state.</p></div><StatusBadge status={application.healthCondition?.status ?? "Unknown"} /></div>
+      <Tabs.Root value={activeTab} onValueChange={(value) => selectTab(String(value))} className="min-w-0">
+        {application && <Tabs.List aria-label="Application views" className="mb-6 flex gap-6 overflow-x-auto border-b" activateOnFocus>
+          {[
+            { id: "overview", label: "Overview" },
+            { id: "topology", label: "Topology", count: pendingData.topology ? undefined : topology?.nodes.length },
+            { id: "changes", label: "Plan & diff", count: pendingData.plans ? undefined : latestPlan ? latestPlan.plan.changes.length + (latestPlan.plan.ignored?.length ?? 0) : 0 },
+            { id: "components", label: "Managed components", count: pendingData.resources ? undefined : resources.length },
+            { id: "activity", label: "Activity & source", count: pendingData.operations ? undefined : operations.length },
+            { id: "settings", label: "Settings" },
+          ].map((tab) => <Tabs.Tab key={tab.id} value={tab.id} className="flex shrink-0 items-center gap-2 border-b-2 border-transparent px-1 pb-3 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[active]:border-primary data-[active]:text-foreground">
+            {tab.label}{tab.count !== undefined && <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">{tab.count}</span>}
+          </Tabs.Tab>)}
+        </Tabs.List>}
+
+    {error != null && <ErrorNotice error={error} />}
+    {application && <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3">
+      <div className="min-w-0 flex-1 text-xs">
+        {application.statusIssues?.length > 0 ? <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <span className="font-medium text-destructive">{application.statusIssues.map(issue => issue.source === "git" ? "Git repository" : issue.source === "cluster" ? "Target cluster" : "Application").join(" & ")} check failed</span>
+          <ErrorDetailsButton label="View diagnostics" error={{ name: "ApplicationCheckFailed", message: "The current state could not be verified. Refresh the plan to recheck Git and Kubernetes connectivity.", applicationId: application.id, checkedAt: application.lastCheckedAt, issues: application.statusIssues }} />
+        </div> : <span className="text-muted-foreground">{application.lastCheckedAt ? `Last checked ${new Date(application.lastCheckedAt).toLocaleString()}` : "Application checks pending"}</span>}
+      </div>
+      <Dialog.Root>
+        <Dialog.Trigger render={<Button variant="ghost" size="sm" className="gap-2" />}><span className="text-xs text-muted-foreground">Runtime health</span><StatusBadge status={application.healthCondition?.status ?? "Unknown"} /><span aria-hidden="true">↗</span></Dialog.Trigger>
+        <Dialog.Portal>
+          <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/50" />
+          <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 max-h-[85dvh] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border bg-card p-5 shadow-xl sm:p-6">
+            <div className="flex items-center justify-between gap-3"><Dialog.Title className="text-lg font-semibold">Runtime health</Dialog.Title><Dialog.Close render={<Button variant="ghost" size="sm" />}>Close</Dialog.Close></div>
+            <Dialog.Description className="mt-1 text-sm text-muted-foreground">Kubernetes workload health is separate from Git sync state.</Dialog.Description>
+            <div className="mt-4"><StatusBadge status={application.healthCondition?.status ?? "Unknown"} /></div>
       <p className="mt-3 text-sm"><strong>{application.healthCondition?.reason ?? "HealthNotObserved"}:</strong> {application.healthCondition?.message ?? "Live Kubernetes health has not been observed yet."}</p>
       <p className="mt-1 text-xs text-muted-foreground">Last transition {application.healthCondition?.lastTransitionTime ? new Date(application.healthCondition.lastTransitionTime).toLocaleString() : "not recorded"}{application.healthCondition?.observedAt ? ` · observed ${new Date(application.healthCondition.observedAt).toLocaleString()}` : ""}</p>
       {(application.healthCondition?.warnings?.length ?? 0) > 0 && <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-amber-700 dark:text-amber-300">{application.healthCondition?.warnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}</ul>}
       {(application.healthCondition?.resources?.length ?? 0) > 0 && <div className="mt-4 border-t pt-3"><h3 className="text-xs font-semibold">Resources needing attention</h3><ul className="mt-2 space-y-2">{application.healthCondition?.resources.map((item, index) => <li key={`${item.identity.kind}-${item.identity.namespace}-${item.identity.name}-${index}`} className="flex flex-wrap items-start gap-2 rounded-lg border p-2.5 text-xs"><StatusBadge status={item.status} /><span className="min-w-0 flex-1"><strong>{item.identity.kind} {item.identity.namespace ? `${item.identity.namespace}/` : ""}{item.identity.name}</strong><span className="mt-1 block text-muted-foreground">{item.reason}{item.readiness ? ` · ${item.readiness}` : ""}{item.phase ? ` · phase ${item.phase}` : ""} · {item.message}</span></span></li>)}</ul></div>}
       <details className="mt-4 border-t pt-3"><summary className="cursor-pointer text-xs font-medium">Recent condition transitions ({healthHistory.length})</summary>{healthHistory.length ? <ol className="mt-3 space-y-2">{healthHistory.map((item) => <li key={item.id} className="flex flex-wrap items-center gap-2 text-xs"><StatusBadge status={item.status} /><strong>{item.reason}</strong><span className="min-w-0 flex-1 text-muted-foreground">{item.message}</span><time className="text-muted-foreground" dateTime={item.changedAt}>{new Date(item.changedAt).toLocaleString()}</time></li>)}</ol> : <p className="mt-2 text-xs text-muted-foreground">No health transitions have been recorded yet.</p>}</details>
-    </section>}
+
+          </Dialog.Popup>
+        </Dialog.Portal>
+      </Dialog.Root>
+    </div>}
     {application?.decommissioning && <div role="status" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300/70 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><span>Deletion in progress. Auto-sync is paused. Review and apply the deletion plan, then finish removing the application.</span>{canApprove && <Button size="sm" variant="outline" disabled={busy || hasPendingOperation} onClick={() => void cancelDecommission()}>Cancel deletion</Button>}</div>}
     {application?.autoSyncPaused && <div role="status" className="mb-5 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-300/70 bg-amber-50/70 p-4 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"><div className="min-w-0 flex-1"><p className="text-sm font-semibold">Automatic reconciliation is paused</p><p className="mt-1 text-xs leading-5">{application.rollbackResumeAvailable ? "JustCD is pinned to the approved target. An owner can keep this pin or explicitly resume the previous tracked source." : "An operation failed or was interrupted. JustCD will not automatically retry; review its details and any available checkpoint before resuming."}</p>{application.rollbackResumeRequiresRevision && <div className="mt-3 max-w-md"><FormField label="Git revision to use before resuming" htmlFor="rollback-resume-revision"><Input id="rollback-resume-revision" value={resumeRevision} onChange={(event) => setResumeRevision(event.target.value)} placeholder="branch, tag, or commit" /></FormField></div>}</div>{canApprove && <div className="flex flex-wrap gap-2">{application.rollbackResumeAvailable && <Button size="sm" variant="outline" loading={pendingAction === "rollback-state-keep"} loadingText="Keeping pin…" disabled={busy || hasPendingOperation} onClick={() => void updateRollbackTracking("keep")}>Keep rollback pin</Button>}<Button size="sm" loading={pendingAction === "rollback-state-resume"} loadingText="Resuming…" disabled={busy || hasPendingOperation || (application.rollbackResumeRequiresRevision && !resumeRevision.trim())} onClick={() => void updateRollbackTracking("resume")}>{application.rollbackResumeAvailable ? "Resume previous source" : "Resume reconciliation"}</Button></div>}</div>}
     {namespaceMismatch && !application?.kustomizeNamespaceOverride && <div role="alert" className="mb-5 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><strong>Kustomize namespace: {kustomization?.namespace}.</strong> JustCD target: {application?.namespaces[0]?.namespace}. The namespaces differ, so a plan cannot be refreshed until an owner enables the transform. {application?.applicationGroupId ? <Link className="font-semibold underline underline-offset-4" href={`/application-groups/${application.applicationGroupId}`}>Review group settings →</Link> : <button type="button" className="font-semibold underline underline-offset-4" onClick={() => selectTab("settings")}>Review namespace setting →</button>}</div>}
@@ -651,27 +682,14 @@ export default function ApplicationDetailPage() {
         {visibleOperation.progress?.total ? <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted"><div className={`h-full rounded-full ${visibleOperation.status === "failed" ? "bg-destructive" : "bg-primary"}`} style={{ width: `${Math.min(100, Math.round((visibleOperation.progress.completed.length / visibleOperation.progress.total) * 100))}%` }} /></div> : null}
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground"><span>{visibleOperation.progress?.current ? `Now: ${resourceLabel(visibleOperation.progress.current)}` : visibleOperation.message}</span><div className="flex items-center gap-2">{visibleOperation.status === "failed" && canApprove && visibleOperationCheckpoint && <Button size="sm" variant="outline" disabled={busy || hasPendingOperation} onClick={() => void createRollbackPlan({ kind: "pre_operation", id: visibleOperationCheckpoint })}>Restore state before this {visibleOperation.type === "rollback" ? "rollback" : "sync"}</Button>}{visibleOperation.status === "failed" && <ErrorDetailsButton label="Debug details" error={{ name: "SyncOperationError", message: visibleOperation.message, operationId: visibleOperation.id, applicationId: visibleOperation.applicationId, planId: visibleOperation.planId, status: visibleOperation.status, startedAt: visibleOperation.startedAt, finishedAt: visibleOperation.finishedAt, progress: visibleOperation.progress }} />}</div></div>
       </div>}
-      <div className="mb-6 grid gap-3 rounded-xl border bg-card p-4 sm:grid-cols-3 sm:divide-x sm:p-5">
+
+
+        <Tabs.Panel value="overview" className="space-y-5 outline-none">
+      <div className="grid gap-3 rounded-xl border bg-card p-3 sm:grid-cols-3 sm:divide-x sm:p-4">
         <SummaryFact label="Target" value={application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"} />
         <SummaryFact label="Latest plan" value={latestPlan ? `${latestPlan.plan.changes.length} changes · ${latestPlan.status}` : "No plan yet"} loading={pendingData.plans} />
         <SummaryFact label="Last sync" value={application.lastSyncedRevision ? `${application.lastSyncedRevision.slice(0, 12)} · ${latestOperation?.status ?? "completed"}` : "Not synced yet"} loading={pendingData.operations} />
       </div>
-
-      <Tabs.Root value={activeTab} onValueChange={(value) => selectTab(String(value))} className="min-w-0">
-        <Tabs.List aria-label="Application views" className="mb-6 flex gap-6 overflow-x-auto border-b" activateOnFocus>
-          {[
-            { id: "overview", label: "Overview" },
-            { id: "topology", label: "Topology", count: pendingData.topology ? undefined : topology?.nodes.length },
-            { id: "changes", label: "Plan & diff", count: pendingData.plans ? undefined : latestPlan ? latestPlan.plan.changes.length + (latestPlan.plan.ignored?.length ?? 0) : 0 },
-            { id: "components", label: "Managed components", count: pendingData.resources ? undefined : resources.length },
-            { id: "activity", label: "Activity & source", count: pendingData.operations ? undefined : operations.length },
-            { id: "settings", label: "Settings" },
-          ].map((tab) => <Tabs.Tab key={tab.id} value={tab.id} className="flex shrink-0 items-center gap-2 border-b-2 border-transparent px-1 pb-3 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[active]:border-primary data-[active]:text-foreground">
-            {tab.label}{tab.count !== undefined && <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">{tab.count}</span>}
-          </Tabs.Tab>)}
-        </Tabs.List>
-
-        <Tabs.Panel value="overview" className="space-y-5 outline-none">
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(280px,1fr)]">
             <Panel title="Delivery state" description="The current Git-to-cluster picture, without opening the full diff.">
               {pendingData.plans ? <SectionLoading label="Loading the latest plan" compact /> :
@@ -788,8 +806,8 @@ export default function ApplicationDetailPage() {
           </Panel>
           {canApprove && <Panel title="Delete application" description="Choose whether JustCD keeps or removes the resources it manages."><div className="flex flex-wrap items-center justify-between gap-3 p-5"><p className="text-xs text-muted-foreground">{`${resources.length} managed resource${resources.length === 1 ? "" : "s"} currently recorded.`} Keeping them removes ownership tracking from JustCD.</p><ConfirmDisclosure trigger="Delete application" title={`Delete ${application.name}?`} description="Removing this application from JustCD cannot be undone. Choose what happens to its managed Kubernetes resources." confirmLabel="Delete application" onConfirm={deleteApplication} disabled={busy || hasPendingOperation}><FormField label="Managed cluster resources" htmlFor="application-delete-policy"><FormSelect id="application-delete-policy" value={deletePolicy} onValueChange={setDeletePolicy} items={[{ value: "keep", label: "Keep resources in Kubernetes" }, { value: "delete", label: "Delete resources through a reviewed plan" }]} /></FormField>{deletePolicy === "delete" && resources.length > 0 && <p className="mt-2 text-xs text-muted-foreground">A deletion plan must receive {deletionApprovalCount} approval{deletionApprovalCount === 1 ? "" : "s"} from eligible project members before the resources can be removed.</p>}</ConfirmDisclosure></div></Panel>}
         </Tabs.Panel>
-      </Tabs.Root>
     </>}
+      </Tabs.Root>
   </>
 }
 

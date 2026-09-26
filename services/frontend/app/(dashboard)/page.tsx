@@ -269,40 +269,6 @@ export default function OverviewPage() {
                   )}
                 </div>
               </section>
-              <section className="px-1">
-                <p className="text-[10px] font-semibold tracking-widest text-muted-foreground uppercase">
-                  Workspace essentials
-                </p>
-                <div className="mt-3 space-y-1">
-                  {[
-                    {
-                      href: "/projects",
-                      title: "Manage project connections",
-                      description: "Choose a project to configure its Git and Kubernetes access",
-                      icon: "branch" as const,
-                    },
-                  ].map((item) => (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      className="flex gap-3 rounded-lg py-3 hover:bg-muted/50"
-                    >
-                      <WorkspaceIcon
-                        name={item.icon}
-                        className="mt-0.5 size-4 shrink-0 text-muted-foreground"
-                      />
-                      <span>
-                        <span className="block text-xs font-medium">
-                          {item.title}
-                        </span>
-                        <span className="mt-1 block text-[11px] text-muted-foreground">
-                          {item.description}
-                        </span>
-                      </span>
-                    </Link>
-                  ))}
-                </div>
-              </section>
             </aside>
           </div>
         </>

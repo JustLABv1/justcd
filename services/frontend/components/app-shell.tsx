@@ -4,12 +4,11 @@ import Link from "next/link"
 import styles from "./app-shell.module.css"
 import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
-import { Button } from "@/components/ui/button"
-import { ThemePicker } from "@/components/theme-picker"
+import { AccountMenu } from "@/components/account-menu"
 import { api, apiPost } from "@/lib/api"
 import type { Application, ListResponse, Project, User } from "@/lib/types"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Home01Icon, Folder01Icon, Layers01Icon, Settings02Icon, Audit01Icon, Logout01Icon } from "@hugeicons/core-free-icons"
+import { Home01Icon, Folder01Icon, Layers01Icon, Settings02Icon, Audit01Icon } from "@hugeicons/core-free-icons"
 
 const navigation = [
   { href: "/", label: "Overview", icon: Home01Icon },
@@ -119,41 +118,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </nav>
           </>}
         </div>
-        <div className="mx-3 mb-3 flex shrink-0 items-center gap-2 rounded-2xl bg-muted/50 p-2.5">
-          <span className="grid size-9 shrink-0 place-items-center rounded-full border border-border/60 bg-background text-xs font-semibold uppercase">
-            {(user.displayName || user.email).slice(0, 2)}
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-xs font-medium" title={user.displayName || user.email}>{user.displayName || user.email}</span>
-            <span className="mt-0.5 block truncate text-[10px] text-muted-foreground" title={user.isAdmin ? "Instance administrator" : user.email}>{user.isAdmin ? "Administrator" : user.email}</span>
-          </span>
-          <Button variant="ghost" size="icon" className="size-8 shrink-0 rounded-full text-muted-foreground" aria-label="Sign out" title="Sign out" onClick={signOut}>
-            <HugeiconsIcon icon={Logout01Icon} strokeWidth={1.8} className="size-4" aria-hidden="true" />
-          </Button>
-        </div>
+        <AccountMenu user={user} onSignOut={signOut} />
       </aside>
 
       <div className="lg:pl-[248px]">
-        <header className="sticky top-0 z-10 flex h-14 items-center justify-between gap-4 border-b border-border/40 bg-background/80 px-5 backdrop-blur-md sm:px-8">
-          <div className="flex min-w-0 items-center gap-3">
-            <Link href="/" className="flex items-center gap-2 lg:hidden">
-              <span className="grid size-8 place-items-center rounded-lg bg-primary font-bold text-primary-foreground">J</span>
-              <span className="font-semibold">JustCD</span>
-            </Link>
-            {crumbs.length > 1 && <nav aria-label="Breadcrumb" className="hidden min-w-0 items-center gap-2 overflow-hidden text-xs sm:flex">
-              {crumbs.map((crumb, index) => <span key={`${crumb.label}-${index}`} className="flex min-w-0 items-center gap-2">
-                {index > 0 && <span aria-hidden="true" className="hidden text-muted-foreground/60 sm:block">/</span>}
-                {crumb.href ? <Link href={crumb.href} className="hidden truncate text-muted-foreground transition-colors hover:text-foreground sm:block">{crumb.label}</Link> : <span aria-current="page" className="truncate font-medium text-foreground">{crumb.label}</span>}
-              </span>)}
-            </nav>}
-          </div>
-          <div className="flex items-center gap-3">
-            <ThemePicker />
-            <Link href="/settings" className="grid size-8 place-items-center rounded-full bg-muted text-xs font-semibold uppercase lg:hidden">
-              {(user.displayName || user.email).slice(0, 2)}
-            </Link>
-            <Button variant="ghost" size="sm" className="hidden text-muted-foreground sm:inline-flex lg:hidden" onClick={signOut}>Sign out</Button>
-          </div>
+        <header className="flex h-14 items-center justify-between gap-4 px-5 sm:px-8 lg:hidden">
+          <Link href="/" className="flex items-center gap-2">
+            <span className="grid size-8 place-items-center rounded-lg bg-primary font-bold text-primary-foreground">J</span>
+            <span className="font-semibold">JustCD</span>
+          </Link>
+          <AccountMenu user={user} onSignOut={signOut} compact />
         </header>
         <nav aria-label="Main navigation" className="mx-4 mt-3 flex gap-1 overflow-x-auto rounded-2xl border border-border/70 bg-card p-1.5 shadow-sm lg:hidden">
           {navigation.filter((item) => !item.adminOnly || user.isAdmin).map((item) => {
@@ -161,7 +135,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             return <Link key={item.href} href={item.href} aria-current={selected ? "page" : undefined} className={`${styles.navItem} shrink-0 !px-3 !py-2 !text-xs`}>{item.label}</Link>
           })}
         </nav>
-        <main className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") ? "max-w-none" : "max-w-[1440px]"} px-5 pb-7 pt-5 sm:px-8 sm:pb-8 sm:pt-6 ${pathname === "/audit" ? "lg:flex lg:h-[calc(100dvh-56px)] lg:flex-col lg:overflow-hidden" : ""}`}>{children}</main>
+        <main className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") ? "max-w-none" : "max-w-[1440px]"} px-5 pb-7 pt-5 sm:px-8 sm:pb-8 sm:pt-6 lg:pt-9 ${pathname === "/audit" ? "lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden" : ""}`}>
+          {crumbs.length > 1 && <nav aria-label="Breadcrumb" className="mb-4 shrink-0 text-xs">
+            <ol className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              {crumbs.map((crumb, index) => <li key={`${crumb.label}-${index}`} className="flex min-w-0 max-w-full items-center gap-2">
+                {index > 0 && <span aria-hidden="true" className="text-muted-foreground/50">/</span>}
+                {crumb.href ? <Link href={crumb.href} className="truncate text-muted-foreground transition-colors hover:text-foreground">{crumb.label}</Link> : <span aria-current="page" className="truncate text-muted-foreground">{crumb.label}</span>}
+              </li>)}
+            </ol>
+          </nav>}
+          {children}
+        </main>
       </div>
     </div>
   )

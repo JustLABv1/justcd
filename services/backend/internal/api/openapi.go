@@ -246,12 +246,21 @@ paths:
         '200': { description: Redacted review plans, status errors, and preview application links }
   /webhooks/source-control/{connectionID}:
     post:
-      summary: Receive verified GitHub pull request or GitLab merge request events
+      summary: Receive verified GitHub or GitLab PR/MR and branch push events
       description: Public webhook endpoint. GitHub uses X-Hub-Signature-256. GitLab supports Standard Webhooks HMAC signatures and legacy X-Gitlab-Token for older self hosted instances.
       responses:
         '202': { description: Event stored for reconciliation }
         '204': { description: Event type ignored }
         '401': { description: Webhook verification failed }
+  /git-sources/{sourceID}/push-webhook:
+    get:
+      summary: Read generic signed push webhook configuration without exposing the secret
+    put:
+      summary: Configure a generic signed push webhook for a Git source (project owner)
+  /webhooks/git-sources/{sourceID}:
+    post:
+      summary: Receive a signed GitHub, GitLab, or generic branch push event
+      description: Native GitHub and GitLab push hooks use their provider signatures. Generic senders sign the raw JSON body with the configured secret in X-JustCD-Signature-256 and send an optional X-JustCD-Delivery id. Body fields are ref and after.
   /applications/{applicationID}/approval-policy:
     put:
       summary: Set or clear independent approval rule overrides (owner only)

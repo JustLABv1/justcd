@@ -346,6 +346,7 @@ export type PlanApprovalSummary = {
 export type PlanRecord = {
   id: string
   plan: Plan
+  trigger?: { sourceKey: string; provider: string; deliveryId: string; ref: string; reportedCommit: string }
   resources?: Identity[]
   createdBy: string
   createdAt: string

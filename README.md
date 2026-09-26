@@ -119,9 +119,26 @@ request. For GitLab.com JustCD uses
 such as `https://gitlab.example.com/api/v4`. Supply a webhook secret and a token permitted to read
 pull requests and write commit statuses. Copy the displayed webhook URL into
 the repository webhook settings and enable pull request or merge request
-events. GitLab's signed webhooks are supported; older instances can use the
+and push events. A branch push triggers a fresh plan for every application in
+the project tracking that repository and branch, including application-group
+children. Manual applications stop at plan review; auto-safe applications keep
+their existing safety and approval rules. The poller remains a fallback.
+GitLab's signed webhooks are supported; older instances can use the
 legacy secret token. The host running JustCD must trust the GitLab instance's
 TLS certificate.
+
+For a Git source without a PR reporting connection, a project owner can configure
+a push webhook in the Git source settings or with
+`PUT /api/v1/git-sources/{sourceID}/push-webhook` and JSON
+`{"secret":"at-least-16-characters"}`. The response contains a webhook URL.
+That URL accepts native GitHub or GitLab push events using their normal webhook
+signature headers, or a generic signed envelope from another provider or CI.
+POST `{"ref":"refs/heads/main","after":"<40-character-commit-SHA>"}` to that URL,
+setting `X-JustCD-Signature-256` to `sha256=` followed by the hex HMAC-SHA256
+of the exact request body using the secret. Set `X-JustCD-Delivery` to a unique
+delivery ID when available. This endpoint accepts branch updates only, not
+tag or branch-deletion events. Delivery IDs are deduplicated; the audit trail
+records the reported SHA and the commit actually resolved when planning.
 
 Each PR or MR is checked against the provider's current head and rendered from
 its `head` Git ref. JustCD verifies that the rendered commit equals the head

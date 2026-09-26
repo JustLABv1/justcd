@@ -280,6 +280,29 @@ func (s *Server) sourceControlWebhook(w http.ResponseWriter, r *http.Request) {
 		sum := sha256.Sum256(body)
 		event.DeliveryID = hex.EncodeToString(sum[:])
 	}
+	if event.Kind == "push" {
+		app, err := s.Store.ApplicationByID(r.Context(), c.ApplicationID)
+		if err != nil {
+			writeStoreError(w, "could not load webhook application")
+			return
+		}
+		source, err := s.Store.GitSourceByID(r.Context(), app.SourceID)
+		apiURL, parseErr := url.Parse(c.APIURL)
+		if err != nil || parseErr != nil || !sourceMatchesConnection(source.RepositoryURL, c.Provider, apiURL, c.Repository) {
+			writeError(w, http.StatusConflict, "application Git source no longer matches source control connection")
+			return
+		}
+		accepted, count, err := s.Store.RecordPushEvent(r.Context(), c.ProjectID, app.SourceID, "connection:"+c.ID, c.Provider, event.DeliveryID, event.Ref, event.HeadSHA)
+		if err != nil {
+			writeStoreError(w, "could not record Git push event")
+			return
+		}
+		if accepted {
+			_ = s.Store.Audit(r.Context(), "justcd-system", "webhook.push_received", "application", c.ApplicationID, map[string]any{"provider": c.Provider, "deliveryId": event.DeliveryID, "repository": event.Repository, "ref": event.Ref, "commit": event.HeadSHA, "matchedApplications": count})
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"accepted": accepted, "matchedApplications": count})
+		return
+	}
 	v := store.PullRequestReview{ID: store.NewID(), ConnectionID: c.ID, Number: event.Number, HeadSHA: event.HeadSHA, SourceURL: event.URL, Fork: event.Fork, Closed: event.Closed, EventAt: event.EventAt}
 	accepted, err := s.Store.RecordReviewEvent(r.Context(), c.ID, event.DeliveryID, v)
 	if err != nil {

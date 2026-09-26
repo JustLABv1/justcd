@@ -20,8 +20,10 @@ import (
 )
 
 type Event struct {
+	Kind       string
 	DeliveryID string
 	Repository string
+	Ref        string
 	Number     int
 	HeadSHA    string
 	URL        string
@@ -45,6 +47,23 @@ func VerifyAndParse(provider, secret string, header http.Header, body []byte, no
 		mac.Write(body)
 		if !hmac.Equal(decoded, mac.Sum(nil)) {
 			return Event{}, errors.New("invalid GitHub signature")
+		}
+		if header.Get("X-GitHub-Event") == "push" {
+			var p struct {
+				Ref        string `json:"ref"`
+				After      string `json:"after"`
+				Deleted    bool   `json:"deleted"`
+				Repository struct {
+					FullName string `json:"full_name"`
+				} `json:"repository"`
+			}
+			if err := json.Unmarshal(body, &p); err != nil {
+				return Event{}, err
+			}
+			if p.Deleted {
+				return Event{}, errors.New("event ignored")
+			}
+			return validatePushEvent(Event{Kind: "push", DeliveryID: header.Get("X-GitHub-Delivery"), Repository: p.Repository.FullName, Ref: p.Ref, HeadSHA: p.After})
 		}
 		if header.Get("X-GitHub-Event") != "pull_request" {
 			return Event{}, errors.New("event ignored")
@@ -108,6 +127,30 @@ func VerifyAndParse(provider, secret string, header http.Header, body []byte, no
 		} else if subtle.ConstantTimeCompare([]byte(header.Get("X-Gitlab-Token")), []byte(secret)) != 1 {
 			return Event{}, errors.New("invalid GitLab token")
 		}
+		if header.Get("X-Gitlab-Event") == "Push Hook" {
+			var p struct {
+				ObjectKind string `json:"object_kind"`
+				Ref        string `json:"ref"`
+				After      string `json:"after"`
+				Project    struct {
+					PathWithNamespace string `json:"path_with_namespace"`
+				} `json:"project"`
+			}
+			if err := json.Unmarshal(body, &p); err != nil {
+				return Event{}, err
+			}
+			if p.ObjectKind != "push" || p.After == strings.Repeat("0", 40) {
+				return Event{}, errors.New("event ignored")
+			}
+			id := header.Get("webhook-id")
+			if id == "" {
+				id = header.Get("X-Gitlab-Event-UUID")
+			}
+			if id == "" {
+				id = header.Get("X-Gitlab-Webhook-UUID")
+			}
+			return validatePushEvent(Event{Kind: "push", DeliveryID: id, Repository: p.Project.PathWithNamespace, Ref: p.Ref, HeadSHA: p.After})
+		}
 		if header.Get("X-Gitlab-Event") != "Merge Request Hook" {
 			return Event{}, errors.New("event ignored")
 		}
@@ -156,6 +199,7 @@ func VerifyAndParse(provider, secret string, header http.Header, body []byte, no
 }
 
 func validateEvent(e Event) (Event, error) {
+	e.Kind = "review"
 	if e.DeliveryID == "" || len(e.DeliveryID) > 200 || e.Repository == "" || e.Number <= 0 || len(e.HeadSHA) != 40 || e.EventAt.IsZero() {
 		return Event{}, errors.New("incomplete pull request event")
 	}
@@ -167,6 +211,42 @@ func validateEvent(e Event) (Event, error) {
 		return Event{}, errors.New("invalid pull request URL")
 	}
 	return e, nil
+}
+
+func validatePushEvent(e Event) (Event, error) {
+	if len(e.DeliveryID) > 200 || !strings.HasPrefix(e.Ref, "refs/heads/") || len(e.Ref) <= len("refs/heads/") || len(e.HeadSHA) != 40 {
+		return Event{}, errors.New("incomplete push event")
+	}
+	if _, err := hex.DecodeString(e.HeadSHA); err != nil {
+		return Event{}, errors.New("invalid push commit")
+	}
+	return e, nil
+}
+
+// VerifyGenericPush accepts a minimal signed push envelope from CI systems.
+// The endpoint is bound to a Git source, so the signed body needs only a ref and SHA.
+func VerifyGenericPush(secret string, header http.Header, body []byte) (Event, error) {
+	if len(secret) < 16 {
+		return Event{}, errors.New("webhook secret is too short")
+	}
+	got := strings.TrimPrefix(header.Get("X-JustCD-Signature-256"), "sha256=")
+	decoded, err := hex.DecodeString(got)
+	if err != nil || len(decoded) != sha256.Size {
+		return Event{}, errors.New("invalid webhook signature")
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	if !hmac.Equal(decoded, mac.Sum(nil)) {
+		return Event{}, errors.New("invalid webhook signature")
+	}
+	var p struct {
+		Ref   string `json:"ref"`
+		After string `json:"after"`
+	}
+	if err := json.Unmarshal(body, &p); err != nil {
+		return Event{}, err
+	}
+	return validatePushEvent(Event{Kind: "push", DeliveryID: header.Get("X-JustCD-Delivery"), Ref: p.Ref, HeadSHA: p.After})
 }
 
 type Client struct{ HTTP *http.Client }

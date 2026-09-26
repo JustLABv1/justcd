@@ -8,12 +8,13 @@ import { AccountMenu } from "@/components/account-menu"
 import { api, apiPost } from "@/lib/api"
 import type { Application, ListResponse, Project, User } from "@/lib/types"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Home01Icon, Folder01Icon, Layers01Icon, Settings02Icon, Audit01Icon } from "@hugeicons/core-free-icons"
+import { Home01Icon, Folder01Icon, Layers01Icon, Task01Icon, Settings02Icon, Audit01Icon } from "@hugeicons/core-free-icons"
 
 const navigation = [
   { href: "/", label: "Overview", icon: Home01Icon },
   { href: "/projects", label: "Projects", icon: Folder01Icon },
   { href: "/applications", label: "Applications", icon: Layers01Icon },
+  { href: "/approvals", label: "Approvals", icon: Task01Icon },
   { href: "/settings", label: "Instance settings", icon: Settings02Icon, adminOnly: true },
   { href: "/audit", label: "Audit trail", icon: Audit01Icon, adminOnly: true },
 ]
@@ -177,6 +178,7 @@ function pageCrumbs(pathname: string, project: Project | null, application: Appl
     const section = { "git-sources": "Git sources", clusters: "Kubernetes clusters", namespaces: "Namespace bindings", credentials: "Credentials", oidc: "OIDC providers", users: "Local users" }[parts[1] as "git-sources"]
     return parts[1] ? [{ label: "Instance settings", href: "/settings" }, { label: section ?? "Section" }] : [{ label: "Instance settings" }]
   }
+  if (parts[0] === "approvals") return [{ label: "Approvals" }]
   if (parts[0] === "audit") return [{ label: "Audit trail" }]
   return [{ label: "Overview", href: "/" }, { label: "Not found" }]
 }

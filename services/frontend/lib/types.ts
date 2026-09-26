@@ -325,6 +325,7 @@ export type PlanApproval = {
   actorId: string
   displayName: string
   email: string
+  comment?: string
   role?: string
   eligible: boolean
   expiresAt: string

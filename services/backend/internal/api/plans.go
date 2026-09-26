@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -176,6 +177,25 @@ func (s *Server) approvePlan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var input struct {
+		Comment    string `json:"comment"`
+		PlanDigest string `json:"planDigest"`
+	}
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil && err != io.EOF {
+			writeError(w, http.StatusBadRequest, "invalid approval request")
+			return
+		}
+	}
+	input.Comment = strings.TrimSpace(input.Comment)
+	if len(input.Comment) > 1000 {
+		writeError(w, http.StatusBadRequest, "approval comment must be at most 1000 characters")
+		return
+	}
+	if input.PlanDigest != "" && input.PlanDigest != record.Plan.Digest {
+		writeError(w, http.StatusConflict, "plan has changed; review it again before approving")
+		return
+	}
 	required := core.RequiredApprovalCount(record.Plan)
 	if required == 0 {
 		writeError(w, http.StatusConflict, "this plan does not require approval")
@@ -245,7 +265,7 @@ func (s *Server) approvePlan(w http.ResponseWriter, r *http.Request) {
 		expires = record.ExpiresAt
 	}
 	approval := core.DeletionApproval{PlanDigest: record.Plan.Digest, ActorID: currentUser(r).ID, Deletes: deletes, Privileged: privileged, ExpiresAt: expires}
-	if err := s.Store.CreateApproval(r.Context(), approvalID, record.ID, approval, expires); err != nil {
+	if err := s.Store.CreateApproval(r.Context(), approvalID, record.ID, approval, expires, input.Comment); err != nil {
 		if strings.Contains(err.Error(), "already") || strings.Contains(err.Error(), "required approvals") {
 			writeError(w, http.StatusConflict, err.Error())
 			return
@@ -261,8 +281,8 @@ func (s *Server) approvePlan(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, "could not save approval")
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "plan.approved", "application", app.ID, map[string]any{"planId": record.ID, "approvalId": approvalID, "digest": record.Plan.Digest, "kind": record.Plan.ApprovalKind, "deletions": len(deletes), "privilegedChanges": len(privileged)})
-	writeJSON(w, http.StatusCreated, map[string]any{"id": approvalID, "planId": record.ID, "planDigest": record.Plan.Digest, "expiresAt": expires, "requiredApprovals": required, "approvedApprovals": len(approvedActors) + 1})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "plan.approved", "application", app.ID, map[string]any{"planId": record.ID, "approvalId": approvalID, "digest": record.Plan.Digest, "kind": record.Plan.ApprovalKind, "deletions": len(deletes), "privilegedChanges": len(privileged), "comment": input.Comment})
+	writeJSON(w, http.StatusCreated, map[string]any{"id": approvalID, "planId": record.ID, "planDigest": record.Plan.Digest, "expiresAt": expires, "requiredApprovals": required, "approvedApprovals": len(approvedActors) + 1, "comment": input.Comment})
 }
 
 func (s *Server) listPlanApprovals(w http.ResponseWriter, r *http.Request) {
@@ -281,6 +301,7 @@ func (s *Server) listPlanApprovals(w http.ResponseWriter, r *http.Request) {
 		ActorID     string    `json:"actorId"`
 		DisplayName string    `json:"displayName"`
 		Email       string    `json:"email"`
+		Comment     string    `json:"comment"`
 		Role        string    `json:"role,omitempty"`
 		Eligible    bool      `json:"eligible"`
 		ExpiresAt   time.Time `json:"expiresAt"`
@@ -302,7 +323,7 @@ func (s *Server) listPlanApprovals(w http.ResponseWriter, r *http.Request) {
 				name = email
 			}
 		}
-		approvals = append(approvals, approvalView{ID: item.ID, ActorID: item.Approval.ActorID, DisplayName: name, Email: email, Role: role, Eligible: eligible, ExpiresAt: item.Approval.ExpiresAt})
+		approvals = append(approvals, approvalView{ID: item.ID, ActorID: item.Approval.ActorID, DisplayName: name, Email: email, Comment: item.Comment, Role: role, Eligible: eligible, ExpiresAt: item.Approval.ExpiresAt})
 		if eligible {
 			approvedActors[item.Approval.ActorID] = true
 			if item.Approval.ActorID == currentUser(r).ID {

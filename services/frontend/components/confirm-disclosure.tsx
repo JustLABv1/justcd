@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/toast-provider"
 import { errorMessage } from "@/lib/api"
 
-export function ConfirmDisclosure({ trigger, title, description, confirmLabel, onConfirm, children, disabled = false, confirmDisabled = false, triggerVariant = "destructive", open: controlledOpen, onOpenChange }: {
+export function ConfirmDisclosure({ trigger, title, description, confirmLabel, onConfirm, children, disabled = false, confirmDisabled = false, triggerVariant = "destructive", confirmVariant = "destructive", open: controlledOpen, onOpenChange }: {
   trigger?: ReactNode
   title: string
   description: string
@@ -16,6 +16,7 @@ export function ConfirmDisclosure({ trigger, title, description, confirmLabel, o
   disabled?: boolean
   confirmDisabled?: boolean
   triggerVariant?: ComponentProps<typeof Button>["variant"]
+  confirmVariant?: ComponentProps<typeof Button>["variant"]
   open?: boolean
   onOpenChange?: (open: boolean) => void
 }) {
@@ -41,7 +42,7 @@ export function ConfirmDisclosure({ trigger, title, description, confirmLabel, o
           {children && <div className="mt-4">{children}</div>}
           <div className="mt-6 flex justify-end gap-2 border-t pt-4">
             <AlertDialog.Close render={<Button type="button" variant="outline" disabled={busy} />}>Cancel</AlertDialog.Close>
-            <Button type="button" variant="destructive" disabled={confirmDisabled} loading={busy} loadingText="Working…" onClick={() => void confirm()}>{confirmLabel}</Button>
+            <Button type="button" variant={confirmVariant} disabled={confirmDisabled} loading={busy} loadingText="Working…" onClick={() => void confirm()}>{confirmLabel}</Button>
           </div>
         </AlertDialog.Popup>
       </AlertDialog.Viewport>

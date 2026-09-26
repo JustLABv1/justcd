@@ -15,7 +15,7 @@ import (
 func (s *Server) setupStatus(w http.ResponseWriter, r *http.Request) {
 	available, err := s.Store.SignupAvailable(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not check setup state")
+		writeStoreError(w, "could not check setup state")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"signupAvailable": available})
@@ -56,7 +56,7 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "setup is complete; sign in instead")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "could not create administrator")
+		writeStoreError(w, "could not create administrator")
 		return
 	}
 	s.clearLogin(ip)
@@ -122,7 +122,7 @@ func (s *Server) clearLogin(ip string) {
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request, user store.User) {
 	sessionToken, csrfToken, err := s.issueSession(r, user)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not create session")
+		writeSessionError(w, err)
 		return
 	}
 	s.setSessionCookies(w, sessionToken, csrfToken)
@@ -139,9 +139,23 @@ func (s *Server) issueSession(r *http.Request, user store.User) (string, string,
 		return "", "", err
 	}
 	if err := s.Store.CreateSession(r.Context(), sessionHash, csrfHash, user.ID, time.Now().Add(s.Config.SessionLifetime)); err != nil {
-		return "", "", err
+		return "", "", &sessionStoreError{err: err}
 	}
 	return sessionToken, csrfToken, nil
+}
+
+type sessionStoreError struct{ err error }
+
+func (e *sessionStoreError) Error() string { return e.err.Error() }
+func (e *sessionStoreError) Unwrap() error { return e.err }
+
+func writeSessionError(w http.ResponseWriter, err error) {
+	var storeError *sessionStoreError
+	if errors.As(err, &storeError) {
+		writeStoreError(w, "could not create session")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "could not create session")
 }
 
 func (s *Server) session(w http.ResponseWriter, r *http.Request) {

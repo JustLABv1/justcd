@@ -40,7 +40,7 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "project.updated", "project", id, map[string]string{"name": input.Name, "description": input.Description})
 	project, err := s.Store.ProjectByID(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "project updated but could not reload it")
+		writeStoreError(w, "project updated but could not reload it")
 		return
 	}
 	project.Role = "owner"
@@ -59,20 +59,20 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 	}
 	var managed int
 	if err := s.Store.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM managed_resources m JOIN applications a ON a.id=m.application_id WHERE a.project_id=$1`, id).Scan(&managed); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not inspect project resources")
+		writeStoreError(w, "could not inspect project resources")
 		return
 	}
 	if policy == "delete" && managed > 0 {
 		apps, err := s.Store.ListApplications(r.Context(), id)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "could not list project applications")
+			writeStoreError(w, "could not list project applications")
 			return
 		}
 		plans := make([]map[string]any, 0)
 		for _, app := range apps {
 			var count int
 			if err := s.Store.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM managed_resources WHERE application_id=$1`, app.ID).Scan(&count); err != nil {
-				writeError(w, http.StatusInternalServerError, "could not inspect application resources")
+				writeStoreError(w, "could not inspect application resources")
 				return
 			}
 			if count == 0 {
@@ -246,7 +246,7 @@ func (s *Server) deleteApplication(w http.ResponseWriter, r *http.Request) {
 	if policy == "delete" {
 		var count int
 		if err := s.Store.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM managed_resources WHERE application_id=$1`, app.ID).Scan(&count); err != nil {
-			writeError(w, http.StatusInternalServerError, "could not inspect managed resources")
+			writeStoreError(w, "could not inspect managed resources")
 			return
 		}
 		if count > 0 {

@@ -212,7 +212,7 @@ func (s *Server) getApplicationGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	apps, err := s.Store.ApplicationsByGroupID(r.Context(), group.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load deployment targets")
+		writeStoreError(w, "could not load deployment targets")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"group": group, "applications": apps})
@@ -276,7 +276,7 @@ func (s *Server) updateApplicationGroup(w http.ResponseWriter, r *http.Request) 
 	}
 	apps, err := s.Store.ApplicationsByGroupID(r.Context(), group.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "deployment group updated, but targets could not be loaded")
+		writeStoreError(w, "deployment group updated, but targets could not be loaded")
 		return
 	}
 	details := applicationGroupAuditDetails(group)

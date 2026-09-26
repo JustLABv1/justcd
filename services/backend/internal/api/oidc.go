@@ -54,7 +54,7 @@ func (s *Server) oidcStart(w http.ResponseWriter, r *http.Request) {
 	}
 	verifier := oauth2.GenerateVerifier()
 	if err := s.Store.CreateOIDCState(r.Context(), security.HashToken(state), provider.ID, nonce, verifier, time.Now().Add(10*time.Minute)); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not start OIDC login")
+		writeStoreError(w, "could not start OIDC login")
 		return
 	}
 	callbackPath := "/api/v1/auth/oidc/" + provider.ID + "/callback"
@@ -141,12 +141,12 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	user, err := s.Store.ResolveOIDCUser(ctx, provider.ID, claims.Subject, strings.ToLower(claims.Email), claims.Name, groups)
 	if err != nil {
 		s.Logger.Error("OIDC user mapping failed", "providerId", providerID, "error", err)
-		writeError(w, http.StatusInternalServerError, "could not provision OIDC identity")
+		writeStoreError(w, "could not provision OIDC identity")
 		return
 	}
 	sessionToken, csrfToken, err := s.issueSession(r, user)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not create session")
+		writeSessionError(w, err)
 		return
 	}
 	s.setSessionCookies(w, sessionToken, csrfToken)
@@ -156,7 +156,7 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listPublicProviders(w http.ResponseWriter, r *http.Request) {
 	items, err := s.Store.ListOIDCProviders(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load login providers")
+		writeStoreError(w, "could not load login providers")
 		return
 	}
 	public := make([]map[string]string, 0)
@@ -171,7 +171,7 @@ func (s *Server) listPublicProviders(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listOIDCProviders(w http.ResponseWriter, r *http.Request) {
 	items, err := s.Store.ListOIDCProviders(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load OIDC providers")
+		writeStoreError(w, "could not load OIDC providers")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -227,12 +227,12 @@ func (s *Server) createOIDCProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	cipher, err := security.Encrypt(s.EncryptionKey, []byte(input.ClientSecret), "oidc-provider:"+id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not store OIDC secret")
+		writeError(w, http.StatusInternalServerError, "could not encrypt OIDC client secret")
 		return
 	}
 	provider := store.OIDCProvider{ID: id, Name: input.Name, Issuer: input.Issuer, ClientID: input.ClientID, ClientSecret: cipher, RedirectURL: redirect, GroupsClaim: claim, Enabled: enabled}
 	if err := s.Store.CreateOIDCProvider(r.Context(), provider); err != nil {
-		writeError(w, http.StatusConflict, "could not create OIDC provider")
+		writeStoreError(w, "could not create OIDC provider")
 		return
 	}
 	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "oidc_provider.created", "oidc_provider", id, map[string]string{"name": provider.Name, "issuer": provider.Issuer})

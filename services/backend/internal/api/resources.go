@@ -149,7 +149,7 @@ func (s *Server) listProjectMembers(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.Store.ListProjectMembers(r.Context(), projectID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load project members")
+		writeStoreError(w, "could not load project members")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -248,7 +248,7 @@ func writeProjectMemberError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrUserUnavailable):
 		writeError(w, http.StatusBadRequest, "locked or deleted users cannot be added to a project")
 	default:
-		writeError(w, http.StatusInternalServerError, "could not update project member")
+		writeStoreError(w, "could not update project member")
 	}
 }
 
@@ -259,7 +259,7 @@ func (s *Server) listCredentials(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.Store.ListCredentials(r.Context(), projectID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load credentials")
+		writeStoreError(w, "could not load credentials")
 		return
 	}
 	for i := range items {
@@ -421,7 +421,7 @@ func validateCredentialPayload(kind string, secret map[string]string) error {
 func (s *Server) listClusters(w http.ResponseWriter, r *http.Request) {
 	items, err := s.Store.ListClusters(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load clusters")
+		writeStoreError(w, "could not load clusters")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -528,7 +528,7 @@ func (s *Server) createNamespaceBinding(w http.ResponseWriter, r *http.Request) 
 	}
 	projectCredentialID, err := s.Store.ProjectClusterCredential(r.Context(), input.ProjectID, cluster.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load project cluster credential")
+		writeStoreError(w, "could not load project cluster credential")
 		return
 	}
 	if input.CredentialID == nil && projectCredentialID == nil && cluster.DefaultCredentialID == nil {
@@ -554,7 +554,7 @@ func (s *Server) getProjectClusterCredential(w http.ResponseWriter, r *http.Requ
 	}
 	id, err := s.Store.ProjectClusterCredential(r.Context(), projectID, r.PathValue("clusterID"))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load project cluster credential")
+		writeStoreError(w, "could not load project cluster credential")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"credentialId": id})
@@ -584,7 +584,7 @@ func (s *Server) setProjectClusterCredential(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	if err := s.Store.SetProjectClusterCredential(r.Context(), input.ProjectID, r.PathValue("clusterID"), input.CredentialID); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not save project cluster credential")
+		writeStoreError(w, "could not save project cluster credential")
 		return
 	}
 	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "project_cluster_credential.updated", "cluster", r.PathValue("clusterID"), map[string]string{"projectId": input.ProjectID, "credentialId": valueOf(input.CredentialID)})
@@ -598,7 +598,7 @@ func (s *Server) listNamespaceBindings(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.Store.ListNamespaceBindings(r.Context(), projectID, r.PathValue("clusterID"))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load namespace bindings")
+		writeStoreError(w, "could not load namespace bindings")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -611,7 +611,7 @@ func (s *Server) listGitSources(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.Store.ListGitSources(r.Context(), projectID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load Git sources")
+		writeStoreError(w, "could not load Git sources")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -691,7 +691,7 @@ func (s *Server) listApplications(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.Store.ListApplications(r.Context(), projectID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load applications")
+		writeStoreError(w, "could not load applications")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -729,7 +729,13 @@ func (s *Server) getApplicationKustomization(w http.ResponseWriter, r *http.Requ
 	}
 	checkout, err := gitops.Fetch(r.Context(), s.Store, s.EncryptionKey, source, app.Revision)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeClassifiedError(w, http.StatusBadGateway, "Git source could not be fetched", apiErrorMetadata{
+			code:           "git.fetch_failed",
+			category:       "git",
+			retryable:      true,
+			remediation:    "Check the repository URL, selected revision, credentials, and Git provider availability.",
+			remediationURL: "/settings/connections",
+		}, map[string]any{"applicationId": app.ID})
 		return
 	}
 	defer checkout.Close()
@@ -799,7 +805,7 @@ func (s *Server) updateApplicationRenderSettings(w http.ResponseWriter, r *http.
 		return
 	}
 	if err := s.Store.SetApplicationRenderSettings(r.Context(), app.ID, input.KustomizeHelmEnabled, input.KustomizeNamespaceOverride); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not update render settings")
+		writeStoreError(w, "could not update render settings")
 		return
 	}
 	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "application.render_settings.updated", "application", app.ID, map[string]bool{"kustomizeHelmEnabled": input.KustomizeHelmEnabled, "kustomizeNamespaceOverride": input.KustomizeNamespaceOverride})

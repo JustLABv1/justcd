@@ -108,16 +108,26 @@ func (s *Server) createPlan(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var conflicts *syncer.OwnershipConflicts
 		if errors.As(err, &conflicts) {
-			writeJSON(w, http.StatusConflict, map[string]any{"error": conflicts.Error(), "conflict": conflicts.Items[0], "conflicts": conflicts.Items})
+			writeClassifiedError(w, http.StatusConflict, conflicts.Error(), apiErrorMetadata{
+				code:        "resource.ownership_conflict",
+				category:    "kubernetes",
+				retryable:   false,
+				remediation: "Review the existing resources and resolve ownership before applying this plan.",
+			}, map[string]any{"conflict": conflicts.Items[0], "conflicts": conflicts.Items})
 			return
 		}
 		var conflict *syncer.OwnershipConflict
 		if errors.As(err, &conflict) {
-			writeJSON(w, http.StatusConflict, map[string]any{"error": conflict.Error(), "conflict": conflict})
+			writeClassifiedError(w, http.StatusConflict, conflict.Error(), apiErrorMetadata{
+				code:        "resource.ownership_conflict",
+				category:    "kubernetes",
+				retryable:   false,
+				remediation: "Review the existing resource and resolve ownership before applying this plan.",
+			}, map[string]any{"conflict": conflict})
 			return
 		}
 		s.Logger.Warn("plan calculation failed", "applicationId", app.ID, "error", err)
-		writeError(w, http.StatusUnprocessableEntity, "could not calculate a safe plan")
+		writePlanFailure(w, http.StatusUnprocessableEntity, "could not calculate a safe plan", app.ID, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, toPlanView(record))
@@ -134,7 +144,7 @@ func (s *Server) listPlans(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.Store.ListPlans(r.Context(), app.ID, 20)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load plans")
+		writeStoreError(w, "could not load plans")
 		return
 	}
 	views := make([]planView, 0, len(items))
@@ -177,7 +187,7 @@ func (s *Server) approvePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	fresh, err := s.Syncer.RecheckPlan(r.Context(), app, record)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "could not safely recheck the plan")
+		writePlanFailure(w, http.StatusUnprocessableEntity, "could not safely recheck the plan", app.ID, err)
 		return
 	}
 	if record.Status != "current" || !time.Now().Before(record.ExpiresAt) || fresh.Digest != record.Plan.Digest {
@@ -186,12 +196,17 @@ func (s *Server) approvePlan(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "plan is no longer current; refresh it before approval")
 			return
 		}
-		writeJSON(w, http.StatusConflict, map[string]any{"error": "plan is stale; review the refreshed plan", "plan": toPlanView(refreshed)})
+		writeClassifiedError(w, http.StatusConflict, "plan is stale; review the refreshed plan", apiErrorMetadata{
+			code:        "plan.stale",
+			category:    "plan",
+			retryable:   false,
+			remediation: "Review the refreshed plan and submit a new approval before continuing.",
+		}, map[string]any{"plan": toPlanView(refreshed)})
 		return
 	}
 	activeApprovals, err := s.Store.ListPlanApprovals(r.Context(), record.ID, record.Plan.Digest)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load existing approvals")
+		writeStoreError(w, "could not load existing approvals")
 		return
 	}
 	approvedActors := make(map[string]bool, len(activeApprovals))
@@ -242,7 +257,7 @@ func (s *Server) approvePlan(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "could not save approval")
+		writeStoreError(w, "could not save approval")
 		return
 	}
 	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "plan.approved", "application", app.ID, map[string]any{"planId": record.ID, "approvalId": approvalID, "digest": record.Plan.Digest, "kind": record.Plan.ApprovalKind, "deletions": len(deletes), "privilegedChanges": len(privileged)})
@@ -257,7 +272,7 @@ func (s *Server) listPlanApprovals(w http.ResponseWriter, r *http.Request) {
 	required := core.RequiredApprovalCount(record.Plan)
 	items, err := s.Store.ListPlanApprovals(r.Context(), record.ID, record.Plan.Digest)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load plan approvals")
+		writeStoreError(w, "could not load plan approvals")
 		return
 	}
 	type approvalView struct {
@@ -341,7 +356,12 @@ func (s *Server) applyPlan(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var stale *syncer.StalePlanError
 		if errors.As(err, &stale) {
-			writeJSON(w, http.StatusConflict, map[string]any{"error": "plan is stale; review the refreshed plan", "plan": toPlanView(stale.Fresh)})
+			writeClassifiedError(w, http.StatusConflict, "plan is stale; review the refreshed plan", apiErrorMetadata{
+				code:        "plan.stale",
+				category:    "plan",
+				retryable:   false,
+				remediation: "Review the refreshed plan and submit a new approval before applying it.",
+			}, map[string]any{"plan": toPlanView(stale.Fresh)})
 			return
 		}
 		if strings.Contains(err.Error(), "approv") || strings.Contains(err.Error(), "already has an active operation") || strings.Contains(err.Error(), "changed after approval") {
@@ -349,7 +369,12 @@ func (s *Server) applyPlan(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.Logger.Error("plan apply failed", "applicationId", app.ID, "planId", record.ID, "error", err)
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "sync failed", "operation": operation})
+		writeClassifiedError(w, http.StatusBadGateway, "sync failed", apiErrorMetadata{
+			code:        "sync.apply_failed",
+			category:    "kubernetes",
+			retryable:   false,
+			remediation: "Inspect the operation results, refresh the plan, and retry only after resolving the failed resource.",
+		}, map[string]any{"applicationId": app.ID, "operation": operation})
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"operation": operation})
@@ -379,7 +404,7 @@ func (s *Server) createPlanSelection(w http.ResponseWriter, r *http.Request) {
 	}
 	freshSource, _, err := s.Syncer.CalculatePlanWithSelection(r.Context(), app, record.Plan.Selection)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "could not safely recheck the plan")
+		writePlanFailure(w, http.StatusUnprocessableEntity, "could not safely recheck the plan", app.ID, err)
 		return
 	}
 	if record.Status != "current" || !time.Now().Before(record.ExpiresAt) || freshSource.Digest != record.Plan.Digest {
@@ -388,12 +413,17 @@ func (s *Server) createPlanSelection(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "plan is stale; refresh it before changing the selection")
 			return
 		}
-		writeJSON(w, http.StatusConflict, map[string]any{"error": "plan is stale; review the refreshed plan", "plan": toPlanView(refreshed)})
+		writeClassifiedError(w, http.StatusConflict, "plan is stale; review the refreshed plan", apiErrorMetadata{
+			code:        "plan.stale",
+			category:    "plan",
+			retryable:   false,
+			remediation: "Review the refreshed plan and submit a new selection before continuing.",
+		}, map[string]any{"plan": toPlanView(refreshed)})
 		return
 	}
 	baseline, _, err := s.Syncer.CalculatePlan(r.Context(), app)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "could not safely validate the selected changes")
+		writePlanFailure(w, http.StatusUnprocessableEntity, "could not safely validate the selected changes", app.ID, err)
 		return
 	}
 	availableResources := map[string]bool{}
@@ -444,7 +474,7 @@ func (s *Server) createPlanSelection(w http.ResponseWriter, r *http.Request) {
 	newRecord, err := s.Syncer.BuildPlanWithSelection(r.Context(), app, currentUser(r).ID, input)
 	if err != nil {
 		s.Logger.Warn("selected plan calculation failed", "applicationId", app.ID, "error", err)
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "could not safely create a selected plan"})
+		writePlanFailure(w, http.StatusUnprocessableEntity, "could not safely create a selected plan", app.ID, err)
 		return
 	}
 	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "plan.selection_created", "application", app.ID, map[string]any{"sourcePlanId": record.ID, "planId": newRecord.ID, "digest": newRecord.Plan.Digest, "excludedResources": len(input.Resources), "excludedFields": len(input.Fields)})
@@ -462,7 +492,7 @@ func (s *Server) listIgnoreRules(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.Store.IgnoreRules(r.Context(), app.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load ignore rules")
+		writeStoreError(w, "could not load ignore rules")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -505,7 +535,7 @@ func (s *Server) createIgnoreRule(w http.ResponseWriter, r *http.Request) {
 		input.Path = canonical
 	}
 	if err := s.Syncer.ValidateIgnoreRule(r.Context(), app, input.Identity, input.Path); err != nil {
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	rule := core.IgnoreRule{ID: store.NewID(), Identity: input.Identity, Path: input.Path, Reason: input.Reason}
@@ -540,7 +570,7 @@ func (s *Server) deleteIgnoreRule(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "could not delete ignore rule")
+		writeStoreError(w, "could not delete ignore rule")
 		return
 	}
 	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "application.ignore_rule_deleted", "application", app.ID, map[string]any{"ruleId": rule.ID, "identity": rule.Identity, "path": rule.Path, "reason": rule.Reason})
@@ -575,7 +605,7 @@ func (s *Server) listApplicationResources(w http.ResponseWriter, r *http.Request
 	}
 	managed, err := s.Store.ManagedResources(r.Context(), app.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load application resources")
+		writeStoreError(w, "could not load application resources")
 		return
 	}
 	type resourceView struct {
@@ -603,7 +633,7 @@ func (s *Server) listApplicationOperations(w http.ResponseWriter, r *http.Reques
 	}
 	items, err := s.Store.ListOperations(r.Context(), app.ID, 50)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load application operations")
+		writeStoreError(w, "could not load application operations")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})

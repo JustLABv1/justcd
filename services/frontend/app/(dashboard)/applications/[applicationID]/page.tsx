@@ -22,6 +22,7 @@ import { useToast } from "@/components/toast-provider"
 import { APIError, api, apiDelete, apiPost, errorMessage } from "@/lib/api"
 import { ManifestDiff } from "@/components/manifest-diff"
 import { PlanReview } from "@/components/plan-review"
+import { PullRequestsWorkspace } from "@/components/pull-requests-workspace"
 import type { Application, ApplicationHealthTransition, Change, FieldExclusion, Identity, IgnoreRule, IgnoreSelector, ListResponse, ManagedResource, Operation, OwnershipConflict, PlanApprovalSummary, PlanRecord, Project, ProjectMember, ResourceTopology, RollbackTarget } from "@/lib/types"
 
 function diffId(identity: Identity) {
@@ -120,7 +121,7 @@ export default function ApplicationDetailPage() {
   useEffect(() => {
     const readTab = () => {
       const value = new URLSearchParams(window.location.search).get("tab")
-      setActiveTab(["overview", "topology", "changes", "components", "activity", "settings"].includes(value ?? "") ? value! : "overview")
+      setActiveTab(["overview", "topology", "changes", "components", "activity", "pull-requests", "settings"].includes(value ?? "") ? value! : "overview")
     }
     readTab()
     window.addEventListener("popstate", readTab)
@@ -620,6 +621,7 @@ export default function ApplicationDetailPage() {
             { id: "changes", label: "Plan & diff", count: pendingData.plans ? undefined : latestPlan ? latestPlan.plan.changes.length + (latestPlan.plan.ignored?.length ?? 0) : 0 },
             { id: "components", label: "Managed components", count: pendingData.resources ? undefined : resources.length },
             { id: "activity", label: "Activity & source", count: pendingData.operations ? undefined : operations.length },
+            { id: "pull-requests", label: "Pull requests" },
             { id: "settings", label: "Settings" },
           ].map((tab) => <Tabs.Tab key={tab.id} value={tab.id} className="flex shrink-0 items-center gap-2 border-b-2 border-transparent px-1 pb-3 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[active]:border-primary data-[active]:text-foreground">
             {tab.label}{tab.count !== undefined && <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">{tab.count}</span>}
@@ -778,6 +780,10 @@ export default function ApplicationDetailPage() {
           </Panel>
           </div>
           <Panel title="Application source" description="Configuration stored in JustCD"><div className="space-y-3 p-5 text-xs"><KeyValue label="Manifest path" value={application.manifestPath} mono /><KeyValue label="Renderer" value={application.renderer} />{application.renderer === "kustomize" && <><KeyValue label="Cluster overlay path" value={application.targetManifestPath || "Shared path"} mono />{Object.keys(application.namespaceManifestPaths ?? {}).length > 0 && <KeyValue label="Namespace overlays" value={Object.entries(application.namespaceManifestPaths).map(([namespace, path]) => `${namespace}: ${path}`).join(", ")} mono />}</>}<KeyValue label="Cluster" value={application.clusterId.slice(0, 12)} mono /><KeyValue label="Poll interval" value={`${application.pollSeconds} seconds`} />{application.renderer === "kustomize" && <><KeyValue label="Namespace from Git" value={kustomization ? kustomization.namespace || "Not set in kustomization" : kustomizationError ? errorMessage(kustomizationError) : "Checking kustomization…"} />{kustomizationError && <ErrorDetailsButton error={kustomizationError} />}</>}{application.applicationGroupId && <Link href={`/application-groups/${application.applicationGroupId}`} className="block text-xs font-medium text-primary hover:underline">Open deployment group →</Link>}{canApprove && <Link href={`/applications/${applicationID}/edit`} className="inline-block text-xs font-medium text-primary hover:underline">Edit application →</Link>}<Link href={`/projects/${application.projectId}`} className="block text-xs font-medium text-primary hover:underline">Open project →</Link></div></Panel>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="pull-requests" className="outline-none">
+          <PullRequestsWorkspace embedded canConfigure={canApprove} />
         </Tabs.Panel>
 
         <Tabs.Panel value="settings" className="space-y-5 outline-none">

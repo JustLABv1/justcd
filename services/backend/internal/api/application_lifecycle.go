@@ -21,6 +21,13 @@ func (s *Server) retryApplication(w http.ResponseWriter, r *http.Request) {
 	if !s.requireProjectRole(w, r, app.ProjectID, "deployer") {
 		return
 	}
+	if _, _, err := s.Store.ReviewByPreviewApplication(r.Context(), app.ID); err == nil {
+		writeError(w, http.StatusConflict, "preview retries must be handled through pull request review")
+		return
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		writeStoreError(w, "could not verify preview policy")
+		return
+	}
 	if app.Decommissioning {
 		writeError(w, http.StatusConflict, "application decommissioning must be resumed or cancelled through its reviewed deletion plan")
 		return
@@ -213,6 +220,13 @@ func (s *Server) updateApplication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.requireProjectRole(w, r, app.ProjectID, "owner") {
+		return
+	}
+	if _, _, err := s.Store.ReviewByPreviewApplication(r.Context(), app.ID); err == nil {
+		writeError(w, http.StatusConflict, "preview applications are managed by their pull request profile")
+		return
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		writeStoreError(w, "could not verify preview policy")
 		return
 	}
 	var input struct {

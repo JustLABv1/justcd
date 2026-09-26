@@ -1461,10 +1461,19 @@ func (s *Store) UpdateApplication(ctx context.Context, app Application) error {
 		return err
 	}
 	defer tx.Rollback()
-	var oldCluster string
+	var oldCluster, oldSource string
 	var oldNamespaces []byte
-	if err := tx.QueryRowContext(ctx, `SELECT cluster_id,namespaces FROM applications WHERE id=$1 FOR UPDATE`, app.ID).Scan(&oldCluster, &oldNamespaces); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT cluster_id,source_id,namespaces FROM applications WHERE id=$1 FOR UPDATE`, app.ID).Scan(&oldCluster, &oldSource, &oldNamespaces); err != nil {
 		return err
+	}
+	if oldSource != app.SourceID || oldCluster != app.ClusterID {
+		var previewSlots int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM preview_slots p JOIN source_control_connections c ON c.id=p.connection_id WHERE c.application_id=$1`, app.ID).Scan(&previewSlots); err != nil {
+			return err
+		}
+		if previewSlots > 0 {
+			return errors.New("cannot change Git source or cluster while pull request previews are active")
+		}
 	}
 	var managed, active int
 	if err := tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM managed_resources WHERE application_id=$1), (SELECT COUNT(*) FROM operations WHERE application_id=$1 AND status IN ('queued','running'))`, app.ID).Scan(&managed, &active); err != nil {
@@ -1564,6 +1573,13 @@ func (s *Store) DeleteApplicationKeepingResources(ctx context.Context, id string
 	}
 	if active > 0 {
 		return 0, errors.New("application is currently syncing")
+	}
+	var previewSlots int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM preview_slots p JOIN source_control_connections c ON c.id=p.connection_id WHERE c.application_id=$1`, id).Scan(&previewSlots); err != nil {
+		return 0, err
+	}
+	if previewSlots > 0 {
+		return 0, errors.New("application has active pull request previews")
 	}
 	if requireEmpty && managed > 0 {
 		return 0, errors.New("application still manages Kubernetes resources")

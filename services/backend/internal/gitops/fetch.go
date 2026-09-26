@@ -141,7 +141,7 @@ func Fetch(ctx context.Context, db *store.Store, key []byte, source store.GitSou
 		cleanup()
 		return nil, commandFailure(cloneCtx, "fetch requested Git revision", err)
 	}
-	commitBytes, err := runGitOutput(cloneCtx, env, "-C", checkoutPath, "rev-parse", "--verify", "--end-of-options", revision+"^{commit}")
+	commitBytes, err := runGitOutput(cloneCtx, env, "-C", checkoutPath, "rev-parse", "--verify", "--end-of-options", "FETCH_HEAD^{commit}")
 	if err != nil {
 		cleanup()
 		return nil, errors.New("requested Git revision does not resolve to a commit")

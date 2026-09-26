@@ -106,6 +106,57 @@ callback URL in the identity provider. The public URL must point to the Next.js
 application (whose same-origin API proxy forwards callbacks to the backend).
 Group-to-project role mappings are configured in Connections & access.
 
+## Pull request plans and previews
+
+Open an application's **Pull requests** tab and choose **Enable PR reporting**
+(or **Edit settings** for an existing connection). JustCD derives the provider
+and repository from the application's existing Git source; you do not connect
+the repository a second time. For an unknown Git host, confirm that it is a
+self-hosted GitLab instance and supply its HTTPS API URL if needed. The
+review list remains the default view; reporting settings open only on
+request. For GitLab.com JustCD uses
+`https://gitlab.com/api/v4`; for a self hosted instance use its HTTPS API URL,
+such as `https://gitlab.example.com/api/v4`. Supply a webhook secret and a token permitted to read
+pull requests and write commit statuses. Copy the displayed webhook URL into
+the repository webhook settings and enable pull request or merge request
+events. GitLab's signed webhooks are supported; older instances can use the
+legacy secret token. The host running JustCD must trust the GitLab instance's
+TLS certificate.
+
+Each PR or MR is checked against the provider's current head and rendered from
+its `head` Git ref. JustCD verifies that the rendered commit equals the head
+SHA reported by the provider. Without a preview profile, the resulting plan is
+stored for review only and cannot be applied to production. A commit status on
+the PR or MR links to the plan in JustCD.
+
+To enable deployments, configure the application's preview profile. Provide a
+preview manifest path or Helm values, a database strategy, a namespace prefix,
+an ingress host suffix, CPU and memory quotas, maximum active previews, and a
+maximum lifetime. The profile may reference secrets already provisioned inside
+the preview namespace; JustCD never copies production secrets or databases.
+The configured values or overlay must point to preview-safe data services.
+For Helm values, `{{namespace}}`, `{{number}}`, and `{{sha}}` are replaced with
+the preview namespace, PR/MR number, and exact head SHA. For example, an
+Ingress host can be `web.{{namespace}}.preview.example.com`; every rendered
+Ingress host and TLS host must be inside that namespace-specific domain. A
+wildcard DNS record and certificate for the preview domain simplify routing.
+
+JustCD creates a dedicated namespace and ResourceQuota for each preview. The
+cluster needs a cluster-scope credential that can create and delete namespaces
+and manage ResourceQuotas. The project also needs a namespace credential for
+the generated application. Rendered cluster-scoped resources, Secret objects,
+unexpected secret references, external-facing Services, and out-of-domain
+Ingress hosts are rejected. Fork previews are disabled by default; opting in
+requires owner approval and a profile with no allowed secrets. Fork workloads
+must disable service account token mounting.
+
+Closing, merging, or expiring a preview creates a normal decommission plan.
+After that plan is applied and all JustCD-managed resources are gone, JustCD
+deletes the owned namespace and releases its preview slot. Everything placed
+in that namespace, including separately provisioned preview secrets, is
+removed with it. Cleanup that cannot verify ownership remains pending for
+review.
+
 ## Verification
 
 ```sh

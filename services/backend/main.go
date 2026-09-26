@@ -58,6 +58,7 @@ func run(logger *slog.Logger) error {
 	defer stopSignals()
 	go server.Syncer.RunPoller(signalCtx, logger)
 	go server.Syncer.RunOperationWorker(signalCtx, logger)
+	go server.RunReviewWorker(signalCtx, logger)
 	select {
 	case <-signalCtx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

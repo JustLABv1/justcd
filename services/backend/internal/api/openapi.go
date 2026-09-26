@@ -157,6 +157,38 @@ paths:
       summary: Bind a project to a namespace and optional credential
       responses:
         '201': { description: Namespace binding }
+  /clusters/{clusterID}/test:
+    post:
+      summary: Run and persist Kubernetes permission self-tests for a namespace
+      description: Uses API discovery and SelfSubjectAccessReview only; it does not create, patch, or delete workload resources. Cluster-wide checks are opt-in and require project owner access.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [projectId]
+              properties:
+                projectId: { type: string }
+                namespace: { type: string }
+                includeClusterScope: { type: boolean, default: false }
+      responses:
+        '200': { description: Permission report, including classified failures and suggested RBAC YAML }
+        '403': { description: Project owner access is required for cluster-wide checks }
+  /clusters/{clusterID}/tests:
+    get:
+      summary: List the latest saved Kubernetes permission report per namespace
+      parameters:
+        - in: path
+          name: clusterID
+          required: true
+          schema: { type: string }
+        - in: query
+          name: projectId
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Latest permission reports and timestamps }
   /git-sources:
     get:
       summary: List project Git sources

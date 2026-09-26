@@ -12,9 +12,6 @@ import (
 	"github.com/justlab/justcd/services/backend/internal/kube"
 	"github.com/justlab/justcd/services/backend/internal/security"
 	"github.com/justlab/justcd/services/backend/internal/store"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 func (s *Server) updateCredential(w http.ResponseWriter, r *http.Request) {
@@ -292,14 +289,19 @@ func (s *Server) updateCluster(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) testCluster(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		ProjectID string `json:"projectId"`
-		Namespace string `json:"namespace"`
+		ProjectID           string `json:"projectId"`
+		Namespace           string `json:"namespace"`
+		IncludeClusterScope bool   `json:"includeClusterScope"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if !s.requireProjectRole(w, r, input.ProjectID, "viewer") {
+	minimumRole := "viewer"
+	if input.IncludeClusterScope {
+		minimumRole = "owner"
+	}
+	if !s.requireProjectRole(w, r, input.ProjectID, minimumRole) {
 		return
 	}
 	cluster, err := s.Store.ClusterByID(r.Context(), r.PathValue("clusterID"))
@@ -321,58 +323,89 @@ func (s *Server) testCluster(w http.ResponseWriter, r *http.Request) {
 		if binding.CredentialID != nil {
 			credentialID = binding.CredentialID
 		}
-	} else if credentialID == nil && cluster.DefaultCredentialID == nil {
+	} else {
 		bindings, err := s.Store.ListNamespaceBindings(r.Context(), input.ProjectID, cluster.ID)
 		if err != nil {
 			writeStoreError(w, "could not load namespace bindings")
 			return
 		}
-		for _, binding := range bindings {
-			if binding.CredentialID != nil {
-				credentialID = binding.CredentialID
-				input.Namespace = binding.Namespace
-				break
+		if len(bindings) > 0 {
+			input.Namespace = bindings[0].Namespace
+			if bindings[0].CredentialID != nil {
+				credentialID = bindings[0].CredentialID
 			}
 		}
-	}
-	client, err := kube.ForBinding(r.Context(), s.Store, s.EncryptionKey, cluster, credentialID, false)
-	if err != nil {
-		writeClassifiedError(w, http.StatusUnprocessableEntity, "Cluster credential could not be used", apiErrorMetadata{
-			code:           "kubernetes.credential_unusable",
-			category:       "kubernetes",
-			retryable:      false,
-			remediation:    "Check the credential type, expiration, cluster selection, and namespace binding.",
-			remediationURL: "/settings/connections",
-		}, nil)
-		return
-	}
-	version, err := client.Discovery.ServerVersion()
-	if err != nil {
-		writeClassifiedError(w, http.StatusUnprocessableEntity, "Kubernetes API connection failed", apiErrorMetadata{
-			code:           "kubernetes.connection_failed",
-			category:       "kubernetes",
-			retryable:      true,
-			remediation:    "Check the API endpoint, TLS trust configuration, network path, and credential permissions.",
-			remediationURL: "/settings/connections",
-		}, nil)
-		return
 	}
 	namespace := input.Namespace
 	if namespace == "" {
 		namespace = "default"
 	}
-	review := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "authorization.k8s.io/v1", "kind": "SelfSubjectAccessReview", "spec": map[string]any{"resourceAttributes": map[string]any{"namespace": namespace, "verb": "get", "resource": "pods"}}}}
-	result, err := client.Dynamic.Resource(schema.GroupVersionResource{Group: "authorization.k8s.io", Version: "v1", Resource: "selfsubjectaccessreviews"}).Create(r.Context(), review, metav1.CreateOptions{})
+	client, clientErr := kube.ForBinding(r.Context(), s.Store, s.EncryptionKey, cluster, credentialID, false)
+	var clusterClient *kube.Clients
+	var clusterScopeFailure *kube.PermissionFailure
+	clusterScopeStatus := ""
+	if input.IncludeClusterScope {
+		if cluster.ClusterScopeCredential == nil {
+			clusterScopeStatus = "not_configured"
+		} else {
+			clusterClient, err = kube.ForBinding(r.Context(), s.Store, s.EncryptionKey, cluster, cluster.ClusterScopeCredential, true)
+			if err != nil {
+				failure := kube.ClassifyPermissionTestError(err)
+				clusterScopeFailure = &failure
+			}
+		}
+	}
+	var report kube.PermissionReport
+	if clientErr != nil {
+		report = kube.FailedPermissionReport(namespace, clientErr)
+		if clusterClient != nil {
+			clusterScope := kube.CheckClusterScopePermissions(r.Context(), clusterClient)
+			report.ClusterScope = &clusterScope
+		}
+	} else {
+		report = kube.CheckPermissions(r.Context(), client, namespace, clusterClient)
+	}
+	if input.IncludeClusterScope && report.ClusterScope == nil {
+		switch {
+		case clusterScopeStatus == "not_configured":
+			report.ClusterScope = &kube.ClusterScopePermissions{Status: "not_configured", Checks: []kube.PermissionCheck{}}
+		case clusterScopeFailure != nil:
+			report.ClusterScope = &kube.ClusterScopePermissions{Status: "failed", Checks: []kube.PermissionCheck{}, Failure: clusterScopeFailure}
+		default:
+			report.ClusterScope = &kube.ClusterScopePermissions{Status: "not_run", Checks: []kube.PermissionCheck{}}
+		}
+	}
+	report.CheckedAt = time.Now().UTC()
+	reportJSON, err := json.Marshal(report)
 	if err != nil {
-		writeClassifiedError(w, http.StatusUnprocessableEntity, "Kubernetes authentication check failed", apiErrorMetadata{
-			code:           "kubernetes.permission_check_failed",
-			category:       "kubernetes",
-			retryable:      false,
-			remediation:    "Allow the credential to create SelfSubjectAccessReview requests, then run the connection test again.",
-			remediationURL: "/settings/connections",
-		}, nil)
+		writeError(w, http.StatusInternalServerError, "could not encode Kubernetes permission report")
 		return
 	}
-	allowed, _, _ := unstructured.NestedBool(result.Object, "status", "allowed")
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "serverVersion": version.GitVersion, "namespace": namespace, "canReadPods": allowed})
+	if err := s.Store.SaveKubernetesPermissionTest(r.Context(), store.KubernetesPermissionTest{
+		ProjectID: input.ProjectID, ClusterID: cluster.ID, Namespace: namespace,
+		Report: reportJSON, CheckedAt: report.CheckedAt,
+	}); err != nil {
+		writeStoreError(w, "could not save Kubernetes permission report")
+		return
+	}
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "kubernetes.permission_tested", "cluster", cluster.ID, map[string]any{"projectId": input.ProjectID, "namespace": namespace, "includeClusterScope": input.IncludeClusterScope, "status": report.Status})
+	writeJSON(w, http.StatusOK, report)
+}
+
+func (s *Server) listClusterPermissionTests(w http.ResponseWriter, r *http.Request) {
+	projectID := r.URL.Query().Get("projectId")
+	if !s.requireProjectRole(w, r, projectID, "viewer") {
+		return
+	}
+	clusterID := r.PathValue("clusterID")
+	if _, err := s.Store.ClusterByID(r.Context(), clusterID); err != nil {
+		writeError(w, http.StatusNotFound, "cluster not found")
+		return
+	}
+	items, err := s.Store.ListKubernetesPermissionTests(r.Context(), projectID, clusterID)
+	if err != nil {
+		writeStoreError(w, "could not load Kubernetes permission reports")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }

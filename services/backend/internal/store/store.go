@@ -1106,6 +1106,40 @@ type NamespaceBinding struct {
 	CredentialID *string `json:"credentialId,omitempty"`
 }
 
+type KubernetesPermissionTest struct {
+	ProjectID string          `json:"projectId"`
+	ClusterID string          `json:"clusterId"`
+	Namespace string          `json:"namespace"`
+	Report    json.RawMessage `json:"report"`
+	CheckedAt time.Time       `json:"checkedAt"`
+}
+
+func (s *Store) SaveKubernetesPermissionTest(ctx context.Context, test KubernetesPermissionTest) error {
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO kubernetes_permission_tests(project_id,cluster_id,namespace,report,checked_at)
+		VALUES($1,$2,$3,$4::jsonb,$5)
+		ON CONFLICT (project_id,cluster_id,namespace) DO UPDATE SET report=EXCLUDED.report,checked_at=EXCLUDED.checked_at`,
+		test.ProjectID, test.ClusterID, test.Namespace, string(test.Report), test.CheckedAt)
+	return err
+}
+
+func (s *Store) ListKubernetesPermissionTests(ctx context.Context, projectID, clusterID string) ([]KubernetesPermissionTest, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT project_id,cluster_id,namespace,report::text,checked_at
+		FROM kubernetes_permission_tests WHERE project_id=$1 AND cluster_id=$2 ORDER BY namespace`, projectID, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]KubernetesPermissionTest, 0)
+	for rows.Next() {
+		var item KubernetesPermissionTest
+		if err := rows.Scan(&item.ProjectID, &item.ClusterID, &item.Namespace, &item.Report, &item.CheckedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 type GitSource struct {
 	ID            string    `json:"id"`
 	ProjectID     string    `json:"projectId"`

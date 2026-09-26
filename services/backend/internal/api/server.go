@@ -83,6 +83,7 @@ func (s *Server) routes() {
 	s.Mux.Handle("POST /api/v1/clusters", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.createCluster)))))
 	s.Mux.Handle("PUT /api/v1/clusters/{clusterID}", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.updateCluster)))))
 	s.Mux.Handle("POST /api/v1/clusters/{clusterID}/test", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.testCluster))))
+	s.Mux.Handle("GET /api/v1/clusters/{clusterID}/tests", s.requireAuth(http.HandlerFunc(s.listClusterPermissionTests)))
 	s.Mux.Handle("POST /api/v1/clusters/{clusterID}/bindings", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createNamespaceBinding))))
 	s.Mux.Handle("PUT /api/v1/clusters/{clusterID}/bindings/{namespace}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateNamespaceBinding))))
 	s.Mux.Handle("GET /api/v1/clusters/{clusterID}/bindings", s.requireAuth(http.HandlerFunc(s.listNamespaceBindings)))

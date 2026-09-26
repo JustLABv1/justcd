@@ -13,6 +13,7 @@ import { EmptyState, StatusBadge } from "@/components/ui-kit"
 import { WorkspaceIcon } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
 import {
+  isApplicationHealthy,
   needsAttention,
   type WorkspaceApplication,
 } from "@/hooks/use-workspace"
@@ -49,6 +50,19 @@ function ApplicationActions({ app, canManage, onDeleted }: { app: WorkspaceAppli
   </>
 }
 
+function RuntimeHealth({ condition }: { condition: WorkspaceApplication["healthCondition"] }) {
+  const status = condition?.status ?? "Unknown"
+  const transitioned = condition?.lastTransitionTime
+    ? new Date(condition.lastTransitionTime).toLocaleString()
+    : "Not observed yet"
+  return <div className="min-w-0">
+    <div className="flex flex-wrap items-center gap-2"><span className="text-[10px] text-muted-foreground">Runtime</span><StatusBadge status={status} /></div>
+    <p className="mt-1 truncate text-xs text-muted-foreground" title={`${condition?.reason ?? "HealthNotObserved"} · ${condition?.message ?? "Live Kubernetes health has not been observed yet."}`}>
+      {condition?.reason ?? "Health not observed"} · Since {transitioned}
+    </p>
+  </div>
+}
+
 export function ApplicationCard({ app, canManage, onDeleted }: { app: WorkspaceApplication; canManage?: boolean; onDeleted?: (id: string) => void }) {
   const namespaces = app.namespaces.map((item) => item.namespace).join(", ")
   const revision = /^[a-f0-9]{40}$|^[a-f0-9]{64}$/i.test(app.revision)
@@ -71,8 +85,9 @@ export function ApplicationCard({ app, canManage, onDeleted }: { app: WorkspaceA
         <ApplicationActions app={app} canManage={Boolean(canManage)} onDeleted={onDeleted} />
       </header>
 
-      <div className="mt-4">
-        <StatusBadge status={app.health} />
+      <div className="mt-4 space-y-2">
+        <div className="flex flex-wrap items-center gap-2"><span className="text-[10px] text-muted-foreground">Sync</span><StatusBadge status={app.health} /></div>
+        <RuntimeHealth condition={app.healthCondition} />
         {app.statusIssues?.length > 0 && <p className="mt-2 text-xs leading-5 text-destructive" title={app.statusIssues.map((issue) => issue.summary).join("\n")}>{app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")} check failed · <Link href={`/applications/${app.id}`} className="underline underline-offset-2">Details</Link></p>}
       </div>
 
@@ -127,9 +142,9 @@ export function ApplicationCollection({
   const counts = {
     all: available.length,
     attention: available.filter(needsAttention).length,
-    synced: available.filter((app) => app.health === "synced").length,
+    synced: available.filter(isApplicationHealthy).length,
     other: available.filter(
-      (app) => !needsAttention(app) && app.health !== "synced"
+      (app) => !needsAttention(app) && !isApplicationHealthy(app)
     ).length,
   }
   const visible = available
@@ -139,8 +154,8 @@ export function ApplicationCollection({
         (filter === "attention"
           ? needsAttention(app)
           : filter === "synced"
-            ? app.health === "synced"
-            : !needsAttention(app) && app.health !== "synced")
+            ? isApplicationHealthy(app)
+            : !needsAttention(app) && !isApplicationHealthy(app))
       return (
         matchesStatus &&
         (projectId === "all" || app.projectId === projectId) &&
@@ -294,7 +309,7 @@ export function ApplicationCollection({
                 id: "health",
                 title: "Health",
                 size: 150,
-                cell: (app) => <div className="space-y-1"><StatusBadge status={app.health} />{app.statusIssues?.length > 0 && <span className="block text-xs text-destructive">{app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")} check failed</span>}</div>,
+                cell: (app) => <div className="space-y-2"><div className="flex flex-wrap gap-1.5"><StatusBadge status={app.health} /><StatusBadge status={app.healthCondition?.status ?? "Unknown"} /></div><p className="text-[10px] text-muted-foreground" title={app.healthCondition?.message}>{app.healthCondition?.reason ?? "Health not observed"} · {app.healthCondition?.lastTransitionTime ? new Date(app.healthCondition.lastTransitionTime).toLocaleString() : "Not observed yet"}</p>{app.statusIssues?.length > 0 && <span className="block text-xs text-destructive">{app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")} check failed</span>}</div>,
               },
               {
                 id: "target",

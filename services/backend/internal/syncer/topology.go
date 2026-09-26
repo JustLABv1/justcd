@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/justlab/justcd/services/backend/internal/apphealth"
 	"github.com/justlab/justcd/services/backend/internal/core"
 	"github.com/justlab/justcd/services/backend/internal/kube"
 	"github.com/justlab/justcd/services/backend/internal/store"
@@ -27,13 +28,15 @@ func (s *Service) ObserveTopology(ctx context.Context, app store.Application, ma
 		return errors.New("demo cluster is intentionally unreachable; showing sample observations")
 	}
 	known := map[string]bool{}
+	managedUIDs := map[string]bool{}
 	for _, item := range managed {
 		if item.UID != "" {
 			known[item.UID] = true
+			managedUIDs[item.UID] = true
 		}
 	}
 	if len(known) == 0 {
-		return nil
+		return s.Store.ReplaceObservedResources(ctx, app.ID, nil)
 	}
 	all := []store.ObservedResource{}
 	warnings := []string{}
@@ -58,6 +61,9 @@ func (s *Service) ObserveTopology(ctx context.Context, app store.Application, ma
 			gvr  schema.GroupVersionResource
 			kind string
 		}{
+			{schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}, "Deployment"},
+			{schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "statefulsets"}, "StatefulSet"},
+			{schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "daemonsets"}, "DaemonSet"},
 			{schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "replicasets"}, "ReplicaSet"},
 			{schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "jobs"}, "Job"},
 			{schema.GroupVersionResource{Version: "v1", Resource: "pods"}, "Pod"},
@@ -80,16 +86,24 @@ func (s *Service) ObserveTopology(ctx context.Context, app store.Application, ma
 		}
 	}
 	selected := []store.ObservedResource{}
+	selectedUIDs := map[string]bool{}
+	for _, item := range all {
+		if item.UID != "" && managedUIDs[item.UID] {
+			selected = append(selected, item)
+			selectedUIDs[item.UID] = true
+		}
+	}
 	for range 4 {
 		added := false
 		for _, item := range all {
-			if known[item.UID] {
+			if item.UID == "" || known[item.UID] || selectedUIDs[item.UID] {
 				continue
 			}
 			for _, owner := range item.OwnerUIDs {
 				if known[owner] {
 					known[item.UID] = true
 					selected = append(selected, item)
+					selectedUIDs[item.UID] = true
 					added = true
 					break
 				}
@@ -108,30 +122,182 @@ func (s *Service) ObserveTopology(ctx context.Context, app store.Application, ma
 	return nil
 }
 
+// RefreshApplicationHealth stores a deterministic application-level condition
+// from the latest managed-resource and descendant observations. Read failures
+// are persisted as partial/unknown health instead of leaving a stale Healthy
+// result in place.
+func (s *Service) RefreshApplicationHealth(ctx context.Context, app store.Application) error {
+	managed, err := s.Store.ManagedResources(ctx, app.ID)
+	if err != nil {
+		return err
+	}
+	observeErr := s.ObserveTopology(ctx, app, managed)
+	observed, err := s.Store.ObservedResources(ctx, app.ID)
+	if err != nil {
+		return err
+	}
+	identities := make([]core.Identity, 0, len(managed))
+	for _, item := range managed {
+		identities = append(identities, item.Identity)
+	}
+	resources := make([]apphealth.Observation, 0, len(observed))
+	for _, item := range observed {
+		resources = append(resources, apphealth.Observation{
+			Identity:  item.Identity,
+			Source:    item.Source,
+			Phase:     item.Phase,
+			Readiness: item.Readiness,
+			Details:   item.HealthSummary,
+		})
+	}
+	warnings := []string{}
+	if observeErr != nil && !strings.Contains(observeErr.Error(), "demo cluster is intentionally unreachable") {
+		warnings = append(warnings, "Some Kubernetes resources could not be read; health may be partial.")
+	}
+	condition := apphealth.Evaluate(identities, resources, warnings, app.AutoSyncPaused || app.Decommissioning, time.Now().UTC())
+	if err := s.Store.RecordApplicationHealthCondition(ctx, app.ID, condition); err != nil {
+		return err
+	}
+	return observeErr
+}
+
 func observedObject(clusterID string, object unstructured.Unstructured) store.ObservedResource {
 	owners := make([]string, 0, len(object.GetOwnerReferences()))
 	for _, owner := range object.GetOwnerReferences() {
 		owners = append(owners, string(owner.UID))
 	}
 	phase, _, _ := unstructured.NestedString(object.Object, "status", "phase")
+	details := observedHealthSummary(object)
 	readiness := ""
 	if object.GetKind() == "Pod" {
-		conditions, _, _ := unstructured.NestedSlice(object.Object, "status", "conditions")
-		for _, raw := range conditions {
-			condition, ok := raw.(map[string]any)
-			if ok && condition["type"] == "Ready" {
-				if condition["status"] == "True" {
-					readiness = "Ready"
-				} else {
-					readiness = "Not ready"
-				}
+		for _, condition := range details.Conditions {
+			if condition.Type != "Ready" {
+				continue
 			}
+			switch condition.Status {
+			case "True":
+				readiness = "Ready"
+			case "False":
+				readiness = "Not ready"
+			case "Unknown":
+				readiness = "Unknown"
+			}
+			break
 		}
 	}
 	return store.ObservedResource{
 		Identity: coreIdentity(clusterID, object), UID: string(object.GetUID()), ResourceVersion: object.GetResourceVersion(),
-		Labels: object.GetLabels(), OwnerUIDs: owners, Phase: phase, Readiness: readiness, Source: "kubernetes", ObservedAt: time.Now().UTC(),
+		Labels: object.GetLabels(), OwnerUIDs: owners, Phase: phase, Readiness: readiness, HealthSummary: details, Source: "kubernetes", ObservedAt: time.Now().UTC(),
 	}
+}
+
+func observedHealthSummary(object unstructured.Unstructured) apphealth.ResourceDetails {
+	details := apphealth.ResourceDetails{Conditions: []apphealth.KubernetesCondition{}}
+	_, details.StatusObserved, _ = unstructured.NestedMap(object.Object, "status")
+	conditions, _, _ := unstructured.NestedSlice(object.Object, "status", "conditions")
+	for _, raw := range conditions {
+		if len(details.Conditions) >= 32 {
+			break
+		}
+		condition, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		typ, _ := condition["type"].(string)
+		status, _ := condition["status"].(string)
+		if typ == "" || status == "" {
+			continue
+		}
+		item := apphealth.KubernetesCondition{Type: boundedStatusText(typ, 128), Status: boundedStatusText(status, 32)}
+		if reason, ok := condition["reason"].(string); ok {
+			item.Reason = boundedStatusText(reason, 256)
+		}
+		if message, ok := condition["message"].(string); ok {
+			item.Message = boundedStatusText(message, 2048)
+		}
+		if rawTime, ok := condition["lastTransitionTime"].(string); ok {
+			if parsed, err := time.Parse(time.RFC3339Nano, rawTime); err == nil {
+				parsed = parsed.UTC()
+				item.LastTransitionTime = &parsed
+			}
+		}
+		details.Conditions = append(details.Conditions, item)
+	}
+
+	switch object.GetKind() {
+	case "Deployment", "StatefulSet":
+		details.DesiredReplicas = nestedInt64(object.Object, "spec", "replicas")
+		details.ReadyReplicas = nestedInt64(object.Object, "status", "readyReplicas")
+		details.UpdatedReplicas = nestedInt64(object.Object, "status", "updatedReplicas")
+		details.AvailableReplicas = nestedInt64(object.Object, "status", "availableReplicas")
+	case "DaemonSet":
+		details.DesiredScheduled = nestedInt64(object.Object, "status", "desiredNumberScheduled")
+		details.NumberScheduled = nestedInt64(object.Object, "status", "currentNumberScheduled")
+		details.UpdatedScheduled = nestedInt64(object.Object, "status", "updatedNumberScheduled")
+		details.NumberReady = nestedInt64(object.Object, "status", "numberReady")
+		details.NumberAvailable = nestedInt64(object.Object, "status", "numberAvailable")
+		details.NumberMisscheduled = nestedInt64(object.Object, "status", "numberMisscheduled")
+	case "Job":
+		details.Completions = nestedInt64(object.Object, "spec", "completions")
+		details.Active = nestedInt64(object.Object, "status", "active")
+		details.Succeeded = nestedInt64(object.Object, "status", "succeeded")
+		details.Failed = nestedInt64(object.Object, "status", "failed")
+		details.Suspended, _, _ = unstructured.NestedBool(object.Object, "spec", "suspend")
+	case "Pod":
+		details.FailureReason, details.FailureMessage = podContainerFailure(object.Object)
+	}
+	return details
+}
+
+func nestedInt64(object map[string]any, fields ...string) *int64 {
+	value, found, err := unstructured.NestedInt64(object, fields...)
+	if err != nil || !found {
+		return nil
+	}
+	return &value
+}
+
+func podContainerFailure(object map[string]any) (string, string) {
+	for _, field := range []string{"initContainerStatuses", "containerStatuses"} {
+		statuses, _, _ := unstructured.NestedSlice(object, "status", field)
+		for _, raw := range statuses {
+			status, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			if reason, found, _ := unstructured.NestedString(status, "state", "waiting", "reason"); found && isContainerFailure(reason) {
+				message, _, _ := unstructured.NestedString(status, "state", "waiting", "message")
+				return boundedStatusText(reason, 256), boundedStatusText(message, 2048)
+			}
+			if exitCode, found, _ := unstructured.NestedInt64(status, "state", "terminated", "exitCode"); found && exitCode != 0 {
+				reason, _, _ := unstructured.NestedString(status, "state", "terminated", "reason")
+				message, _, _ := unstructured.NestedString(status, "state", "terminated", "message")
+				if reason == "" {
+					reason = "ContainerTerminated"
+				}
+				return boundedStatusText(reason, 256), boundedStatusText(message, 2048)
+			}
+		}
+	}
+	return "", ""
+}
+
+func isContainerFailure(reason string) bool {
+	switch reason {
+	case "CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "CreateContainerConfigError", "RunContainerError", "InvalidImageName", "CreateContainerError":
+		return true
+	default:
+		return false
+	}
+}
+
+func boundedStatusText(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) > limit {
+		return string(runes[:limit]) + "…"
+	}
+	return value
 }
 
 func coreIdentity(clusterID string, object unstructured.Unstructured) core.Identity {

@@ -21,7 +21,7 @@ import { useToast } from "@/components/toast-provider"
 import { APIError, api, apiDelete, apiPost, errorMessage } from "@/lib/api"
 import { ManifestDiff } from "@/components/manifest-diff"
 import { PlanReview } from "@/components/plan-review"
-import type { Application, Change, FieldExclusion, Identity, IgnoreRule, IgnoreSelector, ListResponse, ManagedResource, Operation, OwnershipConflict, PlanApprovalSummary, PlanRecord, Project, ProjectMember, ResourceTopology, RollbackTarget } from "@/lib/types"
+import type { Application, ApplicationHealthTransition, Change, FieldExclusion, Identity, IgnoreRule, IgnoreSelector, ListResponse, ManagedResource, Operation, OwnershipConflict, PlanApprovalSummary, PlanRecord, Project, ProjectMember, ResourceTopology, RollbackTarget } from "@/lib/types"
 
 function diffId(identity: Identity) {
   return `diff-${[identity.clusterId ?? "", identity.apiVersion, identity.kind, identity.namespace, identity.name].map(encodeURIComponent).join("-")}`
@@ -60,6 +60,7 @@ export default function ApplicationDetailPage() {
   const [topologyError, setTopologyError] = useState<unknown | null>(null)
   const [topologyRefreshing, setTopologyRefreshing] = useState(false)
   const [operations, setOperations] = useState<Operation[]>([])
+  const [healthHistory, setHealthHistory] = useState<ApplicationHealthTransition[]>([])
   const [rollbackTargets, setRollbackTargets] = useState<RollbackTarget[]>([])
   const [rollbackRevision, setRollbackRevision] = useState("")
   const [resumeRevision, setResumeRevision] = useState("")
@@ -151,6 +152,7 @@ export default function ApplicationDetailPage() {
       api<ListResponse<PlanRecord>>(`${appPath}/plans`).then((value) => { if (current()) { setPlans(value.items); setActivePlan((selected) => selected ? value.items.find((item) => item.id === selected.id) ?? value.items[0] ?? null : value.items[0] ?? null) } }).finally(() => done("plans")),
       api<ListResponse<ManagedResource>>(`${appPath}/resources`).then((value) => { if (current()) setResources(value.items) }).finally(() => done("resources")),
       api<ListResponse<Operation>>(`${appPath}/operations`).then((value) => { if (current()) setOperations(value.items) }).finally(() => done("operations")),
+      api<ListResponse<ApplicationHealthTransition>>(`${appPath}/health-history`).then((value) => { if (current()) setHealthHistory(value.items) }).catch(() => { if (current()) setHealthHistory([]) }),
       api<ListResponse<IgnoreRule>>(`${appPath}/ignore-rules`).then((value) => { if (current()) setIgnoreRules(value.items) }).finally(() => done("rules")),
       api<ListResponse<IgnoreSelector>>(`${appPath}/ignore-selectors`).then((value) => { if (current()) setIgnoreSelectors(value.items) }).finally(() => done("selectors")),
       api<ListResponse<RollbackTarget>>(`${appPath}/rollback-targets`).catch(() => ({ items: [] as RollbackTarget[] })).then((value) => { if (current()) setRollbackTargets(value.items) }).finally(() => done("rollback")),
@@ -175,6 +177,7 @@ export default function ApplicationDetailPage() {
       setActivePlan(null)
       setResources([])
       setOperations([])
+      setHealthHistory([])
       setRollbackTargets([])
       setIgnoreRules([])
       setIgnoreSelectors([])
@@ -241,6 +244,7 @@ export default function ApplicationDetailPage() {
 
   useEffect(() => {
     if (!busy && !hasPendingOperation) return
+    let healthRefreshStarted = false
     const timer = window.setInterval(() => {
       void Promise.all([
         api<ListResponse<Operation>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/operations`),
@@ -255,6 +259,20 @@ export default function ApplicationDetailPage() {
         setRollbackTargets(nextRollbackTargets.items)
         setApplication(nextApplication)
         setActivePlan(current => current ? nextPlans.items.find((plan) => plan.id === current.id) ?? nextPlans.items[0] ?? null : nextPlans.items[0] ?? null)
+        const operationStillRunning = nextOperations.items.some((operation) => operation.status === "queued" || operation.status === "running")
+        if (hasPendingOperation && !operationStillRunning && !healthRefreshStarted) {
+          healthRefreshStarted = true
+          void api<ResourceTopology>(`/api/v1/applications/${encodeURIComponent(applicationID)}/topology?refresh=1`).then((topologyResult) => {
+            setTopology(topologyResult)
+            return Promise.all([
+              api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`),
+              api<ListResponse<ApplicationHealthTransition>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/health-history`),
+            ])
+          }).then(([refreshedApplication, history]) => {
+            setApplication(refreshedApplication)
+            setHealthHistory(history.items)
+          }).catch(() => {})
+        }
       }).catch(() => {})
     }, 1500)
     return () => window.clearInterval(timer)
@@ -595,6 +613,14 @@ export default function ApplicationDetailPage() {
     <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.renderer} · ${application.manifestPath} · ${application.revision}` : ""} actions={application && <><StatusBadge status={application.health} />{pendingData.project && <span role="status" className="text-xs text-muted-foreground">Loading permissions…</span>}{canApprove && !application.decommissioning && <Link href={`/applications/${applicationID}/edit`}><Button variant="outline">Edit application</Button></Link>}<Button variant="outline" loading={pendingAction === "create-plan"} loadingText="Calculating plan…" onClick={() => void createPlan()} disabled={application.decommissioning || !canDeploy || busy || (namespaceMismatch && !application.kustomizeNamespaceOverride)} title={namespaceMismatch && !application.kustomizeNamespaceOverride ? "Choose a namespace override before refreshing the plan" : undefined}><span aria-hidden="true">↻</span> Refresh plan</Button></>} />
     {error && <ErrorNotice error={error} />}
     {application && application.statusIssues?.length > 0 && <section role="alert" className="mb-5 rounded-xl border border-destructive/30 bg-destructive/5 p-4"><h2 className="text-sm font-semibold">Application check failed</h2><p className="mt-1 text-xs text-muted-foreground">JustCD could not verify the current state. The last successful sync does not confirm that Git or Kubernetes is reachable now.</p><ul className="mt-3 space-y-2">{application.statusIssues.map((issue) => <li key={issue.source} className="text-sm"><strong>{issue.source === "git" ? "Git repository" : issue.source === "cluster" ? "Target cluster" : "Application"}:</strong> {issue.summary}</li>)}</ul><p className="mt-3 text-xs text-muted-foreground">Checked {application.lastCheckedAt ? new Date(application.lastCheckedAt).toLocaleString() : "recently"}. Refresh the plan after maintenance to recheck both connections.</p></section>}
+    {application && <section aria-labelledby="runtime-health-title" className="mb-5 rounded-xl border bg-card p-4 sm:p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="runtime-health-title" className="text-sm font-semibold">Runtime health</h2><p className="mt-1 text-xs text-muted-foreground">Kubernetes workload health is separate from Git sync state.</p></div><StatusBadge status={application.healthCondition?.status ?? "Unknown"} /></div>
+      <p className="mt-3 text-sm"><strong>{application.healthCondition?.reason ?? "HealthNotObserved"}:</strong> {application.healthCondition?.message ?? "Live Kubernetes health has not been observed yet."}</p>
+      <p className="mt-1 text-xs text-muted-foreground">Last transition {application.healthCondition?.lastTransitionTime ? new Date(application.healthCondition.lastTransitionTime).toLocaleString() : "not recorded"}{application.healthCondition?.observedAt ? ` · observed ${new Date(application.healthCondition.observedAt).toLocaleString()}` : ""}</p>
+      {(application.healthCondition?.warnings?.length ?? 0) > 0 && <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-amber-700 dark:text-amber-300">{application.healthCondition?.warnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}</ul>}
+      {(application.healthCondition?.resources?.length ?? 0) > 0 && <div className="mt-4 border-t pt-3"><h3 className="text-xs font-semibold">Resources needing attention</h3><ul className="mt-2 space-y-2">{application.healthCondition?.resources.map((item, index) => <li key={`${item.identity.kind}-${item.identity.namespace}-${item.identity.name}-${index}`} className="flex flex-wrap items-start gap-2 rounded-lg border p-2.5 text-xs"><StatusBadge status={item.status} /><span className="min-w-0 flex-1"><strong>{item.identity.kind} {item.identity.namespace ? `${item.identity.namespace}/` : ""}{item.identity.name}</strong><span className="mt-1 block text-muted-foreground">{item.reason}{item.readiness ? ` · ${item.readiness}` : ""}{item.phase ? ` · phase ${item.phase}` : ""} · {item.message}</span></span></li>)}</ul></div>}
+      <details className="mt-4 border-t pt-3"><summary className="cursor-pointer text-xs font-medium">Recent condition transitions ({healthHistory.length})</summary>{healthHistory.length ? <ol className="mt-3 space-y-2">{healthHistory.map((item) => <li key={item.id} className="flex flex-wrap items-center gap-2 text-xs"><StatusBadge status={item.status} /><strong>{item.reason}</strong><span className="min-w-0 flex-1 text-muted-foreground">{item.message}</span><time className="text-muted-foreground" dateTime={item.changedAt}>{new Date(item.changedAt).toLocaleString()}</time></li>)}</ol> : <p className="mt-2 text-xs text-muted-foreground">No health transitions have been recorded yet.</p>}</details>
+    </section>}
     {application?.decommissioning && <div role="status" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300/70 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><span>Deletion in progress. Auto-sync is paused. Review and apply the deletion plan, then finish removing the application.</span>{canApprove && <Button size="sm" variant="outline" disabled={busy || hasPendingOperation} onClick={() => void cancelDecommission()}>Cancel deletion</Button>}</div>}
     {application?.autoSyncPaused && <div role="status" className="mb-5 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-300/70 bg-amber-50/70 p-4 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"><div className="min-w-0 flex-1"><p className="text-sm font-semibold">Automatic reconciliation is paused</p><p className="mt-1 text-xs leading-5">{application.rollbackResumeAvailable ? "JustCD is pinned to the approved target. An owner can keep this pin or explicitly resume the previous tracked source." : "An operation failed or was interrupted. JustCD will not automatically retry; review its details and any available checkpoint before resuming."}</p>{application.rollbackResumeRequiresRevision && <div className="mt-3 max-w-md"><FormField label="Git revision to use before resuming" htmlFor="rollback-resume-revision"><Input id="rollback-resume-revision" value={resumeRevision} onChange={(event) => setResumeRevision(event.target.value)} placeholder="branch, tag, or commit" /></FormField></div>}</div>{canApprove && <div className="flex flex-wrap gap-2">{application.rollbackResumeAvailable && <Button size="sm" variant="outline" loading={pendingAction === "rollback-state-keep"} loadingText="Keeping pin…" disabled={busy || hasPendingOperation} onClick={() => void updateRollbackTracking("keep")}>Keep rollback pin</Button>}<Button size="sm" loading={pendingAction === "rollback-state-resume"} loadingText="Resuming…" disabled={busy || hasPendingOperation || (application.rollbackResumeRequiresRevision && !resumeRevision.trim())} onClick={() => void updateRollbackTracking("resume")}>{application.rollbackResumeAvailable ? "Resume previous source" : "Resume reconciliation"}</Button></div>}</div>}
     {namespaceMismatch && !application?.kustomizeNamespaceOverride && <div role="alert" className="mb-5 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><strong>Kustomize namespace: {kustomization?.namespace}.</strong> JustCD target: {application?.namespaces[0]?.namespace}. The namespaces differ, so a plan cannot be refreshed until an owner enables the transform. {application?.applicationGroupId ? <Link className="font-semibold underline underline-offset-4" href={`/application-groups/${application.applicationGroupId}`}>Review group settings →</Link> : <button type="button" className="font-semibold underline underline-offset-4" onClick={() => selectTab("settings")}>Review namespace setting →</button>}</div>}
@@ -672,7 +698,11 @@ export default function ApplicationDetailPage() {
       {topologyError && <div role="alert" className="mb-4 rounded-lg border border-destructive/30 p-3 text-xs">Saved topology could not be loaded. The map uses available inventory. <ErrorDetailsButton error={topologyError} /></div>}
       <ResourceMap application={application} plan={plans[0] ?? null} inventory={resources} operations={operations} topology={topology} refreshing={topologyRefreshing} onRefresh={() => {
         setTopologyRefreshing(true)
-        void api<ResourceTopology>(`/api/v1/applications/${encodeURIComponent(applicationID)}/topology?refresh=1`).then((result) => { setTopology(result); setTopologyError(null) }).catch((cause) => { setTopologyError(cause); toast.error(errorMessage(cause), cause) }).finally(() => setTopologyRefreshing(false))
+        void api<ResourceTopology>(`/api/v1/applications/${encodeURIComponent(applicationID)}/topology?refresh=1`).then((result) => {
+          setTopology(result); setTopologyError(null)
+          void api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`).then(setApplication).catch(() => {})
+          void api<ListResponse<ApplicationHealthTransition>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/health-history`).then((history) => setHealthHistory(history.items)).catch(() => {})
+        }).catch((cause) => { setTopologyError(cause); toast.error(errorMessage(cause), cause) }).finally(() => setTopologyRefreshing(false))
       }} onViewDiff={(identity) => {
         const matching = plans[0]?.plan.changes.some((change) => diffId(change.identity) === diffId(identity))
         if (matching && plans[0]?.id !== activePlan?.id) setActivePlan(plans[0])

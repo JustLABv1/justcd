@@ -54,7 +54,7 @@ func (s *Server) applicationTopology(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !hasSample && (r.URL.Query().Get("refresh") == "1" || (r.URL.Query().Get("cached") != "1" && stale)) && len(managed) > 0 {
-		if err := s.Syncer.ObserveTopology(r.Context(), app, managed); err != nil {
+		if err := s.Syncer.RefreshApplicationHealth(r.Context(), app); err != nil {
 			s.Logger.Warn("topology observation incomplete", "applicationId", app.ID, "error", err)
 			warning = "Live descendants could not be fully observed. Check namespace read permissions or cluster connectivity."
 		}

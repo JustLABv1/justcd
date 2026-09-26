@@ -29,6 +29,15 @@ type Checkout struct {
 	cleanup func()
 }
 
+type FetchError struct {
+	operation string
+	retryable bool
+}
+
+func (e *FetchError) Error() string     { return "could not " + e.operation }
+func (e *FetchError) Retryable() bool   { return e.retryable }
+func (e *FetchError) ErrorCode() string { return "git.fetch_failed" }
+
 func (c *Checkout) Close() {
 	if c != nil && c.cleanup != nil {
 		c.cleanup()
@@ -122,7 +131,7 @@ func Fetch(ctx context.Context, db *store.Store, key []byte, source store.GitSou
 	defer cancel()
 	if err := runGit(cloneCtx, env, "clone", "--no-checkout", "--filter=blob:none", "--", source.RepositoryURL, checkoutPath); err != nil {
 		cleanup()
-		return nil, errors.New("could not clone Git source")
+		return nil, commandFailure(cloneCtx, "clone Git source", err)
 	}
 	if err := runGit(cloneCtx, env, "-C", checkoutPath, "config", "core.hooksPath", "/dev/null"); err != nil {
 		cleanup()
@@ -130,7 +139,7 @@ func Fetch(ctx context.Context, db *store.Store, key []byte, source store.GitSou
 	}
 	if err := runGit(cloneCtx, env, "-C", checkoutPath, "fetch", "--depth=1", "origin", revision); err != nil {
 		cleanup()
-		return nil, errors.New("could not fetch requested Git revision")
+		return nil, commandFailure(cloneCtx, "fetch requested Git revision", err)
 	}
 	commitBytes, err := runGitOutput(cloneCtx, env, "-C", checkoutPath, "rev-parse", "--verify", "--end-of-options", revision+"^{commit}")
 	if err != nil {
@@ -222,4 +231,22 @@ func runGitOutput(ctx context.Context, env []string, args ...string) ([]byte, er
 		return nil, errors.New("Git command output exceeds 1 MiB")
 	}
 	return output, nil
+}
+
+func commandFailure(ctx context.Context, operation string, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	var exitErr *exec.ExitError
+	transient := false
+	if errors.As(err, &exitErr) {
+		output := strings.ToLower(string(exitErr.Stderr))
+		for _, marker := range []string{"could not resolve host", "connection timed out", "connection reset", "connection refused", "network is unreachable", "temporary failure", "temporarily unavailable", "service unavailable", "remote end hung up", "early eof", "unexpected eof", "tls handshake timeout", "i/o timeout", "returned error: 502", "returned error: 503", "returned error: 504", "http 502", "http 503", "http 504"} {
+			if strings.Contains(output, marker) {
+				transient = true
+				break
+			}
+		}
+	}
+	return &FetchError{operation: operation, retryable: transient}
 }

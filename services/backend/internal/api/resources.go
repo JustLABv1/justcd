@@ -435,6 +435,8 @@ func (s *Server) createCluster(w http.ResponseWriter, r *http.Request) {
 		InsecureSkipVerify       bool    `json:"insecureSkipVerify"`
 		DefaultCredentialID      *string `json:"defaultCredentialId"`
 		ClusterScopeCredentialID *string `json:"clusterScopeCredentialId"`
+		MaxConcurrentOperations  *int    `json:"maxConcurrentOperations"`
+		OperationsPerMinute      *int    `json:"operationsPerMinute"`
 		ProjectID                string  `json:"projectId"`
 		ProjectCredentialID      *string `json:"projectCredentialId"`
 	}
@@ -450,6 +452,17 @@ func (s *Server) createCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.Name == "" || len(input.Name) > 100 {
 		writeError(w, http.StatusBadRequest, "cluster name is required and must be at most 100 characters")
+		return
+	}
+	maxConcurrentOperations, operationsPerMinute := 2, 30
+	if input.MaxConcurrentOperations != nil && *input.MaxConcurrentOperations != 0 {
+		maxConcurrentOperations = *input.MaxConcurrentOperations
+	}
+	if input.OperationsPerMinute != nil && *input.OperationsPerMinute != 0 {
+		operationsPerMinute = *input.OperationsPerMinute
+	}
+	if !validClusterOperationLimits(maxConcurrentOperations, operationsPerMinute) {
+		writeError(w, http.StatusBadRequest, "cluster operation limits must allow 1–20 concurrent operations and 1–1000 operations per minute")
 		return
 	}
 	caData, err := base64.StdEncoding.DecodeString(input.CADataBase64)
@@ -480,7 +493,7 @@ func (s *Server) createCluster(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	cluster := store.Cluster{ID: store.NewID(), Name: input.Name, APIServer: endpoint.String(), CAData: caData, InsecureSkipVerify: input.InsecureSkipVerify, DefaultCredentialID: input.DefaultCredentialID, ClusterScopeCredential: input.ClusterScopeCredentialID}
+	cluster := store.Cluster{ID: store.NewID(), Name: input.Name, APIServer: endpoint.String(), CAData: caData, InsecureSkipVerify: input.InsecureSkipVerify, DefaultCredentialID: input.DefaultCredentialID, ClusterScopeCredential: input.ClusterScopeCredentialID, MaxConcurrentOperations: maxConcurrentOperations, OperationsPerMinute: operationsPerMinute}
 	var createErr error
 	if input.ProjectCredentialID != nil {
 		createErr = s.Store.CreateClusterWithProjectCredential(r.Context(), cluster, input.ProjectID, *input.ProjectCredentialID)
@@ -835,6 +848,7 @@ func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 		Namespaces                 []string                           `json:"namespaces"`
 		SyncPolicy                 string                             `json:"syncPolicy"`
 		PollSeconds                int                                `json:"pollSeconds"`
+		RetryPolicy                *store.RetryPolicy                 `json:"retryPolicy"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -905,6 +919,14 @@ func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "pollSeconds must be between 30 and 86400")
 		return
 	}
+	retryPolicy := store.DefaultRetryPolicy()
+	if input.RetryPolicy != nil {
+		retryPolicy = *input.RetryPolicy
+	}
+	if err := retryPolicy.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	source, err := s.Store.GitSourceByID(r.Context(), input.SourceID)
 	if err != nil || source.ProjectID != input.ProjectID {
 		writeError(w, http.StatusBadRequest, "Git source is not available to this project")
@@ -934,7 +956,7 @@ func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 		}
 		bindings = append(bindings, binding)
 	}
-	app := store.Application{ID: store.NewID(), ProjectID: input.ProjectID, Name: input.Name, SourceID: input.SourceID, Revision: input.Revision, ManifestPath: input.ManifestPath, TargetManifestPath: input.TargetManifestPath, NamespaceManifestPaths: input.NamespaceManifestPaths, Renderer: input.Renderer, KustomizeHelmEnabled: input.KustomizeHelmEnabled, KustomizeNamespaceOverride: input.KustomizeNamespaceOverride, HelmValuesFiles: input.HelmValuesFiles, HelmValuesYAML: input.HelmValuesYAML, TargetHelmValuesFiles: input.TargetHelmValuesFiles, TargetHelmValuesYAML: input.TargetHelmValuesYAML, NamespaceHelmValues: input.NamespaceHelmValues, ClusterID: input.ClusterID, Namespaces: bindings, SyncPolicy: input.SyncPolicy, PollSeconds: input.PollSeconds, Health: "unknown"}
+	app := store.Application{ID: store.NewID(), ProjectID: input.ProjectID, Name: input.Name, SourceID: input.SourceID, Revision: input.Revision, ManifestPath: input.ManifestPath, TargetManifestPath: input.TargetManifestPath, NamespaceManifestPaths: input.NamespaceManifestPaths, Renderer: input.Renderer, KustomizeHelmEnabled: input.KustomizeHelmEnabled, KustomizeNamespaceOverride: input.KustomizeNamespaceOverride, HelmValuesFiles: input.HelmValuesFiles, HelmValuesYAML: input.HelmValuesYAML, TargetHelmValuesFiles: input.TargetHelmValuesFiles, TargetHelmValuesYAML: input.TargetHelmValuesYAML, NamespaceHelmValues: input.NamespaceHelmValues, ClusterID: input.ClusterID, Namespaces: bindings, SyncPolicy: input.SyncPolicy, PollSeconds: input.PollSeconds, RetryPolicy: retryPolicy, Health: "unknown"}
 	if err := s.Store.CreateApplication(r.Context(), app); err != nil {
 		writeError(w, http.StatusConflict, "could not create application")
 		return
@@ -954,6 +976,7 @@ func applicationAuditDetails(app store.Application) map[string]any {
 		"targetManifestPath": app.TargetManifestPath, "namespaceManifestPaths": app.NamespaceManifestPaths,
 		"renderer": app.Renderer, "clusterId": app.ClusterID, "namespaces": app.Namespaces,
 		"syncPolicy": app.SyncPolicy, "pollSeconds": app.PollSeconds,
+		"retryPolicy":          app.RetryPolicy,
 		"kustomizeHelmEnabled": app.KustomizeHelmEnabled, "kustomizeNamespaceOverride": app.KustomizeNamespaceOverride,
 		"helmValuesFiles": app.HelmValuesFiles, "helmValuesConfigured": app.HelmValuesYAML != "",
 		"targetHelmValuesFiles": app.TargetHelmValuesFiles, "targetHelmValuesConfigured": app.TargetHelmValuesYAML != "",

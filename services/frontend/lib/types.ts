@@ -60,6 +60,8 @@ export type Cluster = {
   insecureSkipVerify: boolean
   defaultCredentialId?: string
   clusterScopeCredentialId?: string
+  maxConcurrentOperations: number
+  operationsPerMinute: number
   createdAt: string
 }
 
@@ -96,6 +98,11 @@ export type Application = {
   namespaces: NamespaceBinding[]
   syncPolicy: "manual" | "auto-safe"
   pollSeconds: number
+  retryPolicy: RetryPolicy
+  retryAttemptCount: number
+  retryNextAt?: string
+  retryTerminalReason?: string
+  retryLastErrorCode?: string
   lastCheckedAt?: string
   lastSyncedRevision?: string
   health: string
@@ -272,8 +279,20 @@ export type Operation = {
   status: string
   message: string
   progress?: { phase?: string; total: number; completed: Identity[]; current?: Identity }
+  attemptCount: number
+  errorCode?: string
+  nextRetryAt?: string
+  terminalReason?: string
   startedAt: string
   finishedAt?: string
+}
+
+export type RetryPolicy = {
+  enabled: boolean
+  maxAttempts: number
+  initialDelaySeconds: number
+  maxDelaySeconds: number
+  jitterPercent: number
 }
 
 export type RollbackTarget = {

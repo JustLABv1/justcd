@@ -37,6 +37,7 @@ export default function NewApplicationPage() {
   const [helmValuesYaml, setHelmValuesYaml] = useState("")
   const [syncPolicy, setSyncPolicy] = useState("manual")
   const [pollSeconds, setPollSeconds] = useState("300")
+  const [retryPolicy, setRetryPolicy] = useState({ enabled: true, maxAttempts: 5, initialDelaySeconds: 5, maxDelaySeconds: 300, jitterPercent: 20 })
   const [error, setError] = useState<unknown | null>(null)
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -92,7 +93,7 @@ export default function NewApplicationPage() {
         helmValuesFiles: renderer === "helm" ? helmValuesFiles.split("\n").map((line) => line.trim()).filter(Boolean) : [],
         helmValuesYaml: renderer === "helm" ? helmValuesYaml : "",
         namespaceHelmValues: renderer === "helm" ? Object.fromEntries(namespaces.map((namespace) => [namespace, namespaceHelmValues[namespace] ?? { files: [], yaml: "" }])) : {},
-        clusterId, namespaces, syncPolicy, pollSeconds: Number(pollSeconds),
+        clusterId, namespaces, syncPolicy, pollSeconds: Number(pollSeconds), retryPolicy,
       })
       toast.success("Application created.")
       router.push(`/applications/${app.id}`)
@@ -142,6 +143,16 @@ export default function NewApplicationPage() {
         <Panel title="Reconciliation" description="Choose how often to check Git for changes."><div className="space-y-4 p-5">
           <FormField label="Sync policy" htmlFor="policy"><FormSelect id="policy" value={syncPolicy} onValueChange={setSyncPolicy} items={[{ value: "manual", label: "Manual · review each sync" }, { value: "auto-safe", label: "Auto-safe · apply non-destructive changes" }]} /></FormField>
           <FormField label="Poll interval (seconds)" htmlFor="poll" hint="Auto-safe still pauses for every deletion and cluster-wide change."><Input id="poll" type="number" min={30} max={86400} value={pollSeconds} onChange={(event) => setPollSeconds(event.target.value)} /></FormField>
+          <div className="space-y-3 border-t pt-4">
+            <label className="flex items-center gap-2 text-xs font-medium"><Checkbox checked={retryPolicy.enabled} onCheckedChange={(checked) => setRetryPolicy({ ...retryPolicy, enabled: Boolean(checked) })} />Retry transient reconciliation failures automatically</label>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <FormField label="Maximum attempts" htmlFor="retry-attempts"><Input id="retry-attempts" type="number" min={1} max={20} value={retryPolicy.maxAttempts} onChange={(event) => setRetryPolicy({ ...retryPolicy, maxAttempts: Number(event.target.value) })} disabled={!retryPolicy.enabled} /></FormField>
+              <FormField label="Initial backoff (seconds)" htmlFor="retry-initial"><Input id="retry-initial" type="number" min={1} max={3600} value={retryPolicy.initialDelaySeconds} onChange={(event) => setRetryPolicy({ ...retryPolicy, initialDelaySeconds: Number(event.target.value) })} disabled={!retryPolicy.enabled} /></FormField>
+              <FormField label="Maximum backoff (seconds)" htmlFor="retry-max"><Input id="retry-max" type="number" min={1} max={86400} value={retryPolicy.maxDelaySeconds} onChange={(event) => setRetryPolicy({ ...retryPolicy, maxDelaySeconds: Number(event.target.value) })} disabled={!retryPolicy.enabled} /></FormField>
+              <FormField label="Jitter (%)" htmlFor="retry-jitter"><Input id="retry-jitter" type="number" min={0} max={50} value={retryPolicy.jitterPercent} onChange={(event) => setRetryPolicy({ ...retryPolicy, jitterPercent: Number(event.target.value) })} disabled={!retryPolicy.enabled} /></FormField>
+            </div>
+            <p className="text-[10px] leading-4 text-muted-foreground">Only transient failures are retried. Each attempt recalculates the plan from live cluster state; authorization, validation, approval, and interrupted operations require review.</p>
+          </div>
           <div className="rounded-lg bg-muted/50 p-3 text-[11px] leading-5 text-muted-foreground"><span className="font-medium text-foreground">Safe by default.</span> Review a plan before syncing. Project or application approval rules determine who must approve syncs and deletions; cluster-scoped changes always require explicit approval.</div>
         </div></Panel>
         <Panel title="Ready to review?" description="Creating the application will not make cluster changes."><div className="p-5"><p className="text-xs leading-5 text-muted-foreground">JustCD stores the configuration and waits for you to calculate a diff. You can review every rendered resource before applying the plan.</p>{selectedProject?.role === "viewer" && <p className="mt-3 text-xs text-destructive">Your role cannot create applications.</p>}<Button className="mt-4 w-full" type="submit" loading={busy} loadingText="Creating application…" disabled={loading || !projectId || !sourceId || !clusterId || !namespaces.length || selectedProject?.role === "viewer"}>Create application</Button></div></Panel>

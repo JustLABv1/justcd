@@ -961,6 +961,8 @@ function ClusterPanel({
   const [caDataBase64, setCaDataBase64] = useState("")
   const [defaultCredentialId, setDefaultCredentialId] = useState("")
   const [clusterScopeCredentialId, setClusterScopeCredentialId] = useState("")
+  const [maxConcurrentOperations, setMaxConcurrentOperations] = useState("2")
+  const [operationsPerMinute, setOperationsPerMinute] = useState("30")
   const [projectCredentialId, setProjectCredentialId] = useState("")
   const [newProjectCredentialId, setNewProjectCredentialId] = useState("")
   const [selectedClusterId, setSelectedClusterId] = useState("")
@@ -1022,6 +1024,8 @@ function ClusterPanel({
                   insecureSkipVerify: insecure,
                   defaultCredentialId: defaultCredentialId || null,
                   clusterScopeCredentialId: clusterScopeCredentialId || null,
+                  maxConcurrentOperations: Number(maxConcurrentOperations),
+                  operationsPerMinute: Number(operationsPerMinute),
                 }),
               }
             )
@@ -1032,6 +1036,8 @@ function ClusterPanel({
               insecureSkipVerify: insecure,
               defaultCredentialId: defaultCredentialId || undefined,
               clusterScopeCredentialId: clusterScopeCredentialId || undefined,
+              maxConcurrentOperations: Number(maxConcurrentOperations),
+              operationsPerMinute: Number(operationsPerMinute),
               projectId: project?.id,
               projectCredentialId: newProjectCredentialId || undefined,
             })
@@ -1041,6 +1047,8 @@ function ClusterPanel({
         setNewProjectCredentialId("")
         setDefaultCredentialId("")
         setClusterScopeCredentialId("")
+        setMaxConcurrentOperations("2")
+        setOperationsPerMinute("30")
         setInsecure(false)
         setEditing(null)
         return result
@@ -1059,6 +1067,8 @@ function ClusterPanel({
     setInsecure(cluster.insecureSkipVerify)
     setDefaultCredentialId(cluster.defaultCredentialId ?? "")
     setClusterScopeCredentialId(cluster.clusterScopeCredentialId ?? "")
+    setMaxConcurrentOperations(String(cluster.maxConcurrentOperations || 2))
+    setOperationsPerMinute(String(cluster.operationsPerMinute || 30))
     focusSettingsEditor("cluster-name")
   }
   async function test(cluster: Cluster) {
@@ -1322,6 +1332,14 @@ function ClusterPanel({
               </label>
             </div>
           </details>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FormField label="Max concurrent operations" htmlFor="cluster-max-concurrent" hint="Bounds simultaneous operations against this cluster (1–20).">
+              <Input id="cluster-max-concurrent" type="number" min={1} max={20} value={maxConcurrentOperations} onChange={(event) => setMaxConcurrentOperations(event.target.value)} required />
+            </FormField>
+            <FormField label="Operations per minute" htmlFor="cluster-operations-per-minute" hint="Minimum spacing is applied between operation starts (1–1000).">
+              <Input id="cluster-operations-per-minute" type="number" min={1} max={1000} value={operationsPerMinute} onChange={(event) => setOperationsPerMinute(event.target.value)} required />
+            </FormField>
+          </div>
           <div className="flex gap-2">
             <Button size="sm" type="submit" loading={busy} loadingText={editing ? "Saving cluster…" : "Adding cluster…"}>
               {editing ? "Save cluster" : "Add cluster"}
@@ -1338,6 +1356,8 @@ function ClusterPanel({
                   setCaDataBase64("")
                   setDefaultCredentialId("")
                   setClusterScopeCredentialId("")
+                  setMaxConcurrentOperations("2")
+                  setOperationsPerMinute("30")
                   setInsecure(false)
                 }}
               >

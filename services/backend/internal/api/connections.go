@@ -247,9 +247,28 @@ func (s *Server) updateCluster(w http.ResponseWriter, r *http.Request) {
 		InsecureSkipVerify       bool    `json:"insecureSkipVerify"`
 		DefaultCredentialID      *string `json:"defaultCredentialId"`
 		ClusterScopeCredentialID *string `json:"clusterScopeCredentialId"`
+		MaxConcurrentOperations  *int    `json:"maxConcurrentOperations"`
+		OperationsPerMinute      *int    `json:"operationsPerMinute"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	maxConcurrentOperations, operationsPerMinute := cluster.MaxConcurrentOperations, cluster.OperationsPerMinute
+	if input.MaxConcurrentOperations != nil {
+		maxConcurrentOperations = *input.MaxConcurrentOperations
+	}
+	if input.OperationsPerMinute != nil {
+		operationsPerMinute = *input.OperationsPerMinute
+	}
+	if maxConcurrentOperations == 0 {
+		maxConcurrentOperations = 2
+	}
+	if operationsPerMinute == 0 {
+		operationsPerMinute = 30
+	}
+	if !validClusterOperationLimits(maxConcurrentOperations, operationsPerMinute) {
+		writeError(w, http.StatusBadRequest, "cluster operation limits must allow 1–20 concurrent operations and 1–1000 operations per minute")
 		return
 	}
 	endpoint, err := url.Parse(strings.TrimSpace(input.APIServer))
@@ -281,6 +300,7 @@ func (s *Server) updateCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	cluster.APIServer, cluster.InsecureSkipVerify = endpoint.String(), input.InsecureSkipVerify
 	cluster.DefaultCredentialID, cluster.ClusterScopeCredential = input.DefaultCredentialID, input.ClusterScopeCredentialID
+	cluster.MaxConcurrentOperations, cluster.OperationsPerMinute = maxConcurrentOperations, operationsPerMinute
 	if err := s.Store.UpdateCluster(r.Context(), cluster); err != nil {
 		writeError(w, http.StatusConflict, "could not update cluster")
 		return
@@ -288,6 +308,16 @@ func (s *Server) updateCluster(w http.ResponseWriter, r *http.Request) {
 	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "cluster.updated", "cluster", cluster.ID, map[string]string{"name": cluster.Name, "apiServer": cluster.APIServer})
 	cluster.CAData = nil
 	writeJSON(w, http.StatusOK, cluster)
+}
+
+func validClusterOperationLimits(maxConcurrent, operationsPerMinute int) bool {
+	if maxConcurrent == 0 {
+		maxConcurrent = 2
+	}
+	if operationsPerMinute == 0 {
+		operationsPerMinute = 30
+	}
+	return maxConcurrent >= 1 && maxConcurrent <= 20 && operationsPerMinute >= 1 && operationsPerMinute <= 1000
 }
 
 func (s *Server) testCluster(w http.ResponseWriter, r *http.Request) {

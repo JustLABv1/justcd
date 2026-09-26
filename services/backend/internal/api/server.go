@@ -105,6 +105,7 @@ func (s *Server) routes() {
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}/kustomization", s.requireAuth(http.HandlerFunc(s.getApplicationKustomization)))
 	s.Mux.Handle("PUT /api/v1/applications/{applicationID}/render-settings", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateApplicationRenderSettings))))
 	s.Mux.Handle("POST /api/v1/applications/{applicationID}/plans", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createPlan))))
+	s.Mux.Handle("POST /api/v1/applications/{applicationID}/retry", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.retryApplication))))
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}/rollback-targets", s.requireAuth(http.HandlerFunc(s.listRollbackTargets)))
 	s.Mux.Handle("POST /api/v1/applications/{applicationID}/rollback-plans", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createRollbackPlan))))
 	s.Mux.Handle("POST /api/v1/applications/{applicationID}/rollback-state", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateRollbackState))))

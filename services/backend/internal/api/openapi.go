@@ -212,6 +212,15 @@ paths:
         '201': { description: Immutable review plan }
         '409': { description: An existing untracked resource blocks the plan; includes ownership conflict metadata }
         '422': { description: Could not create a safe plan }
+  /applications/{applicationID}/retry:
+    post:
+      summary: Manually retry a failed sync using a newly calculated plan (deployer or owner)
+      description: Never replays a failed immutable plan or resumes an interrupted operation. The endpoint reads current cluster state, creates a fresh plan, and either queues safe changes or returns a plan for review. Rollbacks and decommissioning use their dedicated reviewed flows.
+      responses:
+        '200': { description: Application was already up to date }
+        '202': { description: Fresh plan queued or requires review }
+        '409': { description: Operation is active or is not eligible for retry }
+        '422': { description: A fresh plan could not be calculated }
   /applications/{applicationID}/rollback-targets:
     get:
       summary: List recorded successful deployments and failed-operation checkpoints
@@ -284,9 +293,9 @@ paths:
         '200': { description: Resource graph with safe metadata and observation warnings }
   /applications/{applicationID}/operations:
     get:
-      summary: List recent sync operations
+      summary: List recent sync operations, including retry attempt and outcome metadata
       responses:
-        '200': { description: Operation history }
+        '200': { description: Operation history and next retry time or terminal reason }
   /plans/{planID}:
     get:
       summary: Get a sanitized immutable plan

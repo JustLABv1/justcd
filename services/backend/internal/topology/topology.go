@@ -8,20 +8,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/justlab/justcd/services/backend/internal/apphealth"
 	"github.com/justlab/justcd/services/backend/internal/core"
 	"github.com/justlab/justcd/services/backend/internal/store"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 type Node struct {
-	ID              string        `json:"id"`
-	Identity        core.Identity `json:"identity"`
-	Source          string        `json:"source"`
-	UID             string        `json:"uid,omitempty"`
-	ResourceVersion string        `json:"resourceVersion,omitempty"`
-	Phase           string        `json:"phase,omitempty"`
-	Readiness       string        `json:"readiness,omitempty"`
-	ObservedAt      *time.Time    `json:"observedAt,omitempty"`
+	ID              string                     `json:"id"`
+	Identity        core.Identity              `json:"identity"`
+	Source          string                     `json:"source"`
+	UID             string                     `json:"uid,omitempty"`
+	ResourceVersion string                     `json:"resourceVersion,omitempty"`
+	Phase           string                     `json:"phase,omitempty"`
+	Readiness       string                     `json:"readiness,omitempty"`
+	HealthSummary   *apphealth.ResourceDetails `json:"healthSummary,omitempty"`
+	ObservedAt      *time.Time                 `json:"observedAt,omitempty"`
 }
 
 type Edge struct {
@@ -77,7 +79,7 @@ func Build(plan *store.PlanRecord, managed []store.ManagedResource, observed []s
 		identity := resource.Identity
 		key := ID(identity)
 		at := resource.ObservedAt
-		items[key] = &material{node: Node{ID: key, Identity: identity, Source: resource.Source, UID: resource.UID, ResourceVersion: resource.ResourceVersion, Phase: resource.Phase, Readiness: resource.Readiness, ObservedAt: &at}, labels: resource.Labels, owners: resource.OwnerUIDs}
+		items[key] = &material{node: Node{ID: key, Identity: identity, Source: resource.Source, UID: resource.UID, ResourceVersion: resource.ResourceVersion, Phase: resource.Phase, Readiness: resource.Readiness, HealthSummary: nonEmptyHealthSummary(resource.HealthSummary), ObservedAt: &at}, labels: resource.Labels, owners: resource.OwnerUIDs}
 	}
 
 	byUID := map[string]*material{}
@@ -229,6 +231,13 @@ func Build(plan *store.PlanRecord, managed []store.ManagedResource, observed []s
 	}
 	sortGraph(&graph)
 	return graph
+}
+
+func nonEmptyHealthSummary(details apphealth.ResourceDetails) *apphealth.ResourceDetails {
+	if !details.StatusObserved && details.DesiredReplicas == nil && details.ReadyReplicas == nil && details.UpdatedReplicas == nil && details.AvailableReplicas == nil && details.DesiredScheduled == nil && details.NumberScheduled == nil && details.UpdatedScheduled == nil && details.NumberReady == nil && details.NumberAvailable == nil && details.NumberMisscheduled == nil && details.Completions == nil && details.Active == nil && details.Succeeded == nil && details.Failed == nil && !details.Suspended && details.FailureReason == "" && details.FailureMessage == "" && len(details.Conditions) == 0 {
+		return nil
+	}
+	return &details
 }
 
 func parse(raw json.RawMessage) map[string]any {

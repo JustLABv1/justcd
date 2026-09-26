@@ -157,6 +157,7 @@ export type Application = {
   lastCheckedAt?: string
   lastSyncedRevision?: string
   health: string
+  healthCondition?: ApplicationHealthCondition
   statusIssues: { source: string; summary: string; observedAt: string }[]
   decommissioning: boolean
   autoSyncPaused?: boolean
@@ -164,6 +165,54 @@ export type Application = {
   rollbackResumeRequiresRevision?: boolean
   approvalPolicyOverride?: ApprovalPolicyOverride
   createdAt: string
+}
+
+export type ApplicationHealthStatus = "Healthy" | "Progressing" | "Degraded" | "Suspended" | "Missing" | "Unknown" | "Partial"
+export type KubernetesCondition = { type: string; status: string; reason?: string; message?: string; lastTransitionTime?: string }
+export type ResourceHealthSummary = {
+  desiredReplicas?: number
+  readyReplicas?: number
+  updatedReplicas?: number
+  availableReplicas?: number
+  desiredScheduled?: number
+  numberScheduled?: number
+  updatedScheduled?: number
+  numberReady?: number
+  numberAvailable?: number
+  numberMisscheduled?: number
+  completions?: number
+  active?: number
+  succeeded?: number
+  failed?: number
+  suspended?: boolean
+  failureReason?: string
+  failureMessage?: string
+  conditions?: KubernetesCondition[]
+}
+export type ResourceHealthAssessment = {
+  identity: Identity
+  status: ApplicationHealthStatus
+  reason: string
+  message: string
+  phase?: string
+  readiness?: string
+}
+export type ApplicationHealthCondition = {
+  status: ApplicationHealthStatus
+  reason: string
+  message: string
+  lastTransitionTime: string
+  observedAt?: string
+  resources: ResourceHealthAssessment[]
+  warnings: string[]
+}
+export type ApplicationHealthTransition = {
+  id: number
+  status: ApplicationHealthStatus
+  reason: string
+  message: string
+  resources: ResourceHealthAssessment[]
+  changedAt: string
 }
 
 export type ApplicationGroup = {
@@ -314,6 +363,7 @@ export type TopologyNode = {
   resourceVersion?: string
   phase?: string
   readiness?: string
+  healthSummary?: ResourceHealthSummary
   observedAt?: string
 }
 

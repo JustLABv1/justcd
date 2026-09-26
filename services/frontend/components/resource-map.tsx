@@ -4,6 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Layers01Icon, Settings02Icon, Globe02Icon, DatabaseIcon, CubeIcon } from "@hugeicons/core-free-icons"
 import { Button } from "@/components/ui/button"
+import { StatusBadge } from "@/components/ui-kit"
 import { Input } from "@/components/ui/input"
 import { identityKey, observed, workload, relatedNodes, syncState, topologyLayout, nodeWidth, nodeHeight, type SyncState } from "@/lib/topology-view"
 import type { Application, Identity, ManagedResource, Operation, PlanRecord, ResourceTopology, TopologyNode } from "@/lib/types"
@@ -15,8 +16,21 @@ const iconFor = (kind: string) => ["Ingress", "Service", "HTTPRoute", "Gateway"]
 function health(node: TopologyNode) {
   if (node.source === "sample") return `Sample · ${node.readiness || node.phase || "unknown"}`
   if (node.readiness) return node.readiness
+  const details = node.healthSummary
+  if (details?.readyReplicas !== undefined && details.desiredReplicas !== undefined) return `Ready ${details.readyReplicas}/${details.desiredReplicas} replicas`
+  if (details?.numberReady !== undefined && details.desiredScheduled !== undefined) return `Ready ${details.numberReady}/${details.desiredScheduled} pods`
+  if (details?.succeeded !== undefined && details.completions !== undefined) return `Completed ${details.succeeded}/${details.completions}`
+  const condition = details?.conditions?.find((item) => item.status !== "True") ?? details?.conditions?.[0]
+  if (condition) return `${condition.type}: ${condition.status}${condition.reason ? ` · ${condition.reason}` : ""}`
+  if (details?.failureReason) return details.failureReason
   if (node.phase) return `Phase: ${node.phase}`
   return node.uid ? "Health not reported" : "Not observed in cluster"
+}
+function healthTone(node: TopologyNode) {
+  if (node.readiness === "Ready" || node.phase === "Succeeded") return "font-medium text-emerald-700 dark:text-emerald-300"
+  if (node.readiness === "Not ready" || node.phase === "Failed" || node.healthSummary?.failureReason || node.healthSummary?.conditions?.some((item) => item.status === "False")) return "font-medium text-rose-600 dark:text-rose-300"
+  if (node.readiness === "Unknown") return "font-medium text-amber-700 dark:text-amber-300"
+  return "text-muted-foreground"
 }
 function fallback(plan: PlanRecord | null, inventory: ManagedResource[]): ResourceTopology {
   const nodes = new Map<string, TopologyNode>()
@@ -152,7 +166,7 @@ export function ResourceMap({ application, plan, inventory, operations, topology
                 <span className="flex items-center gap-2 text-xs text-muted-foreground"><HugeiconsIcon icon={iconFor(node.identity.kind)} className="size-4 shrink-0" aria-hidden="true" />{node.identity.kind}</span>
                 <span className="mt-1 block truncate text-sm font-semibold" title={node.identity.name}>{node.identity.name}</span>
                 <span className={`mt-1 inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-semibold ${tones[state]}`}><span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${stateDot[state]}`} />{labels[state]}</span>
-                <span className={`mt-1 block truncate text-xs ${node.source !== "sample" && node.readiness === "Ready" ? "font-medium text-emerald-700 dark:text-emerald-300" : node.readiness === "Not ready" ? "font-medium text-rose-600 dark:text-rose-300" : "text-muted-foreground"}`}>{health(node)}</span>
+                <span className={`mt-1 block truncate text-xs ${node.source === "sample" ? "text-muted-foreground" : healthTone(node)}`}>{health(node)}</span>
               </button>
               {descendants.length > 0 && <button type="button" aria-expanded={expanded.has(node.id)} onClick={() => setExpanded((old) => { const next = new Set(old); if (next.has(node.id)) next.delete(node.id); else next.add(node.id); return next })} className="absolute bottom-1 left-3 right-3 rounded text-left text-xs font-medium text-primary focus-visible:outline-2 focus-visible:outline-primary">{expanded.has(node.id) ? "−" : "+"} Pods {pods.filter((n) => n.readiness === "Ready" && n.source !== "sample").length}/{pods.filter((n) => n.source !== "sample").length} ready · {replicas.length} ReplicaSets{descendants.some((n) => n.source === "sample") ? " · samples" : ""}</button>}
             </div>
@@ -162,6 +176,21 @@ export function ResourceMap({ application, plan, inventory, operations, topology
       {selected && <aside aria-label="Resource details" className="min-w-0 space-y-5 border-t bg-card p-5 xl:h-[min(72svh,900px)] xl:overflow-auto xl:border-t-0 xl:border-l">
         <div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="text-xs text-muted-foreground">{selected.identity.kind}</p><h3 className="mt-1 break-all text-base font-semibold">{selected.identity.name}</h3></div><Button type="button" variant="ghost" aria-label="Close resource details" onClick={() => { setSelectedId(null); setFocus(false) }}>×</Button></div>
         <dl className="space-y-3 text-sm">{[["Namespace", selected.identity.namespace || "Cluster scope"], ["Sync", labels[stateFor(selected)]], ["Health", health(selected)], ["API version", selected.identity.apiVersion], ["Source", selected.source], ["Last observed", selected.observedAt ? new Date(selected.observedAt).toLocaleString() : "Not available"], ["Resource version", selected.resourceVersion || "Not available"]].map(([key, value]) => <div key={key}><dt className="text-xs text-muted-foreground">{key}</dt><dd className="mt-1 break-all">{value}</dd></div>)}</dl>
+        {selected.healthSummary && <section aria-label="Kubernetes health details" className="space-y-3 border-t pt-4">
+          <h4 className="text-sm font-semibold">Kubernetes health details</h4>
+          <dl className="grid grid-cols-2 gap-2 text-xs">
+            {selected.healthSummary.readyReplicas !== undefined && <div><dt className="text-muted-foreground">Ready replicas</dt><dd className="mt-1 font-medium">{selected.healthSummary.readyReplicas}{selected.healthSummary.desiredReplicas !== undefined ? ` / ${selected.healthSummary.desiredReplicas}` : ""}</dd></div>}
+            {selected.healthSummary.updatedReplicas !== undefined && <div><dt className="text-muted-foreground">Updated replicas</dt><dd className="mt-1 font-medium">{selected.healthSummary.updatedReplicas}{selected.healthSummary.desiredReplicas !== undefined ? ` / ${selected.healthSummary.desiredReplicas}` : ""}</dd></div>}
+            {selected.healthSummary.availableReplicas !== undefined && <div><dt className="text-muted-foreground">Available replicas</dt><dd className="mt-1 font-medium">{selected.healthSummary.availableReplicas}{selected.healthSummary.desiredReplicas !== undefined ? ` / ${selected.healthSummary.desiredReplicas}` : ""}</dd></div>}
+            {selected.healthSummary.numberReady !== undefined && <div><dt className="text-muted-foreground">Ready pods</dt><dd className="mt-1 font-medium">{selected.healthSummary.numberReady}{selected.healthSummary.desiredScheduled !== undefined ? ` / ${selected.healthSummary.desiredScheduled}` : ""}</dd></div>}
+            {selected.healthSummary.updatedScheduled !== undefined && <div><dt className="text-muted-foreground">Updated pods</dt><dd className="mt-1 font-medium">{selected.healthSummary.updatedScheduled}{selected.healthSummary.desiredScheduled !== undefined ? ` / ${selected.healthSummary.desiredScheduled}` : ""}</dd></div>}
+            {selected.healthSummary.succeeded !== undefined && <div><dt className="text-muted-foreground">Job completions</dt><dd className="mt-1 font-medium">{selected.healthSummary.succeeded}{selected.healthSummary.completions !== undefined ? ` / ${selected.healthSummary.completions}` : ""}</dd></div>}
+            {selected.healthSummary.active !== undefined && <div><dt className="text-muted-foreground">Active pods</dt><dd className="mt-1 font-medium">{selected.healthSummary.active}</dd></div>}
+            {selected.healthSummary.failed !== undefined && <div><dt className="text-muted-foreground">Failed pods</dt><dd className="mt-1 font-medium">{selected.healthSummary.failed}</dd></div>}
+          </dl>
+          {selected.healthSummary.failureReason && <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive"><strong>{selected.healthSummary.failureReason}</strong>{selected.healthSummary.failureMessage ? ` · ${selected.healthSummary.failureMessage}` : ""}</p>}
+          {selected.healthSummary.conditions?.length ? <div className="space-y-2"><h5 className="text-xs font-semibold">Conditions</h5><ul className="space-y-2">{selected.healthSummary.conditions.map((condition, index) => <li key={`${condition.type}-${index}`} className="rounded-md border p-2 text-xs"><div className="flex flex-wrap items-center gap-1.5"><strong>{condition.type}</strong><StatusBadge status={condition.status} />{condition.reason && <span className="text-muted-foreground">{condition.reason}</span>}</div>{condition.message && <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">{condition.message}</p>}{condition.lastTransitionTime && <p className="mt-1 text-[10px] text-muted-foreground">Transitioned {new Date(condition.lastTransitionTime).toLocaleString()}</p>}</li>)}</ul></div> : <p className="text-xs text-muted-foreground">Kubernetes has not reported explicit status conditions for this resource.</p>}
+        </section>}
         {operation && <p className="text-xs text-muted-foreground">Plan operation: {operation.status} · {new Date(operation.finishedAt || operation.startedAt).toLocaleString()}</p>}
         {plan?.plan.changes.some((change) => identityKey(change.identity) === identityKey(selected.identity)) && <Button type="button" variant="outline" onClick={async () => { if (document.fullscreenElement === root.current) await document.exitFullscreen(); onViewDiff(selected.identity) }}>View diff →</Button>}
         <div><h4 className="text-sm font-semibold">Relationships ({connections.length})</h4><div className="mt-2 space-y-2">{connections.map((edge, i) => {

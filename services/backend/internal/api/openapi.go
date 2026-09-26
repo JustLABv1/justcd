@@ -323,6 +323,16 @@ paths:
       summary: Show desired, managed, and read-only observed Kubernetes resources with their relationships
       responses:
         '200': { description: Resource graph with safe metadata and observation warnings }
+  /applications/{applicationID}/health-history:
+    get:
+      summary: List recent Kubernetes health condition transitions
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+      responses:
+        '200': { description: Recent application health condition transitions, newest first }
+        '400': { description: Invalid history limit }
   /applications/{applicationID}/operations:
     get:
       summary: List recent sync operations, including retry attempt and outcome metadata

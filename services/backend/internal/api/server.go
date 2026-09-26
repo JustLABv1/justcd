@@ -122,6 +122,7 @@ func (s *Server) routes() {
 	s.Mux.Handle("DELETE /api/v1/applications/{applicationID}/ignore-selectors/{selectorID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.deleteIgnoreSelector))))
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}/resources", s.requireAuth(http.HandlerFunc(s.listApplicationResources)))
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}/topology", s.requireAuth(http.HandlerFunc(s.applicationTopology)))
+	s.Mux.Handle("GET /api/v1/applications/{applicationID}/health-history", s.requireAuth(http.HandlerFunc(s.applicationHealthHistory)))
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}/operations", s.requireAuth(http.HandlerFunc(s.listApplicationOperations)))
 	s.Mux.Handle("GET /api/v1/plans/{planID}", s.requireAuth(http.HandlerFunc(s.getPlan)))
 	s.Mux.Handle("POST /api/v1/plans/{planID}/approvals", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.approvePlan))))

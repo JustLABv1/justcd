@@ -13,6 +13,7 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/justlab/justcd/services/backend/internal/apphealth"
 	"github.com/justlab/justcd/services/backend/internal/core"
 )
 
@@ -1254,6 +1255,7 @@ type Application struct {
 	LastSyncedRevision             string                             `json:"lastSyncedRevision,omitempty"`
 	Health                         string                             `json:"health"`
 	StatusIssues                   []ApplicationStatusIssue           `json:"statusIssues"`
+	HealthCondition                apphealth.ApplicationCondition     `json:"healthCondition"`
 	Decommissioning                bool                               `json:"decommissioning"`
 	AutoSyncPaused                 bool                               `json:"autoSyncPaused"`
 	RollbackResumeAvailable        bool                               `json:"rollbackResumeAvailable"`
@@ -1351,10 +1353,16 @@ func (s *Store) CreateApplication(ctx context.Context, a Application) error {
 
 func scanApplication(row interface{ Scan(...any) error }) (Application, error) {
 	var a Application
-	var namespaces, helmValuesFiles, namespaceManifestPaths, targetValuesFiles, namespaceValues, rawApprovalOverride, rawRollbackState, rawStatusIssues []byte
-	err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.SourceID, &a.Revision, &a.ManifestPath, &a.Renderer, &a.KustomizeHelmEnabled, &a.KustomizeNamespaceOverride, &helmValuesFiles, &a.HelmValuesYAML, &a.ApplicationGroupID, &a.TargetManifestPath, &namespaceManifestPaths, &targetValuesFiles, &a.TargetHelmValuesYAML, &namespaceValues, &a.ClusterID, &namespaces, &a.SyncPolicy, &a.PollSeconds, &a.LastCheckedAt, &a.LastSyncedRevision, &a.Health, &rawStatusIssues, &a.Decommissioning, &rawApprovalOverride, &a.AutoSyncPaused, &rawRollbackState, &a.RollbackResumeRequiresRevision, &a.CreatedAt, &a.RetryPolicy.Enabled, &a.RetryPolicy.MaxAttempts, &a.RetryPolicy.InitialDelaySeconds, &a.RetryPolicy.MaxDelaySeconds, &a.RetryPolicy.JitterPercent, &a.RetryAttemptCount, &a.RetryNextAt, &a.RetryTerminalReason, &a.RetryLastErrorCode)
+	var namespaces, helmValuesFiles, namespaceManifestPaths, targetValuesFiles, namespaceValues, rawApprovalOverride, rawRollbackState, rawStatusIssues, rawHealthResources, rawHealthWarnings []byte
+	err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.SourceID, &a.Revision, &a.ManifestPath, &a.Renderer, &a.KustomizeHelmEnabled, &a.KustomizeNamespaceOverride, &helmValuesFiles, &a.HelmValuesYAML, &a.ApplicationGroupID, &a.TargetManifestPath, &namespaceManifestPaths, &targetValuesFiles, &a.TargetHelmValuesYAML, &namespaceValues, &a.ClusterID, &namespaces, &a.SyncPolicy, &a.PollSeconds, &a.LastCheckedAt, &a.LastSyncedRevision, &a.Health, &rawStatusIssues, &a.Decommissioning, &rawApprovalOverride, &a.AutoSyncPaused, &rawRollbackState, &a.RollbackResumeRequiresRevision, &a.CreatedAt, &a.RetryPolicy.Enabled, &a.RetryPolicy.MaxAttempts, &a.RetryPolicy.InitialDelaySeconds, &a.RetryPolicy.MaxDelaySeconds, &a.RetryPolicy.JitterPercent, &a.RetryAttemptCount, &a.RetryNextAt, &a.RetryTerminalReason, &a.RetryLastErrorCode, &a.HealthCondition.Status, &a.HealthCondition.Reason, &a.HealthCondition.Message, &a.HealthCondition.LastTransitionTime, &a.HealthCondition.ObservedAt, &rawHealthResources, &rawHealthWarnings)
 	if err == nil {
 		err = json.Unmarshal(rawStatusIssues, &a.StatusIssues)
+	}
+	if err == nil {
+		err = json.Unmarshal(rawHealthResources, &a.HealthCondition.Resources)
+	}
+	if err == nil {
+		err = json.Unmarshal(rawHealthWarnings, &a.HealthCondition.Warnings)
 	}
 	if err == nil {
 		err = json.Unmarshal(namespaces, &a.Namespaces)
@@ -1376,6 +1384,12 @@ func scanApplication(row interface{ Scan(...any) error }) (Application, error) {
 	}
 	if a.StatusIssues == nil {
 		a.StatusIssues = []ApplicationStatusIssue{}
+	}
+	if a.HealthCondition.Resources == nil {
+		a.HealthCondition.Resources = []apphealth.ResourceAssessment{}
+	}
+	if a.HealthCondition.Warnings == nil {
+		a.HealthCondition.Warnings = []string{}
 	}
 	if a.TargetHelmValuesFiles == nil {
 		a.TargetHelmValuesFiles = []string{}
@@ -1405,7 +1419,7 @@ func scanApplication(row interface{ Scan(...any) error }) (Application, error) {
 	return a, err
 }
 
-const applicationColumns = `id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,COALESCE(application_group_id,''),target_manifest_path,namespace_manifest_paths,target_helm_values_files,target_helm_values_yaml,namespace_helm_values,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,COALESCE(last_synced_revision,''),health,status_issues,decommissioning,approval_policy_override,auto_sync_paused,rollback_resume_state,rollback_resume_requires_revision,created_at,retry_enabled,retry_max_attempts,retry_initial_delay_seconds,retry_max_delay_seconds,retry_jitter_percent,retry_attempt_count,retry_next_at,retry_terminal_reason,retry_last_error_code`
+const applicationColumns = `id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,COALESCE(application_group_id,''),target_manifest_path,namespace_manifest_paths,target_helm_values_files,target_helm_values_yaml,namespace_helm_values,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,COALESCE(last_synced_revision,''),health,status_issues,decommissioning,approval_policy_override,auto_sync_paused,rollback_resume_state,rollback_resume_requires_revision,created_at,retry_enabled,retry_max_attempts,retry_initial_delay_seconds,retry_max_delay_seconds,retry_jitter_percent,retry_attempt_count,retry_next_at,retry_terminal_reason,retry_last_error_code,health_condition_status,health_condition_reason,health_condition_message,health_condition_last_transition_at,health_condition_observed_at,health_condition_resources,health_condition_warnings`
 
 func (s *Store) ApplicationByID(ctx context.Context, id string) (Application, error) {
 	return scanApplication(s.DB.QueryRowContext(ctx, `SELECT `+applicationColumns+` FROM applications WHERE id=$1`, id))
@@ -1749,6 +1763,94 @@ func (s *Store) UpdateApplicationHealth(ctx context.Context, id, health, checked
 	_, err := s.DB.ExecContext(ctx, `UPDATE applications SET health=$2,last_checked_at=$3::timestamptz,updated_at=NOW() WHERE id=$1`, id, health, checkedAt)
 	return err
 }
+
+func (s *Store) RecordApplicationHealthCondition(ctx context.Context, id string, condition apphealth.ApplicationCondition) error {
+	if condition.Status == "" {
+		condition.Status = apphealth.Unknown
+	}
+	if condition.Reason == "" {
+		condition.Reason = "HealthObservationUnavailable"
+	}
+	if condition.Message == "" {
+		condition.Message = "Kubernetes health could not be determined."
+	}
+	if condition.Resources == nil {
+		condition.Resources = []apphealth.ResourceAssessment{}
+	}
+	if condition.Warnings == nil {
+		condition.Warnings = []string{}
+	}
+	resources, err := json.Marshal(condition.Resources)
+	if err != nil {
+		return err
+	}
+	warnings, err := json.Marshal(condition.Warnings)
+	if err != nil {
+		return err
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var previousStatus, previousReason string
+	var previousTransition time.Time
+	if err := tx.QueryRowContext(ctx, `SELECT health_condition_status,health_condition_reason,health_condition_last_transition_at FROM applications WHERE id=$1 FOR UPDATE`, id).Scan(&previousStatus, &previousReason, &previousTransition); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	observedAt := now
+	if condition.ObservedAt != nil {
+		observedAt = condition.ObservedAt.UTC()
+	}
+	changed := previousStatus != string(condition.Status) || previousReason != condition.Reason
+	if changed {
+		condition.LastTransitionTime = now
+	} else {
+		condition.LastTransitionTime = previousTransition.UTC()
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET health_condition_status=$2,health_condition_reason=$3,health_condition_message=$4,health_condition_last_transition_at=$5,health_condition_observed_at=$6,health_condition_resources=$7::jsonb,health_condition_warnings=$8::jsonb,updated_at=NOW() WHERE id=$1`, id, condition.Status, condition.Reason, condition.Message, condition.LastTransitionTime, observedAt, resources, warnings); err != nil {
+		return err
+	}
+	if changed {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO application_health_transitions(application_id,status,reason,message,resources,changed_at) VALUES($1,$2,$3,$4,$5::jsonb,$6)`, id, condition.Status, condition.Reason, condition.Message, resources, now); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM application_health_transitions WHERE id IN (SELECT id FROM application_health_transitions WHERE application_id=$1 ORDER BY changed_at DESC,id DESC OFFSET 100)`, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) ApplicationHealthTransitions(ctx context.Context, applicationID string, limit int) ([]apphealth.Transition, error) {
+	if limit < 1 || limit > 100 {
+		limit = 25
+	}
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,status,reason,message,resources,changed_at FROM application_health_transitions WHERE application_id=$1 ORDER BY changed_at DESC,id DESC LIMIT $2`, applicationID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]apphealth.Transition, 0)
+	for rows.Next() {
+		var item apphealth.Transition
+		var rawResources []byte
+		if err := rows.Scan(&item.ID, &item.Status, &item.Reason, &item.Message, &rawResources, &item.ChangedAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(rawResources, &item.Resources); err != nil {
+			return nil, err
+		}
+		if item.Resources == nil {
+			item.Resources = []apphealth.ResourceAssessment{}
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) SetApplicationStatusIssues(ctx context.Context, id string, issues []ApplicationStatusIssue) error {
 	if issues == nil {
 		issues = []ApplicationStatusIssue{}
@@ -1770,8 +1872,26 @@ func (s *Store) MarkApplicationSynced(ctx context.Context, id, revision, health 
 }
 
 func (s *Store) PauseAutoSync(ctx context.Context, id string) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE applications SET auto_sync_paused=TRUE,health='degraded',last_checked_at=NOW(),updated_at=NOW() WHERE id=$1 AND sync_policy='auto-safe'`, id)
-	return err
+	result, err := s.DB.ExecContext(ctx, `UPDATE applications SET auto_sync_paused=TRUE,health='degraded',last_checked_at=NOW(),updated_at=NOW() WHERE id=$1 AND sync_policy='auto-safe'`, id)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed == 0 {
+		return err
+	}
+	app, err := s.ApplicationByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	condition := app.HealthCondition
+	if condition.Status == apphealth.Degraded || condition.Status == apphealth.Missing || condition.Status == apphealth.Partial {
+		return nil
+	}
+	condition.Status = apphealth.Suspended
+	condition.Reason = "ReconciliationSuspended"
+	condition.Message = "Automatic reconciliation is paused; runtime health reflects the last successful Kubernetes observation."
+	return s.RecordApplicationHealthCondition(ctx, id, condition)
 }
 
 func (s *Store) RecordApplicationRetry(ctx context.Context, id string, attempt int, errorCode string, nextRetryAt *time.Time, terminalReason string) error {
@@ -2578,19 +2698,20 @@ func (s *Store) ManagedResources(ctx context.Context, applicationID string) ([]M
 }
 
 type ObservedResource struct {
-	Identity        core.Identity     `json:"identity"`
-	UID             string            `json:"uid"`
-	ResourceVersion string            `json:"resourceVersion"`
-	Labels          map[string]string `json:"labels"`
-	OwnerUIDs       []string          `json:"ownerUids"`
-	Phase           string            `json:"phase,omitempty"`
-	Readiness       string            `json:"readiness,omitempty"`
-	Source          string            `json:"source"`
-	ObservedAt      time.Time         `json:"observedAt"`
+	Identity        core.Identity             `json:"identity"`
+	UID             string                    `json:"uid"`
+	ResourceVersion string                    `json:"resourceVersion"`
+	Labels          map[string]string         `json:"labels"`
+	OwnerUIDs       []string                  `json:"ownerUids"`
+	Phase           string                    `json:"phase,omitempty"`
+	Readiness       string                    `json:"readiness,omitempty"`
+	HealthSummary   apphealth.ResourceDetails `json:"healthSummary,omitempty"`
+	Source          string                    `json:"source"`
+	ObservedAt      time.Time                 `json:"observedAt"`
 }
 
 func (s *Store) ObservedResources(ctx context.Context, applicationID string) ([]ObservedResource, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT cluster_id,api_version,kind,namespace,name,uid,resource_version,labels,owner_uids,phase,readiness,source,observed_at FROM application_resource_observations WHERE application_id=$1 ORDER BY kind,namespace,name`, applicationID)
+	rows, err := s.DB.QueryContext(ctx, `SELECT cluster_id,api_version,kind,namespace,name,uid,resource_version,labels,owner_uids,phase,readiness,source,observed_at,health_summary FROM application_resource_observations WHERE application_id=$1 ORDER BY kind,namespace,name`, applicationID)
 	if err != nil {
 		return nil, err
 	}
@@ -2598,14 +2719,17 @@ func (s *Store) ObservedResources(ctx context.Context, applicationID string) ([]
 	items := []ObservedResource{}
 	for rows.Next() {
 		var item ObservedResource
-		var labels, owners []byte
-		if err := rows.Scan(&item.Identity.ClusterID, &item.Identity.APIVersion, &item.Identity.Kind, &item.Identity.Namespace, &item.Identity.Name, &item.UID, &item.ResourceVersion, &labels, &owners, &item.Phase, &item.Readiness, &item.Source, &item.ObservedAt); err != nil {
+		var labels, owners, healthSummary []byte
+		if err := rows.Scan(&item.Identity.ClusterID, &item.Identity.APIVersion, &item.Identity.Kind, &item.Identity.Namespace, &item.Identity.Name, &item.UID, &item.ResourceVersion, &labels, &owners, &item.Phase, &item.Readiness, &item.Source, &item.ObservedAt, &healthSummary); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(labels, &item.Labels); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(owners, &item.OwnerUIDs); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(healthSummary, &item.HealthSummary); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -2631,7 +2755,11 @@ func (s *Store) ReplaceObservedResources(ctx context.Context, applicationID stri
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO application_resource_observations(application_id,cluster_id,api_version,kind,namespace,name,uid,resource_version,labels,owner_uids,phase,readiness,source,observed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'kubernetes',NOW()) ON CONFLICT(application_id,cluster_id,api_version,kind,namespace,name) DO UPDATE SET uid=EXCLUDED.uid,resource_version=EXCLUDED.resource_version,labels=EXCLUDED.labels,owner_uids=EXCLUDED.owner_uids,phase=EXCLUDED.phase,readiness=EXCLUDED.readiness,source='kubernetes',observed_at=NOW()`, applicationID, item.Identity.ClusterID, item.Identity.APIVersion, item.Identity.Kind, item.Identity.Namespace, item.Identity.Name, item.UID, item.ResourceVersion, labels, owners, item.Phase, item.Readiness); err != nil {
+		healthSummary, err := json.Marshal(item.HealthSummary)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO application_resource_observations(application_id,cluster_id,api_version,kind,namespace,name,uid,resource_version,labels,owner_uids,phase,readiness,source,observed_at,health_summary) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'kubernetes',NOW(),$13) ON CONFLICT(application_id,cluster_id,api_version,kind,namespace,name) DO UPDATE SET uid=EXCLUDED.uid,resource_version=EXCLUDED.resource_version,labels=EXCLUDED.labels,owner_uids=EXCLUDED.owner_uids,phase=EXCLUDED.phase,readiness=EXCLUDED.readiness,source='kubernetes',observed_at=NOW(),health_summary=EXCLUDED.health_summary`, applicationID, item.Identity.ClusterID, item.Identity.APIVersion, item.Identity.Kind, item.Identity.Namespace, item.Identity.Name, item.UID, item.ResourceVersion, labels, owners, item.Phase, item.Readiness, healthSummary); err != nil {
 			return err
 		}
 	}

@@ -40,6 +40,9 @@ func (s *Service) reconcileDue(ctx context.Context, logger *slog.Logger) {
 		record, err := s.BuildPlan(ctx, app.ID, systemActorID)
 		if err != nil {
 			logger.Warn("automatic JustCD plan failed", "applicationId", app.ID, "error", err)
+			if healthErr := s.RefreshApplicationHealth(ctx, app); healthErr != nil && ctx.Err() == nil {
+				logger.Warn("could not fully refresh Kubernetes application health", "applicationId", app.ID, "error", healthErr)
+			}
 			if ctx.Err() != nil {
 				return
 			}
@@ -56,6 +59,9 @@ func (s *Service) reconcileDue(ctx context.Context, logger *slog.Logger) {
 			}
 			_ = s.Store.Audit(ctx, systemActorID, "auto_sync.plan_failed", "application", app.ID, map[string]any{"message": "automatic drift check failed; see server logs", "attempt": decision.AttemptCount, "errorCode": decision.ErrorCode, "nextRetryAt": decision.NextRetryAt, "terminalReason": decision.TerminalReason})
 			continue
+		}
+		if healthErr := s.RefreshApplicationHealth(ctx, app); healthErr != nil && ctx.Err() == nil {
+			logger.Warn("could not fully refresh Kubernetes application health", "applicationId", app.ID, "error", healthErr)
 		}
 		if len(record.Plan.Changes) == 0 {
 			_ = s.Store.SetPlanStatus(ctx, record.ID, "applied")
@@ -81,6 +87,8 @@ func (s *Service) reconcileDue(ctx context.Context, logger *slog.Logger) {
 		}
 		if _, err := s.Apply(ctx, record.ID, systemActorID, ""); err != nil {
 			logger.Warn("automatic JustCD sync failed", "applicationId", app.ID, "planId", record.ID, "error", err)
+		} else if healthErr := s.RefreshApplicationHealth(ctx, app); healthErr != nil && ctx.Err() == nil {
+			logger.Warn("could not fully refresh Kubernetes application health", "applicationId", app.ID, "error", healthErr)
 		}
 	}
 }

@@ -13,7 +13,18 @@ export function needsAttention(app: Application) {
     "degraded",
     "failed",
     "error",
-  ].includes(app.health)
+  ].includes(app.health) || [
+    "Progressing",
+    "Degraded",
+    "Suspended",
+    "Missing",
+    "Unknown",
+    "Partial",
+  ].includes(app.healthCondition?.status ?? "")
+}
+
+export function isApplicationHealthy(app: Application) {
+  return app.health === "synced" && app.healthCondition?.status === "Healthy"
 }
 
 export function useWorkspace() {

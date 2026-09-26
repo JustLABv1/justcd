@@ -29,9 +29,6 @@ function ApplicationsContent() {
     : "all"
   return (
     <>
-      <p className="mb-2 text-[10px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
-        Build. Review. Deliver.
-      </p>
       <PageHeading
         title="Applications"
         description="Your deployments, from Git revision to running workload."

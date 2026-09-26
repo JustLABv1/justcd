@@ -22,9 +22,6 @@ export default function ProjectsPage() {
   )
   return (
     <>
-      <p className="mb-2 text-[10px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
-        A home for every deployment
-      </p>
       <PageHeading
         title="Projects"
         description="Bring applications, connections, and people together."

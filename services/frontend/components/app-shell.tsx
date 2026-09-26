@@ -9,7 +9,7 @@ import { ThemePicker } from "@/components/theme-picker"
 import { api, apiPost } from "@/lib/api"
 import type { Application, ListResponse, Project, User } from "@/lib/types"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Home01Icon, Folder01Icon, Layers01Icon, PlusSignIcon, Settings02Icon, Audit01Icon, Logout01Icon } from "@hugeicons/core-free-icons"
+import { Home01Icon, Folder01Icon, Layers01Icon, Settings02Icon, Audit01Icon, Logout01Icon } from "@hugeicons/core-free-icons"
 
 const navigation = [
   { href: "/", label: "Overview", icon: Home01Icon },
@@ -134,24 +134,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <div className="lg:pl-[248px]">
-        <header className="sticky top-0 z-10 flex h-[64px] items-center justify-between border-b bg-background/90 px-5 backdrop-blur-md sm:px-8">
+        <header className="sticky top-0 z-10 flex h-14 items-center justify-between gap-4 border-b border-border/40 bg-background/80 px-5 backdrop-blur-md sm:px-8">
           <div className="flex min-w-0 items-center gap-3">
             <Link href="/" className="flex items-center gap-2 lg:hidden">
               <span className="grid size-8 place-items-center rounded-lg bg-primary font-bold text-primary-foreground">J</span>
               <span className="font-semibold">JustCD</span>
             </Link>
-            <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-2 overflow-hidden text-xs">
+            {crumbs.length > 1 && <nav aria-label="Breadcrumb" className="hidden min-w-0 items-center gap-2 overflow-hidden text-xs sm:flex">
               {crumbs.map((crumb, index) => <span key={`${crumb.label}-${index}`} className="flex min-w-0 items-center gap-2">
                 {index > 0 && <span aria-hidden="true" className="hidden text-muted-foreground/60 sm:block">/</span>}
                 {crumb.href ? <Link href={crumb.href} className="hidden truncate text-muted-foreground transition-colors hover:text-foreground sm:block">{crumb.label}</Link> : <span aria-current="page" className="truncate font-medium text-foreground">{crumb.label}</span>}
               </span>)}
-            </nav>
+            </nav>}
           </div>
           <div className="flex items-center gap-3">
             <ThemePicker />
-            <Link href="/applications/new" className="hidden shrink-0 items-center gap-1.5 rounded-md border bg-background px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-muted md:inline-flex">
-              <HugeiconsIcon icon={PlusSignIcon} className="size-3.5" aria-hidden="true" /> New application
-            </Link>
             <Link href="/settings" className="grid size-8 place-items-center rounded-full bg-muted text-xs font-semibold uppercase lg:hidden">
               {(user.displayName || user.email).slice(0, 2)}
             </Link>
@@ -164,7 +161,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             return <Link key={item.href} href={item.href} aria-current={selected ? "page" : undefined} className={`${styles.navItem} shrink-0 !px-3 !py-2 !text-xs`}>{item.label}</Link>
           })}
         </nav>
-        <main className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") ? "max-w-none" : "max-w-[1440px]"} px-5 py-7 sm:px-8 sm:py-9 ${pathname === "/audit" ? "lg:flex lg:h-[calc(100dvh-64px)] lg:flex-col lg:overflow-hidden" : ""}`}>{children}</main>
+        <main className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") ? "max-w-none" : "max-w-[1440px]"} px-5 pb-7 pt-5 sm:px-8 sm:pb-8 sm:pt-6 ${pathname === "/audit" ? "lg:flex lg:h-[calc(100dvh-56px)] lg:flex-col lg:overflow-hidden" : ""}`}>{children}</main>
       </div>
     </div>
   )

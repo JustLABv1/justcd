@@ -26,9 +26,6 @@ export default function OverviewPage() {
 
   return (
     <>
-      <p className="mb-2 text-[10px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
-        Your delivery workspace
-      </p>
       <PageHeading
         title="Overview"
         description="A clear view of what’s running and what needs you next."

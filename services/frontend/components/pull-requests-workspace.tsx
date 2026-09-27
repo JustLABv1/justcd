@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { ErrorNotice } from "@/components/workspace-ui"
-import { FormField, PageHeading, Panel, StatusBadge } from "@/components/ui-kit"
+import { EmptyState, FormField, PageHeading, Panel, StatusBadge } from "@/components/ui-kit"
 import { APIError, api } from "@/lib/api"
 import type { Application, ListResponse, PlanRecord, Workspace } from "@/lib/types"
 
@@ -169,7 +169,7 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
       {connection ? <>
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span className="font-medium text-foreground">{connection.repository}</span><span aria-hidden="true">·</span><span>{connection.provider === "github" ? "GitHub" : "GitLab"}</span><span aria-hidden="true">·</span><span>{connection.previewProfile.enabled ? "Isolated previews enabled" : "Review-only plans"}</span></div>
       <Panel title="Recent pull requests" description="Each PR/MR status links back to its plan and preview details.">
-        <div className="divide-y">{reviews.length===0 ? <p className="p-5 text-sm text-muted-foreground">No pull requests received yet.</p> : reviews.map((review)=><div key={review.id} id={`review-${review.number}`} className="space-y-2 p-5">
+        <div className="divide-y">{reviews.length===0 ? <EmptyState title="No pull requests received yet" description="New pull requests will appear here after the repository webhook sends an event." /> : reviews.map((review)=><div key={review.id} id={`review-${review.number}`} className="space-y-2 p-5">
           <div className="flex flex-wrap items-center gap-3"><a href={review.sourceUrl} target="_blank" rel="noreferrer" className="font-medium text-primary hover:underline">PR/MR #{review.number} ↗</a><StatusBadge status={review.phase} /><code className="text-xs text-muted-foreground">{review.headSha.slice(0,12)}</code>{review.previewApplicationId && <Link href={`/applications/${review.previewApplicationId}`} className="text-xs text-primary hover:underline">Preview application →</Link>}</div>
           {review.error && <p className="text-xs text-destructive">{review.error}</p>}
           {review.reportError && <p className="text-xs text-destructive">{review.reportError}</p>}
@@ -177,10 +177,8 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
           {review.plan && <details className="text-xs"><summary className="cursor-pointer font-medium">Review plan · {review.plan.plan.changes.length} changes {review.plan.status==="review-only"?"· cannot be applied":""}</summary><ul className="mt-2 space-y-1 pl-4">{review.plan.plan.changes.map((change,index)=><li key={`${change.identity.kind}-${change.identity.namespace}-${change.identity.name}-${index}`}>{change.kind}: {change.identity.kind} {change.identity.namespace}/{change.identity.name}</li>)}</ul></details>}
         </div>)}</div>
       </Panel>
-      </> : <div className="rounded-xl border border-dashed bg-muted/10 px-6 py-12 text-center">
-        <h3 className="text-sm font-semibold">PR reporting isn’t enabled yet</h3>
-        <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">This application already uses <span className="font-medium text-foreground">{source.repository}</span>. Enable reporting to receive review-only plans and commit statuses for its pull requests.</p>
-        {!(canConfigure ?? ownerAccess) && <p className="mt-4 text-xs text-muted-foreground">A workspace owner can enable PR reporting.</p>}
+      </> : <div className="rounded-xl border border-dashed bg-card">
+        <EmptyState title="PR reporting isn’t enabled yet" description={`This application already uses ${source.repository}. Enable reporting to receive review-only plans and commit statuses for its pull requests.${canConfigure ?? ownerAccess ? "" : " A workspace owner can enable reporting."}`} />
       </div>}
       </>}
     </> : null}

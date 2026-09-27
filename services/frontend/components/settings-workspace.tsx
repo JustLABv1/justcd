@@ -844,9 +844,7 @@ function CredentialPanel({
               ))}
             </div>
           ) : (
-            <p className="px-5 py-5 text-sm text-muted-foreground">
-              Credentials will be listed here by name only.
-            </p>
+            <EmptyState title="No credentials yet" description="Add a credential to connect a private repository or Kubernetes cluster. Secret values are never shown after saving." />
           )}
         </SettingsInventory>
         <ConnectionDialog open={dialogOpen} onOpenChange={setDialogOpen} busy={busy} title={editing ? "Edit credential" : "Add credential"} description="Credentials are encrypted and their secret values are never shown again.">

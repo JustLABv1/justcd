@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button"
 import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { FormField, PageHeading } from "@/components/ui-kit"
+import { EmptyState, FormField, PageHeading } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
 import { api, apiPost, errorMessage } from "@/lib/api"
 import type { Credential, GitSource, ListResponse, Workspace, WorkspaceConnectionShare } from "@/lib/types"
@@ -194,7 +194,7 @@ export default function ConnectGitSourcePage() {
         <StepperContent value={1}><WorkflowPanel icon={ServerStack02Icon} eyebrow="Step 1 of 3" title="How would you like to connect?" description="Reuse a source already available to this workspace, or add a new repository.">
           <div className="space-y-5"><div className="grid gap-3 sm:grid-cols-2"><button type="button" aria-pressed={mode === "existing"} onClick={() => setMode("existing")} className={`rounded-xl border p-4 text-left transition-[border-color,background-color,transform] duration-150 motion-reduce:transition-none hover:border-primary/40 active:scale-[0.99] motion-reduce:active:scale-100 ${mode === "existing" ? "border-primary bg-primary/5" : "bg-card"}`}><span className="block text-sm font-semibold">Use an accessible source</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">Choose one owned here or accepted from another workspace.</span></button><button type="button" aria-pressed={mode === "create"} onClick={() => setMode("create")} className={`rounded-xl border p-4 text-left transition-[border-color,background-color,transform] duration-150 motion-reduce:transition-none hover:border-primary/40 active:scale-[0.99] motion-reduce:active:scale-100 ${mode === "create" ? "border-primary bg-primary/5" : "bg-card"}`}><span className="block text-sm font-semibold">Add a new source</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">Connect a Git URL and optionally create credentials in this flow.</span></button></div>
             {mode === "existing" && <FormField label="Accessible Git source" htmlFor="existing-git-source"><FormSelect id="existing-git-source" value={selectedSourceId} onValueChange={chooseExistingSource} emptyOption="Select a Git source" items={sources.map((item) => ({ value: item.id, label: `${item.name}${item.shared ? ` · shared by ${item.ownerWorkspaceName}` : " · this workspace"}` }))} /></FormField>}
-            {mode === "existing" && !sources.length && <div className="rounded-xl border border-dashed p-4 text-xs text-muted-foreground">No Git sources are accessible yet. An owner can accept a share, or choose “Add a new source”.</div>}
+            {mode === "existing" && !sources.length && <div className="rounded-xl border border-dashed"><EmptyState title="No accessible Git sources" description="An owner can accept a share, or you can add a new source." /></div>}
             <WorkflowActions><Button type="button" disabled={mode === "existing" && !selectedSource} onClick={() => { if (mode === "existing" && selectedSource) chooseExistingSource(selectedSource.id); advance(2) }}>Continue</Button></WorkflowActions>
           </div>
         </WorkflowPanel></StepperContent>

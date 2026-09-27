@@ -4,6 +4,7 @@ import { useRef, useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FormSelect } from "@/components/ui/form-select"
+import { EmptyState } from "@/components/ui-kit"
 import type { Change } from "@/lib/types"
 
 export function PlanReview({ changes, ignored, selected, onSelect, identityKey, isExcluded, renderChange }: {
@@ -43,7 +44,7 @@ export function PlanReview({ changes, ignored, selected, onSelect, identityKey, 
           </Button>)}
         </div>
       </nav>
-      <div className="min-w-0">{active ? renderChange(active.change, active.ignored) : <p className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">No resources match this filter.</p>}</div>
+      <div className="min-w-0">{active ? renderChange(active.change, active.ignored) : <div className="rounded-xl border border-dashed"><EmptyState title="No matching resources" description="Try a different resource filter or search term." /></div>}</div>
     </div>
   </section>
 }

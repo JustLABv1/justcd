@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button"
 import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { FormField, PageHeading } from "@/components/ui-kit"
+import { EmptyState, FormField, PageHeading } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
 import { api, apiPost, errorMessage } from "@/lib/api"
 import type { Cluster, Credential, KubernetesPermissionReport, ListResponse, NamespaceBinding, Workspace } from "@/lib/types"
@@ -209,7 +209,7 @@ export default function ConnectClusterPage() {
               <button type="button" aria-pressed={connectionMode === "create"} onClick={() => setConnectionMode("create")} className={`rounded-xl border p-4 text-left transition-[border-color,background-color,transform] duration-150 motion-reduce:transition-none hover:border-primary/40 active:scale-[0.99] motion-reduce:active:scale-100 ${connectionMode === "create" ? "border-primary bg-primary/5" : "bg-card"}`}><span className="block text-sm font-semibold">Create a cluster</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">Register a new Kubernetes API endpoint for this workspace.</span></button>
             </div>
             {connectionMode === "existing" && <FormField label="Accessible cluster" htmlFor="wizard-existing-cluster" hint="Cluster credentials are never copied from another workspace."><FormSelect id="wizard-existing-cluster" value={selectedClusterId} onValueChange={setSelectedClusterId} emptyOption="Select a cluster" items={clusters.map((item) => ({ value: item.id, label: `${item.name}${item.shared ? ` · shared by ${item.ownerWorkspaceName}` : item.workspaceId ? " · this workspace" : " · instance"}` }))} /></FormField>}
-            {connectionMode === "existing" && !clusters.length && <div className="rounded-xl border border-dashed p-4 text-xs text-muted-foreground">No clusters are accessible yet. You can create one here, or ask its owner to share a cluster with this workspace.</div>}
+            {connectionMode === "existing" && !clusters.length && <div className="rounded-xl border border-dashed"><EmptyState title="No accessible clusters" description="Create a cluster here or ask its owner to share one with this workspace." /></div>}
             <WorkflowActions><Button type="button" disabled={connectionMode === "existing" && !selectedAccessibleCluster} onClick={() => advance(2)}>Continue</Button></WorkflowActions>
           </div>
         </WorkflowPanel></StepperContent>

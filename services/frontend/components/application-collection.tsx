@@ -55,15 +55,7 @@ function ApplicationActions({ app, canManage, onDeleted }: { app: WorkspaceAppli
 
 function RuntimeHealth({ condition }: { condition: WorkspaceApplication["healthCondition"] }) {
   const status = condition?.status ?? "Unknown"
-  const transitioned = condition?.lastTransitionTime
-    ? new Date(condition.lastTransitionTime).toLocaleString()
-    : "Not observed yet"
-  return <div className="min-w-0">
-    <div className="flex flex-wrap items-center gap-2"><span className="text-[10px] text-muted-foreground">Runtime</span><StatusBadge status={status} /></div>
-    <p className="mt-1 truncate text-xs text-muted-foreground" title={`${condition?.reason ?? "HealthNotObserved"} · ${condition?.message ?? "Live Kubernetes health has not been observed yet."}`}>
-      {condition?.reason ?? "Health not observed"} · Since {transitioned}
-    </p>
-  </div>
+  return <div className="flex flex-wrap items-center gap-2"><span className="text-[10px] text-muted-foreground">Runtime</span><StatusBadge status={status} /></div>
 }
 
 export function ApplicationCard({ app, canManage, onDeleted }: { app: WorkspaceApplication; canManage?: boolean; onDeleted?: (id: string) => void }) {

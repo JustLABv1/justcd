@@ -232,13 +232,16 @@ available at `/api/v1/health`.
 
 ## Container deployment
 
-Build and publish the two images from their service directories:
+Pushing a version tag such as `v0.1.0` runs
+[release.yml](.github/workflows/release.yml). It builds both service images,
+publishes them to GHCR, and creates a GitHub release with generated notes after
+both images succeed. The moving tags and versioned tags are:
 
-```sh
-docker build -t registry.example.com/justcd-backend:0.1.0 services/backend
-docker build -t registry.example.com/justcd-frontend:0.1.0 services/frontend
-docker push registry.example.com/justcd-backend:0.1.0
-docker push registry.example.com/justcd-frontend:0.1.0
+```text
+ghcr.io/justlabv1/justcd:frontend
+ghcr.io/justlabv1/justcd:backend
+ghcr.io/justlabv1/justcd:frontend-v0.1.0
+ghcr.io/justlabv1/justcd:backend-v0.1.0
 ```
 
 The frontend runtime uses a nonroot distroless Node image. The backend runtime
@@ -247,8 +250,8 @@ tools and package managers stay in the build stages. Scan the exact images you
 intend to deploy after every build, for example:
 
 ```sh
-trivy image --scanners vuln --severity HIGH,CRITICAL registry.example.com/justcd-backend:0.1.0
-trivy image --scanners vuln --severity HIGH,CRITICAL registry.example.com/justcd-frontend:0.1.0
+trivy image --scanners vuln --severity HIGH,CRITICAL ghcr.io/justlabv1/justcd:backend-v0.1.0
+trivy image --scanners vuln --severity HIGH,CRITICAL ghcr.io/justlabv1/justcd:frontend-v0.1.0
 ```
 
 Rebuild and rescan regularly as base images and vulnerability data change.

@@ -2,9 +2,7 @@ import { cn } from "cn"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Loading03Icon } from "@hugeicons/core-free-icons"
 
-type SpinnerProps = Omit<React.ComponentProps<"svg">, "strokeWidth"> & {
-  strokeWidth?: number
-}
+type SpinnerProps = Omit<React.ComponentProps<"svg">, "strokeWidth"> & { strokeWidth?: number }
 
 function Spinner({ className, strokeWidth = 2, ...props }: SpinnerProps) {
   return (

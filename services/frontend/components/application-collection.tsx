@@ -6,6 +6,9 @@ import { useState } from "react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { FormSelect } from "@/components/ui/form-select"
+import { Filters } from "@/components/reui/filters/filters"
+import { createFilterQuery, flattenFilterConditions } from "@/components/reui/filters/filters-query"
+import type { FilterField, FilterQuery } from "@/components/reui/filters/filters-types"
 import { DataGridList } from "@/components/data-grid-table"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -52,15 +55,7 @@ function ApplicationActions({ app, canManage, onDeleted }: { app: WorkspaceAppli
 
 function RuntimeHealth({ condition }: { condition: WorkspaceApplication["healthCondition"] }) {
   const status = condition?.status ?? "Unknown"
-  const transitioned = condition?.lastTransitionTime
-    ? new Date(condition.lastTransitionTime).toLocaleString()
-    : "Not observed yet"
-  return <div className="min-w-0">
-    <div className="flex flex-wrap items-center gap-2"><span className="text-[10px] text-muted-foreground">Runtime</span><StatusBadge status={status} /></div>
-    <p className="mt-1 truncate text-xs text-muted-foreground" title={`${condition?.reason ?? "HealthNotObserved"} · ${condition?.message ?? "Live Kubernetes health has not been observed yet."}`}>
-      {condition?.reason ?? "Health not observed"} · Since {transitioned}
-    </p>
-  </div>
+  return <div className="flex flex-wrap items-center gap-2"><span className="text-[10px] text-muted-foreground">Runtime</span><StatusBadge status={status} /></div>
 }
 
 export function ApplicationCard({ app, canManage, onDeleted }: { app: WorkspaceApplication; canManage?: boolean; onDeleted?: (id: string) => void }) {
@@ -133,12 +128,18 @@ export function ApplicationCollection({
 }) {
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState(initialFilter)
-  const [workspaceId, setWorkspaceId] = useState("all")
+  const [filterQuery, setFilterQuery] = useState<FilterQuery>(() => createFilterQuery())
   const [view, setView] = useState<"cards" | "table">("cards")
   const [sort, setSort] = useState("attention")
   const [removedIds, setRemovedIds] = useState<string[]>([])
   const handleDeleted = (id: string) => { setRemovedIds((current) => [...current, id]); onDeleted?.(id) }
   const available = applications.filter((app) => !removedIds.includes(app.id))
+  const filterFields: FilterField[] = [
+    ...(workspaces ? [{ id: "workspace", label: "Workspace", type: "select" as const, options: workspaces.map((item) => ({ value: item.id, label: item.name })), operators: [{ value: "is", label: "is" }] }] : []),
+    { id: "namespace", label: "Namespace", type: "select", options: [...new Set(available.flatMap((app) => app.namespaces.map((item) => item.namespace)))].sort().map((value) => ({ value, label: value })), operators: [{ value: "is", label: "is" }] },
+    { id: "renderer", label: "Renderer", type: "select", options: [{ value: "yaml", label: "Plain YAML / JSON" }, { value: "helm", label: "Helm" }, { value: "kustomize", label: "Kustomize" }], operators: [{ value: "is", label: "is" }] },
+  ]
+  const conditions = flattenFilterConditions(filterQuery)
   const counts = {
     all: available.length,
     attention: available.filter(needsAttention).length,
@@ -158,7 +159,17 @@ export function ApplicationCollection({
             : !needsAttention(app) && !isApplicationHealthy(app))
       return (
         matchesStatus &&
-        (workspaceId === "all" || app.workspaceId === workspaceId) &&
+        conditions.every((condition) => {
+          const rawValue = String(condition.values[0] ?? "")
+          const value = rawValue.toLowerCase()
+          if (!value) return true
+          switch (condition.field) {
+            case "workspace": return app.workspaceId === rawValue
+            case "namespace": return app.namespaces.some((item) => item.namespace.toLowerCase() === value)
+            case "renderer": return app.renderer === value
+            default: return true
+          }
+        }) &&
         `${app.name} ${app.workspaceName ?? ""} ${app.namespaces.map((item) => item.namespace).join(" ")} ${app.revision}`
           .toLowerCase()
           .includes(query.trim().toLowerCase())
@@ -175,7 +186,7 @@ export function ApplicationCollection({
 
   if (!available.length)
     return (
-      <div className="rounded-2xl border border-dashed bg-card">
+      <div className="rounded-xl border border-dashed bg-card">
         <EmptyState
           title="Your next deployment starts here"
           description="Connect a Git repository and a Kubernetes target to bring your first application online."
@@ -186,98 +197,77 @@ export function ApplicationCollection({
     )
   return (
     <div>
-      <div className="mb-5 flex flex-col justify-between gap-4 border-b pb-4 min-[1100px]:flex-row min-[1100px]:items-center">
+      <section
+        aria-label="Filter applications"
+        className="mb-3 rounded-xl border bg-card"
+      >
         <div
-          className="flex flex-wrap gap-1"
-          role="group"
-          aria-label="Filter by health"
+          className="overflow-x-auto border-b px-4 py-3 sm:px-5"
         >
-          {(
-            [
-              ["all", "All apps"],
-              ["attention", "Needs attention"],
-              ["synced", "In sync"],
-              ["other", "Other"],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={filter === value}
-              onClick={() => setFilter(value)}
-              className={`flex min-h-9 items-center gap-2 rounded-lg px-3 text-xs font-medium transition-colors ${filter === value ? "border border-foreground bg-foreground text-background" : "border border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground"}`}
-            >
-              {label}
-              <span
-                className={`rounded px-1.5 py-0.5 text-[10px] tabular-nums ${filter === value ? "bg-background/15" : "bg-muted"}`}
+          <div
+            className="flex w-max gap-1"
+            role="group"
+            aria-label="Filter by health"
+          >
+            {(
+              [
+                ["all", "All apps"],
+                ["attention", "Needs attention"],
+                ["synced", "In sync"],
+                ["other", "Other"],
+              ] as const
+            ).map(([value, label]) => (
+              <Button
+                key={value}
+                type="button"
+                aria-pressed={filter === value}
+                onClick={() => setFilter(value)}
+                size="sm"
+                variant={filter === value ? "secondary" : "ghost"}
+                className="h-8 shrink-0 gap-2"
               >
-                {counts[value]}
-              </span>
-            </button>
-          ))}
+                {label}
+                <span className="rounded bg-background/60 px-1.5 py-0.5 text-[10px] leading-none tabular-nums">
+                  {counts[value]}
+                </span>
+              </Button>
+            ))}
+          </div>
         </div>
-        <div
-          className="flex w-fit gap-1 rounded-lg border bg-card p-1"
-          role="group"
-          aria-label="Application view"
-        >
-          {(["cards", "table"] as const).map((value) => (
-            <button
-              type="button"
-              key={value}
-              aria-pressed={view === value}
-              onClick={() => setView(value)}
-              className={`rounded-md px-3 py-1.5 text-xs capitalize ${view === value ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-            >
-              {value}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="mb-5 flex flex-wrap items-center gap-3">
-        <div className="relative min-w-48 flex-1">
-          <WorkspaceIcon
-            name="search"
-            className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted-foreground"
-          />
-          <Input
-            aria-label="Search applications"
-            placeholder="Search applications, namespaces, revisions…"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            className="h-9 bg-card pl-9"
-          />
-        </div>
-        {workspaces && (
+        <div className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5">
+          <div className="relative w-full min-w-0 sm:w-auto sm:min-w-56 sm:flex-1 lg:max-w-sm">
+            <WorkspaceIcon
+              name="search"
+              className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted-foreground"
+            />
+            <Input
+              aria-label="Search applications"
+              placeholder="Search applications, namespaces, revisions…"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              className="h-9 bg-background pl-9"
+            />
+          </div>
+          <Filters fields={filterFields} query={filterQuery} onQueryChange={setFilterQuery} size="sm" className="min-w-0 flex-1" />
           <FormSelect
-            ariaLabel="Filter by workspace"
-            value={workspaceId}
-            onValueChange={setWorkspaceId}
-            className="w-44"
+            ariaLabel="Sort applications"
+            value={sort}
+            onValueChange={setSort}
+            className="w-40 shrink-0"
             items={[
-              { value: "all", label: "All workspaces" },
-              ...workspaces.map((workspace) => ({
-                value: workspace.id,
-                label: workspace.name,
-              })),
+              { value: "attention", label: "Attention first" },
+              { value: "name", label: "Name A–Z" },
+              { value: "newest", label: "Newest first" },
             ]}
           />
-        )}
-        <FormSelect
-          ariaLabel="Sort applications"
-          value={sort}
-          onValueChange={setSort}
-          className="w-40"
-          items={[
-            { value: "attention", label: "Attention first" },
-            { value: "name", label: "Name A–Z" },
-            { value: "newest", label: "Newest first" },
-          ]}
-        />
+        </div>
+      </section>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-1">
+        <p role="status" className="text-xs text-muted-foreground">Showing {visible.length} of {available.length} applications</p>
+        <div className="flex w-fit gap-1 rounded-lg border bg-card p-1" role="group" aria-label="Application view">
+          {(["cards", "table"] as const).map((value) => <Button type="button" key={value} aria-pressed={view === value} onClick={() => setView(value)} size="sm" variant={view === value ? "secondary" : "ghost"} className="capitalize">{value}</Button>)}
+        </div>
       </div>
-      <p role="status" className="mb-3 text-xs text-muted-foreground">
-        {visible.length} of {available.length} applications
-      </p>
       {visible.length ? (
         view === "cards" ? (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-4">
@@ -350,7 +340,7 @@ export function ApplicationCollection({
           />
         )
       ) : (
-        <div className="rounded-2xl border border-dashed bg-card pb-6 text-center">
+        <div className="rounded-xl border border-dashed bg-card pb-6 text-center">
           <EmptyState
             title="No matching applications"
             description="Try another search or clear the filters to see all applications."
@@ -360,7 +350,7 @@ export function ApplicationCollection({
             onClick={() => {
               setQuery("")
               setFilter("all")
-              setWorkspaceId("all")
+              setFilterQuery(createFilterQuery())
             }}
           >
             Clear filters

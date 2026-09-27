@@ -471,7 +471,7 @@ export default function ApplicationDetailPage() {
 
   async function deleteApplication() {
     const result = await api<{ deleted: boolean; plan?: PlanRecord }>(`/api/v1/applications/${encodeURIComponent(applicationID)}?resources=${deletePolicy}`, { method: "DELETE" })
-    if (result.deleted) { toast.success("Application deleted."); router.push(`/workspaces/${application?.workspaceId ?? ""}`); router.refresh(); return }
+    if (result.deleted) { toast.success("Application deleted."); router.push("/applications"); router.refresh(); return }
     if (result.plan) {
       setDeletePolicy("delete")
       setActivePlan(result.plan)

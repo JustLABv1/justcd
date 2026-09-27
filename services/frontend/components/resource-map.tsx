@@ -4,7 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Layers01Icon, Settings02Icon, Globe02Icon, DatabaseIcon, CubeIcon, Router02Icon, ServerStack01Icon, Files01Icon, FileTextIcon, Key01Icon, Shield01Icon, Clock01Icon, PlayIcon, Route01Icon, WorkflowSquare04Icon, Folder01Icon } from "@hugeicons/core-free-icons"
 import { Button } from "@/components/ui/button"
-import { StatusBadge } from "@/components/ui-kit"
+import { EmptyState, StatusBadge } from "@/components/ui-kit"
 import { Input } from "@/components/ui/input"
 import { identityKey, observed, workload, relatedNodes, syncState, topologyLayout, nodeWidth, nodeHeight, type SyncState } from "@/lib/topology-view"
 import type { Application, Identity, ManagedResource, Operation, PlanRecord, ResourceTopology, TopologyNode } from "@/lib/types"
@@ -140,7 +140,7 @@ export function ResourceMap({ application, plan, inventory, operations, topology
         drag.current = { x: event.clientX, y: event.clientY, left: el.scrollLeft, top: el.scrollTop }
         el.setPointerCapture(event.pointerId); el.style.cursor = "grabbing"
       }} onPointerMove={(event) => { if (drag.current) { event.currentTarget.scrollLeft = drag.current.left - event.clientX + drag.current.x; event.currentTarget.scrollTop = drag.current.top - event.clientY + drag.current.y } }} onPointerUp={(event) => { drag.current = null; event.currentTarget.style.cursor = ""; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) }} onPointerCancel={() => { drag.current = null }}>
-        {!shown.length ? <p className="p-12 text-center text-sm text-muted-foreground">{graph.nodes.length ? "No resources match this view." : "Build a plan to discover resources."}</p> : <div style={{ width: layout.width * zoom, height: layout.height * zoom }}><div className="relative origin-top-left" style={{ width: layout.width, height: layout.height, transform: `scale(${zoom})` }}>
+        {!shown.length ? <div className="grid min-h-full place-items-center"><EmptyState title={graph.nodes.length ? "No matching resources" : "No resources to show yet"} description={graph.nodes.length ? "Try another filter to see resources in this view." : "Build a plan to discover resources and their relationships."} /></div> : <div style={{ width: layout.width * zoom, height: layout.height * zoom }}><div className="relative origin-top-left" style={{ width: layout.width, height: layout.height, transform: `scale(${zoom})` }}>
           {layout.bands.map((band) => <div key={band.id} className="pointer-events-none absolute border-t border-border/60" style={{ left: 28, top: band.y, width: layout.width - 56, height: band.height }}><h3 className="py-3 text-xs font-medium text-muted-foreground">{band.label}</h3></div>)}
           <svg aria-hidden="true" className="pointer-events-none absolute inset-0" width={layout.width} height={layout.height}>
             <defs><marker id={marker} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0L7 3.5L0 7Z" fill="context-stroke" /></marker></defs>

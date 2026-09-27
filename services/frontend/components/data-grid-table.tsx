@@ -12,6 +12,7 @@ import {
 } from "@/components/reui/data-grid/data-grid"
 import { DataGridTable } from "@/components/reui/data-grid/data-grid-table"
 import { DataGridPagination } from "@/components/reui/data-grid/data-grid-pagination"
+import { EmptyState } from "@/components/ui-kit"
 
 export type GridColumn<T extends object> = {
   id: string
@@ -55,7 +56,7 @@ export function DataGridList<T extends object>({
   return (
     <div className="min-w-0 overflow-hidden rounded-xl border bg-card">
       {rows.length === 0 ? (
-        <div className="px-5 py-10 text-center text-sm text-muted-foreground">{empty}</div>
+        <EmptyState title="No items yet" description={empty} />
       ) : (
         <DataGrid
           table={table}

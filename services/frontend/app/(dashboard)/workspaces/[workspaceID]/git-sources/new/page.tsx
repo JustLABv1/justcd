@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button"
 import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { FormField, PageHeading } from "@/components/ui-kit"
+import { EmptyState, FormField, PageHeading } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
 import { api, apiPost, errorMessage } from "@/lib/api"
 import type { Credential, GitSource, ListResponse, Workspace, WorkspaceConnectionShare } from "@/lib/types"
@@ -46,9 +46,11 @@ export default function ConnectGitSourcePage() {
   const [repositoryUrl, setRepositoryUrl] = useState("")
   const [step, setStep] = useState(1)
   const [highestStep, setHighestStep] = useState(1)
+  const [loadedWorkspaceId, setLoadedWorkspaceId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [testResult, setTestResult] = useState<{ commit: string } | null>(null)
+  const loading = loadedWorkspaceId !== workspaceID
 
   useEffect(() => {
     let active = true
@@ -59,12 +61,13 @@ export default function ConnectGitSourcePage() {
       api<ListResponse<WorkspaceConnectionShare>>(`/api/v1/workspace-connection-shares?workspaceId=${encodeURIComponent(workspaceID)}`),
     ]).then(([workspaces, sourceList, credentialList, shareList]) => {
       if (!active) return
+      setError(null)
       setWorkspace(workspaces.items.find((item) => item.id === workspaceID) ?? null)
       setSources(sourceList.items)
       setShares(shareList.items)
       setSelectedSourceId(sourceList.items[0]?.id ?? "")
       setCredentials(credentialList.items.filter((item) => item.workspaceId === workspaceID && (item.kind === "git-https" || item.kind === "git-ssh")))
-    }).catch((cause) => active && setError(cause))
+    }).catch((cause) => active && setError(cause)).finally(() => active && setLoadedWorkspaceId(workspaceID))
     return () => { active = false }
   }, [workspaceID])
 
@@ -180,8 +183,8 @@ export default function ConnectGitSourcePage() {
 
   return <>
     <PageHeading title="Connect a Git source" description={`A single guided flow to reuse or add a repository for ${workspace?.name ?? "this workspace"}. Credentials stay owned by this workspace.`} actions={<Link href={`/workspaces/${workspaceID}/connections/git-sources`}><Button variant="outline">Exit workflow</Button></Link>} />
-    {error && <div role="alert" className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive"><span>{errorMessage(error)}</span><ErrorDetailsButton error={error} /></div>}
-    {workspace?.role !== "owner" ? <div role="alert" className="rounded-2xl border bg-card p-6 text-sm text-muted-foreground">Workspace owner access is required to connect or configure Git sources.</div> : <Stepper orientation="vertical" value={step} onValueChange={(value) => { if (value <= highestStep) setStep(value) }} className="grid items-start gap-7 lg:grid-cols-[240px_minmax(0,1fr)]">
+    {!loading && error && <div role="alert" className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive"><span>{errorMessage(error)}</span><ErrorDetailsButton error={error} /></div>}
+    {loading ? <div role="status" className="h-44 animate-pulse rounded-xl border bg-muted/40 motion-reduce:animate-none" /> : !workspace ? <div role="alert" className="rounded-xl border bg-card p-6 text-sm text-muted-foreground">Workspace not found or unavailable to your account.</div> : workspace.role !== "owner" ? <div role="alert" className="rounded-xl border bg-card p-6 text-sm text-muted-foreground">Workspace owner access is required to connect or configure Git sources.</div> : <Stepper orientation="vertical" value={step} onValueChange={(value) => { if (value <= highestStep) setStep(value) }} className="grid items-start gap-7 lg:grid-cols-[240px_minmax(0,1fr)]">
       <aside className="rounded-2xl border bg-card p-4 sm:p-5 lg:sticky lg:top-8">
         <div className="mb-4 flex items-center gap-4 lg:mb-6"><IconStack className="cluster-icon-stack h-14 w-12 text-primary lg:h-16 lg:w-14"><HugeiconsIcon icon={ServerStack02Icon} className="size-5" /></IconStack><div><p className="text-sm font-semibold">Git source</p><p className="mt-1 text-[11px] text-muted-foreground">Three focused steps</p></div></div>
         <StepperNav className="grid w-full grid-cols-3 gap-1 lg:flex lg:grid-cols-none lg:gap-0">{steps.map((item, index) => <StepperItem key={item.title} step={index + 1} disabled={index + 1 > highestStep} className="items-center! justify-start! lg:items-start!"><StepperTrigger className="w-full flex-col items-center rounded-lg px-1 py-2 text-center transition-[background-color,transform] duration-150 motion-reduce:transition-none active:scale-[0.98] motion-reduce:active:scale-100 data-[state=active]:bg-muted lg:flex-row lg:items-start lg:px-2 lg:text-left"><StepperIndicator>{index + 1}</StepperIndicator><span className="min-w-0"><StepperTitle className="text-[10px] lg:text-sm">{item.title}</StepperTitle><StepperDescription className="mt-1 hidden text-[11px] leading-4 lg:block">{item.description}</StepperDescription></span></StepperTrigger>{index < steps.length - 1 && <StepperSeparator className="ml-[19px] hidden h-6! lg:block" />}</StepperItem>)}</StepperNav>
@@ -191,7 +194,7 @@ export default function ConnectGitSourcePage() {
         <StepperContent value={1}><WorkflowPanel icon={ServerStack02Icon} eyebrow="Step 1 of 3" title="How would you like to connect?" description="Reuse a source already available to this workspace, or add a new repository.">
           <div className="space-y-5"><div className="grid gap-3 sm:grid-cols-2"><button type="button" aria-pressed={mode === "existing"} onClick={() => setMode("existing")} className={`rounded-xl border p-4 text-left transition-[border-color,background-color,transform] duration-150 motion-reduce:transition-none hover:border-primary/40 active:scale-[0.99] motion-reduce:active:scale-100 ${mode === "existing" ? "border-primary bg-primary/5" : "bg-card"}`}><span className="block text-sm font-semibold">Use an accessible source</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">Choose one owned here or accepted from another workspace.</span></button><button type="button" aria-pressed={mode === "create"} onClick={() => setMode("create")} className={`rounded-xl border p-4 text-left transition-[border-color,background-color,transform] duration-150 motion-reduce:transition-none hover:border-primary/40 active:scale-[0.99] motion-reduce:active:scale-100 ${mode === "create" ? "border-primary bg-primary/5" : "bg-card"}`}><span className="block text-sm font-semibold">Add a new source</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">Connect a Git URL and optionally create credentials in this flow.</span></button></div>
             {mode === "existing" && <FormField label="Accessible Git source" htmlFor="existing-git-source"><FormSelect id="existing-git-source" value={selectedSourceId} onValueChange={chooseExistingSource} emptyOption="Select a Git source" items={sources.map((item) => ({ value: item.id, label: `${item.name}${item.shared ? ` · shared by ${item.ownerWorkspaceName}` : " · this workspace"}` }))} /></FormField>}
-            {mode === "existing" && !sources.length && <div className="rounded-xl border border-dashed p-4 text-xs text-muted-foreground">No Git sources are accessible yet. An owner can accept a share, or choose “Add a new source”.</div>}
+            {mode === "existing" && !sources.length && <div className="rounded-xl border border-dashed"><EmptyState title="No accessible Git sources" description="An owner can accept a share, or you can add a new source." /></div>}
             <WorkflowActions><Button type="button" disabled={mode === "existing" && !selectedSource} onClick={() => { if (mode === "existing" && selectedSource) chooseExistingSource(selectedSource.id); advance(2) }}>Continue</Button></WorkflowActions>
           </div>
         </WorkflowPanel></StepperContent>

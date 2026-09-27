@@ -175,8 +175,11 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 	if err := s.CreateWorkspaceGitSourceShare(ctx, gitShare); err != nil {
 		t.Fatalf("offer Git share: %v", err)
 	}
-	if canUse, err := s.WorkspaceCanUseCluster(ctx, "integration-consumer", "integration-cluster"); err != nil || canUse {
+	if canUse, err := s.WorkspaceCanUseCluster(ctx, "integration-consumer", "integration-owned-cluster"); err != nil || canUse {
 		t.Fatalf("pending cluster offer should remain private: allowed=%v err=%v", canUse, err)
+	}
+	if canUse, err := s.WorkspaceCanUseCluster(ctx, "integration-consumer", "integration-cluster"); err != nil || !canUse {
+		t.Fatalf("legacy instance-owned cluster should remain available: allowed=%v err=%v", canUse, err)
 	}
 	if canUse, err := s.WorkspaceCanUseGitSource(ctx, "integration-consumer", "integration-git"); err != nil || canUse {
 		t.Fatalf("pending Git offer should remain private: allowed=%v err=%v", canUse, err)

@@ -21,8 +21,10 @@ export default function ApplicationsPage() {
 }
 
 function ApplicationsContent() {
-  const { workspaces, applications, loading, error, refresh } = useWorkspace()
-  const { workspace, workspaceId } = useWorkspaceSelection()
+  const { workspaces, applications, loading, error, refresh } = useWorkspace({
+    includeAllApplications: true,
+  })
+  const { workspaceId } = useWorkspaceSelection()
   const searchParams = useSearchParams()
   const initialFilter = ["attention", "synced", "other"].includes(
     searchParams.get("status") ?? ""
@@ -33,12 +35,12 @@ function ApplicationsContent() {
     <>
       <PageHeading
         title="Applications"
-        description={workspace ? `Deployments in ${workspace.name}, from Git revision to running workload.` : "Select a workspace to view its applications."}
+        description="Deployments across your workspaces, from Git revision to running workload."
         actions={<>
           <ActionLink href={workspaceId ? `/applications/new?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces"}>
             <span aria-hidden="true">＋</span> New application
           </ActionLink>
-          <ActionLink href={workspaceId ? `/application-groups/new?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces"}>
+          <ActionLink secondary href={workspaceId ? `/application-groups/new?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces"}>
             <span aria-hidden="true">＋</span> Deploy to multiple targets
           </ActionLink>
         </>}

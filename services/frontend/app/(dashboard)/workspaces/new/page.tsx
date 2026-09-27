@@ -21,7 +21,7 @@ export default function NewWorkspacePage() {
     try {
       const workspace = await apiPost<Workspace>("/api/v1/workspaces", { name, description })
       toast.success("Workspace created.")
-      router.push(`/workspaces/${workspace.id}`)
+      router.push(`/workspaces/${workspace.id}?tab=connections`)
     } catch (cause) { toast.error(errorMessage(cause), cause) } finally { setBusy(false) }
   }
   return <>

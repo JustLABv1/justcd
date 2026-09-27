@@ -4,25 +4,24 @@ import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
 import { Tabs } from "@base-ui/react/tabs"
+import { Badge } from "@/components/reui/badge"
 import { Button } from "@/components/ui/button"
 import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
-import { ApplicationCollection } from "@/components/application-collection"
 import { ApprovalRuleEditor } from "@/components/approval-rule-editor"
-import { ActionLink, CollectionSkeleton, ErrorNotice } from "@/components/workspace-ui"
-import { FormField, PageHeading, Panel } from "@/components/ui-kit"
+import { ActionLink, ErrorNotice } from "@/components/workspace-ui"
+import { EmptyState, FormField, PageHeading, Panel } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
 import { api, apiPost, errorMessage } from "@/lib/api"
-import type { ApprovalPolicy, Application, ListResponse, Workspace, WorkspaceMember } from "@/lib/types"
+import type { ApprovalPolicy, ListResponse, Workspace, WorkspaceMember } from "@/lib/types"
 
 export default function WorkspaceDetailPage() {
   const { workspaceID } = useParams<{ workspaceID: string }>()
   const router = useRouter()
   const toast = useToast()
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
-  const [applications, setApplications] = useState<Application[]>([])
   const [members, setMembers] = useState<WorkspaceMember[]>([])
   const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy>({
     sync: { requiredApprovals: 0, approverRoles: ["owner"], approverUserIds: [] },
@@ -40,12 +39,12 @@ export default function WorkspaceDetailPage() {
   const [approvalPolicyBusy, setApprovalPolicyBusy] = useState(false)
   const [deletePolicy, setDeletePolicy] = useState("keep")
   const [deletionPlans, setDeletionPlans] = useState<{ applicationId: string; applicationName: string; managedResources: number }[]>([])
-  const [activeTab, setActiveTab] = useState("applications")
+  const [activeTab, setActiveTab] = useState("members")
 
   useEffect(() => {
     const readTab = () => {
       const value = new URLSearchParams(window.location.search).get("tab")
-      setActiveTab(["applications", "members", "connections", "settings"].includes(value ?? "") ? value! : "applications")
+      setActiveTab(["members", "connections", "settings"].includes(value ?? "") ? value! : "members")
     }
     readTab()
     window.addEventListener("popstate", readTab)
@@ -55,7 +54,7 @@ export default function WorkspaceDetailPage() {
   function selectTab(value: string) {
     setActiveTab(value)
     const url = new URL(window.location.href)
-    if (value === "applications") url.searchParams.delete("tab")
+    if (value === "members") url.searchParams.delete("tab")
     else url.searchParams.set("tab", value)
     window.history.pushState(null, "", url)
   }
@@ -64,9 +63,8 @@ export default function WorkspaceDetailPage() {
     let active = true
     async function load() {
       try {
-        const [workspaces, apps, workspaceMembers] = await Promise.all([
+        const [workspaces, workspaceMembers] = await Promise.all([
           api<ListResponse<Workspace>>("/api/v1/workspaces"),
-          api<ListResponse<Application>>(`/api/v1/applications?workspaceId=${encodeURIComponent(workspaceID)}`),
           api<ListResponse<WorkspaceMember>>(`/api/v1/workspaces/${encodeURIComponent(workspaceID)}/members`),
         ])
         if (!active) return
@@ -75,7 +73,6 @@ export default function WorkspaceDetailPage() {
         if (selected) setApprovalPolicy(selected.approvalPolicy)
         setEditName(selected?.name ?? "")
         setEditDescription(selected?.description ?? "")
-        setApplications(apps.items)
         setMembers(workspaceMembers.items)
       } catch (cause) {
         if (active) setError(cause)
@@ -141,18 +138,21 @@ export default function WorkspaceDetailPage() {
   }
 
   return <>
-    <PageHeading title={workspace?.name ?? (loading ? "Loading workspace…" : "Workspace not found")} description={workspace?.description || "Manage Git-driven applications and access scoped to this workspace."} actions={workspace && <>{workspace.role !== "viewer" && <ActionLink href={`/applications/new?workspaceId=${workspace.id}`}><span aria-hidden="true">＋</span> New application</ActionLink>}</>} />
+    <PageHeading
+      title={workspace?.name ?? (loading ? "Loading workspace…" : "Workspace not found")}
+      description={workspace?.description || "Manage Git-driven applications and access scoped to this workspace."}
+      actions={workspace && (
+        activeTab === "connections" && workspace.role === "owner"
+            ? <ActionLink href={`/workspaces/${workspace.id}/clusters/new`}><span aria-hidden="true">＋</span> Connect cluster</ActionLink>
+            : undefined
+      )}
+    />
     {error && <ErrorNotice error={error} />}
     {deletionPlans.length > 0 && <div role="status" className="mb-5 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><p className="font-medium">Deletion plans are ready for review.</p><p className="mt-1 text-xs">Approve and apply each application plan. Once all managed resources are gone, choose “Delete resources” here again to remove the workspace record.</p><ul className="mt-3 space-y-1">{deletionPlans.map((item) => <li key={item.applicationId}><Link href={`/applications/${item.applicationId}?tab=changes`} className="underline underline-offset-4">{item.applicationName} · {item.managedResources} resources →</Link></li>)}</ul></div>}
     <Tabs.Root value={activeTab} onValueChange={(value) => selectTab(String(value))}>
       <Tabs.List aria-label="Workspace views" className="mb-6 flex gap-6 overflow-x-auto border-b" activateOnFocus>
-        {[["applications", "Applications", applications.length], ["members", "Members", members.length], ...(workspace && workspace.role !== "viewer" ? [["connections", "Connections", null]] : []), ...(workspace?.role === "owner" ? [["settings", "Workspace settings", null]] : [])].map(([value, label, count]) => <Tabs.Tab key={String(value)} value={String(value)} className="flex shrink-0 items-center gap-2 border-b-2 border-transparent px-1 pb-3 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[active]:border-primary data-[active]:text-foreground">{label}{count !== null && <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">{count}</span>}</Tabs.Tab>)}
+        {[["members", "Members", members.length], ...(workspace && workspace.role !== "viewer" ? [["connections", "Connections", null]] : []), ...(workspace?.role === "owner" ? [["settings", "Workspace settings", null]] : [])].map(([value, label, count]) => <Tabs.Tab key={String(value)} value={String(value)} className="flex shrink-0 items-center gap-2 border-b-2 border-transparent px-1 pb-3 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[active]:border-primary data-[active]:text-foreground">{label}{count !== null && <Badge size="xs" variant="secondary">{count}</Badge>}</Tabs.Tab>)}
       </Tabs.List>
-      <Tabs.Panel value="applications" className="outline-none">
-        <Panel surface="flat" title="Applications" description="Deployments reconciled by this workspace">
-          {loading ? <CollectionSkeleton /> : <ApplicationCollection applications={applications} workspaceRole={workspace?.role} createHref={`/applications/new?workspaceId=${workspaceID}`} canCreate={workspace?.role !== "viewer"} onDeleted={(id) => setApplications((current) => current.filter((app) => app.id !== id))} />}
-        </Panel>
-      </Tabs.Panel>
       <Tabs.Panel value="members" className="max-w-3xl outline-none">
         <Panel title="Members" description="Users with access to this delivery scope">
           {workspace?.role === "owner" && <form className="grid gap-3 border-b p-4" onSubmit={addMember}>
@@ -160,11 +160,11 @@ export default function WorkspaceDetailPage() {
             <FormField label="Workspace role" htmlFor="member-role"><FormSelect id="member-role" size="sm" value={memberRole} onValueChange={setMemberRole} items={[{ value: "viewer", label: "Viewer" }, { value: "deployer", label: "Deployer" }, { value: "owner", label: "Owner" }]} /></FormField>
             <Button size="sm" type="submit" className="w-fit" loading={memberBusy} loadingText="Adding member…">Add member</Button>
           </form>}
-          {members.length ? <div className="divide-y">{members.map((member) => <div key={member.id} className="flex flex-wrap items-center gap-3 px-5 py-3"><span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-[10px] font-semibold uppercase">{(member.displayName || member.email).slice(0, 2)}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{member.displayName || member.email}</span><span className="block truncate text-[10px] text-muted-foreground">{member.email}</span><span className="mt-1 flex flex-wrap gap-1.5">{member.disabled && <span className="rounded-full border border-amber-500/30 bg-amber-500/5 px-2 py-0.5 text-[9px] text-amber-700 dark:text-amber-300">Locked</span>}{member.managedBySSO && <span className="rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">Managed by SSO</span>}</span></span>{workspace?.role === "owner" && member.editable ? <><FormSelect ariaLabel={`Workspace role for ${member.displayName || member.email}`} size="sm" className="max-w-32 min-w-28" value={member.role} disabled={memberActionId !== null} onValueChange={(role) => { if (role !== member.role) void changeMemberRole(member, role) }} items={[{ value: "viewer", label: "Viewer" }, { value: "deployer", label: "Deployer" }, { value: "owner", label: "Owner" }]} /><ConfirmDisclosure trigger="Remove" triggerVariant="outline" title={`Remove ${member.displayName || member.email}?`} description="They will lose access to this workspace and its applications immediately. Their JustCD account and activity history will remain." confirmLabel="Remove member" onConfirm={() => removeMember(member)} disabled={memberActionId !== null} /></> : <span className="text-[10px] capitalize text-muted-foreground">{member.role}</span>}</div>)}</div> : <p className="px-5 py-6 text-xs text-muted-foreground">Workspace owner is the only member so far.</p>}
+          {members.length ? <div className="divide-y">{members.map((member) => <div key={member.id} className="flex flex-wrap items-center gap-3 px-5 py-3"><span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-[10px] font-semibold uppercase">{(member.displayName || member.email).slice(0, 2)}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{member.displayName || member.email}</span><span className="block truncate text-[10px] text-muted-foreground">{member.email}</span><span className="mt-1 flex flex-wrap gap-1.5">{member.disabled && <span className="rounded-full border border-amber-500/30 bg-amber-500/5 px-2 py-0.5 text-[9px] text-amber-700 dark:text-amber-300">Locked</span>}{member.managedBySSO && <span className="rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">Managed by SSO</span>}</span></span>{workspace?.role === "owner" && member.editable ? <><FormSelect ariaLabel={`Workspace role for ${member.displayName || member.email}`} size="sm" className="max-w-32 min-w-28" value={member.role} disabled={memberActionId !== null} onValueChange={(role) => { if (role !== member.role) void changeMemberRole(member, role) }} items={[{ value: "viewer", label: "Viewer" }, { value: "deployer", label: "Deployer" }, { value: "owner", label: "Owner" }]} /><ConfirmDisclosure trigger="Remove" triggerVariant="outline" title={`Remove ${member.displayName || member.email}?`} description="They will lose access to this workspace and its applications immediately. Their JustCD account and activity history will remain." confirmLabel="Remove member" onConfirm={() => removeMember(member)} disabled={memberActionId !== null} /></> : <span className="text-[10px] capitalize text-muted-foreground">{member.role}</span>}</div>)}</div> : <EmptyState title="No additional members yet" description="The workspace owner is the only member so far." />}
         </Panel>
       </Tabs.Panel>
       {workspace && workspace.role !== "viewer" && <Tabs.Panel value="connections" className="outline-none">
-        <div className="mb-5 flex flex-wrap items-end justify-between gap-4"><div><h2 className="text-sm font-semibold">Workspace connections</h2><p className="mt-1 text-xs text-muted-foreground">Manage the repositories, targets, and secrets used by {workspace?.name ?? "this workspace"}.</p></div>{workspace.role === "owner" && <Link href={`/workspaces/${workspaceID}/clusters/new`}><Button>Connect cluster</Button></Link>}</div>
+        <div className="mb-5"><h2 className="text-sm font-semibold">Workspace connections</h2><p className="mt-1 text-xs text-muted-foreground">Manage the repositories, targets, and secrets used by {workspace?.name ?? "this workspace"}.</p></div>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {[
             { id: "git-sources", title: "Git sources", description: "Repositories tracked by this workspace" },

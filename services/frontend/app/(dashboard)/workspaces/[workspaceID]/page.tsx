@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
 import { Tabs } from "@base-ui/react/tabs"
+import { Badge } from "@/components/reui/badge"
 import { Button } from "@/components/ui/button"
 import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
@@ -141,12 +142,22 @@ export default function WorkspaceDetailPage() {
   }
 
   return <>
-    <PageHeading title={workspace?.name ?? (loading ? "Loading workspace…" : "Workspace not found")} description={workspace?.description || "Manage Git-driven applications and access scoped to this workspace."} actions={workspace && <>{workspace.role !== "viewer" && <ActionLink href={`/applications/new?workspaceId=${workspace.id}`}><span aria-hidden="true">＋</span> New application</ActionLink>}</>} />
+    <PageHeading
+      title={workspace?.name ?? (loading ? "Loading workspace…" : "Workspace not found")}
+      description={workspace?.description || "Manage Git-driven applications and access scoped to this workspace."}
+      actions={workspace && (
+        activeTab === "applications" && workspace.role !== "viewer"
+          ? <ActionLink href={`/applications/new?workspaceId=${workspace.id}`}><span aria-hidden="true">＋</span> New application</ActionLink>
+          : activeTab === "connections" && workspace.role === "owner"
+            ? <ActionLink href={`/workspaces/${workspace.id}/clusters/new`}><span aria-hidden="true">＋</span> Connect cluster</ActionLink>
+            : undefined
+      )}
+    />
     {error && <ErrorNotice error={error} />}
     {deletionPlans.length > 0 && <div role="status" className="mb-5 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><p className="font-medium">Deletion plans are ready for review.</p><p className="mt-1 text-xs">Approve and apply each application plan. Once all managed resources are gone, choose “Delete resources” here again to remove the workspace record.</p><ul className="mt-3 space-y-1">{deletionPlans.map((item) => <li key={item.applicationId}><Link href={`/applications/${item.applicationId}?tab=changes`} className="underline underline-offset-4">{item.applicationName} · {item.managedResources} resources →</Link></li>)}</ul></div>}
     <Tabs.Root value={activeTab} onValueChange={(value) => selectTab(String(value))}>
       <Tabs.List aria-label="Workspace views" className="mb-6 flex gap-6 overflow-x-auto border-b" activateOnFocus>
-        {[["applications", "Applications", applications.length], ["members", "Members", members.length], ...(workspace && workspace.role !== "viewer" ? [["connections", "Connections", null]] : []), ...(workspace?.role === "owner" ? [["settings", "Workspace settings", null]] : [])].map(([value, label, count]) => <Tabs.Tab key={String(value)} value={String(value)} className="flex shrink-0 items-center gap-2 border-b-2 border-transparent px-1 pb-3 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[active]:border-primary data-[active]:text-foreground">{label}{count !== null && <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">{count}</span>}</Tabs.Tab>)}
+        {[["applications", "Applications", applications.length], ["members", "Members", members.length], ...(workspace && workspace.role !== "viewer" ? [["connections", "Connections", null]] : []), ...(workspace?.role === "owner" ? [["settings", "Workspace settings", null]] : [])].map(([value, label, count]) => <Tabs.Tab key={String(value)} value={String(value)} className="flex shrink-0 items-center gap-2 border-b-2 border-transparent px-1 pb-3 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[active]:border-primary data-[active]:text-foreground">{label}{count !== null && <Badge size="xs" variant="secondary">{count}</Badge>}</Tabs.Tab>)}
       </Tabs.List>
       <Tabs.Panel value="applications" className="outline-none">
         <Panel surface="flat" title="Applications" description="Deployments reconciled by this workspace">
@@ -164,7 +175,7 @@ export default function WorkspaceDetailPage() {
         </Panel>
       </Tabs.Panel>
       {workspace && workspace.role !== "viewer" && <Tabs.Panel value="connections" className="outline-none">
-        <div className="mb-5 flex flex-wrap items-end justify-between gap-4"><div><h2 className="text-sm font-semibold">Workspace connections</h2><p className="mt-1 text-xs text-muted-foreground">Manage the repositories, targets, and secrets used by {workspace?.name ?? "this workspace"}.</p></div>{workspace.role === "owner" && <Link href={`/workspaces/${workspaceID}/clusters/new`}><Button>Connect cluster</Button></Link>}</div>
+        <div className="mb-5"><h2 className="text-sm font-semibold">Workspace connections</h2><p className="mt-1 text-xs text-muted-foreground">Manage the repositories, targets, and secrets used by {workspace?.name ?? "this workspace"}.</p></div>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {[
             { id: "git-sources", title: "Git sources", description: "Repositories tracked by this workspace" },

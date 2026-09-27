@@ -38,6 +38,7 @@ export default function ConnectClusterPage() {
   const [credentials, setCredentials] = useState<Credential[]>([])
   const [step, setStep] = useState(1)
   const [highestStep, setHighestStep] = useState(1)
+  const [loadedWorkspaceId, setLoadedWorkspaceId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown | null>(null)
   const [credentialId, setCredentialId] = useState("")
@@ -54,6 +55,7 @@ export default function ConnectClusterPage() {
   const [bindingsLoadedFor, setBindingsLoadedFor] = useState("")
   const [namespace, setNamespace] = useState("default")
   const [report, setReport] = useState<KubernetesPermissionReport | null>(null)
+  const loading = loadedWorkspaceId !== workspaceID
 
   useEffect(() => {
     let active = true
@@ -63,11 +65,12 @@ export default function ConnectClusterPage() {
       api<ListResponse<Cluster>>(`/api/v1/clusters?workspaceId=${encodeURIComponent(workspaceID)}`),
     ]).then(([workspaces, credentialList, clusterList]) => {
       if (!active) return
+      setError(null)
       setWorkspace(workspaces.items.find((item) => item.id === workspaceID) ?? null)
       setCredentials(credentialList.items.filter((item) => item.kind === "kubernetes-token" || item.kind === "kubeconfig"))
       setClusters(clusterList.items)
       setSelectedClusterId(clusterList.items[0]?.id ?? "")
-    }).catch((cause) => active && setError(cause))
+    }).catch((cause) => active && setError(cause)).finally(() => active && setLoadedWorkspaceId(workspaceID))
     return () => { active = false }
   }, [workspaceID])
 
@@ -179,9 +182,9 @@ export default function ConnectClusterPage() {
   }
 
   return <>
-    <PageHeading title="Connect a Kubernetes cluster" description={`A guided, verifiable connection for ${workspace?.name ?? "this workspace"}. Existing credentials stay reusable and secret values never return to the browser.`} actions={<Link href={`/workspaces/${workspaceID}?tab=connections`}><Button variant="outline">Exit workflow</Button></Link>} />
-    {error && <div role="alert" className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive"><span>{errorMessage(error)}</span><ErrorDetailsButton error={error} /></div>}
-    {workspace && workspace.role !== "owner" ? <div role="alert" className="rounded-2xl border bg-card p-6"><h2 className="text-sm font-semibold">Workspace owner access required</h2><p className="mt-2 text-xs leading-5 text-muted-foreground">Only a workspace owner can add credentials, cluster endpoints, or namespace bindings. Ask an owner to connect this cluster or accept a share.</p></div> : <Stepper orientation="vertical" value={step} onValueChange={(value) => { if (value <= highestStep) setStep(value) }} className="grid items-start gap-7 lg:grid-cols-[240px_minmax(0,1fr)]">
+    <PageHeading title="Connect a Kubernetes cluster" description={`A guided, verifiable connection for ${workspace?.name ?? "this workspace"}. Existing credentials stay reusable and secret values never return to the browser.`} actions={<Link href={`/workspaces/${workspaceID}/connections/clusters`}><Button variant="outline">Exit workflow</Button></Link>} />
+    {!loading && error && <div role="alert" className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive"><span>{errorMessage(error)}</span><ErrorDetailsButton error={error} /></div>}
+    {loading ? <div role="status" className="h-44 animate-pulse rounded-xl border bg-muted/40 motion-reduce:animate-none" /> : !workspace ? <div role="alert" className="rounded-xl border bg-card p-6 text-sm text-muted-foreground">Workspace not found or unavailable to your account.</div> : workspace.role !== "owner" ? <div role="alert" className="rounded-xl border bg-card p-6"><h2 className="text-sm font-semibold">Workspace owner access required</h2><p className="mt-2 text-xs leading-5 text-muted-foreground">Only a workspace owner can add credentials, cluster endpoints, or namespace bindings. Ask an owner to connect this cluster or accept a share.</p></div> : <Stepper orientation="vertical" value={step} onValueChange={(value) => { if (value <= highestStep) setStep(value) }} className="grid items-start gap-7 lg:grid-cols-[240px_minmax(0,1fr)]">
       <aside className="rounded-2xl border bg-card p-4 sm:p-5 lg:sticky lg:top-8">
         <div className="mb-4 flex items-center gap-4 lg:mb-6">
           <IconStack className="cluster-icon-stack h-14 w-12 text-primary lg:h-16 lg:w-14"><HugeiconsIcon icon={ServerStack02Icon} className="size-5" /></IconStack>
@@ -224,7 +227,7 @@ export default function ConnectClusterPage() {
           <form onSubmit={saveNamespace} className="space-y-5"><FormField label="Namespace" htmlFor="wizard-namespace" hint={existingBindings.length ? `Existing workspace bindings: ${existingBindings.map((binding) => binding.namespace).join(", ")}. Choose one to reuse or enter another.` : "The namespace must already exist unless you later configure approved cluster-scope access."}><Input id="wizard-namespace" value={namespace} onChange={(event) => setNamespace(event.target.value)} placeholder="production" required list="wizard-existing-namespaces" /><datalist id="wizard-existing-namespaces">{existingBindings.map((binding) => <option key={binding.namespace} value={binding.namespace} />)}</datalist></FormField><div className="rounded-xl border bg-muted/30 p-4 text-xs leading-5"><strong>{workspace?.name}</strong> will use <strong>{selectedCredential?.name}</strong> for <strong>{cluster?.name}</strong>. Namespace-specific credentials can be assigned later.</div><WorkflowActions><Button type="submit" loading={busy} loadingText="Binding namespace…" disabled={busy || bindingsLoadedFor !== `${workspace?.id}:${cluster?.id}`}>{bindingsLoadedFor === `${workspace?.id}:${cluster?.id}` ? "Bind and continue" : "Checking existing bindings…"}</Button></WorkflowActions></form>
         </WorkflowPanel></StepperContent>
         <StepperContent value={4}><WorkflowPanel icon={report?.status === "passed" ? CheckmarkCircle02Icon : ShieldEnergyIcon} eyebrow="Step 4 of 4" title={report?.status === "passed" ? "Cluster connection verified" : "Verify access safely"} description="Check TLS, API discovery, authentication, and the namespace permissions JustCD needs.">
-          {!report ? <div className="space-y-5"><ReviewGrid values={[["Workspace", workspace?.name], ["Cluster", cluster?.name], ["Endpoint", cluster?.apiServer], ["Namespace", namespace], ["Credential", selectedCredential?.name]]} /><WorkflowActions><Button onClick={() => void verify()} loading={busy} loadingText="Running safe checks…">Run verification</Button></WorkflowActions></div> : <div className="space-y-5"><div className={`rounded-xl border p-5 ${report.status === "passed" ? "border-emerald-500/30 bg-emerald-500/5" : "border-amber-500/30 bg-amber-500/5"}`}><div className="flex items-center gap-3"><span className="grid size-9 place-items-center rounded-full bg-background"><HugeiconsIcon icon={report.status === "passed" ? CheckmarkCircle02Icon : ShieldEnergyIcon} className="size-5" /></span><div><p className="text-sm font-semibold capitalize">{report.status}</p><p className="mt-1 text-xs text-muted-foreground">{report.status === "passed" ? `All required namespace checks passed on ${report.serverVersion ?? "the Kubernetes API"}.` : report.failure?.message ?? `${report.checks.filter((item) => item.status === "missing").length} required permissions are missing.`}</p></div></div>{report.failure?.remediation && <p className="mt-4 border-t pt-3 text-xs leading-5"><strong>How to fix:</strong> {report.failure.remediation}</p>}</div><ReviewGrid values={[["Checks passed", `${report.checks.filter((item) => item.status === "passed").length} / ${report.checks.length}`], ["Namespace", report.namespace], ["Read Pods", report.canReadPods ? "Allowed" : "Not allowed"]]} /><WorkflowActions><Button variant="outline" onClick={() => void verify()} loading={busy}>Run again</Button><Button onClick={() => router.push(`/workspaces/${workspaceID}?tab=connections`)}>{report.status === "passed" ? "Finish connection" : "Finish with warnings"}</Button></WorkflowActions></div>}
+          {!report ? <div className="space-y-5"><ReviewGrid values={[["Workspace", workspace?.name], ["Cluster", cluster?.name], ["Endpoint", cluster?.apiServer], ["Namespace", namespace], ["Credential", selectedCredential?.name]]} /><WorkflowActions><Button onClick={() => void verify()} loading={busy} loadingText="Running safe checks…">Run verification</Button></WorkflowActions></div> : <div className="space-y-5"><div className={`rounded-xl border p-5 ${report.status === "passed" ? "border-emerald-500/30 bg-emerald-500/5" : "border-amber-500/30 bg-amber-500/5"}`}><div className="flex items-center gap-3"><span className="grid size-9 place-items-center rounded-full bg-background"><HugeiconsIcon icon={report.status === "passed" ? CheckmarkCircle02Icon : ShieldEnergyIcon} className="size-5" /></span><div><p className="text-sm font-semibold capitalize">{report.status}</p><p className="mt-1 text-xs text-muted-foreground">{report.status === "passed" ? `All required namespace checks passed on ${report.serverVersion ?? "the Kubernetes API"}.` : report.failure?.message ?? `${report.checks.filter((item) => item.status === "missing").length} required permissions are missing.`}</p></div></div>{report.failure?.remediation && <p className="mt-4 border-t pt-3 text-xs leading-5"><strong>How to fix:</strong> {report.failure.remediation}</p>}</div><ReviewGrid values={[["Checks passed", `${report.checks.filter((item) => item.status === "passed").length} / ${report.checks.length}`], ["Namespace", report.namespace], ["Read Pods", report.canReadPods ? "Allowed" : "Not allowed"]]} /><WorkflowActions><Button variant="outline" onClick={() => void verify()} loading={busy}>Run again</Button><Button onClick={() => router.push(`/workspaces/${workspaceID}/connections/clusters`)}>{report.status === "passed" ? "Finish connection" : "Finish with warnings"}</Button></WorkflowActions></div>}
         </WorkflowPanel></StepperContent>
       </StepperPanel>
     </Stepper>}

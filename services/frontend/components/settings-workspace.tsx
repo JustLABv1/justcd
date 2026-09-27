@@ -98,6 +98,24 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
   const [busy, setBusy] = useState(false)
   const [busyMessage, setBusyMessage] = useState("")
   const [loading, setLoading] = useState(true)
+  const [registeredPrimaryAction, setRegisteredPrimaryAction] = useState<{
+    section: string
+    run: () => void
+  } | null>(null)
+  const registerPrimaryAction = useCallback(
+    (actionSection: string, run: (() => void) | null) => {
+      setRegisteredPrimaryAction(run ? { section: actionSection, run } : null)
+    },
+    []
+  )
+  const registerCredentialAction = useCallback(
+    (run: (() => void) | null) => registerPrimaryAction("credentials", run),
+    [registerPrimaryAction]
+  )
+  const registerNamespaceAction = useCallback(
+    (run: (() => void) | null) => registerPrimaryAction("namespaces", run),
+    [registerPrimaryAction]
+  )
 
   const loadBase = useCallback(async () => {
     const [session, workspaceList] = await Promise.all([
@@ -245,6 +263,39 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
           current?.description ??
           (workspaceScoped ? "Repositories, Kubernetes access, and credentials for this workspace." : "Sign-in providers and accounts for the JustCD instance.")
         }
+        actions={
+          workspaceScoped && workspace?.role === "owner" && !scopeLoading ? (
+            section === "git-sources" ? (
+              <Button
+                render={<Link href={`/workspaces/${workspace.id}/git-sources/new`} />}
+              >
+                Connect a Git source
+              </Button>
+            ) : section === "clusters" ? (
+              <Button
+                render={<Link href={`/workspaces/${workspace.id}/clusters/new`} />}
+              >
+                Connect a cluster
+              </Button>
+            ) : section === "credentials" ? (
+              <Button
+                type="button"
+                disabled={busy || registeredPrimaryAction?.section !== section}
+                onClick={() => registeredPrimaryAction?.run()}
+              >
+                Add credential
+              </Button>
+            ) : section === "namespaces" && clusterId ? (
+              <Button
+                type="button"
+                disabled={busy || registeredPrimaryAction?.section !== section}
+                onClick={() => registeredPrimaryAction?.run()}
+              >
+                Grant namespace access
+              </Button>
+            ) : null
+          ) : null
+        }
       />
       {error && (
         <div
@@ -361,30 +412,6 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                   )}
 
                   {workspaceScoped && !workspace && <EmptyState title="Workspace unavailable" description="You need workspace access to manage its connections." href="/workspaces" action="View workspaces" />}
-                  {workspaceScoped && section === "namespaces" && (
-                    <div className="mb-6 max-w-sm">
-                          <FormField
-                            label="Active cluster"
-                            htmlFor="active-cluster"
-                          >
-                            <FormSelect
-                              id="active-cluster"
-                              className="w-full sm:min-w-[220px]"
-                              value={clusterId}
-                              onValueChange={(value) => {
-                                setError(null)
-                                setClusterId(value)
-                              }}
-                              emptyOption="Select cluster"
-                              items={clusters.map((item) => ({
-                                value: item.id,
-                                label: item.name,
-                              }))}
-                            />
-                          </FormField>
-                    </div>
-                  )}
-
                   {!section && !user?.isAdmin ? <EmptyState title="Administrator access required" description="Instance settings are available to administrators. Workspace connections live on each workspace page." href="/workspaces" action="View workspaces" /> : !section ? (
                     <div className="space-y-8">
                       <div className="flex flex-col justify-between gap-4 rounded-2xl border bg-card p-6 sm:flex-row sm:items-center">
@@ -497,6 +524,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                               )
                             )
                           }
+                          onPrimaryActionChange={registerCredentialAction}
                         />
                       )}
                       {workspaceScoped && workspace && section === "clusters" && !scopeLoading && (
@@ -572,6 +600,12 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                             )}
                             credentials={namespaceCredentials}
                             bindings={bindings}
+                            clusters={clusters}
+                            activeClusterId={clusterId}
+                            onClusterChange={(value) => {
+                              setError(null)
+                              setClusterId(value)
+                            }}
                             busy={busy}
                             action={action}
                             onCreated={(binding) =>
@@ -590,6 +624,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                                 )
                               )
                             }
+                            onPrimaryActionChange={registerNamespaceAction}
                           />
                         )}
                       {section === "oidc" && user?.isAdmin && (
@@ -648,6 +683,7 @@ function CredentialPanel({
   action,
   onCreated,
   onUpdated,
+  onPrimaryActionChange,
 }: {
   workspace?: Workspace
   user: User | null
@@ -660,6 +696,7 @@ function CredentialPanel({
   ) => Promise<void>
   onCreated: (value: Credential) => void
   onUpdated: (value: Credential) => void
+  onPrimaryActionChange: (run: (() => void) | null) => void
 }) {
   const [name, setName] = useState("")
   const [kind, setKind] = useState<Credential["kind"]>("kubernetes-token")
@@ -669,6 +706,19 @@ function CredentialPanel({
   const [editing, setEditing] = useState<Credential | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const isAdmin = user?.isAdmin ?? false
+  const openCreateDialog = useCallback(() => {
+    setEditing(null)
+    setName("")
+    setKind("kubernetes-token")
+    setSecretOne("")
+    setSecretTwo("")
+    setUsername("")
+    setDialogOpen(true)
+  }, [])
+  useEffect(() => {
+    onPrimaryActionChange(openCreateDialog)
+    return () => onPrimaryActionChange(null)
+  }, [onPrimaryActionChange, openCreateDialog])
   const fields =
     kind === "git-ssh"
       ? {
@@ -751,17 +801,13 @@ function CredentialPanel({
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-6">
-        <div className="rounded-2xl border bg-card p-6">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <p className="text-[11px] font-medium">Available credentials</p>
-            <div className="flex items-center gap-3"><span className="text-[10px] text-muted-foreground">{credentials.length} total</span>{workspace?.role === "owner" && <Button size="sm" type="button" onClick={() => { setEditing(null); setName(""); setKind("kubernetes-token"); setSecretOne(""); setSecretTwo(""); setUsername(""); setDialogOpen(true) }}>Add credential</Button>}</div>
-          </div>
+        <SettingsInventory title="Available credentials" count={credentials.length}>
           {credentials.length ? (
-            <div className="space-y-2">
+            <div className="divide-y">
               {credentials.map((credential) => (
                 <div
                   key={credential.id}
-                  className="flex items-center gap-3 rounded-lg border px-3 py-2"
+                  className="flex flex-wrap items-center gap-3 px-5 py-3"
                 >
                   <span className="grid size-7 place-items-center rounded-md bg-muted text-[10px]">
                     {credential.kind.startsWith("git") ? "G" : "K"}
@@ -798,11 +844,11 @@ function CredentialPanel({
               ))}
             </div>
           ) : (
-            <p className="text-[11px] text-muted-foreground">
+            <p className="px-5 py-5 text-sm text-muted-foreground">
               Credentials will be listed here by name only.
             </p>
           )}
-        </div>
+        </SettingsInventory>
         <ConnectionDialog open={dialogOpen} onOpenChange={setDialogOpen} busy={busy} title={editing ? "Edit credential" : "Add credential"} description="Credentials are encrypted and their secret values are never shown again.">
         <form
           className="space-y-5"
@@ -1122,89 +1168,79 @@ function ClusterPanel({
     <div className="space-y-6">
       <SettingsInventory title="Connected clusters" count={clusters.length}>
         {clusters.length ? (
-          <div className="divide-y border-b">
+          <div className="divide-y">
             {clusters.map((cluster) => (
               <div
                 key={cluster.id}
-                className="flex flex-wrap items-center gap-3 px-5 py-3"
+                className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
               >
-                <span className="grid size-8 place-items-center rounded-lg bg-violet-500/10 text-xs text-violet-700">
-                  K8s
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-xs font-medium">
-                    {cluster.name}
+                <div className="flex min-w-0 flex-1 items-start gap-3">
+                  <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-violet-500/10 text-xs text-violet-700">
+                    K8s
                   </span>
-                  <span className="block truncate font-mono text-[9px] text-muted-foreground">
-                    {cluster.apiServer}
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs font-medium">
+                      {cluster.name}
+                    </span>
+                    <span className="block truncate font-mono text-[9px] text-muted-foreground">
+                      {cluster.apiServer}
+                    </span>
+                    <span className="mt-2 flex flex-wrap gap-1.5">
+                      <span className="inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
+                        {cluster.shared ? `Shared by ${cluster.ownerWorkspaceName ?? "another workspace"}` : cluster.workspaceId ? "Private to this workspace" : "Legacy instance-owned"}
+                      </span>
+                      <span className="inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
+                        {workspaceCredentialByCluster[cluster.id] ? "Workspace default configured" : cluster.shared ? "Workspace credential needed" : cluster.defaultCredentialId ? "Legacy instance default" : "No workspace default"}
+                      </span>
+                      <span className="inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
+                        {latestTests[cluster.id] ? `Last test: ${latestTests[cluster.id].report.status} · ${new Date(latestTests[cluster.id].checkedAt).toLocaleString()}` : "Not tested yet"}
+                      </span>
+                    </span>
                   </span>
-                  <span className="mt-1 inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
-                    {cluster.shared ? `Shared by ${cluster.ownerWorkspaceName ?? "another workspace"}` : cluster.workspaceId ? "Private to this workspace" : "Legacy instance-owned"}
-                  </span>
-                  <span className="ml-1 mt-1 inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
-                    {workspaceCredentialByCluster[cluster.id] ? "Workspace default configured" : cluster.shared ? "Workspace credential needed" : cluster.defaultCredentialId ? "Legacy instance default" : "No workspace default"}
-                  </span>
-                  <span className="ml-1 mt-1 inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
-                    {latestTests[cluster.id] ? `Last test: ${latestTests[cluster.id].report.status} · ${new Date(latestTests[cluster.id].checkedAt).toLocaleString()}` : "Not tested yet"}
-                  </span>
-                </span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  type="button"
-                  loading={testingClusterId === cluster.id}
-                  loadingText="Testing…"
-                  disabled={busy || !workspace}
-                  onClick={() => test(cluster)}
-                >
-                  Test
-                </Button>
-                {workspace?.role === "owner" && (cluster.workspaceId === workspace.id || (!cluster.workspaceId && user?.isAdmin)) && (
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
                   <Button
                     size="sm"
                     variant="outline"
                     type="button"
-                    disabled={busy}
-                    onClick={() => edit(cluster)}
+                    loading={testingClusterId === cluster.id}
+                    loadingText="Testing…"
+                    disabled={busy || !workspace}
+                    onClick={() => test(cluster)}
                   >
-                    Edit
+                    Test
                   </Button>
-                )}
+                  {workspace?.role === "owner" && (cluster.workspaceId === workspace.id || (!cluster.workspaceId && user?.isAdmin)) && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => edit(cluster)}
+                    >
+                      Edit
+                    </Button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
         ) : null}
         {!clusters.length && (
-          <EmptyState title="No connected clusters yet" description="Connect a new cluster or ask another workspace owner to offer one. Credentials stay private to each workspace." href={workspace?.role === "owner" ? `/workspaces/${workspace.id}/clusters/new` : undefined} action={workspace?.role === "owner" ? "Connect a cluster" : undefined} />
+          <EmptyState title="No connected clusters yet" description="Connect a new cluster or ask another workspace owner to offer one. Credentials stay private to each workspace." />
         )}
       </SettingsInventory>
-      {workspace?.role === "owner" && clusters.length > 0 && <div className="flex justify-end"><Link href={`/workspaces/${workspace.id}/clusters/new`}><Button variant="outline">Connect a cluster</Button></Link></div>}
       {workspace && clusters.length > 0 && (
-        <div className="flex flex-wrap items-end gap-4 rounded-2xl border bg-card p-5 sm:p-6">
-          <div className="min-w-0 flex-1"><h2 className="text-sm font-semibold">Workspace authentication</h2><p className="mt-1 text-xs text-muted-foreground">Choose a cluster to review its workspace credential.</p></div>
-          <div className="w-full sm:w-56">
-            <FormField label="Cluster" htmlFor="workspace-cluster">
-              <FormSelect
-                id="workspace-cluster"
-                value={activeClusterId}
-                onValueChange={(value) => {
-                  setSelectedClusterId(value)
-                  setCredentialLoadedFor("")
-                  setCredentialLoadError(null)
-                }}
-                emptyOption="Select cluster"
-                items={clusters.map((cluster) => ({
-                  value: cluster.id,
-                  label: cluster.name,
-                }))}
-              />
-            </FormField>
+        <section className="overflow-hidden rounded-xl border bg-card">
+          <div className="border-b px-5 py-4"><h2 className="text-sm font-semibold">Workspace authentication</h2><p className="mt-1 text-xs text-muted-foreground">Choose the credential this workspace uses for namespace access on each cluster.</p></div>
+          <div className="grid gap-4 px-5 py-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+            <div className="max-w-sm"><FormField label="Cluster" htmlFor="workspace-cluster"><FormSelect id="workspace-cluster" value={activeClusterId} onValueChange={(value) => { setSelectedClusterId(value); setCredentialLoadedFor(""); setCredentialLoadError(null) }} emptyOption="Select cluster" items={clusters.map((cluster) => ({ value: cluster.id, label: cluster.name }))} /></FormField></div>
+            <div className="flex flex-wrap items-center gap-3 sm:justify-end"><span className="text-xs text-muted-foreground">{workspaceCredentialByCluster[activeClusterId] ? "Credential configured" : "No workspace credential"}</span><Button size="sm" variant="outline" type="button" disabled={workspace.role !== "owner" || !activeClusterId || credentialLoadedFor !== activeClusterId} onClick={() => setAuthDialogOpen(true)}>Configure</Button></div>
           </div>
-          <div className="flex items-center gap-3 pb-0.5"><span className="text-xs text-muted-foreground">{workspaceCredentialByCluster[activeClusterId] ? "Credential configured" : "No workspace credential"}</span><Button size="sm" variant="outline" type="button" disabled={workspace.role !== "owner" || !activeClusterId || credentialLoadedFor !== activeClusterId} onClick={() => setAuthDialogOpen(true)}>Configure</Button></div>
           {credentialLoadError != null && (
-            <div role="alert" className="flex basis-full flex-wrap items-center justify-between gap-3 text-sm text-destructive"><span>{errorMessage(credentialLoadError)}</span><ErrorDetailsButton error={credentialLoadError} /></div>
+            <div role="alert" className="flex flex-wrap items-center justify-between gap-3 border-t px-5 py-3 text-sm text-destructive"><span>{errorMessage(credentialLoadError)}</span><ErrorDetailsButton error={credentialLoadError} /></div>
           )}
-        </div>
+        </section>
       )}
       <ConnectionDialog open={authDialogOpen} onOpenChange={setAuthDialogOpen} busy={busy} title="Configure workspace authentication" description={`Choose the credential used for namespace bindings on ${activeCluster?.name ?? "this cluster"}. It is never shared with other workspaces.`}>
           <div className="space-y-5"><FormField
@@ -1488,56 +1524,60 @@ function GitSourcePanel({
     <div className="space-y-6">
       <SettingsInventory title="Connected repositories" count={sources.length}>
         {sources.length ? (
-          <div className="divide-y border-b">
+          <div className="divide-y">
             {sources.map((source) => (
               <div
                 key={source.id}
-                className="flex flex-wrap items-center gap-3 px-6 py-3"
+                className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
               >
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-medium">{source.name}</p>
                   <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
                     {source.repositoryUrl}
                   </p>
-                  <span className="mt-1 inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
-                    {source.shared ? `Shared by ${source.ownerWorkspaceName ?? "another workspace"}` : "Private to this workspace"}
+                  <span className="mt-2 flex flex-wrap gap-1.5">
+                    <span className="inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
+                      {source.shared ? `Shared by ${source.ownerWorkspaceName ?? "another workspace"}` : "Private to this workspace"}
+                    </span>
+                    <span className="inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
+                      {source.credentialId ? "Credential configured" : "No Git credential"}
+                    </span>
+                    <span className="inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
+                      {lastTestResults[source.id] ? `Last test: HEAD ${lastTestResults[source.id].commit.slice(0, 8)} · ${new Date(lastTestResults[source.id].testedAt).toLocaleString()}` : "Not tested in this session"}
+                    </span>
                   </span>
-                  <span className="ml-2 inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">{source.credentialId ? "Credential configured" : "No Git credential"}</span>
-                  <span className="ml-1 mt-1 inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">{lastTestResults[source.id] ? `Last test: HEAD ${lastTestResults[source.id].commit.slice(0, 8)} · ${new Date(lastTestResults[source.id].testedAt).toLocaleString()}` : "Not tested in this session"}</span>
                 </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  type="button"
-                  loading={testingSourceId === source.id}
-                  loadingText="Testing…"
-                  disabled={busy}
-                  onClick={() => test(source)}
-                >
-                  Test
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  type="button"
-                  disabled={busy || workspace?.role !== "owner" || source.shared || source.workspaceId !== workspace.id}
-                  onClick={() => edit(source)}
-                >
-                  Edit
-                </Button>
-                {!source.shared && <Button size="sm" variant="outline" type="button" disabled={busy || workspace?.role !== "owner"} onClick={() => void openWebhook(source)}>Push webhook</Button>}
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    type="button"
+                    loading={testingSourceId === source.id}
+                    loadingText="Testing…"
+                    disabled={busy}
+                    onClick={() => test(source)}
+                  >
+                    Test
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    type="button"
+                    disabled={busy || workspace?.role !== "owner" || source.shared || source.workspaceId !== workspace.id}
+                    onClick={() => edit(source)}
+                  >
+                    Edit
+                  </Button>
+                  {!source.shared && <Button size="sm" variant="outline" type="button" disabled={busy || workspace?.role !== "owner"} onClick={() => void openWebhook(source)}>Push webhook</Button>}
+                </div>
               </div>
             ))}
           </div>
         ) : null}
         {!sources.length && (
-          <p className="px-6 py-5 text-sm text-muted-foreground">
-            No Git sources are connected yet. Use the guided flow to reuse an accessible source or connect a repository with workspace-owned credentials.
-          </p>
+          <EmptyState title="No Git sources connected yet" description="Use the guided flow to reuse an accessible source or connect a repository with workspace-owned credentials." />
         )}
       </SettingsInventory>
-      {sources.length === 0 && workspace?.role === "owner" && <div className="flex justify-end"><Link href={`/workspaces/${workspace.id}/git-sources/new`}><Button>Connect a Git source</Button></Link></div>}
-      {sources.length > 0 && workspace?.role === "owner" && <div className="flex justify-end"><Link href={`/workspaces/${workspace.id}/git-sources/new`}><Button variant="outline">Connect a Git source</Button></Link></div>}
       {webhookSource && <ConnectionDialog open={!!webhookSource} onOpenChange={(open) => { if (!open) setWebhookSource(null) }} busy={busy} title={`Push webhook · ${webhookSource.name}`} description="Configure push events for this Git source. An existing PR webhook already accepts pushes too."><form className="space-y-4" onSubmit={(event) => void saveWebhook(event)}>
         {webhookInfo && <div className="mt-4 rounded-lg border bg-muted/30 p-3 text-xs"><p>{webhookInfo.configured ? "Configured" : "Not configured"}</p><code className="mt-1 block break-all">{webhookInfo.webhookUrl}</code><p className="mt-2 text-muted-foreground">For GitHub/GitLab, enable push events with this secret. For other senders, POST JSON with ref and after (commit SHA), sign the raw body with HMAC-SHA256 in X-JustCD-Signature-256, and send a unique X-JustCD-Delivery ID.</p></div>}
         <div className="mt-4"><FormField label={webhookInfo?.configured ? "Rotate webhook secret" : "Webhook secret"} htmlFor="generic-push-secret" hint="At least 16 characters. The value is never shown again."><Input id="generic-push-secret" type="password" minLength={16} required value={webhookSecret} onChange={(event) => setWebhookSecret(event.target.value)} autoComplete="new-password" /></FormField></div>
@@ -1626,15 +1666,22 @@ function GitSourcePanel({
 function NamespacePanel({
   workspace,
   cluster,
+  clusters,
+  activeClusterId,
+  onClusterChange,
   credentials,
   bindings,
   busy,
   action,
   onCreated,
   onUpdated,
+  onPrimaryActionChange,
 }: {
   workspace?: Workspace
   cluster?: Cluster
+  clusters: Cluster[]
+  activeClusterId: string
+  onClusterChange: (value: string) => void
   credentials: Credential[]
   bindings: NamespaceBinding[]
   busy: boolean
@@ -1645,6 +1692,7 @@ function NamespacePanel({
   ) => Promise<void>
   onCreated: (value: NamespaceBinding) => void
   onUpdated: (value: NamespaceBinding) => void
+  onPrimaryActionChange: (run: (() => void) | null) => void
 }) {
   const [namespace, setNamespace] = useState("")
   const [credentialId, setCredentialId] = useState("")
@@ -1656,6 +1704,16 @@ function NamespacePanel({
   >({})
   const [testingNamespace, setTestingNamespace] = useState("")
   const [includeClusterScope, setIncludeClusterScope] = useState(false)
+  const openCreateDialog = useCallback(() => {
+    setEditing(null)
+    setNamespace("")
+    setCredentialId("")
+    setDialogOpen(true)
+  }, [])
+  useEffect(() => {
+    onPrimaryActionChange(openCreateDialog)
+    return () => onPrimaryActionChange(null)
+  }, [onPrimaryActionChange, openCreateDialog])
   useEffect(() => {
     if (!workspace || !cluster) return
     api<{ credentialId: string | null }>(
@@ -1780,29 +1838,30 @@ function NamespacePanel({
   }
   return (
     <div className="space-y-6">
-      {workspace?.role === "owner" && cluster && <div className="flex justify-end"><Button type="button" onClick={() => { setEditing(null); setNamespace(""); setCredentialId(""); setDialogOpen(true) }}>Grant namespace access</Button></div>}
-      <SettingsInventory title="Allowed namespaces" count={bindings.length}>
+      <SettingsInventory title="Allowed namespaces" count={bindings.length} control={<FormField label="Active cluster" htmlFor="active-cluster"><FormSelect id="active-cluster" value={activeClusterId} onValueChange={onClusterChange} emptyOption="Select cluster" items={clusters.map((item) => ({ value: item.id, label: item.name }))} /></FormField>}>
         {bindings.length ? (
-          <div className="divide-y border-b">
+          <div className="divide-y">
             {bindings.map((binding) => {
               const record = reports[binding.namespace]
               const report = record?.report
               return (
                 <div
                   key={binding.namespace}
-                  className="flex flex-wrap items-center justify-between gap-3 px-6 py-3"
+                  className="grid gap-3 px-5 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
                 >
-                  <span className="font-mono text-xs">{binding.namespace}</span>
-                  <span className="text-[10px] text-muted-foreground">
-                    {binding.credentialId
-                      ? credentials.find(
-                          (item) => item.id === binding.credentialId
-                        )?.name || "namespace credential"
-                      : workspaceDefault
-                        ? "Workspace credential"
-                        : "Cluster default"}
-                  </span>
-                  <div className="flex gap-2">
+                  <div className="min-w-0">
+                    <p className="font-mono text-xs">{binding.namespace}</p>
+                    <p className="mt-1 text-[10px] text-muted-foreground">
+                      {binding.credentialId
+                        ? credentials.find(
+                            (item) => item.id === binding.credentialId
+                          )?.name || "Namespace credential"
+                        : workspaceDefault
+                          ? "Workspace credential"
+                          : "Cluster default"}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2 sm:justify-end">
                     <Button
                       size="sm"
                       variant="outline"
@@ -1831,7 +1890,7 @@ function NamespacePanel({
                       Edit
                     </Button>
                   </div>
-                  <div className="basis-full text-[10px] text-muted-foreground">
+                  <div className="text-[10px] text-muted-foreground sm:col-span-2">
                     {record ? (
                       <>
                         Latest self-test:{" "}
@@ -1859,9 +1918,7 @@ function NamespacePanel({
           </div>
         ) : null}
         {!bindings.length && (
-          <p className="px-6 py-5 text-sm text-muted-foreground">
-            No allowed namespaces yet. Grant access to a namespace to get started.
-          </p>
+          <EmptyState title="No allowed namespaces yet" description="Grant access to a namespace to get started." />
         )}
       </SettingsInventory>
       <div className="rounded-xl border bg-card px-5 py-4">
@@ -2162,9 +2219,7 @@ function OIDCPanel({
           </div>
         ) : null}
         {!providers.length && (
-          <p className="px-6 py-5 text-sm text-muted-foreground">
-            No identity providers yet. Use the form below to get started.
-          </p>
+          <EmptyState title="No identity providers yet" description="Use the form below to get started." />
         )}
       </SettingsInventory>
       <form
@@ -2549,9 +2604,7 @@ function PlatformUsersPanel({
           </ul>
         )}
         {!usersLoading && !usersError && !users.length && (
-          <p className="px-6 py-5 text-sm text-muted-foreground">
-            No platform users yet. Use the form below to create the first local account.
-          </p>
+          <EmptyState title="No platform users yet" description="Use the form below to create the first local account." />
         )}
       </SettingsInventory>
       <form
@@ -2616,19 +2669,19 @@ function PlatformUsersPanel({
 function SettingsInventory({
   title,
   count,
+  control,
   children,
 }: {
   title: string
   count: number
+  control?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
-    <section className="overflow-hidden rounded-2xl border bg-card">
-      <div className="flex items-center justify-between border-b px-6 py-4">
-        <h2 className="text-sm font-semibold">{title}</h2>
-        <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground tabular-nums">
-          {count}
-        </span>
+    <section className="overflow-hidden rounded-xl border bg-card">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b px-5 py-4">
+        <div className="flex items-center gap-2"><h2 className="text-sm font-semibold">{title}</h2><span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground tabular-nums">{count}</span></div>
+        {control && <div className="w-full sm:w-56">{control}</div>}
       </div>
       {children}
     </section>

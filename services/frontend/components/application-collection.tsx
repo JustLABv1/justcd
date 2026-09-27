@@ -175,7 +175,7 @@ export function ApplicationCollection({
 
   if (!available.length)
     return (
-      <div className="rounded-2xl border border-dashed bg-card">
+      <div className="rounded-xl border border-dashed bg-card">
         <EmptyState
           title="Your next deployment starts here"
           description="Connect a Git repository and a Kubernetes target to bring your first application online."
@@ -186,98 +186,107 @@ export function ApplicationCollection({
     )
   return (
     <div>
-      <div className="mb-5 flex flex-col justify-between gap-4 border-b pb-4 min-[1100px]:flex-row min-[1100px]:items-center">
+      <section
+        aria-label="Filter applications"
+        className="mb-4 flex flex-col gap-4 rounded-xl border bg-card p-4 sm:p-5"
+      >
         <div
-          className="flex flex-wrap gap-1"
-          role="group"
-          aria-label="Filter by health"
+          className="flex flex-col justify-between gap-3 min-[1100px]:flex-row min-[1100px]:items-center"
         >
-          {(
-            [
-              ["all", "All apps"],
-              ["attention", "Needs attention"],
-              ["synced", "In sync"],
-              ["other", "Other"],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={filter === value}
-              onClick={() => setFilter(value)}
-              className={`flex min-h-9 items-center gap-2 rounded-lg px-3 text-xs font-medium transition-colors ${filter === value ? "border border-foreground bg-foreground text-background" : "border border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground"}`}
-            >
-              {label}
-              <span
-                className={`rounded px-1.5 py-0.5 text-[10px] tabular-nums ${filter === value ? "bg-background/15" : "bg-muted"}`}
+          <div
+            className="flex flex-wrap gap-1"
+            role="group"
+            aria-label="Filter by health"
+          >
+            {(
+              [
+                ["all", "All apps"],
+                ["attention", "Needs attention"],
+                ["synced", "In sync"],
+                ["other", "Other"],
+              ] as const
+            ).map(([value, label]) => (
+              <Button
+                key={value}
+                type="button"
+                aria-pressed={filter === value}
+                onClick={() => setFilter(value)}
+                size="sm"
+                variant={filter === value ? "secondary" : "ghost"}
+                className="h-8 gap-2"
               >
-                {counts[value]}
-              </span>
-            </button>
-          ))}
+                {label}
+                <span className="rounded bg-background/60 px-1.5 py-0.5 text-[10px] leading-none tabular-nums">
+                  {counts[value]}
+                </span>
+              </Button>
+            ))}
+          </div>
+          <div
+            className="flex w-fit gap-1 rounded-lg border bg-background p-1"
+            role="group"
+            aria-label="Application view"
+          >
+            {(["cards", "table"] as const).map((value) => (
+              <Button
+                type="button"
+                key={value}
+                aria-pressed={view === value}
+                onClick={() => setView(value)}
+                size="sm"
+                variant={view === value ? "secondary" : "ghost"}
+                className="capitalize"
+              >
+                {value}
+              </Button>
+            ))}
+          </div>
         </div>
-        <div
-          className="flex w-fit gap-1 rounded-lg border bg-card p-1"
-          role="group"
-          aria-label="Application view"
-        >
-          {(["cards", "table"] as const).map((value) => (
-            <button
-              type="button"
-              key={value}
-              aria-pressed={view === value}
-              onClick={() => setView(value)}
-              className={`rounded-md px-3 py-1.5 text-xs capitalize ${view === value ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-            >
-              {value}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="mb-5 flex flex-wrap items-center gap-3">
-        <div className="relative min-w-48 flex-1">
-          <WorkspaceIcon
-            name="search"
-            className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted-foreground"
-          />
-          <Input
-            aria-label="Search applications"
-            placeholder="Search applications, namespaces, revisions…"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            className="h-9 bg-card pl-9"
-          />
-        </div>
-        {workspaces && (
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative min-w-48 flex-1">
+            <WorkspaceIcon
+              name="search"
+              className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted-foreground"
+            />
+            <Input
+              aria-label="Search applications"
+              placeholder="Search applications, namespaces, revisions…"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              className="h-9 bg-background pl-9"
+            />
+          </div>
+          {workspaces && (
+            <FormSelect
+              ariaLabel="Filter by workspace"
+              value={workspaceId}
+              onValueChange={setWorkspaceId}
+              className="w-44"
+              items={[
+                { value: "all", label: "All workspaces" },
+                ...workspaces.map((workspace) => ({
+                  value: workspace.id,
+                  label: workspace.name,
+                })),
+              ]}
+            />
+          )}
           <FormSelect
-            ariaLabel="Filter by workspace"
-            value={workspaceId}
-            onValueChange={setWorkspaceId}
-            className="w-44"
+            ariaLabel="Sort applications"
+            value={sort}
+            onValueChange={setSort}
+            className="w-40"
             items={[
-              { value: "all", label: "All workspaces" },
-              ...workspaces.map((workspace) => ({
-                value: workspace.id,
-                label: workspace.name,
-              })),
+              { value: "attention", label: "Attention first" },
+              { value: "name", label: "Name A–Z" },
+              { value: "newest", label: "Newest first" },
             ]}
           />
-        )}
-        <FormSelect
-          ariaLabel="Sort applications"
-          value={sort}
-          onValueChange={setSort}
-          className="w-40"
-          items={[
-            { value: "attention", label: "Attention first" },
-            { value: "name", label: "Name A–Z" },
-            { value: "newest", label: "Newest first" },
-          ]}
-        />
-      </div>
-      <p role="status" className="mb-3 text-xs text-muted-foreground">
-        {visible.length} of {available.length} applications
-      </p>
+        </div>
+        <p role="status" className="text-xs text-muted-foreground">
+          Showing {visible.length} of {available.length} applications
+        </p>
+      </section>
       {visible.length ? (
         view === "cards" ? (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-4">
@@ -350,7 +359,7 @@ export function ApplicationCollection({
           />
         )
       ) : (
-        <div className="rounded-2xl border border-dashed bg-card pb-6 text-center">
+        <div className="rounded-xl border border-dashed bg-card pb-6 text-center">
           <EmptyState
             title="No matching applications"
             description="Try another search or clear the filters to see all applications."

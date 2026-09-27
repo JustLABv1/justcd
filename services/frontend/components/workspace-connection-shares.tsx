@@ -2,11 +2,12 @@
 
 import Link from "next/link"
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { Badge } from "@/components/reui/badge"
 import { Button } from "@/components/ui/button"
 import { FormSelect } from "@/components/ui/form-select"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
 import { ConnectionDialog } from "@/components/connection-dialog"
-import { FormField } from "@/components/ui-kit"
+import { EmptyState, FormField } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
 import { api, errorMessage } from "@/lib/api"
 import type { Cluster, Credential, GitSource, ListResponse, Workspace, WorkspaceConnectionShare } from "@/lib/types"
@@ -125,7 +126,6 @@ export function WorkspaceConnectionShares({
 
   return <div className="space-y-6">
     {error != null && <div role="alert" className="rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">{errorMessage(error)}</div>}
-    <div className="flex justify-end">{workspace.role === "owner" && <Button type="button" onClick={() => setOfferOpen(true)}>Offer connection</Button>}</div>
     <ConnectionDialog open={offerOpen} onOpenChange={setOfferOpen} busy={busyId === "offer"} title="Offer a connection" description="The receiving workspace owner must accept. Credentials stay private.">
       <form className="space-y-4" onSubmit={(event) => void offer(event)}>
         <FormField label="Connection type" htmlFor="share-kind"><FormSelect id="share-kind" value={kind} onValueChange={(value) => { setKind(value as ShareKind); setResourceId("") }} items={[{ value: "cluster", label: "Kubernetes cluster" }, { value: "git-source", label: "Git source" }]} /></FormField>
@@ -138,8 +138,8 @@ export function WorkspaceConnectionShares({
     </ConnectionDialog>
 
     <section className="overflow-hidden rounded-2xl border bg-card">
-      <header className="flex items-center justify-between gap-3 border-b px-5 py-4"><div><h2 className="text-sm font-semibold">Connection offers and access</h2><p className="mt-1 text-xs text-muted-foreground">Private offers, accepted shares, and revoked access for {workspace.name}.</p></div><span className="rounded-md bg-muted px-2 py-1 text-[10px] tabular-nums text-muted-foreground">{shares.length}</span></header>
-      {loading ? <div role="status" className="space-y-2 p-5"><div className="h-12 animate-pulse rounded-lg bg-muted/50 motion-reduce:animate-none" /><div className="h-12 animate-pulse rounded-lg bg-muted/50 motion-reduce:animate-none" /></div> : shares.length === 0 ? <div className="p-6 text-center"><p className="text-sm font-medium">No shared connections yet</p><p className="mx-auto mt-2 max-w-md text-xs leading-5 text-muted-foreground">Connections remain private until explicitly offered and accepted. Offers and access changes will appear here.</p></div> : <div className="divide-y">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4"><div><h2 className="text-sm font-semibold">Connection offers and access</h2><p className="mt-1 text-xs text-muted-foreground">Private offers, accepted shares, and revoked access for {workspace.name}.</p></div><div className="flex shrink-0 items-center gap-2"><Badge size="sm" variant="secondary">{shares.length}</Badge>{workspace.role === "owner" && <Button size="sm" type="button" onClick={() => setOfferOpen(true)}>Offer connection</Button>}</div></header>
+      {loading ? <div role="status" className="space-y-2 p-5"><div className="h-12 animate-pulse rounded-lg bg-muted/50 motion-reduce:animate-none" /><div className="h-12 animate-pulse rounded-lg bg-muted/50 motion-reduce:animate-none" /></div> : shares.length === 0 ? <EmptyState title="No shared connections yet" description="Connections remain private until explicitly offered and accepted. Offers and access changes will appear here." /> : <div className="divide-y">
         {shares.map((share) => {
           const outgoing = share.ownerWorkspaceId === workspace.id
           const pendingForThisWorkspace = !outgoing && share.status === "pending"
@@ -148,7 +148,7 @@ export function WorkspaceConnectionShares({
           return <article key={share.id} className="space-y-3 p-5">
             <div className="flex flex-wrap items-start gap-3">
               <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/8 text-[10px] font-semibold text-primary">{share.kind === "cluster" ? "K8s" : "Git"}</span>
-              <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="text-xs font-semibold">{share.resourceName}</p><span className={`rounded-full px-2 py-0.5 text-[9px] font-medium capitalize ${share.status === "accepted" ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : share.status === "pending" ? "bg-amber-500/10 text-amber-700 dark:text-amber-300" : "bg-muted text-muted-foreground"}`}>{share.status}</span></div><p className="mt-1 truncate text-[10px] text-muted-foreground">{outgoing ? `Offered to ${share.targetWorkspaceName}` : `Shared by ${share.ownerWorkspaceName}`}{share.repositoryUrl ? ` · ${share.repositoryUrl}` : ""}</p><p className="mt-1 text-[10px] text-muted-foreground">{share.kind === "git-source" ? outgoing ? "Recipient must provide its own Git credential after accepting." : share.status === "accepted" ? `Workspace credential: ${savedCredentialName ?? "not configured"}` : "Credential access is not included." : "Kubernetes credentials are never included in cluster shares."}</p></div>
+              <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="text-xs font-semibold">{share.resourceName}</p><Badge size="xs" radius="full" variant={share.status === "accepted" ? "success-light" : share.status === "pending" ? "warning-light" : "outline"} className="capitalize">{share.status}</Badge></div><p className="mt-1 truncate text-[10px] text-muted-foreground">{outgoing ? `Offered to ${share.targetWorkspaceName}` : `Shared by ${share.ownerWorkspaceName}`}{share.repositoryUrl ? ` · ${share.repositoryUrl}` : ""}</p><p className="mt-1 text-[10px] text-muted-foreground">{share.kind === "git-source" ? outgoing ? "Recipient must provide its own Git credential after accepting." : share.status === "accepted" ? `Workspace credential: ${savedCredentialName ?? "not configured"}` : "Credential access is not included." : "Kubernetes credentials are never included in cluster shares."}</p></div>
               {pendingForThisWorkspace && workspace.role === "owner" ? <div className="flex gap-2"><Button size="sm" variant="outline" disabled={busyId !== ""} loading={busyId === share.id} onClick={() => void decide(share, false)}>Decline</Button><Button size="sm" disabled={busyId !== ""} loading={busyId === share.id} onClick={() => void decide(share, true)}>Accept</Button></div> : (outgoing || share.status === "accepted") && workspace.role === "owner" && share.status !== "revoked" && share.status !== "declined" ? <ConfirmDisclosure trigger="Revoke access" triggerVariant="outline" title="Revoke this workspace connection?" description="Applications in the receiving workspace will no longer be able to use this connection. Existing credentials stay separate." confirmLabel="Revoke access" onConfirm={() => revoke(share)} disabled={busyId !== ""} /> : null}
             </div>
             {!outgoing && share.status === "accepted" && share.kind === "git-source" && workspace.role === "owner" && <div className="grid items-end gap-3 pl-12 sm:grid-cols-[minmax(0,1fr)_auto]"><FormField label="Credential owned by this workspace" htmlFor={`shared-git-credential-${share.id}`} hint="Choose a private credential or leave blank for a public repository."><FormSelect id={`shared-git-credential-${share.id}`} value={currentCredential} onValueChange={(value) => setCredentialSelection((current) => ({ ...current, [share.id]: value }))} emptyOption="Public repository / no credential" items={ownGitCredentials.map((item) => ({ value: item.id, label: item.name }))} /></FormField><Button size="sm" variant="outline" disabled={busyId !== ""} loading={busyId === share.id} onClick={() => void saveGitCredential(share)}>Save credential</Button></div>}

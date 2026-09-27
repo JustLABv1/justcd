@@ -246,11 +246,7 @@ export default function AuditPage() {
           </Button>
         }
       />
-      {error !== null && (
-        <div className="mb-5">
-          <ErrorNotice error={error} />
-        </div>
-      )}
+      {error !== null && <ErrorNotice error={error} />}
       <div className="mb-5 flex flex-col gap-4 rounded-xl border bg-card p-4 sm:p-5">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div>
@@ -301,10 +297,12 @@ export default function AuditPage() {
           Audit events could not be loaded. Try refreshing the page.
         </div>
       ) : events.length === 0 ? (
-        <EmptyState
-          title="No activity recorded"
-          description="Administrative and deployment actions will appear here as they happen."
-        />
+        <div className="rounded-xl border bg-card">
+          <EmptyState
+            title="No activity recorded"
+            description="Administrative and deployment actions will appear here as they happen."
+          />
+        </div>
       ) : (
         <div className="grid min-w-0 gap-5 lg:min-h-0 lg:flex-1 lg:overflow-hidden lg:grid-cols-[minmax(360px,0.95fr)_minmax(0,1fr)]">
           <section

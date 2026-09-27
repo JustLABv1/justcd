@@ -49,7 +49,7 @@ export default function OverviewPage() {
         <>
           <section
             aria-label="Delivery overview"
-            className="mb-8 rounded-2xl border bg-card"
+            className="mb-8 rounded-xl border bg-card"
           >
             <div className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-4">
               <h2 className="text-sm font-semibold">Deployment status</h2>
@@ -136,7 +136,7 @@ export default function OverviewPage() {
                   View all →
                 </Link>
               </div>
-              <div className="overflow-hidden rounded-2xl border bg-card">
+              <div className="overflow-hidden rounded-xl border bg-card">
                 {attention.length ? (
                   <div className="divide-y">
                     {attention.slice(0, 5).map((app) => (
@@ -179,7 +179,7 @@ export default function OverviewPage() {
                   />
                 )}
               </div>
-              <div className="mt-8 rounded-2xl border bg-card p-5">
+              <div className="mt-8 rounded-xl border bg-card p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div><h2 className="text-sm font-semibold">Workspace connections</h2><p className="mt-1 text-xs text-muted-foreground">Manage repositories, deployment clusters, and credentials for {workspace?.name ?? "this workspace"}.</p></div>
                   {workspaceId && <Link href={`/workspaces/${workspaceId}?tab=connections`} className="text-xs font-medium text-primary hover:underline">Manage connections →</Link>}
@@ -187,7 +187,7 @@ export default function OverviewPage() {
               </div>
             </section>
             <aside className="space-y-6">
-              <section className="rounded-2xl border bg-card p-5">
+              <section className="rounded-xl border bg-card p-5">
                 <div className="flex items-center justify-between">
                   <h2 className="text-sm font-semibold">Latest checks</h2>
                   <WorkspaceIcon

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { ErrorNotice } from "@/components/workspace-ui"
-import { FormField, Panel, StatusBadge } from "@/components/ui-kit"
+import { FormField, PageHeading, Panel, StatusBadge } from "@/components/ui-kit"
 import { APIError, api } from "@/lib/api"
 import type { Application, ListResponse, PlanRecord, Workspace } from "@/lib/types"
 
@@ -122,18 +122,16 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
   }
 
   return <div className="space-y-5">
-    <header className="flex flex-wrap items-start justify-between gap-4">
-      <div>
-        {embedded ? <h2 className="text-lg font-semibold tracking-tight">Pull requests</h2> : <h1 className="text-2xl font-semibold tracking-tight">Pull requests</h1>}
-        <p className="mt-1 text-sm text-muted-foreground">{application ? `Review plans and previews for ${application.name}.` : "Review plans and optional previews for this application."}</p>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
+    {embedded ? <header className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-lg font-semibold tracking-tight">Pull requests</h2><p className="mt-1 text-sm text-muted-foreground">{application ? `Review plans and previews for ${application.name}.` : "Review plans and optional previews for this application."}</p></div><div className="flex flex-wrap items-center gap-2">
+        {source && (canConfigure ?? ownerAccess) && (showSettings
+          ? <Button variant="outline" size="sm" onClick={() => setShowSettings(false)}>Back to reviews</Button>
+          : <Button size="sm" variant={connection ? "outline" : "default"} onClick={() => setShowSettings(true)}>{connection ? "Edit settings" : "Enable PR reporting"}</Button>)}
+      </div></header> : <PageHeading title="Pull requests" description={application ? `Review plans and previews for ${application.name}.` : "Review plans and optional previews for this application."} actions={<>
         {!embedded && <Link href={`/applications/${applicationID}`}><Button variant="outline" size="sm">Back to application</Button></Link>}
         {source && (canConfigure ?? ownerAccess) && (showSettings
           ? <Button variant="outline" size="sm" onClick={() => setShowSettings(false)}>Back to reviews</Button>
           : <Button size="sm" variant={connection ? "outline" : "default"} onClick={() => setShowSettings(true)}>{connection ? "Edit settings" : "Enable PR reporting"}</Button>)}
-      </div>
-    </header>
+      </>} />}
     {error != null && <ErrorNotice error={error} />}
     {savedMessage && <p role="status" className="rounded-lg border border-emerald-300/50 bg-emerald-50 p-3 text-sm text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">{savedMessage}</p>}
     {loading ? <p role="status" className="text-sm text-muted-foreground">Loading pull requests…</p> : source ? <>

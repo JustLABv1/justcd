@@ -5,7 +5,9 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
 import { Input } from "@/components/ui/input"
-import { FormSelect } from "@/components/ui/form-select"
+import { Filters } from "@/components/reui/filters/filters"
+import { createFilterQuery, flattenFilterConditions, flattenFilterRules } from "@/components/reui/filters/filters-query"
+import type { FilterField, FilterQuery } from "@/components/reui/filters/filters-types"
 import { EmptyState, PageHeading } from "@/components/ui-kit"
 import { Badge } from "@/components/reui/badge"
 import { ErrorDetailsButton } from "@/components/error-details"
@@ -29,10 +31,7 @@ export default function ApprovalInboxPage() {
 }
 
 function WorkspaceApprovalInbox({ workspace, workspaceId }: { workspace: Workspace; workspaceId: string }) {
-  const [applicationId, setApplicationId] = useState("")
-  const [risk, setRisk] = useState("")
-  const [age, setAge] = useState("")
-  const [expiry, setExpiry] = useState("")
+  const [filterQuery, setFilterQuery] = useState<FilterQuery>(() => createFilterQuery())
   const [page, setPage] = useState(1)
   const [inbox, setInbox] = useState<Inbox | null>(null)
   const [selected, setSelected] = useState<string[]>([])
@@ -43,7 +42,20 @@ function WorkspaceApprovalInbox({ workspace, workspaceId }: { workspace: Workspa
   const [results, setResults] = useState<Result | null>(null)
   const [revision, setRevision] = useState(0)
   const refresh = useCallback(() => { setLoading(true); setError(null); setRevision(value => value + 1) }, [])
-  const filter = (setter: (value: string) => void, value: string) => { setLoading(true); setError(null); setter(value); setPage(1); setSelected([]); setResults(null) }
+  const conditions = flattenFilterConditions(filterQuery)
+  const filterValue = (field: string) => String(conditions.find((condition) => condition.field === field)?.values[0] ?? "")
+  const applicationId = filterValue("applicationId")
+  const risk = filterValue("risk")
+  const age = filterValue("age")
+  const expiry = filterValue("expiry")
+  const changeFilters = (next: FilterQuery) => {
+    const nextConditions = flattenFilterConditions(next)
+    const changed = ["applicationId", "risk", "age", "expiry"].some((field) =>
+      String(nextConditions.find((condition) => condition.field === field)?.values[0] ?? "") !== filterValue(field)
+    )
+    setFilterQuery(next)
+    if (changed) { setLoading(true); setError(null); setPage(1); setSelected([]); setResults(null) }
+  }
   useEffect(() => {
     let active = true
     const query = new URLSearchParams({ page: String(page), limit: String(pageSize) })
@@ -52,6 +64,12 @@ function WorkspaceApprovalInbox({ workspace, workspaceId }: { workspace: Workspa
     return () => { active = false }
   }, [workspaceId, applicationId, risk, age, expiry, page, revision])
   const applications = useMemo(() => (inbox?.applications ?? []).map(item => [item.id, item.name]), [inbox])
+  const fields: FilterField[] = [
+    { id: "applicationId", label: "Application", type: "select", options: applications.map(([value, label]) => ({ value, label })), operators: [{ value: "is", label: "is" }] },
+    { id: "risk", label: "Risk", type: "select", options: [{ value: "deletion", label: "Deletion" }, { value: "cluster", label: "Cluster scoped" }, { value: "takeover", label: "Takeover" }, { value: "sync", label: "Other changes" }], operators: [{ value: "is", label: "is" }] },
+    { id: "age", label: "Age", type: "select", options: [{ value: "24h", label: "Last 24 hours" }, { value: "7d", label: "Last 7 days" }, { value: "older7d", label: "Older than 7 days" }], operators: [{ value: "is", label: "is" }] },
+    { id: "expiry", label: "Expiry", type: "select", options: [{ value: "1h", label: "Within 1 hour" }, { value: "24h", label: "Within 24 hours" }, { value: "later", label: "After 24 hours" }], operators: [{ value: "is", label: "is" }] },
+  ]
   const chosen = (inbox?.items ?? []).filter(item => selected.includes(item.planId))
   const riskKey = (item: Request) => `${item.kind}:${item.deletions.length > 0}:${item.clusterScoped.length > 0}:${item.takeovers.length > 0}`
   const selectedRisk = chosen[0] && riskKey(chosen[0])
@@ -67,11 +85,8 @@ function WorkspaceApprovalInbox({ workspace, workspaceId }: { workspace: Workspa
   }
   return <>
     <PageHeading title="Approvals" description={workspace ? `Plans waiting for review in ${workspace.name}.` : "Select a workspace to review its plans."} actions={<Button variant="outline" onClick={refresh} disabled={loading || busy}>Refresh</Button>} />
-    <section aria-label="Filter approval requests" className="mb-5 grid gap-3 rounded-xl border bg-card p-4 sm:grid-cols-2 xl:grid-cols-4">
-      <Filter label="Application" value={applicationId} onChange={value => filter(setApplicationId, value)} options={[["", "All applications"], ...applications.map(([id, name]) => [id, name])]} />
-      <Filter label="Risk" value={risk} onChange={value => filter(setRisk, value)} options={[["", "All risks"], ["deletion", "Deletion"], ["cluster", "Cluster scoped"], ["takeover", "Takeover"], ["sync", "Other changes"]]} />
-      <Filter label="Age" value={age} onChange={value => filter(setAge, value)} options={[["", "Any age"], ["24h", "Last 24 hours"], ["7d", "Last 7 days"], ["older7d", "Older than 7 days"]]} />
-      <Filter label="Expiry" value={expiry} onChange={value => filter(setExpiry, value)} options={[["", "Any expiry"], ["1h", "Within 1 hour"], ["24h", "Within 24 hours"], ["later", "After 24 hours"]]} />
+    <section aria-label="Filter approval requests" className="mb-5 rounded-xl border bg-card p-4">
+      <Filters fields={fields} query={filterQuery} onQueryChange={changeFilters} onBeforeQueryChange={(next) => { const paths = flattenFilterRules(next).map((rule) => rule.path.join(".")); return new Set(paths).size === paths.length }} size="sm" />
     </section>
     {error != null && <div role="alert" className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm"><span>{errorMessage(error)}</span><ErrorDetailsButton error={error} /><Button variant="outline" size="sm" onClick={refresh}>Try again</Button></div>}
     {results && <div role="status" className="mb-5 rounded-xl border bg-card p-4 text-sm"><strong><span className="text-success-foreground">{results.succeeded} approved</span> · <span className={results.failed ? "text-destructive" : "text-muted-foreground"}>{results.failed} failed</span></strong>{results.failed > 0 && <ul className="mt-2 space-y-1 text-xs text-destructive">{results.results.filter(item => !item.success).map(item => <li key={item.planId}>{item.planId.slice(0, 8)}: {item.error || `HTTP ${item.status}`}</li>)}</ul>}</div>}
@@ -85,5 +100,4 @@ function WorkspaceApprovalInbox({ workspace, workspaceId }: { workspace: Workspa
     {chosen.length > 0 && <section aria-label="Approve selected plans" className="sticky bottom-4 z-10 mt-6 flex flex-wrap items-center gap-3 rounded-xl border bg-card p-4 shadow-lg"><p className="min-w-0 flex-1 text-sm"><strong>{chosen.length} selected</strong><span className="ml-2 text-xs text-muted-foreground">Same approval kind and risk profile. Every plan is rechecked independently.</span></p><Input aria-label="Approval comment" value={comment} maxLength={1000} onChange={event => setComment(event.target.value)} placeholder="Comment (optional)" className="w-full sm:w-64" /><ConfirmDisclosure trigger={`Review ${chosen.length} approval${chosen.length === 1 ? "" : "s"}`} triggerVariant="default" confirmVariant="default" title="Approve these exact plans?" description="Each plan will be checked again for current authorization, expiry, and changes. Successful approvals remain recorded if another plan fails." confirmLabel="Approve selected plans" disabled={busy} onConfirm={() => approve(chosen)}><ul className="max-h-48 space-y-2 overflow-y-auto text-xs">{chosen.map(item => <li key={item.planId}><strong>{item.applicationName}</strong> · {item.changeCount} changes · {item.deletions.length} deletions · {item.clusterScoped.length} cluster scoped · {item.takeovers.length} takeovers</li>)}</ul>{comment.trim() && <p className="mt-3 text-xs text-muted-foreground">Comment: {comment.trim()}</p>}</ConfirmDisclosure></section>}
   </>
 }
-function Filter({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: string[][] }) { const id = `approval-filter-${label.toLowerCase()}`; return <div className="min-w-0 space-y-1.5"><label htmlFor={id} className="block text-xs font-medium">{label}</label><FormSelect id={id} ariaLabel={label} value={value} onValueChange={next => { if (next !== value) onChange(next) }} emptyOption={options[0][1]} items={options.slice(1).map(([key, text]) => ({ value: key, label: text }))} /></div> }
 function Risk({ title, items, tone }: { title: string; items: string[]; tone: "destructive" | "warning" }) { return <div className={`rounded-xl border p-3 text-xs ${tone === "destructive" ? "border-destructive/25 bg-destructive/5" : "border-warning/25 bg-warning/10"}`}><p className={`font-semibold ${tone === "destructive" ? "text-destructive" : "text-warning-foreground"}`}>{title}</p><ul className="mt-2 max-h-24 space-y-1 overflow-y-auto text-foreground/80">{items.map((name, index) => <li key={`${name}-${index}`} className="break-all">{name}</li>)}</ul></div> }

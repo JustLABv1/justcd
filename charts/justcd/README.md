@@ -63,6 +63,25 @@ Install or upgrade:
 helm upgrade --install justcd ./charts/justcd --namespace justcd --create-namespace -f deploy-values.yaml
 ```
 
+On a fresh installation, create the first administrator at `/signup`. JustCD
+then opens `/onboarding`, where the readiness checklist verifies the database
+and public URL, asks an administrator to confirm the encryption key is durably
+backed up, and walks through workspace, Kubernetes credential/endpoint/namespace,
+Git source, and first-application setup. Progress is derived from persisted
+configuration and saved safe connection tests, so the flow resumes across
+sessions without blocking normal navigation.
+
+The cluster workflow is not limited to first-run setup. Administrators can
+open it from any workspace's Connections tab to reuse an existing credential or
+add one inline, register another API endpoint, bind a namespace, and rerun the
+same verification checks.
+
+The Kubernetes check performs discovery and `SelfSubjectAccessReview` calls;
+it does not create or modify cluster resources. Diagnostic results distinguish
+configuration, permission, connectivity, and service-health failures. Secret
+credential values stay encrypted in the backend and are not exposed by the
+readiness API.
+
 The Ingress routes only to the frontend. Its same-origin `/api` proxy calls
 the backend service inside the namespace. The frontend and backend images can
 be promoted between environments without rebuilding for the internal API URL.

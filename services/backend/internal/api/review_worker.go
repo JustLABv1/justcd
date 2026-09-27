@@ -56,7 +56,7 @@ func (s *Server) processReview(ctx context.Context, review store.PullRequestRevi
 	if err != nil {
 		return err
 	}
-	expired:=review.ExpiresAt!=nil && !review.ExpiresAt.After(time.Now())
+	expired := review.ExpiresAt != nil && !review.ExpiresAt.After(time.Now())
 	if !expired {
 		client := scm.Client{}
 		current, err := client.Current(ctx, connection.Provider, connection.APIURL, connection.Repository, string(token), review.Number)
@@ -87,7 +87,7 @@ func (s *Server) processReview(ctx context.Context, review store.PullRequestRevi
 	if err != nil {
 		return err
 	}
-	source, sourceErr := s.Store.GitSourceByID(ctx, app.SourceID)
+	source, sourceErr := s.Store.GitSourceForWorkspace(ctx, app.SourceID, app.WorkspaceID)
 	apiURL, parseErr := url.Parse(connection.APIURL)
 	if sourceErr != nil || parseErr != nil || !sourceMatchesConnection(source.RepositoryURL, connection.Provider, apiURL, connection.Repository) {
 		_ = s.Store.SetReviewWorkerError(ctx, review.ID, "application Git source no longer matches source control connection")
@@ -294,7 +294,7 @@ func (s *Server) handleClosedReview(ctx context.Context, connection store.Source
 			result.Error = "application cleanup is waiting"
 			return
 		}
-		_ = s.Store.DeletePreviewNamespaceBinding(ctx, preview.ProjectID, preview.ClusterID, namespace)
+		_ = s.Store.DeletePreviewNamespaceBinding(ctx, preview.WorkspaceID, preview.ClusterID, namespace)
 		_ = s.Store.ReleasePreviewSlot(ctx, connection.ID, result.Number)
 		result.PreviewApplicationID = nil
 		result.Phase = "removed"

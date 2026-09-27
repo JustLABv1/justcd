@@ -1,5 +1,8 @@
 import Link from "next/link"
 import type { ReactNode } from "react"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { Layers01Icon } from "@hugeicons/core-free-icons"
+import { IconStack } from "@/components/reui/icon-stack"
 
 export function PageHeading({
   title,
@@ -109,7 +112,7 @@ export function EmptyState({
 }) {
   return (
     <div className="flex flex-col items-center justify-center px-5 py-12 text-center">
-      <span className="grid size-11 place-items-center rounded-xl border bg-muted/50 text-lg text-muted-foreground">◇</span>
+      <IconStack className="empty-state-icon-stack text-primary"><HugeiconsIcon icon={Layers01Icon} className="size-6" /></IconStack>
       <h3 className="mt-4 text-sm font-semibold">{title}</h3>
       <p className="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">{description}</p>
       {href && <Link href={href} className="mt-4 text-xs font-medium text-primary hover:underline">{action} <span aria-hidden="true">→</span></Link>}

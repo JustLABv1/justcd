@@ -59,7 +59,7 @@ func (s *Service) saveRollbackSnapshot(ctx context.Context, app store.Applicatio
 }
 
 // captureManagedLiveState returns only fields recorded as managed in JustCD's
-// last-applied manifests, projected from the live object at checkpoint time.
+// last-applied manifests, workspaceed from the live object at checkpoint time.
 // It deliberately does not apply current ignore rules here: a rollback plan
 // must be able to show when a present-day rule prevents restoring part of the
 // complete captured checkpoint.
@@ -534,7 +534,7 @@ func (s *Service) ValidateRollbackResourceStep(ctx context.Context, operation st
 }
 
 func sameRollbackApplicationConfig(left, right store.Application) bool {
-	return left.ID == right.ID && left.ProjectID == right.ProjectID && left.SourceID == right.SourceID && left.Revision == right.Revision && left.ManifestPath == right.ManifestPath && left.TargetManifestPath == right.TargetManifestPath && reflect.DeepEqual(left.NamespaceManifestPaths, right.NamespaceManifestPaths) && left.Renderer == right.Renderer && left.KustomizeHelmEnabled == right.KustomizeHelmEnabled && left.KustomizeNamespaceOverride == right.KustomizeNamespaceOverride && reflect.DeepEqual(left.HelmValuesFiles, right.HelmValuesFiles) && left.HelmValuesYAML == right.HelmValuesYAML && reflect.DeepEqual(left.TargetHelmValuesFiles, right.TargetHelmValuesFiles) && left.TargetHelmValuesYAML == right.TargetHelmValuesYAML && reflect.DeepEqual(left.NamespaceHelmValues, right.NamespaceHelmValues) && left.ClusterID == right.ClusterID && reflect.DeepEqual(left.Namespaces, right.Namespaces) && left.Decommissioning == right.Decommissioning
+	return left.ID == right.ID && left.WorkspaceID == right.WorkspaceID && left.SourceID == right.SourceID && left.Revision == right.Revision && left.ManifestPath == right.ManifestPath && left.TargetManifestPath == right.TargetManifestPath && reflect.DeepEqual(left.NamespaceManifestPaths, right.NamespaceManifestPaths) && left.Renderer == right.Renderer && left.KustomizeHelmEnabled == right.KustomizeHelmEnabled && left.KustomizeNamespaceOverride == right.KustomizeNamespaceOverride && reflect.DeepEqual(left.HelmValuesFiles, right.HelmValuesFiles) && left.HelmValuesYAML == right.HelmValuesYAML && reflect.DeepEqual(left.TargetHelmValuesFiles, right.TargetHelmValuesFiles) && left.TargetHelmValuesYAML == right.TargetHelmValuesYAML && reflect.DeepEqual(left.NamespaceHelmValues, right.NamespaceHelmValues) && left.ClusterID == right.ClusterID && reflect.DeepEqual(left.Namespaces, right.Namespaces) && left.Decommissioning == right.Decommissioning
 }
 
 func samePlanBindings(left, right []core.Binding) bool {
@@ -576,9 +576,9 @@ func (s *Service) validateRollbackTargetStillAvailable(ctx context.Context, app 
 		if target.Revision == "" {
 			return errors.New("rollback Git target is missing its resolved commit")
 		}
-		source, err := s.Store.GitSourceByID(ctx, target.Settings.SourceID)
-		if err != nil || source.ProjectID != app.ProjectID {
-			return errors.New("rollback Git source is no longer available to this project")
+		source, err := s.Store.GitSourceForWorkspace(ctx, target.Settings.SourceID, app.WorkspaceID)
+		if err != nil {
+			return errors.New("rollback Git source is no longer available to this workspace")
 		}
 		if source.CredentialID == nil {
 			return nil
@@ -618,9 +618,9 @@ func (s *Service) validateRollbackOwnerApprovals(ctx context.Context, app store.
 	if err != nil {
 		return errors.New("rollback actor is no longer available")
 	}
-	role, err := s.Store.ProjectRole(ctx, actor, app.ProjectID)
+	role, err := s.Store.WorkspaceRole(ctx, actor, app.WorkspaceID)
 	if err != nil || role != "owner" {
-		return errors.New("rollback actor is no longer a project owner")
+		return errors.New("rollback actor is no longer a workspace owner")
 	}
 	approvalIDs := operation.ApprovalIDs
 	if len(approvalIDs) == 0 && operation.ApprovalID != "" {
@@ -641,9 +641,9 @@ func (s *Service) validateRollbackOwnerApprovals(ctx context.Context, app store.
 		if err != nil {
 			return errors.New("rollback approver is no longer available")
 		}
-		role, err := s.Store.ProjectRole(ctx, approver, app.ProjectID)
+		role, err := s.Store.WorkspaceRole(ctx, approver, app.WorkspaceID)
 		if err != nil || role != "owner" || !core.ApprovalRoleAllows(record.Plan, role, stored.Approval.ActorID) {
-			return errors.New("rollback approver is no longer a project owner")
+			return errors.New("rollback approver is no longer a workspace owner")
 		}
 		approvals = append(approvals, stored.Approval)
 	}

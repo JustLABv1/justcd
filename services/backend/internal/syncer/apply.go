@@ -46,9 +46,9 @@ func (s *Service) ApplyWithApprovals(ctx context.Context, planID, actorID string
 		if err != nil {
 			return store.Operation{}, errors.New("rollback actor is no longer available")
 		}
-		role, err := s.Store.ProjectRole(ctx, actor, app.ProjectID)
+		role, err := s.Store.WorkspaceRole(ctx, actor, app.WorkspaceID)
 		if err != nil || role != "owner" {
-			return store.Operation{}, errors.New("rollback can only be applied by a project owner")
+			return store.Operation{}, errors.New("rollback can only be applied by a workspace owner")
 		}
 	}
 	fresh, err := s.RecheckPlan(ctx, app, record)
@@ -80,13 +80,13 @@ func (s *Service) ApplyWithApprovals(ctx context.Context, planID, actorID string
 				return store.Operation{}, errors.New("approval is expired, already used, or unavailable")
 			}
 			if seenActors[stored.Approval.ActorID] {
-				return store.Operation{}, errors.New("approvals must come from distinct project members")
+				return store.Operation{}, errors.New("approvals must come from distinct workspace members")
 			}
 			seenActors[stored.Approval.ActorID] = true
 			approver, err := s.Store.UserByID(ctx, stored.Approval.ActorID)
 			role := ""
 			if err == nil {
-				role, err = s.Store.ProjectRole(ctx, approver, app.ProjectID)
+				role, err = s.Store.WorkspaceRole(ctx, approver, app.WorkspaceID)
 			}
 			if err != nil || role == "" || !core.ApprovalRoleAllows(record.Plan, role, stored.Approval.ActorID) {
 				return store.Operation{}, errors.New("approver is no longer eligible for this plan")
@@ -179,15 +179,15 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		if err != nil {
 			return finishFailure(errors.New("sync actor is no longer available"), "failed")
 		}
-		role, err := s.Store.ProjectRole(ctx, actor, app.ProjectID)
+		role, err := s.Store.WorkspaceRole(ctx, actor, app.WorkspaceID)
 		if err != nil || (role != "owner" && role != "deployer") {
 			return finishFailure(errors.New("sync actor no longer has deploy permission"), "failed")
 		}
 		if record.Plan.Decommission && role != "owner" {
-			return finishFailure(errors.New("decommission requires a project owner"), "failed")
+			return finishFailure(errors.New("decommission requires a workspace owner"), "failed")
 		}
 		if record.Plan.Rollback != nil && role != "owner" {
-			return finishFailure(errors.New("rollback requires a project owner"), "failed")
+			return finishFailure(errors.New("rollback requires a workspace owner"), "failed")
 		}
 	}
 	if required := core.RequiredApprovalCount(record.Plan); required > 0 {
@@ -206,13 +206,13 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 				return finishFailure(errors.New("queued approval is unavailable"), "failed")
 			}
 			if seenActors[stored.Approval.ActorID] {
-				return finishFailure(errors.New("queued approvals are not from distinct project members"), "failed")
+				return finishFailure(errors.New("queued approvals are not from distinct workspace members"), "failed")
 			}
 			seenActors[stored.Approval.ActorID] = true
 			approver, err := s.Store.UserByID(ctx, stored.Approval.ActorID)
 			role := ""
 			if err == nil {
-				role, err = s.Store.ProjectRole(ctx, approver, app.ProjectID)
+				role, err = s.Store.WorkspaceRole(ctx, approver, app.WorkspaceID)
 			}
 			if err != nil || role == "" || !core.ApprovalRoleAllows(record.Plan, role, stored.Approval.ActorID) {
 				return finishFailure(errors.New("approver is no longer eligible for this plan"), "failed")

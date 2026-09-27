@@ -13,7 +13,7 @@ import {
 import { buttonVariants } from "@/components/ui/button"
 import { ErrorDetailsButton, ErrorGuidance } from "@/components/error-details"
 import { errorMessage } from "@/lib/api"
-import type { Project } from "@/lib/types"
+import type { Workspace } from "@/lib/types"
 
 const icons = {
   folder: Folder01Icon,
@@ -126,20 +126,20 @@ export function ErrorNotice({ error }: { error: unknown }) {
   )
 }
 
-export function ProjectCard({
-  project,
+export function WorkspaceCard({
+  workspace,
   total,
   synced,
   attention,
 }: {
-  project: Project
+  workspace: Workspace
   total: number
   synced: number
   attention: number
 }) {
   return (
     <Link
-      href={`/projects/${project.id}`}
+      href={`/workspaces/${workspace.id}`}
       className="workspace-card group flex min-w-0 flex-col rounded-2xl border bg-card p-5"
     >
       <div className="flex items-center justify-between">
@@ -147,14 +147,14 @@ export function ProjectCard({
           <WorkspaceIcon name="folder" />
         </span>
         <span className="rounded-md bg-muted px-2 py-1 text-[11px] text-muted-foreground capitalize">
-          {project.role}
+          {workspace.role}
         </span>
       </div>
       <h3 className="mt-5 truncate text-base font-semibold tracking-tight">
-        {project.name}
+        {workspace.name}
       </h3>
       <p className="mt-1.5 line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground">
-        {project.description ||
+        {workspace.description ||
           "Applications, connections, and team access in one place."}
       </p>
       <div className="mt-6 flex items-center justify-between text-xs">

@@ -96,7 +96,30 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 	if _, err := db.ExecContext(ctx, `INSERT INTO users(id,email,display_name) VALUES('integration-owner','owner@example.invalid','Integration Owner')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO projects(id,name) VALUES('integration-project','Migration survivor')`); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO projects(id,name) VALUES('integration-workspace','Migration survivor')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO project_memberships(project_id,user_id,role) VALUES('integration-workspace','integration-owner','owner')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO credentials(id,project_id,name,kind,secret_cipher) VALUES
+		('integration-workspace-credential','integration-workspace','Workspace kube','kubernetes-token',decode('00','hex')),
+		('integration-git-credential','integration-workspace','Workspace Git','git-https',decode('01','hex'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO clusters(id,name,api_server) VALUES('integration-cluster','Test cluster','https://example.invalid')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO project_cluster_credentials(project_id,cluster_id,credential_id) VALUES('integration-workspace','integration-cluster','integration-workspace-credential')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO namespace_bindings(id,project_id,cluster_id,namespace,credential_id) VALUES('integration-binding','integration-workspace','integration-cluster','default','integration-workspace-credential')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO git_sources(id,project_id,name,repository_url,credential_id) VALUES('integration-git','integration-workspace','Test source','https://example.invalid/repo.git','integration-git-credential')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO applications(id,project_id,name,source_id,revision,manifest_path,renderer,cluster_id) VALUES('integration-app','integration-workspace','Due application','integration-git','main','.','yaml','integration-cluster')`); err != nil {
 		t.Fatal(err)
 	}
 	s := &Store{DB: db}
@@ -107,21 +130,90 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 		t.Fatalf("idempotent migration: %v", err)
 	}
 	var name string
-	if err := db.QueryRowContext(ctx, `SELECT name FROM projects WHERE id='integration-project'`).Scan(&name); err != nil || name != "Migration survivor" {
-		t.Fatalf("existing project lost during upgrade: %q, %v", name, err)
+	if err := db.QueryRowContext(ctx, `SELECT name FROM workspaces WHERE id='integration-workspace'`).Scan(&name); err != nil || name != "Migration survivor" {
+		t.Fatalf("existing workspace lost during upgrade: %q, %v", name, err)
+	}
+	var role string
+	if err := db.QueryRowContext(ctx, `SELECT role FROM workspace_memberships WHERE workspace_id='integration-workspace' AND user_id='integration-owner'`).Scan(&role); err != nil || role != "owner" {
+		t.Fatalf("workspace membership lost during upgrade: %q, %v", role, err)
+	}
+	var workspaceID, sourceCredentialID, clusterCredentialID, namespace string
+	if err := db.QueryRowContext(ctx, `SELECT workspace_id,credential_id FROM git_sources WHERE id='integration-git'`).Scan(&workspaceID, &sourceCredentialID); err != nil || workspaceID != "integration-workspace" || sourceCredentialID != "integration-git-credential" {
+		t.Fatalf("Git source references changed during upgrade: %q, %q, %v", workspaceID, sourceCredentialID, err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT workspace_id,credential_id FROM workspace_cluster_credentials WHERE cluster_id='integration-cluster'`).Scan(&workspaceID, &clusterCredentialID); err != nil || workspaceID != "integration-workspace" || clusterCredentialID != "integration-workspace-credential" {
+		t.Fatalf("cluster credential references changed during upgrade: %q, %q, %v", workspaceID, clusterCredentialID, err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT workspace_id,namespace FROM namespace_bindings WHERE id='integration-binding'`).Scan(&workspaceID, &namespace); err != nil || workspaceID != "integration-workspace" || namespace != "default" {
+		t.Fatalf("namespace binding reference changed during upgrade: %q, %q, %v", workspaceID, namespace, err)
+	}
+	var appSourceID, appClusterID string
+	if err := db.QueryRowContext(ctx, `SELECT workspace_id,source_id,cluster_id FROM applications WHERE id='integration-app'`).Scan(&workspaceID, &appSourceID, &appClusterID); err != nil || workspaceID != "integration-workspace" || appSourceID != "integration-git" || appClusterID != "integration-cluster" {
+		t.Fatalf("application references changed during upgrade: %q, %q, %q, %v", workspaceID, appSourceID, appClusterID, err)
+	}
+	var legacyClusterWorkspaceID sql.NullString
+	if err := db.QueryRowContext(ctx, `SELECT workspace_id FROM clusters WHERE id='integration-cluster'`).Scan(&legacyClusterWorkspaceID); err != nil || legacyClusterWorkspaceID.Valid {
+		t.Fatalf("legacy instance-owned cluster unexpectedly acquired a workspace: %+v, %v", legacyClusterWorkspaceID, err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO workspaces(id,name) VALUES('integration-consumer','Receiving workspace')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES('integration-consumer','integration-owner','owner')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO credentials(id,workspace_id,name,kind,secret_cipher) VALUES('integration-consumer-git-credential','integration-consumer','Consumer Git','git-https',decode('02','hex'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO clusters(id,workspace_id,name,api_server) VALUES('integration-owned-cluster','integration-workspace','Workspace cluster','https://owned.example.invalid')`); err != nil {
+		t.Fatal(err)
+	}
+	clusterShare := WorkspaceConnectionShare{ID: "integration-cluster-share", ResourceID: "integration-owned-cluster", OwnerWorkspaceID: "integration-workspace", TargetWorkspaceID: "integration-consumer"}
+	if err := s.CreateWorkspaceClusterShare(ctx, clusterShare); err != nil {
+		t.Fatalf("offer cluster share: %v", err)
+	}
+	gitShare := WorkspaceConnectionShare{ID: "integration-git-share", ResourceID: "integration-git", OwnerWorkspaceID: "integration-workspace", TargetWorkspaceID: "integration-consumer"}
+	if err := s.CreateWorkspaceGitSourceShare(ctx, gitShare); err != nil {
+		t.Fatalf("offer Git share: %v", err)
+	}
+	if canUse, err := s.WorkspaceCanUseCluster(ctx, "integration-consumer", "integration-cluster"); err != nil || canUse {
+		t.Fatalf("pending cluster offer should remain private: allowed=%v err=%v", canUse, err)
+	}
+	if canUse, err := s.WorkspaceCanUseGitSource(ctx, "integration-consumer", "integration-git"); err != nil || canUse {
+		t.Fatalf("pending Git offer should remain private: allowed=%v err=%v", canUse, err)
+	}
+	if err := s.DecideWorkspaceConnectionShare(ctx, "integration-cluster-share", "integration-consumer", true); err != nil {
+		t.Fatalf("accept cluster share: %v", err)
+	}
+	if err := s.DecideWorkspaceConnectionShare(ctx, "integration-git-share", "integration-consumer", true); err != nil {
+		t.Fatalf("accept Git share: %v", err)
+	}
+	if canUse, err := s.WorkspaceCanUseCluster(ctx, "integration-consumer", "integration-owned-cluster"); err != nil || !canUse {
+		t.Fatalf("accepted cluster share should grant access: allowed=%v err=%v", canUse, err)
+	}
+	sharedSource, err := s.GitSourceForWorkspace(ctx, "integration-git", "integration-consumer")
+	if err != nil || sharedSource.CredentialID != nil {
+		t.Fatalf("accepted share must not disclose owner credential: credential=%v err=%v", sharedSource.CredentialID, err)
+	}
+	consumerCredentialID := "integration-consumer-git-credential"
+	if err := s.SetWorkspaceGitSourceShareCredential(ctx, "integration-git-share", "integration-consumer", &consumerCredentialID); err != nil {
+		t.Fatalf("assign recipient-owned Git credential: %v", err)
+	}
+	sharedSource, err = s.GitSourceForWorkspace(ctx, "integration-git", "integration-consumer")
+	if err != nil || sharedSource.CredentialID == nil || *sharedSource.CredentialID != consumerCredentialID {
+		t.Fatalf("recipient Git source did not use its own credential: credential=%v err=%v", sharedSource.CredentialID, err)
+	}
+	if err := s.RevokeWorkspaceConnectionShare(ctx, "integration-git-share", "integration-workspace"); err != nil {
+		t.Fatalf("revoke Git share: %v", err)
+	}
+	if canUse, err := s.WorkspaceCanUseGitSource(ctx, "integration-consumer", "integration-git"); err != nil || canUse {
+		t.Fatalf("revoked Git share should remove access: allowed=%v err=%v", canUse, err)
+	}
+	if err := s.CreateWorkspaceGitSourceShare(ctx, WorkspaceConnectionShare{ID: "integration-git-share-again", ResourceID: "integration-git", OwnerWorkspaceID: "integration-workspace", TargetWorkspaceID: "integration-consumer"}); err != nil {
+		t.Fatalf("re-offer after revocation: %v", err)
 	}
 	var applied int
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&applied); err != nil || applied != len(files) {
 		t.Fatalf("migration ledger: got %d, want %d: %v", applied, len(files), err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO clusters(id,name,api_server) VALUES('integration-cluster','Test cluster','https://example.invalid')`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO git_sources(id,project_id,name,repository_url) VALUES('integration-git','integration-project','Test source','https://example.invalid/repo.git')`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO applications(id,project_id,name,source_id,revision,manifest_path,renderer,cluster_id) VALUES('integration-app','integration-project','Due application','integration-git','main','.','yaml','integration-cluster')`); err != nil {
-		t.Fatal(err)
 	}
 	apps, err := s.DueApplications(ctx, 25)
 	if err != nil {

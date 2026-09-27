@@ -12,14 +12,14 @@ import { FormField, PageHeading, Panel, StatusBadge } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
 import { api, errorMessage } from "@/lib/api"
-import type { Application, ApplicationGroup, ApplicationGroupResponse, Cluster, GitSource, ListResponse, Project } from "@/lib/types"
+import type { Application, ApplicationGroup, ApplicationGroupResponse, Cluster, GitSource, ListResponse, Workspace } from "@/lib/types"
 
 export default function ApplicationGroupPage() {
   const { groupID } = useParams<{ groupID: string }>()
   const toast = useToast()
   const [group, setGroup] = useState<ApplicationGroup | null>(null)
   const [applications, setApplications] = useState<Application[]>([])
-  const [project, setProject] = useState<Project | null>(null)
+  const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [clusters, setClusters] = useState<Cluster[]>([])
   const [sources, setSources] = useState<GitSource[]>([])
   const [revision, setRevision] = useState("")
@@ -38,13 +38,13 @@ export default function ApplicationGroupPage() {
     let active = true
     Promise.all([
       api<ApplicationGroupResponse>("/api/v1/application-groups/" + encodeURIComponent(groupID)),
-      api<ListResponse<Project>>("/api/v1/projects"),
+      api<ListResponse<Workspace>>("/api/v1/workspaces"),
       api<ListResponse<Cluster>>("/api/v1/clusters"),
-    ]).then(([result, projects, clusterList]) => {
+    ]).then(([result, workspaces, clusterList]) => {
       if (!active) return
       setGroup(result.group)
       setApplications(result.applications)
-      setProject(projects.items.find((item) => item.id === result.group.projectId) ?? null)
+      setWorkspace(workspaces.items.find((item) => item.id === result.group.workspaceId) ?? null)
       setClusters(clusterList.items)
       setRevision(result.group.revision)
       setManifestPath(result.group.manifestPath)
@@ -54,7 +54,7 @@ export default function ApplicationGroupPage() {
       setKustomizeNamespaceOverride(result.group.kustomizeNamespaceOverride)
       setSyncPolicy(result.group.syncPolicy)
       setPollSeconds(String(result.group.pollSeconds))
-      return api<ListResponse<GitSource>>("/api/v1/git-sources?projectId=" + encodeURIComponent(result.group.projectId))
+      return api<ListResponse<GitSource>>("/api/v1/git-sources?workspaceId=" + encodeURIComponent(result.group.workspaceId))
     }).then((sourceList) => { if (active && sourceList) setSources(sourceList.items) })
       .catch((cause) => active && setError(cause))
       .finally(() => active && setLoading(false))
@@ -116,7 +116,7 @@ export default function ApplicationGroupPage() {
         </Panel>
 
         <Panel title="Shared configuration" description="Changes here update all targets and invalidate their existing plans.">
-          {project?.role === "owner" ? <form className="space-y-4 p-5" onSubmit={save}>
+          {workspace?.role === "owner" ? <form className="space-y-4 p-5" onSubmit={save}>
             <FormField label="Git source" htmlFor="group-source"><FormSelect id="group-source" value={group.sourceId} onValueChange={(value) => setGroup({ ...group, sourceId: value })} items={sources.map((source) => ({ value: source.id, label: source.name }))} /></FormField>
             <FormField label="Git revision" htmlFor="group-revision"><Input id="group-revision" value={revision} onChange={(event) => setRevision(event.target.value)} required /></FormField>
             <p className="text-xs text-muted-foreground">Renderer: <span className="font-medium text-foreground">{group.renderer === "helm" ? "Helm" : "Kustomize"}</span></p>

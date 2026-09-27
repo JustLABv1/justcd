@@ -10,6 +10,7 @@ import {
   LoadError,
 } from "@/components/workspace-ui"
 import { useWorkspace } from "@/hooks/use-workspace"
+import { useWorkspaceSelection } from "@/hooks/workspace-selection"
 
 export default function ApplicationsPage() {
   return (
@@ -20,7 +21,8 @@ export default function ApplicationsPage() {
 }
 
 function ApplicationsContent() {
-  const { projects, applications, loading, error, refresh } = useWorkspace()
+  const { workspaces, applications, loading, error, refresh } = useWorkspace()
+  const { workspace, workspaceId } = useWorkspaceSelection()
   const searchParams = useSearchParams()
   const initialFilter = ["attention", "synced", "other"].includes(
     searchParams.get("status") ?? ""
@@ -31,12 +33,12 @@ function ApplicationsContent() {
     <>
       <PageHeading
         title="Applications"
-        description="Your deployments, from Git revision to running workload."
+        description={workspace ? `Deployments in ${workspace.name}, from Git revision to running workload.` : "Select a workspace to view its applications."}
         actions={<>
-          <ActionLink href="/applications/new">
+          <ActionLink href={workspaceId ? `/applications/new?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces"}>
             <span aria-hidden="true">＋</span> New application
           </ActionLink>
-          <ActionLink href="/application-groups/new">
+          <ActionLink href={workspaceId ? `/application-groups/new?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces"}>
             <span aria-hidden="true">＋</span> Deploy to multiple targets
           </ActionLink>
         </>}
@@ -50,7 +52,7 @@ function ApplicationsContent() {
           key={initialFilter}
           initialFilter={initialFilter}
           applications={applications}
-          projects={projects}
+          workspaces={workspaces}
         />
       )}
     </>

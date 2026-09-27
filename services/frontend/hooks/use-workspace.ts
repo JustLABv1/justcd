@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { api } from "@/lib/api"
-import type { Application, ListResponse, Project } from "@/lib/types"
+import type { Application, ListResponse, Workspace } from "@/lib/types"
+import { useWorkspaceSelection } from "@/hooks/workspace-selection"
 
-export type WorkspaceApplication = Application & { projectName?: string }
+export type WorkspaceApplication = Application & { workspaceName?: string }
 
 export function needsAttention(app: Application) {
   return [
@@ -27,8 +28,9 @@ export function isApplicationHealthy(app: Application) {
   return app.health === "synced" && app.healthCondition?.status === "Healthy"
 }
 
-export function useWorkspace() {
-  const [projects, setProjects] = useState<Project[]>([])
+export function useWorkspace({ includeAllApplications = false }: { includeAllApplications?: boolean } = {}) {
+  const { workspaceId } = useWorkspaceSelection()
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [applications, setApplications] = useState<WorkspaceApplication[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<unknown | null>(null)
@@ -42,23 +44,26 @@ export function useWorkspace() {
     const controller = new AbortController()
     async function load() {
       try {
-        const result = await api<ListResponse<Project>>("/api/v1/projects", {
+        const result = await api<ListResponse<Workspace>>("/api/v1/workspaces", {
           signal: controller.signal,
         })
+        const selected = includeAllApplications
+          ? result.items
+          : result.items.filter((workspace) => workspace.id === workspaceId)
         const grouped = await Promise.all(
-          result.items.map(async (project) => {
+          selected.map(async (workspace) => {
             const response = await api<ListResponse<Application>>(
-              `/api/v1/applications?projectId=${encodeURIComponent(project.id)}`,
+              `/api/v1/applications?workspaceId=${encodeURIComponent(workspace.id)}`,
               { signal: controller.signal }
             )
             return response.items.map((app) => ({
               ...app,
-              projectName: project.name,
+              workspaceName: workspace.name,
             }))
           })
         )
         if (!controller.signal.aborted) {
-          setProjects(result.items)
+          setWorkspaces(result.items)
           setApplications(grouped.flat())
           setError(null)
         }
@@ -70,6 +75,6 @@ export function useWorkspace() {
     }
     void load()
     return () => controller.abort()
-  }, [version])
-  return { projects, applications, loading, error, refresh }
+  }, [version, workspaceId, includeAllApplications])
+  return { workspaces, applications, loading, error, refresh }
 }

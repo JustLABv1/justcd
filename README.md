@@ -4,7 +4,7 @@ JustCD is a Git-driven Kubernetes delivery control plane that runs outside the
 managed clusters. It connects directly to the Kubernetes API; it does not
 install a JustCD operator, controller, or JustCD-specific CRDs.
 
-The current v1 includes local password authentication and OIDC login, projects
+The current v1 includes local password authentication and OIDC login, workspaces
 and roles, encrypted Git/Kubernetes credentials, cluster and namespace
 connections, YAML/Kustomize/Helm rendering, drift plans, resource topology and inventory,
 audited sync operations, and explicit owner approval for deletion and
@@ -48,7 +48,7 @@ first administrator; no bootstrap password is needed in the environment.
 Schema migrations are applied at backend startup. Keep `.env`
 and `.envrc` out of version control; the backend's `.gitignore` excludes both.
 
-To add sample project/application states to that same database, load your
+To add sample workspace/application states to that same database, load your
 backend environment and run the demo seeder:
 
 ```sh
@@ -86,25 +86,42 @@ credentials directly.
 
 ## First setup
 
-1. Create the first administrator at `/signup`, then create a project and add a local
+After creating the first administrator, JustCD opens `/onboarding`. This
+readiness checklist is derived from current persisted configuration and saved
+connection tests, so it resumes across sessions and completed steps can always
+be revisited. It is guidance rather than a gate: experienced administrators
+can continue to use normal workspace and settings navigation.
+
+The checklist verifies database availability and public URL configuration,
+records an administrator's confirmation that the stable encryption key is
+backed up, and guides the Git, Kubernetes, and first-application workflow.
+Kubernetes readiness uses discovery and `SelfSubjectAccessReview` calls only;
+it does not mutate workloads. Failures identify configuration, permission,
+connectivity, or service-health problems and include remediation. Credential
+values remain encrypted in the backend and are never returned to the browser.
+The same guided cluster workflow is available later from every workspace's
+Connections tab, where administrators can reuse an existing credential or add
+one inline before registering and verifying another cluster.
+
+1. Create the first administrator at `/signup`, then create a workspace and add a local
    user or configure an OIDC provider.
 2. Add a global Kubernetes token or static kubeconfig credential, then register
    the Kubernetes API endpoint and CA. Leave cluster-scope access disabled
    unless the application genuinely manages cluster-wide resources.
-3. Bind one or more namespaces to the project. Each binding may use its own
+3. Bind one or more namespaces to the workspace. Each binding may use its own
    credential or inherit the cluster default.
 4. Add an HTTPS/SSH Git source and a credential when needed, then create an
    application with a tracked branch, manifest path, renderer, and namespace
    bindings.
 5. Build a plan and review its resource-level diff before syncing. Plans expire
-   after 15 minutes. Deletes and cluster-scoped changes require a project
+   after 15 minutes. Deletes and cluster-scoped changes require a workspace
    owner’s one-time approval. The executor rechecks the plan, resource UID,
    resource version, and ownership immediately before mutation.
 
 For OIDC, use the `redirectUrl` returned by provider creation as the exact
 callback URL in the identity provider. The public URL must point to the Next.js
 application (whose same-origin API proxy forwards callbacks to the backend).
-Group-to-project role mappings are configured in Connections & access.
+Group-to-workspace role mappings are configured in Connections & access.
 
 ## Pull request plans and previews
 
@@ -120,14 +137,14 @@ such as `https://gitlab.example.com/api/v4`. Supply a webhook secret and a token
 pull requests and write commit statuses. Copy the displayed webhook URL into
 the repository webhook settings and enable pull request or merge request
 and push events. A branch push triggers a fresh plan for every application in
-the project tracking that repository and branch, including application-group
+the workspace tracking that repository and branch, including application-group
 children. Manual applications stop at plan review; auto-safe applications keep
 their existing safety and approval rules. The poller remains a fallback.
 GitLab's signed webhooks are supported; older instances can use the
 legacy secret token. The host running JustCD must trust the GitLab instance's
 TLS certificate.
 
-For a Git source without a PR reporting connection, a project owner can configure
+For a Git source without a PR reporting connection, a workspace owner can configure
 a push webhook in the Git source settings or with
 `PUT /api/v1/git-sources/{sourceID}/push-webhook` and JSON
 `{"secret":"at-least-16-characters"}`. The response contains a webhook URL.
@@ -160,7 +177,7 @@ wildcard DNS record and certificate for the preview domain simplify routing.
 
 JustCD creates a dedicated namespace and ResourceQuota for each preview. The
 cluster needs a cluster-scope credential that can create and delete namespaces
-and manage ResourceQuotas. The project also needs a namespace credential for
+and manage ResourceQuotas. The workspace also needs a namespace credential for
 the generated application. Rendered cluster-scoped resources, Secret objects,
 unexpected secret references, external-facing Services, and out-of-domain
 Ingress hosts are rejected. Fork previews are disabled by default; opting in

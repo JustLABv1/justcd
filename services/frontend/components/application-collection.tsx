@@ -17,7 +17,7 @@ import {
   needsAttention,
   type WorkspaceApplication,
 } from "@/hooks/use-workspace"
-import type { Project } from "@/lib/types"
+import type { Workspace } from "@/lib/types"
 import { api } from "@/lib/api"
 
 function ApplicationActions({ app, canManage, onDeleted }: { app: WorkspaceApplication; canManage: boolean; onDeleted?: (id: string) => void }) {
@@ -78,8 +78,8 @@ export function ApplicationCard({ app, canManage, onDeleted }: { app: WorkspaceA
               {app.name}
             </Link>
           </h3>
-          <p className="mt-1 truncate text-xs text-muted-foreground" title={app.projectName || app.projectId}>
-            {app.projectName || app.projectId}
+          <p className="mt-1 truncate text-xs text-muted-foreground" title={app.workspaceName || app.workspaceId}>
+            {app.workspaceName || app.workspaceId}
           </p>
         </div>
         <ApplicationActions app={app} canManage={Boolean(canManage)} onDeleted={onDeleted} />
@@ -116,24 +116,24 @@ export function ApplicationCard({ app, canManage, onDeleted }: { app: WorkspaceA
 
 export function ApplicationCollection({
   applications,
-  projects,
+  workspaces,
   initialFilter = "all",
   createHref = "/applications/new",
   canCreate = true,
-  projectRole,
+  workspaceRole,
   onDeleted,
 }: {
   applications: WorkspaceApplication[]
-  projects?: Project[]
+  workspaces?: Workspace[]
   initialFilter?: string
   createHref?: string
   canCreate?: boolean
-  projectRole?: Project["role"]
+  workspaceRole?: Workspace["role"]
   onDeleted?: (id: string) => void
 }) {
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState(initialFilter)
-  const [projectId, setProjectId] = useState("all")
+  const [workspaceId, setWorkspaceId] = useState("all")
   const [view, setView] = useState<"cards" | "table">("cards")
   const [sort, setSort] = useState("attention")
   const [removedIds, setRemovedIds] = useState<string[]>([])
@@ -158,8 +158,8 @@ export function ApplicationCollection({
             : !needsAttention(app) && !isApplicationHealthy(app))
       return (
         matchesStatus &&
-        (projectId === "all" || app.projectId === projectId) &&
-        `${app.name} ${app.projectName ?? ""} ${app.namespaces.map((item) => item.namespace).join(" ")} ${app.revision}`
+        (workspaceId === "all" || app.workspaceId === workspaceId) &&
+        `${app.name} ${app.workspaceName ?? ""} ${app.namespaces.map((item) => item.namespace).join(" ")} ${app.revision}`
           .toLowerCase()
           .includes(query.trim().toLowerCase())
       )
@@ -248,17 +248,17 @@ export function ApplicationCollection({
             className="h-9 bg-card pl-9"
           />
         </div>
-        {projects && (
+        {workspaces && (
           <FormSelect
-            ariaLabel="Filter by project"
-            value={projectId}
-            onValueChange={setProjectId}
+            ariaLabel="Filter by workspace"
+            value={workspaceId}
+            onValueChange={setWorkspaceId}
             className="w-44"
             items={[
-              { value: "all", label: "All projects" },
-              ...projects.map((project) => ({
-                value: project.id,
-                label: project.name,
+              { value: "all", label: "All workspaces" },
+              ...workspaces.map((workspace) => ({
+                value: workspace.id,
+                label: workspace.name,
               })),
             ]}
           />
@@ -282,7 +282,7 @@ export function ApplicationCollection({
         view === "cards" ? (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-4">
             {visible.map((app) => (
-              <ApplicationCard key={app.id} app={app} canManage={projectRole === "owner" || projects?.some((project) => project.id === app.projectId && project.role === "owner")} onDeleted={handleDeleted} />
+              <ApplicationCard key={app.id} app={app} canManage={workspaceRole === "owner" || workspaces?.some((workspace) => workspace.id === app.workspaceId && workspace.role === "owner")} onDeleted={handleDeleted} />
             ))}
           </div>
         ) : (
@@ -300,7 +300,7 @@ export function ApplicationCollection({
                   >
                     {app.name}
                     <span className="block truncate text-xs font-normal text-muted-foreground">
-                      {app.projectName || app.manifestPath}
+                      {app.workspaceName || app.manifestPath}
                     </span>
                   </Link>
                 ),
@@ -344,7 +344,7 @@ export function ApplicationCollection({
                 id: "actions",
                 title: "",
                 size: 64,
-                cell: (app) => <ApplicationActions app={app} canManage={projectRole === "owner" || Boolean(projects?.some((project) => project.id === app.projectId && project.role === "owner"))} onDeleted={handleDeleted} />,
+                cell: (app) => <ApplicationActions app={app} canManage={workspaceRole === "owner" || Boolean(workspaces?.some((workspace) => workspace.id === app.workspaceId && workspace.role === "owner"))} onDeleted={handleDeleted} />,
               },
             ]}
           />
@@ -360,7 +360,7 @@ export function ApplicationCollection({
             onClick={() => {
               setQuery("")
               setFilter("all")
-              setProjectId("all")
+              setWorkspaceId("all")
             }}
           >
             Clear filters

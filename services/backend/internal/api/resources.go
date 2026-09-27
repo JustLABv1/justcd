@@ -142,21 +142,21 @@ func validateKustomizeManifestPaths(renderer, targetPath string, namespacePaths 
 	return targetPath, validated, nil
 }
 
-func (s *Server) listProjectMembers(w http.ResponseWriter, r *http.Request) {
-	projectID := r.PathValue("projectID")
-	if !s.requireProjectRole(w, r, projectID, "viewer") {
+func (s *Server) listWorkspaceMembers(w http.ResponseWriter, r *http.Request) {
+	workspaceID := r.PathValue("workspaceID")
+	if !s.requireWorkspaceRole(w, r, workspaceID, "viewer") {
 		return
 	}
-	items, err := s.Store.ListProjectMembers(r.Context(), projectID)
+	items, err := s.Store.ListWorkspaceMembers(r.Context(), workspaceID)
 	if err != nil {
-		writeStoreError(w, "could not load project members")
+		writeStoreError(w, "could not load workspace members")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
-func (s *Server) setProjectMember(w http.ResponseWriter, r *http.Request) {
-	projectID := r.PathValue("projectID")
-	if !s.requireProjectRole(w, r, projectID, "owner") {
+func (s *Server) setWorkspaceMember(w http.ResponseWriter, r *http.Request) {
+	workspaceID := r.PathValue("workspaceID")
+	if !s.requireWorkspaceRole(w, r, workspaceID, "owner") {
 		return
 	}
 	var input struct {
@@ -177,24 +177,24 @@ func (s *Server) setProjectMember(w http.ResponseWriter, r *http.Request) {
 		input.UserID = user.ID
 	}
 	if input.UserID == "" || !validRole(input.Role) {
-		writeError(w, http.StatusBadRequest, "an active user and a valid project role are required")
+		writeError(w, http.StatusBadRequest, "an active user and a valid workspace role are required")
 		return
 	}
 	if input.UserID == currentUser(r).ID && input.Role != "owner" {
-		writeError(w, http.StatusConflict, "you cannot demote yourself from project owner")
+		writeError(w, http.StatusConflict, "you cannot demote yourself from workspace owner")
 		return
 	}
-	if err := s.Store.SetProjectMember(r.Context(), projectID, input.UserID, input.Role); err != nil {
-		writeProjectMemberError(w, err)
+	if err := s.Store.SetWorkspaceMember(r.Context(), workspaceID, input.UserID, input.Role); err != nil {
+		writeWorkspaceMemberError(w, err)
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "project_member.updated", "project", projectID, map[string]string{"userId": input.UserID, "role": input.Role})
-	writeJSON(w, http.StatusOK, map[string]string{"projectId": projectID, "userId": input.UserID, "role": input.Role})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "workspace_member.updated", "workspace", workspaceID, map[string]string{"userId": input.UserID, "role": input.Role})
+	writeJSON(w, http.StatusOK, map[string]string{"workspaceId": workspaceID, "userId": input.UserID, "role": input.Role})
 }
 
-func (s *Server) updateProjectMember(w http.ResponseWriter, r *http.Request) {
-	projectID := r.PathValue("projectID")
-	if !s.requireProjectRole(w, r, projectID, "owner") {
+func (s *Server) updateWorkspaceMember(w http.ResponseWriter, r *http.Request) {
+	workspaceID := r.PathValue("workspaceID")
+	if !s.requireWorkspaceRole(w, r, workspaceID, "owner") {
 		return
 	}
 	userID := r.PathValue("userID")
@@ -206,58 +206,58 @@ func (s *Server) updateProjectMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validRole(input.Role) {
-		writeError(w, http.StatusBadRequest, "a valid project role is required")
+		writeError(w, http.StatusBadRequest, "a valid workspace role is required")
 		return
 	}
 	if userID == currentUser(r).ID && input.Role != "owner" {
-		writeError(w, http.StatusConflict, "you cannot demote yourself from project owner")
+		writeError(w, http.StatusConflict, "you cannot demote yourself from workspace owner")
 		return
 	}
-	if err := s.Store.SetProjectMember(r.Context(), projectID, userID, input.Role); err != nil {
-		writeProjectMemberError(w, err)
+	if err := s.Store.SetWorkspaceMember(r.Context(), workspaceID, userID, input.Role); err != nil {
+		writeWorkspaceMemberError(w, err)
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "project_member.updated", "project", projectID, map[string]string{"userId": userID, "role": input.Role})
-	writeJSON(w, http.StatusOK, map[string]string{"projectId": projectID, "userId": userID, "role": input.Role})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "workspace_member.updated", "workspace", workspaceID, map[string]string{"userId": userID, "role": input.Role})
+	writeJSON(w, http.StatusOK, map[string]string{"workspaceId": workspaceID, "userId": userID, "role": input.Role})
 }
 
-func (s *Server) removeProjectMember(w http.ResponseWriter, r *http.Request) {
-	projectID := r.PathValue("projectID")
-	if !s.requireProjectRole(w, r, projectID, "owner") {
+func (s *Server) removeWorkspaceMember(w http.ResponseWriter, r *http.Request) {
+	workspaceID := r.PathValue("workspaceID")
+	if !s.requireWorkspaceRole(w, r, workspaceID, "owner") {
 		return
 	}
 	userID := r.PathValue("userID")
 	if userID == currentUser(r).ID {
-		writeError(w, http.StatusBadRequest, "you cannot remove yourself from the project")
+		writeError(w, http.StatusBadRequest, "you cannot remove yourself from the workspace")
 		return
 	}
-	if err := s.Store.RemoveProjectMember(r.Context(), projectID, userID); err != nil {
-		writeProjectMemberError(w, err)
+	if err := s.Store.RemoveWorkspaceMember(r.Context(), workspaceID, userID); err != nil {
+		writeWorkspaceMemberError(w, err)
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "project_member.removed", "project", projectID, map[string]string{"userId": userID})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "workspace_member.removed", "workspace", workspaceID, map[string]string{"userId": userID})
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func writeProjectMemberError(w http.ResponseWriter, err error) {
+func writeWorkspaceMemberError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, store.ErrProjectNotFound), errors.Is(err, store.ErrProjectMemberNotFound):
+	case errors.Is(err, store.ErrWorkspaceNotFound), errors.Is(err, store.ErrWorkspaceMemberNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, store.ErrLastProjectOwner), errors.Is(err, store.ErrProjectMemberManagedSSO):
+	case errors.Is(err, store.ErrLastWorkspaceOwner), errors.Is(err, store.ErrWorkspaceMemberManagedSSO):
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, store.ErrUserUnavailable):
-		writeError(w, http.StatusBadRequest, "locked or deleted users cannot be added to a project")
+		writeError(w, http.StatusBadRequest, "locked or deleted users cannot be added to a workspace")
 	default:
-		writeStoreError(w, "could not update project member")
+		writeStoreError(w, "could not update workspace member")
 	}
 }
 
 func (s *Server) listCredentials(w http.ResponseWriter, r *http.Request) {
-	projectID := r.URL.Query().Get("projectId")
-	if !s.requireProjectRole(w, r, projectID, "viewer") {
+	workspaceID := r.URL.Query().Get("workspaceId")
+	if !s.requireWorkspaceRole(w, r, workspaceID, "viewer") {
 		return
 	}
-	items, err := s.Store.ListCredentials(r.Context(), projectID)
+	items, err := s.Store.ListCredentials(r.Context(), workspaceID)
 	if err != nil {
 		writeStoreError(w, "could not load credentials")
 		return
@@ -278,19 +278,19 @@ func (s *Server) listCredentials(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createCredential(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		ProjectID *string           `json:"projectId"`
-		Name      string            `json:"name"`
-		Kind      string            `json:"kind"`
-		ExpiresAt *string           `json:"expiresAt"`
-		Secret    map[string]string `json:"secret"`
+		WorkspaceID *string           `json:"workspaceId"`
+		Name        string            `json:"name"`
+		Kind        string            `json:"kind"`
+		ExpiresAt   *string           `json:"expiresAt"`
+		Secret      map[string]string `json:"secret"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	user := currentUser(r)
-	if input.ProjectID != nil {
-		if !s.requireProjectRole(w, r, *input.ProjectID, "owner") {
+	if input.WorkspaceID != nil {
+		if !s.requireWorkspaceRole(w, r, *input.WorkspaceID, "owner") {
 			return
 		}
 	} else if !user.IsAdmin {
@@ -311,7 +311,7 @@ func (s *Server) createCredential(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid credential payload")
 		return
 	}
-	credential := store.Credential{ID: store.NewID(), ProjectID: input.ProjectID, Name: input.Name, Kind: input.Kind}
+	credential := store.Credential{ID: store.NewID(), WorkspaceID: input.WorkspaceID, Name: input.Name, Kind: input.Kind}
 	if input.ExpiresAt != nil {
 		value := strings.TrimSpace(*input.ExpiresAt)
 		if value != "" {
@@ -419,7 +419,11 @@ func validateCredentialPayload(kind string, secret map[string]string) error {
 }
 
 func (s *Server) listClusters(w http.ResponseWriter, r *http.Request) {
-	items, err := s.Store.ListClusters(r.Context())
+	workspaceID := r.URL.Query().Get("workspaceId")
+	if !s.requireWorkspaceRole(w, r, workspaceID, "viewer") {
+		return
+	}
+	items, err := s.Store.ListClusters(r.Context(), workspaceID)
 	if err != nil {
 		writeStoreError(w, "could not load clusters")
 		return
@@ -437,11 +441,14 @@ func (s *Server) createCluster(w http.ResponseWriter, r *http.Request) {
 		ClusterScopeCredentialID *string `json:"clusterScopeCredentialId"`
 		MaxConcurrentOperations  *int    `json:"maxConcurrentOperations"`
 		OperationsPerMinute      *int    `json:"operationsPerMinute"`
-		ProjectID                string  `json:"projectId"`
-		ProjectCredentialID      *string `json:"projectCredentialId"`
+		WorkspaceID              string  `json:"workspaceId"`
+		WorkspaceCredentialID    *string `json:"workspaceCredentialId"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !s.requireWorkspaceRole(w, r, input.WorkspaceID, "owner") {
 		return
 	}
 	input.Name = strings.TrimSpace(input.Name)
@@ -476,29 +483,26 @@ func (s *Server) createCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, credentialID := range []*string{input.DefaultCredentialID, input.ClusterScopeCredentialID} {
 		if credentialID != nil {
-			c, err := s.Store.CredentialByID(r.Context(), *credentialID)
-			if err != nil || (c.Kind != "kubernetes-token" && c.Kind != "kubeconfig") || c.ProjectID != nil {
-				writeError(w, http.StatusBadRequest, "cluster credentials must be global Kubernetes credentials")
-				return
-			}
-		}
-	}
-	if input.ProjectCredentialID != nil {
-		if !s.requireProjectRole(w, r, input.ProjectID, "owner") {
-			return
-		}
-		c, err := s.Store.CredentialByID(r.Context(), *input.ProjectCredentialID)
-		if err != nil || (c.Kind != "kubernetes-token" && c.Kind != "kubeconfig") || c.ProjectID == nil || *c.ProjectID != input.ProjectID {
-			writeError(w, http.StatusBadRequest, "project credential must be a Kubernetes credential owned by the selected project")
+			writeError(w, http.StatusBadRequest, "new workspace clusters must use a workspace-owned Kubernetes credential")
 			return
 		}
 	}
-	cluster := store.Cluster{ID: store.NewID(), Name: input.Name, APIServer: endpoint.String(), CAData: caData, InsecureSkipVerify: input.InsecureSkipVerify, DefaultCredentialID: input.DefaultCredentialID, ClusterScopeCredential: input.ClusterScopeCredentialID, MaxConcurrentOperations: maxConcurrentOperations, OperationsPerMinute: operationsPerMinute}
+	if input.WorkspaceCredentialID != nil {
+		if !s.requireWorkspaceRole(w, r, input.WorkspaceID, "owner") {
+			return
+		}
+		c, err := s.Store.CredentialByID(r.Context(), *input.WorkspaceCredentialID)
+		if err != nil || (c.Kind != "kubernetes-token" && c.Kind != "kubeconfig") || c.WorkspaceID == nil || *c.WorkspaceID != input.WorkspaceID {
+			writeError(w, http.StatusBadRequest, "workspace credential must be a Kubernetes credential owned by the selected workspace")
+			return
+		}
+	}
+	cluster := store.Cluster{ID: store.NewID(), WorkspaceID: &input.WorkspaceID, Name: input.Name, APIServer: endpoint.String(), CAData: caData, InsecureSkipVerify: input.InsecureSkipVerify, DefaultCredentialID: input.DefaultCredentialID, ClusterScopeCredential: input.ClusterScopeCredentialID, MaxConcurrentOperations: maxConcurrentOperations, OperationsPerMinute: operationsPerMinute}
 	var createErr error
-	if input.ProjectCredentialID != nil {
-		createErr = s.Store.CreateClusterWithProjectCredential(r.Context(), cluster, input.ProjectID, *input.ProjectCredentialID)
+	if input.WorkspaceCredentialID != nil {
+		createErr = s.Store.CreateClusterWithWorkspaceCredential(r.Context(), cluster, input.WorkspaceID, *input.WorkspaceCredentialID)
 	} else {
-		createErr = s.Store.CreateCluster(r.Context(), cluster)
+		createErr = s.Store.CreateWorkspaceCluster(r.Context(), cluster)
 	}
 	if createErr != nil {
 		writeError(w, http.StatusConflict, "could not create cluster")
@@ -511,7 +515,7 @@ func (s *Server) createCluster(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createNamespaceBinding(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		ProjectID    string  `json:"projectId"`
+		WorkspaceID  string  `json:"workspaceId"`
 		Namespace    string  `json:"namespace"`
 		CredentialID *string `json:"credentialId"`
 	}
@@ -519,7 +523,7 @@ func (s *Server) createNamespaceBinding(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if !s.requireProjectRole(w, r, input.ProjectID, "owner") {
+	if !s.requireWorkspaceRole(w, r, input.WorkspaceID, "owner") {
 		return
 	}
 	input.Namespace = strings.TrimSpace(input.Namespace)
@@ -532,57 +536,66 @@ func (s *Server) createNamespaceBinding(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "cluster not found")
 		return
 	}
+	if !s.requireWorkspaceCluster(w, r, input.WorkspaceID, cluster.ID) {
+		return
+	}
 	if input.CredentialID != nil {
 		c, err := s.Store.CredentialByID(r.Context(), *input.CredentialID)
-		if err != nil || (c.Kind != "kubernetes-token" && c.Kind != "kubeconfig") || (c.ProjectID != nil && *c.ProjectID != input.ProjectID) {
-			writeError(w, http.StatusBadRequest, "credential must be a Kubernetes credential available to this project")
+		if err != nil || (c.Kind != "kubernetes-token" && c.Kind != "kubeconfig") || (c.WorkspaceID != nil && *c.WorkspaceID != input.WorkspaceID) {
+			writeError(w, http.StatusBadRequest, "credential must be a Kubernetes credential available to this workspace")
 			return
 		}
 	}
-	projectCredentialID, err := s.Store.ProjectClusterCredential(r.Context(), input.ProjectID, cluster.ID)
+	workspaceCredentialID, err := s.Store.WorkspaceClusterCredential(r.Context(), input.WorkspaceID, cluster.ID)
 	if err != nil {
-		writeStoreError(w, "could not load project cluster credential")
+		writeStoreError(w, "could not load workspace cluster credential")
 		return
 	}
-	if input.CredentialID == nil && projectCredentialID == nil && cluster.DefaultCredentialID == nil {
+	if input.CredentialID == nil && workspaceCredentialID == nil && cluster.DefaultCredentialID == nil {
 		writeError(w, http.StatusBadRequest, "a namespace credential or cluster default credential is required")
 		return
 	}
-	if err := s.Store.CreateNamespaceBinding(r.Context(), input.ProjectID, cluster.ID, input.Namespace, input.CredentialID); err != nil {
+	if err := s.Store.CreateNamespaceBinding(r.Context(), input.WorkspaceID, cluster.ID, input.Namespace, input.CredentialID); err != nil {
 		writeError(w, http.StatusConflict, "could not create namespace binding")
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "namespace_binding.created", "cluster", cluster.ID, map[string]string{"projectId": input.ProjectID, "namespace": input.Namespace, "credentialId": valueOf(input.CredentialID)})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "namespace_binding.created", "cluster", cluster.ID, map[string]string{"workspaceId": input.WorkspaceID, "namespace": input.Namespace, "credentialId": valueOf(input.CredentialID)})
 	writeJSON(w, http.StatusCreated, store.NamespaceBinding{Namespace: input.Namespace, CredentialID: input.CredentialID})
 }
 
-func (s *Server) getProjectClusterCredential(w http.ResponseWriter, r *http.Request) {
-	projectID := r.URL.Query().Get("projectId")
-	if !s.requireProjectRole(w, r, projectID, "viewer") {
+func (s *Server) getWorkspaceClusterCredential(w http.ResponseWriter, r *http.Request) {
+	workspaceID := r.URL.Query().Get("workspaceId")
+	if !s.requireWorkspaceRole(w, r, workspaceID, "viewer") {
+		return
+	}
+	if !s.requireWorkspaceCluster(w, r, workspaceID, r.PathValue("clusterID")) {
 		return
 	}
 	if _, err := s.Store.ClusterByID(r.Context(), r.PathValue("clusterID")); err != nil {
 		writeError(w, http.StatusNotFound, "cluster not found")
 		return
 	}
-	id, err := s.Store.ProjectClusterCredential(r.Context(), projectID, r.PathValue("clusterID"))
+	id, err := s.Store.WorkspaceClusterCredential(r.Context(), workspaceID, r.PathValue("clusterID"))
 	if err != nil {
-		writeStoreError(w, "could not load project cluster credential")
+		writeStoreError(w, "could not load workspace cluster credential")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"credentialId": id})
 }
 
-func (s *Server) setProjectClusterCredential(w http.ResponseWriter, r *http.Request) {
+func (s *Server) setWorkspaceClusterCredential(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		ProjectID    string  `json:"projectId"`
+		WorkspaceID  string  `json:"workspaceId"`
 		CredentialID *string `json:"credentialId"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if !s.requireProjectRole(w, r, input.ProjectID, "owner") {
+	if !s.requireWorkspaceRole(w, r, input.WorkspaceID, "owner") {
+		return
+	}
+	if !s.requireWorkspaceCluster(w, r, input.WorkspaceID, r.PathValue("clusterID")) {
 		return
 	}
 	if _, err := s.Store.ClusterByID(r.Context(), r.PathValue("clusterID")); err != nil {
@@ -591,25 +604,28 @@ func (s *Server) setProjectClusterCredential(w http.ResponseWriter, r *http.Requ
 	}
 	if input.CredentialID != nil {
 		c, err := s.Store.CredentialByID(r.Context(), *input.CredentialID)
-		if err != nil || (c.Kind != "kubernetes-token" && c.Kind != "kubeconfig") || c.ProjectID == nil || *c.ProjectID != input.ProjectID {
-			writeError(w, http.StatusBadRequest, "credential must be a Kubernetes credential owned by this project")
+		if err != nil || (c.Kind != "kubernetes-token" && c.Kind != "kubeconfig") || c.WorkspaceID == nil || *c.WorkspaceID != input.WorkspaceID {
+			writeError(w, http.StatusBadRequest, "credential must be a Kubernetes credential owned by this workspace")
 			return
 		}
 	}
-	if err := s.Store.SetProjectClusterCredential(r.Context(), input.ProjectID, r.PathValue("clusterID"), input.CredentialID); err != nil {
-		writeStoreError(w, "could not save project cluster credential")
+	if err := s.Store.SetWorkspaceClusterCredential(r.Context(), input.WorkspaceID, r.PathValue("clusterID"), input.CredentialID); err != nil {
+		writeStoreError(w, "could not save workspace cluster credential")
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "project_cluster_credential.updated", "cluster", r.PathValue("clusterID"), map[string]string{"projectId": input.ProjectID, "credentialId": valueOf(input.CredentialID)})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "workspace_cluster_credential.updated", "cluster", r.PathValue("clusterID"), map[string]string{"workspaceId": input.WorkspaceID, "credentialId": valueOf(input.CredentialID)})
 	writeJSON(w, http.StatusOK, map[string]any{"credentialId": input.CredentialID})
 }
 
 func (s *Server) listNamespaceBindings(w http.ResponseWriter, r *http.Request) {
-	projectID := r.URL.Query().Get("projectId")
-	if !s.requireProjectRole(w, r, projectID, "viewer") {
+	workspaceID := r.URL.Query().Get("workspaceId")
+	if !s.requireWorkspaceRole(w, r, workspaceID, "viewer") {
 		return
 	}
-	items, err := s.Store.ListNamespaceBindings(r.Context(), projectID, r.PathValue("clusterID"))
+	if !s.requireWorkspaceCluster(w, r, workspaceID, r.PathValue("clusterID")) {
+		return
+	}
+	items, err := s.Store.ListNamespaceBindings(r.Context(), workspaceID, r.PathValue("clusterID"))
 	if err != nil {
 		writeStoreError(w, "could not load namespace bindings")
 		return
@@ -618,11 +634,11 @@ func (s *Server) listNamespaceBindings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listGitSources(w http.ResponseWriter, r *http.Request) {
-	projectID := r.URL.Query().Get("projectId")
-	if !s.requireProjectRole(w, r, projectID, "viewer") {
+	workspaceID := r.URL.Query().Get("workspaceId")
+	if !s.requireWorkspaceRole(w, r, workspaceID, "viewer") {
 		return
 	}
-	items, err := s.Store.ListGitSources(r.Context(), projectID)
+	items, err := s.Store.ListGitSources(r.Context(), workspaceID)
 	if err != nil {
 		writeStoreError(w, "could not load Git sources")
 		return
@@ -632,7 +648,7 @@ func (s *Server) listGitSources(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createGitSource(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		ProjectID     string  `json:"projectId"`
+		WorkspaceID   string  `json:"workspaceId"`
 		Name          string  `json:"name"`
 		RepositoryURL string  `json:"repositoryUrl"`
 		CredentialID  *string `json:"credentialId"`
@@ -641,7 +657,7 @@ func (s *Server) createGitSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if !s.requireProjectRole(w, r, input.ProjectID, "owner") {
+	if !s.requireWorkspaceRole(w, r, input.WorkspaceID, "owner") {
 		return
 	}
 	input.Name = strings.TrimSpace(input.Name)
@@ -652,17 +668,17 @@ func (s *Server) createGitSource(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.CredentialID != nil {
 		c, err := s.Store.CredentialByID(r.Context(), *input.CredentialID)
-		if err != nil || (c.ProjectID != nil && *c.ProjectID != input.ProjectID) || (c.Kind != "git-ssh" && c.Kind != "git-https") {
-			writeError(w, http.StatusBadRequest, "credential must be a Git credential available to this project")
+		if err != nil || c.WorkspaceID == nil || *c.WorkspaceID != input.WorkspaceID || (c.Kind != "git-ssh" && c.Kind != "git-https") {
+			writeError(w, http.StatusBadRequest, "new Git sources must use a Git credential owned by this workspace")
 			return
 		}
 	}
-	source := store.GitSource{ID: store.NewID(), ProjectID: input.ProjectID, Name: input.Name, RepositoryURL: input.RepositoryURL, CredentialID: input.CredentialID}
+	source := store.GitSource{ID: store.NewID(), WorkspaceID: input.WorkspaceID, Name: input.Name, RepositoryURL: input.RepositoryURL, CredentialID: input.CredentialID}
 	if err := s.Store.CreateGitSource(r.Context(), source); err != nil {
 		writeError(w, http.StatusConflict, "could not create Git source")
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "git_source.created", "git_source", source.ID, map[string]string{"projectId": source.ProjectID, "name": source.Name})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "git_source.created", "git_source", source.ID, map[string]string{"workspaceId": source.WorkspaceID, "name": source.Name})
 	writeJSON(w, http.StatusCreated, source)
 }
 
@@ -698,11 +714,11 @@ func validGitURL(value string) bool {
 }
 
 func (s *Server) listApplications(w http.ResponseWriter, r *http.Request) {
-	projectID := r.URL.Query().Get("projectId")
-	if !s.requireProjectRole(w, r, projectID, "viewer") {
+	workspaceID := r.URL.Query().Get("workspaceId")
+	if !s.requireWorkspaceRole(w, r, workspaceID, "viewer") {
 		return
 	}
-	items, err := s.Store.ListApplications(r.Context(), projectID)
+	items, err := s.Store.ListApplications(r.Context(), workspaceID)
 	if err != nil {
 		writeStoreError(w, "could not load applications")
 		return
@@ -716,7 +732,7 @@ func (s *Server) getApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "viewer") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "viewer") {
 		return
 	}
 	writeJSON(w, http.StatusOK, app)
@@ -728,14 +744,14 @@ func (s *Server) getApplicationKustomization(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "viewer") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "viewer") {
 		return
 	}
 	if app.Renderer != "kustomize" {
 		writeError(w, http.StatusBadRequest, "application does not use Kustomize")
 		return
 	}
-	source, err := s.Store.GitSourceByID(r.Context(), app.SourceID)
+	source, err := s.Store.GitSourceForWorkspace(r.Context(), app.SourceID, app.WorkspaceID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "application Git source is unavailable")
 		return
@@ -794,7 +810,7 @@ func (s *Server) updateApplicationRenderSettings(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "owner") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
 	if app.Renderer != "kustomize" {
@@ -829,7 +845,7 @@ func (s *Server) updateApplicationRenderSettings(w http.ResponseWriter, r *http.
 
 func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		ProjectID                  string                             `json:"projectId"`
+		WorkspaceID                string                             `json:"workspaceId"`
 		Name                       string                             `json:"name"`
 		SourceID                   string                             `json:"sourceId"`
 		Revision                   string                             `json:"revision"`
@@ -854,7 +870,7 @@ func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if !s.requireProjectRole(w, r, input.ProjectID, "owner") {
+	if !s.requireWorkspaceRole(w, r, input.WorkspaceID, "owner") {
 		return
 	}
 	input.Name = strings.TrimSpace(input.Name)
@@ -927,13 +943,10 @@ func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	source, err := s.Store.GitSourceByID(r.Context(), input.SourceID)
-	if err != nil || source.ProjectID != input.ProjectID {
-		writeError(w, http.StatusBadRequest, "Git source is not available to this project")
+	if !s.requireWorkspaceGitSource(w, r, input.WorkspaceID, input.SourceID) {
 		return
 	}
-	if _, err := s.Store.ClusterByID(r.Context(), input.ClusterID); err != nil {
-		writeError(w, http.StatusBadRequest, "cluster not found")
+	if !s.requireWorkspaceCluster(w, r, input.WorkspaceID, input.ClusterID) {
 		return
 	}
 	if len(input.Namespaces) == 0 {
@@ -949,14 +962,14 @@ func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		seen[namespace] = true
-		binding, err := s.Store.NamespaceBinding(r.Context(), input.ProjectID, input.ClusterID, namespace)
+		binding, err := s.Store.NamespaceBinding(r.Context(), input.WorkspaceID, input.ClusterID, namespace)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "every application namespace must have a project binding")
+			writeError(w, http.StatusBadRequest, "every application namespace must have a workspace binding")
 			return
 		}
 		bindings = append(bindings, binding)
 	}
-	app := store.Application{ID: store.NewID(), ProjectID: input.ProjectID, Name: input.Name, SourceID: input.SourceID, Revision: input.Revision, ManifestPath: input.ManifestPath, TargetManifestPath: input.TargetManifestPath, NamespaceManifestPaths: input.NamespaceManifestPaths, Renderer: input.Renderer, KustomizeHelmEnabled: input.KustomizeHelmEnabled, KustomizeNamespaceOverride: input.KustomizeNamespaceOverride, HelmValuesFiles: input.HelmValuesFiles, HelmValuesYAML: input.HelmValuesYAML, TargetHelmValuesFiles: input.TargetHelmValuesFiles, TargetHelmValuesYAML: input.TargetHelmValuesYAML, NamespaceHelmValues: input.NamespaceHelmValues, ClusterID: input.ClusterID, Namespaces: bindings, SyncPolicy: input.SyncPolicy, PollSeconds: input.PollSeconds, RetryPolicy: retryPolicy, Health: "unknown"}
+	app := store.Application{ID: store.NewID(), WorkspaceID: input.WorkspaceID, Name: input.Name, SourceID: input.SourceID, Revision: input.Revision, ManifestPath: input.ManifestPath, TargetManifestPath: input.TargetManifestPath, NamespaceManifestPaths: input.NamespaceManifestPaths, Renderer: input.Renderer, KustomizeHelmEnabled: input.KustomizeHelmEnabled, KustomizeNamespaceOverride: input.KustomizeNamespaceOverride, HelmValuesFiles: input.HelmValuesFiles, HelmValuesYAML: input.HelmValuesYAML, TargetHelmValuesFiles: input.TargetHelmValuesFiles, TargetHelmValuesYAML: input.TargetHelmValuesYAML, NamespaceHelmValues: input.NamespaceHelmValues, ClusterID: input.ClusterID, Namespaces: bindings, SyncPolicy: input.SyncPolicy, PollSeconds: input.PollSeconds, RetryPolicy: retryPolicy, Health: "unknown"}
 	if err := s.Store.CreateApplication(r.Context(), app); err != nil {
 		writeError(w, http.StatusConflict, "could not create application")
 		return
@@ -971,7 +984,7 @@ func applicationAuditDetails(app store.Application) map[string]any {
 		namespaceValues[namespace] = map[string]any{"files": values.Files, "configured": values.YAML != ""}
 	}
 	return map[string]any{
-		"name": app.Name, "projectId": app.ProjectID, "sourceId": app.SourceID,
+		"name": app.Name, "workspaceId": app.WorkspaceID, "sourceId": app.SourceID,
 		"revision": app.Revision, "manifestPath": app.ManifestPath,
 		"targetManifestPath": app.TargetManifestPath, "namespaceManifestPaths": app.NamespaceManifestPaths,
 		"renderer": app.Renderer, "clusterId": app.ClusterID, "namespaces": app.Namespaces,

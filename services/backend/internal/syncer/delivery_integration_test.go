@@ -61,11 +61,11 @@ func TestIntegrationDeliveryAgainstKind(t *testing.T) {
 	})
 	repo := newIntegrationGitRepo(t, namespace)
 	key := bytes.Repeat([]byte{0x32}, 32)
-	ownerID, projectID, credentialID, clusterID, sourceID := store.NewID(), store.NewID(), store.NewID(), store.NewID(), store.NewID()
+	ownerID, workspaceID, credentialID, clusterID, sourceID := store.NewID(), store.NewID(), store.NewID(), store.NewID(), store.NewID()
 	if _, err := db.DB.ExecContext(ctx, `INSERT INTO users(id,email,display_name,is_admin) VALUES($1,$2,'Integration Owner',TRUE)`, ownerID, ownerID+"@example.invalid"); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateProject(ctx, store.Project{ID: projectID, Name: "Integration project"}, ownerID); err != nil {
+	if err := db.CreateWorkspace(ctx, store.Workspace{ID: workspaceID, Name: "Integration workspace"}, ownerID); err != nil {
 		t.Fatal(err)
 	}
 	content, err := os.ReadFile(configPath)
@@ -77,16 +77,16 @@ func TestIntegrationDeliveryAgainstKind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateCredential(ctx, store.Credential{ID: credentialID, ProjectID: &projectID, Name: "kind admin", Kind: "kubeconfig", Cipher: cipher}); err != nil {
+	if err := db.CreateCredential(ctx, store.Credential{ID: credentialID, WorkspaceID: &workspaceID, Name: "kind admin", Kind: "kubeconfig", Cipher: cipher}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.CreateCluster(ctx, store.Cluster{ID: clusterID, Name: "kind", APIServer: config.Host, CAData: config.CAData, DefaultCredentialID: &credentialID}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateNamespaceBinding(ctx, projectID, clusterID, namespace, &credentialID); err != nil {
+	if err := db.CreateNamespaceBinding(ctx, workspaceID, clusterID, namespace, &credentialID); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateGitSource(ctx, store.GitSource{ID: sourceID, ProjectID: projectID, Name: "fixture", RepositoryURL: repo.url}); err != nil {
+	if err := db.CreateGitSource(ctx, store.GitSource{ID: sourceID, WorkspaceID: workspaceID, Name: "fixture", RepositoryURL: repo.url}); err != nil {
 		t.Fatal(err)
 	}
 	svc := &Service{Store: db, EncryptionKey: key}
@@ -114,7 +114,7 @@ func TestIntegrationDeliveryAgainstKind(t *testing.T) {
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			appID := store.NewID()
-			app := store.Application{ID: appID, ProjectID: projectID, Name: fixture.name, SourceID: sourceID, Revision: "main", ManifestPath: fixture.path, Renderer: fixture.renderer, ClusterID: clusterID, Namespaces: []store.NamespaceBinding{{Namespace: namespace, CredentialID: &credentialID}}, SyncPolicy: "manual", PollSeconds: 300}
+			app := store.Application{ID: appID, WorkspaceID: workspaceID, Name: fixture.name, SourceID: sourceID, Revision: "main", ManifestPath: fixture.path, Renderer: fixture.renderer, ClusterID: clusterID, Namespaces: []store.NamespaceBinding{{Namespace: namespace, CredentialID: &credentialID}}, SyncPolicy: "manual", PollSeconds: 300}
 			if err := db.CreateApplication(ctx, app); err != nil {
 				t.Fatal(err)
 			}
@@ -154,13 +154,13 @@ func TestIntegrationDeliveryAgainstKind(t *testing.T) {
 			}
 		})
 	}
-	verifyIntegrationPartialFailure(t, ctx, svc, db, kubeClient, repo, projectID, clusterID, sourceID, credentialID, ownerID)
-	verifyIntegrationConnectionFailures(t, ctx, svc, db, repo, projectID, clusterID, credentialID, ownerID, namespace)
-	verifyIntegrationReadOnlyCredential(t, ctx, svc, db, kubeClient, repo, key, projectID, sourceID, ownerID, namespace, config.Host, config.CAData)
+	verifyIntegrationPartialFailure(t, ctx, svc, db, kubeClient, repo, workspaceID, clusterID, sourceID, credentialID, ownerID)
+	verifyIntegrationConnectionFailures(t, ctx, svc, db, repo, workspaceID, clusterID, credentialID, ownerID, namespace)
+	verifyIntegrationReadOnlyCredential(t, ctx, svc, db, kubeClient, repo, key, workspaceID, sourceID, ownerID, namespace, config.Host, config.CAData)
 	stopWorker()
 	<-workerDone
 	workerStopped = true
-	verifyIntegrationWorkerCrash(t, ctx, svc, db, repo, projectID, clusterID, sourceID, credentialID, ownerID, namespace)
+	verifyIntegrationWorkerCrash(t, ctx, svc, db, repo, workspaceID, clusterID, sourceID, credentialID, ownerID, namespace)
 	audit, err := db.ListAuditEvents(ctx, 200, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -176,7 +176,7 @@ func TestIntegrationDeliveryAgainstKind(t *testing.T) {
 	}
 }
 
-func verifyIntegrationPartialFailure(t *testing.T, ctx context.Context, svc *Service, db *store.Store, kubeClient *kubernetes.Clientset, repo *integrationGitRepo, projectID, clusterID, sourceID, credentialID, ownerID string) {
+func verifyIntegrationPartialFailure(t *testing.T, ctx context.Context, svc *Service, db *store.Store, kubeClient *kubernetes.Clientset, repo *integrationGitRepo, workspaceID, clusterID, sourceID, credentialID, ownerID string) {
 	t.Helper()
 	namespace := "justcd-e2e-partial-" + store.NewID()[:8]
 	if _, err := kubeClient.CoreV1().Namespaces().Create(ctx, &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}, metav1.CreateOptions{}); err != nil {
@@ -203,7 +203,7 @@ func verifyIntegrationPartialFailure(t *testing.T, ctx context.Context, svc *Ser
 	if _, err := kubeClient.CoreV1().ResourceQuotas(namespace).Create(ctx, quota, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateNamespaceBinding(ctx, projectID, clusterID, namespace, &credentialID); err != nil {
+	if err := db.CreateNamespaceBinding(ctx, workspaceID, clusterID, namespace, &credentialID); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"a-partial", "z-partial"} {
@@ -211,7 +211,7 @@ func verifyIntegrationPartialFailure(t *testing.T, ctx context.Context, svc *Ser
 	}
 	repo.commit(t, "add partial failure fixture")
 	appID := store.NewID()
-	app := store.Application{ID: appID, ProjectID: projectID, Name: "partial failure", SourceID: sourceID, Revision: "main", ManifestPath: "partial", Renderer: "yaml", ClusterID: clusterID, Namespaces: []store.NamespaceBinding{{Namespace: namespace, CredentialID: &credentialID}}, SyncPolicy: "manual", PollSeconds: 300}
+	app := store.Application{ID: appID, WorkspaceID: workspaceID, Name: "partial failure", SourceID: sourceID, Revision: "main", ManifestPath: "partial", Renderer: "yaml", ClusterID: clusterID, Namespaces: []store.NamespaceBinding{{Namespace: namespace, CredentialID: &credentialID}}, SyncPolicy: "manual", PollSeconds: 300}
 	if err := db.CreateApplication(ctx, app); err != nil {
 		t.Fatal(err)
 	}
@@ -235,14 +235,14 @@ func verifyIntegrationPartialFailure(t *testing.T, ctx context.Context, svc *Ser
 	}
 }
 
-func verifyIntegrationConnectionFailures(t *testing.T, ctx context.Context, svc *Service, db *store.Store, repo *integrationGitRepo, projectID, clusterID, credentialID, ownerID, namespace string) {
+func verifyIntegrationConnectionFailures(t *testing.T, ctx context.Context, svc *Service, db *store.Store, repo *integrationGitRepo, workspaceID, clusterID, credentialID, ownerID, namespace string) {
 	t.Helper()
 	badSourceID := store.NewID()
-	if err := db.CreateGitSource(ctx, store.GitSource{ID: badSourceID, ProjectID: projectID, Name: "offline source", RepositoryURL: "https://127.0.0.1:1/unreachable.git"}); err != nil {
+	if err := db.CreateGitSource(ctx, store.GitSource{ID: badSourceID, WorkspaceID: workspaceID, Name: "offline source", RepositoryURL: "https://127.0.0.1:1/unreachable.git"}); err != nil {
 		t.Fatal(err)
 	}
 	gitAppID := store.NewID()
-	gitApp := store.Application{ID: gitAppID, ProjectID: projectID, Name: "offline Git", SourceID: badSourceID, Revision: "main", ManifestPath: "yaml", Renderer: "yaml", ClusterID: clusterID, Namespaces: []store.NamespaceBinding{{Namespace: namespace, CredentialID: &credentialID}}, SyncPolicy: "manual", PollSeconds: 300}
+	gitApp := store.Application{ID: gitAppID, WorkspaceID: workspaceID, Name: "offline Git", SourceID: badSourceID, Revision: "main", ManifestPath: "yaml", Renderer: "yaml", ClusterID: clusterID, Namespaces: []store.NamespaceBinding{{Namespace: namespace, CredentialID: &credentialID}}, SyncPolicy: "manual", PollSeconds: 300}
 	if err := db.CreateApplication(ctx, gitApp); err != nil {
 		t.Fatal(err)
 	}
@@ -257,11 +257,11 @@ func verifyIntegrationConnectionFailures(t *testing.T, ctx context.Context, svc 
 	if err := db.CreateCluster(ctx, store.Cluster{ID: badClusterID, Name: "offline cluster", APIServer: "https://127.0.0.1:1", CAData: []byte{}, DefaultCredentialID: &credentialID}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateNamespaceBinding(ctx, projectID, badClusterID, namespace, &credentialID); err != nil {
+	if err := db.CreateNamespaceBinding(ctx, workspaceID, badClusterID, namespace, &credentialID); err != nil {
 		t.Fatal(err)
 	}
 	clusterAppID := store.NewID()
-	clusterApp := store.Application{ID: clusterAppID, ProjectID: projectID, Name: "offline cluster", SourceID: gitSourceID(t, ctx, db, projectID, repo.url), Revision: "main", ManifestPath: "kustomize", Renderer: "kustomize", ClusterID: badClusterID, Namespaces: []store.NamespaceBinding{{Namespace: namespace, CredentialID: &credentialID}}, SyncPolicy: "manual", PollSeconds: 300}
+	clusterApp := store.Application{ID: clusterAppID, WorkspaceID: workspaceID, Name: "offline cluster", SourceID: gitSourceID(t, ctx, db, workspaceID, repo.url), Revision: "main", ManifestPath: "kustomize", Renderer: "kustomize", ClusterID: badClusterID, Namespaces: []store.NamespaceBinding{{Namespace: namespace, CredentialID: &credentialID}}, SyncPolicy: "manual", PollSeconds: 300}
 	if err := db.CreateApplication(ctx, clusterApp); err != nil {
 		t.Fatal(err)
 	}
@@ -274,16 +274,16 @@ func verifyIntegrationConnectionFailures(t *testing.T, ctx context.Context, svc 
 	}
 }
 
-func gitSourceID(t *testing.T, ctx context.Context, db *store.Store, projectID, url string) string {
+func gitSourceID(t *testing.T, ctx context.Context, db *store.Store, workspaceID, url string) string {
 	t.Helper()
 	var id string
-	if err := db.DB.QueryRowContext(ctx, `SELECT id FROM git_sources WHERE project_id=$1 AND repository_url=$2`, projectID, url).Scan(&id); err != nil {
+	if err := db.DB.QueryRowContext(ctx, `SELECT id FROM git_sources WHERE workspace_id=$1 AND repository_url=$2`, workspaceID, url).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
 	return id
 }
 
-func verifyIntegrationReadOnlyCredential(t *testing.T, ctx context.Context, svc *Service, db *store.Store, kubeClient *kubernetes.Clientset, repo *integrationGitRepo, key []byte, projectID, sourceID, ownerID, namespace, apiServer string, caData []byte) {
+func verifyIntegrationReadOnlyCredential(t *testing.T, ctx context.Context, svc *Service, db *store.Store, kubeClient *kubernetes.Clientset, repo *integrationGitRepo, key []byte, workspaceID, sourceID, ownerID, namespace, apiServer string, caData []byte) {
 	t.Helper()
 	serviceAccount := "justcd-e2e-reader"
 	if _, err := kubeClient.CoreV1().ServiceAccounts(namespace).Create(ctx, &v1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: serviceAccount}}, metav1.CreateOptions{}); err != nil {
@@ -307,19 +307,19 @@ func verifyIntegrationReadOnlyCredential(t *testing.T, ctx context.Context, svc 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateCredential(ctx, store.Credential{ID: credentialID, ProjectID: &projectID, Name: "read-only token", Kind: "kubernetes-token", Cipher: cipher}); err != nil {
+	if err := db.CreateCredential(ctx, store.Credential{ID: credentialID, WorkspaceID: &workspaceID, Name: "read-only token", Kind: "kubernetes-token", Cipher: cipher}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.CreateCluster(ctx, store.Cluster{ID: clusterID, Name: "kind read only", APIServer: apiServer, CAData: caData, DefaultCredentialID: &credentialID}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateNamespaceBinding(ctx, projectID, clusterID, namespace, &credentialID); err != nil {
+	if err := db.CreateNamespaceBinding(ctx, workspaceID, clusterID, namespace, &credentialID); err != nil {
 		t.Fatal(err)
 	}
 	repo.write(t, "read-only/agent.yaml", fmt.Sprintf("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: read-only-agent\n  namespace: %s\ndata:\n  mode: desired\n", namespace))
 	repo.commit(t, "add read-only fixture")
 	appID := store.NewID()
-	app := store.Application{ID: appID, ProjectID: projectID, Name: "read-only target", SourceID: sourceID, Revision: "main", ManifestPath: "read-only", Renderer: "yaml", ClusterID: clusterID, Namespaces: []store.NamespaceBinding{{Namespace: namespace, CredentialID: &credentialID}}, SyncPolicy: "manual", PollSeconds: 300}
+	app := store.Application{ID: appID, WorkspaceID: workspaceID, Name: "read-only target", SourceID: sourceID, Revision: "main", ManifestPath: "read-only", Renderer: "yaml", ClusterID: clusterID, Namespaces: []store.NamespaceBinding{{Namespace: namespace, CredentialID: &credentialID}}, SyncPolicy: "manual", PollSeconds: 300}
 	if err := db.CreateApplication(ctx, app); err != nil {
 		t.Fatal(err)
 	}
@@ -340,12 +340,12 @@ func verifyIntegrationReadOnlyCredential(t *testing.T, ctx context.Context, svc 
 	}
 }
 
-func verifyIntegrationWorkerCrash(t *testing.T, ctx context.Context, svc *Service, db *store.Store, repo *integrationGitRepo, projectID, clusterID, sourceID, credentialID, ownerID, namespace string) {
+func verifyIntegrationWorkerCrash(t *testing.T, ctx context.Context, svc *Service, db *store.Store, repo *integrationGitRepo, workspaceID, clusterID, sourceID, credentialID, ownerID, namespace string) {
 	t.Helper()
 	repo.write(t, "crash/agent.yaml", fmt.Sprintf("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: crash-agent\n  namespace: %s\ndata:\n  mode: desired\n", namespace))
 	repo.commit(t, "add worker interruption fixture")
 	appID := store.NewID()
-	app := store.Application{ID: appID, ProjectID: projectID, Name: "worker crash", SourceID: sourceID, Revision: "main", ManifestPath: "crash", Renderer: "yaml", ClusterID: clusterID, Namespaces: []store.NamespaceBinding{{Namespace: namespace, CredentialID: &credentialID}}, SyncPolicy: "manual", PollSeconds: 300}
+	app := store.Application{ID: appID, WorkspaceID: workspaceID, Name: "worker crash", SourceID: sourceID, Revision: "main", ManifestPath: "crash", Renderer: "yaml", ClusterID: clusterID, Namespaces: []store.NamespaceBinding{{Namespace: namespace, CredentialID: &credentialID}}, SyncPolicy: "manual", PollSeconds: 300}
 	if err := db.CreateApplication(ctx, app); err != nil {
 		t.Fatal(err)
 	}

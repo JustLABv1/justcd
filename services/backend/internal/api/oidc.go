@@ -242,25 +242,25 @@ func (s *Server) createOIDCProvider(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) addOIDCGroupRole(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Group     string `json:"group"`
-		ProjectID string `json:"projectId"`
-		Role      string `json:"role"`
+		Group       string `json:"group"`
+		WorkspaceID string `json:"workspaceId"`
+		Role        string `json:"role"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	input.Group = strings.TrimSpace(input.Group)
-	if input.Group == "" || len(input.Group) > 256 || input.ProjectID == "" || !validRole(input.Role) {
-		writeError(w, http.StatusBadRequest, "group, projectId, and a valid role are required")
+	if input.Group == "" || len(input.Group) > 256 || input.WorkspaceID == "" || !validRole(input.Role) {
+		writeError(w, http.StatusBadRequest, "group, workspaceId, and a valid role are required")
 		return
 	}
-	if err := s.Store.AddOIDCGroupRole(r.Context(), r.PathValue("providerID"), input.Group, input.ProjectID, input.Role); err != nil {
+	if err := s.Store.AddOIDCGroupRole(r.Context(), r.PathValue("providerID"), input.Group, input.WorkspaceID, input.Role); err != nil {
 		writeError(w, http.StatusBadRequest, "could not add group mapping")
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "oidc_group_role.created", "oidc_provider", r.PathValue("providerID"), map[string]string{"group": input.Group, "projectId": input.ProjectID, "role": input.Role})
-	writeJSON(w, http.StatusCreated, map[string]string{"group": input.Group, "projectId": input.ProjectID, "role": input.Role})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "oidc_group_role.created", "oidc_provider", r.PathValue("providerID"), map[string]string{"group": input.Group, "workspaceId": input.WorkspaceID, "role": input.Role})
+	writeJSON(w, http.StatusCreated, map[string]string{"group": input.Group, "workspaceId": input.WorkspaceID, "role": input.Role})
 }
 
 func validOIDCClaim(raw json.RawMessage) ([]string, error) {

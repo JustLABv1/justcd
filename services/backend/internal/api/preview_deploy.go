@@ -60,7 +60,7 @@ func (s *Server) previewApplication(ctx context.Context, production store.Applic
 		}
 	}()
 	if existing, err := s.Store.ApplicationByID(ctx, id); err == nil {
-		if existing.ProjectID != production.ProjectID || existing.SourceID != production.SourceID || existing.ClusterID != production.ClusterID || len(existing.Namespaces) != 1 || existing.Namespaces[0].Namespace != namespace {
+		if existing.WorkspaceID != production.WorkspaceID || existing.SourceID != production.SourceID || existing.ClusterID != production.ClusterID || len(existing.Namespaces) != 1 || existing.Namespaces[0].Namespace != namespace {
 			return store.Application{}, "", errors.New("preview application identity collision")
 		}
 		if existing.Revision != pullRequestRef(connection.Provider, review.Number) || existing.TargetHelmValuesYAML != renderPreviewValue(p.HelmValuesYAML, namespace, review.Number, review.HeadSHA) {
@@ -83,17 +83,17 @@ func (s *Server) previewApplication(ctx context.Context, production store.Applic
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return store.Application{}, "", err
 	}
-	// A project binding may already exist after an interrupted first attempt.
-	binding, err := s.Store.NamespaceBinding(ctx, production.ProjectID, production.ClusterID, namespace)
+	// A workspace binding may already exist after an interrupted first attempt.
+	binding, err := s.Store.NamespaceBinding(ctx, production.WorkspaceID, production.ClusterID, namespace)
 	if errors.Is(err, sql.ErrNoRows) {
-		if err = s.Store.CreateNamespaceBinding(ctx, production.ProjectID, production.ClusterID, namespace, nil); err != nil {
+		if err = s.Store.CreateNamespaceBinding(ctx, production.WorkspaceID, production.ClusterID, namespace, nil); err != nil {
 			return store.Application{}, "", err
 		}
 		binding = store.NamespaceBinding{Namespace: namespace}
 	} else if err != nil {
 		return store.Application{}, "", err
 	}
-	preview := store.Application{ID: id, ProjectID: production.ProjectID, Name: id, SourceID: production.SourceID, Revision: pullRequestRef(connection.Provider, review.Number), ManifestPath: production.ManifestPath, Renderer: production.Renderer, KustomizeHelmEnabled: production.KustomizeHelmEnabled, KustomizeNamespaceOverride: production.Renderer == "kustomize", ClusterID: production.ClusterID, Namespaces: []store.NamespaceBinding{binding}, SyncPolicy: "manual", PollSeconds: 86400, RetryPolicy: store.DefaultRetryPolicy(), Health: "unknown"}
+	preview := store.Application{ID: id, WorkspaceID: production.WorkspaceID, Name: id, SourceID: production.SourceID, Revision: pullRequestRef(connection.Provider, review.Number), ManifestPath: production.ManifestPath, Renderer: production.Renderer, KustomizeHelmEnabled: production.KustomizeHelmEnabled, KustomizeNamespaceOverride: production.Renderer == "kustomize", ClusterID: production.ClusterID, Namespaces: []store.NamespaceBinding{binding}, SyncPolicy: "manual", PollSeconds: 86400, RetryPolicy: store.DefaultRetryPolicy(), Health: "unknown"}
 	if p.ManifestPath != "" {
 		preview.ManifestPath = p.ManifestPath
 	}

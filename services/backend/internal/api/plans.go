@@ -103,7 +103,7 @@ func (s *Server) createPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "deployer") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "deployer") {
 		return
 	}
 	record, err := s.Syncer.BuildPlan(r.Context(), app.ID, currentUser(r).ID)
@@ -141,7 +141,7 @@ func (s *Server) listPlans(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "viewer") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "viewer") {
 		return
 	}
 	items, err := s.Store.ListPlans(r.Context(), app.ID, 20)
@@ -163,7 +163,7 @@ func (s *Server) getPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	app, err := s.Store.ApplicationByID(r.Context(), record.Plan.ApplicationID)
-	if err != nil || !s.requireProjectRole(w, r, app.ProjectID, "viewer") {
+	if err != nil || !s.requireWorkspaceRole(w, r, app.WorkspaceID, "viewer") {
 		if err != nil {
 			writeError(w, http.StatusNotFound, "application not found")
 		}
@@ -201,7 +201,7 @@ func (s *Server) approvePlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "this plan does not require approval")
 		return
 	}
-	role, roleErr := s.Store.ProjectRole(r.Context(), currentUser(r), app.ProjectID)
+	role, roleErr := s.Store.WorkspaceRole(r.Context(), currentUser(r), app.WorkspaceID)
 	if roleErr != nil || role == "" || !core.ApprovalRoleAllows(record.Plan, role, currentUser(r).ID) {
 		writeError(w, http.StatusForbidden, "you are not an eligible approver for this plan")
 		return
@@ -239,7 +239,7 @@ func (s *Server) approvePlan(w http.ResponseWriter, r *http.Request) {
 		approver, userErr := s.Store.UserByID(r.Context(), existing.Approval.ActorID)
 		approverRole := ""
 		if userErr == nil {
-			approverRole, userErr = s.Store.ProjectRole(r.Context(), approver, app.ProjectID)
+			approverRole, userErr = s.Store.WorkspaceRole(r.Context(), approver, app.WorkspaceID)
 		}
 		if userErr == nil && approverRole != "" && core.ApprovalRoleAllows(record.Plan, approverRole, existing.Approval.ActorID) {
 			approvedActors[existing.Approval.ActorID] = true
@@ -318,10 +318,10 @@ func (s *Server) listPlanApprovals(w http.ResponseWriter, r *http.Request) {
 		user, userErr := s.Store.UserByID(r.Context(), item.Approval.ActorID)
 		role := ""
 		if userErr == nil {
-			role, _ = s.Store.ProjectRole(r.Context(), user, app.ProjectID)
+			role, _ = s.Store.WorkspaceRole(r.Context(), user, app.WorkspaceID)
 		}
 		eligible := userErr == nil && role != "" && core.ApprovalRoleAllows(record.Plan, role, item.Approval.ActorID)
-		name, email := "Former project member", ""
+		name, email := "Former workspace member", ""
 		if userErr == nil {
 			name, email = user.DisplayName, user.Email
 			if name == "" {
@@ -336,7 +336,7 @@ func (s *Server) listPlanApprovals(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	currentRole, roleErr := s.Store.ProjectRole(r.Context(), currentUser(r), app.ProjectID)
+	currentRole, roleErr := s.Store.WorkspaceRole(r.Context(), currentUser(r), app.WorkspaceID)
 	canApprove := required > 0 && record.Status == "current" && time.Now().Before(record.ExpiresAt) && roleErr == nil && currentRole != "" && core.ApprovalRoleAllows(record.Plan, currentRole, currentUser(r).ID) && !currentUserApproved && len(approvedActors) < required
 	writeJSON(w, http.StatusOK, map[string]any{
 		"planId":              record.ID,
@@ -374,10 +374,10 @@ func (s *Server) applyPlan(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if record.Plan.Decommission && !s.requireProjectRole(w, r, app.ProjectID, "owner") {
+	if record.Plan.Decommission && !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
-	if record.Plan.Rollback != nil && !s.requireProjectRole(w, r, app.ProjectID, "owner") {
+	if record.Plan.Rollback != nil && !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
 	var input struct {
@@ -532,7 +532,7 @@ func (s *Server) listIgnoreRules(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "viewer") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "viewer") {
 		return
 	}
 	items, err := s.Store.IgnoreRules(r.Context(), app.ID)
@@ -549,7 +549,7 @@ func (s *Server) createIgnoreRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "owner") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
 	var input struct {
@@ -602,7 +602,7 @@ func (s *Server) deleteIgnoreRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "owner") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
 	rule, err := s.Store.DeleteIgnoreRule(r.Context(), app.ID, r.PathValue("ruleID"))
@@ -633,7 +633,7 @@ func (s *Server) authorizedPlan(w http.ResponseWriter, r *http.Request, minimum 
 		writeError(w, http.StatusNotFound, "application not found")
 		return store.PlanRecord{}, store.Application{}, false
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, minimum) {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, minimum) {
 		return store.PlanRecord{}, store.Application{}, false
 	}
 	return record, app, true
@@ -645,7 +645,7 @@ func (s *Server) listApplicationResources(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "viewer") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "viewer") {
 		return
 	}
 	managed, err := s.Store.ManagedResources(r.Context(), app.ID)
@@ -673,7 +673,7 @@ func (s *Server) listApplicationOperations(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "viewer") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "viewer") {
 		return
 	}
 	items, err := s.Store.ListOperations(r.Context(), app.ID, 50)

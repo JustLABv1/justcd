@@ -18,9 +18,9 @@ func TestWriteErrorUsesStableVersionedEnvelope(t *testing.T) {
 		category  string
 		retryable bool
 	}{
-		{name: "validation", status: http.StatusBadRequest, message: "invalid project name", code: "request.invalid", category: "validation"},
+		{name: "validation", status: http.StatusBadRequest, message: "invalid workspace name", code: "request.invalid", category: "validation"},
 		{name: "authentication", status: http.StatusUnauthorized, message: "authentication required", code: "authentication.required", category: "authentication"},
-		{name: "authorization", status: http.StatusForbidden, message: "project access denied", code: "authorization.denied", category: "authorization"},
+		{name: "authorization", status: http.StatusForbidden, message: "workspace access denied", code: "authorization.denied", category: "authorization"},
 		{name: "not found", status: http.StatusNotFound, message: "application not found", code: "resource.not_found", category: "not_found"},
 		{name: "conflict", status: http.StatusConflict, message: "plan is stale", code: "state.conflict", category: "conflict"},
 		{name: "unprocessable", status: http.StatusUnprocessableEntity, message: "invalid manifest", code: "request.rejected", category: "validation"},
@@ -60,7 +60,7 @@ func TestWriteErrorUsesStableVersionedEnvelope(t *testing.T) {
 
 func TestWriteStoreErrorUsesDatabaseCategory(t *testing.T) {
 	response := httptest.NewRecorder()
-	writeStoreError(response, "could not load projects")
+	writeStoreError(response, "could not load workspaces")
 
 	var body map[string]any
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {

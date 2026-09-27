@@ -101,7 +101,7 @@ function fallbackErrorMetadata(status: number): APIErrorMetadata {
       category: "authorization",
       retryable: false,
       remediation:
-        "Confirm that your account has the required project role or administrator access.",
+        "Confirm that your account has the required workspace role or administrator access.",
       remediationUrl: null,
     }
   }

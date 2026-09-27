@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { FormField, Panel, StatusBadge } from "@/components/ui-kit"
 import { APIError, api } from "@/lib/api"
-import type { Application, ListResponse, PlanRecord, Project } from "@/lib/types"
+import type { Application, ListResponse, PlanRecord, Workspace } from "@/lib/types"
 
 type PreviewProfile = {
   enabled: boolean
@@ -62,8 +62,8 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
     const app = await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`)
     setApplication(app)
     if (canConfigure === undefined) {
-      const projects = await api<ListResponse<Project>>("/api/v1/projects")
-      setOwnerAccess(projects.items.some((project) => project.id === app.projectId && project.role === "owner"))
+      const workspaces = await api<ListResponse<Workspace>>("/api/v1/workspaces")
+      setOwnerAccess(workspaces.items.some((workspace) => workspace.id === app.workspaceId && workspace.role === "owner"))
     }
     let result: ConnectionResponse
     try {
@@ -182,7 +182,7 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
       </> : <div className="rounded-xl border border-dashed bg-muted/10 px-6 py-12 text-center">
         <h3 className="text-sm font-semibold">PR reporting isn’t enabled yet</h3>
         <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">This application already uses <span className="font-medium text-foreground">{source.repository}</span>. Enable reporting to receive review-only plans and commit statuses for its pull requests.</p>
-        {!(canConfigure ?? ownerAccess) && <p className="mt-4 text-xs text-muted-foreground">A project owner can enable PR reporting.</p>}
+        {!(canConfigure ?? ownerAccess) && <p className="mt-4 text-xs text-muted-foreground">A workspace owner can enable PR reporting.</p>}
       </div>}
       </>}
     </> : null}

@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	demoProjectName = "JustCD Demo Workspace"
-	demoDescription = "Demo data only. Git and Kubernetes endpoints use reserved .invalid domains and cannot sync to a real service."
+	demoWorkspaceName = "JustCD Demo Workspace"
+	demoDescription   = "Demo data only. Git and Kubernetes endpoints use reserved .invalid domains and cannot sync to a real service."
 )
 
 type appFixture struct {
@@ -74,7 +74,7 @@ func seed(ctx context.Context, db *sql.DB, encryptionKey []byte) (bool, error) {
 		return false, err
 	}
 	var existing string
-	err = tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE name=$1 AND description=$2 LIMIT 1`, demoProjectName, demoDescription).Scan(&existing)
+	err = tx.QueryRowContext(ctx, `SELECT id FROM workspaces WHERE name=$1 AND description=$2 LIMIT 1`, demoWorkspaceName, demoDescription).Scan(&existing)
 	if err == nil {
 		created, err := seedHelmTopology(ctx, tx, existing)
 		if err != nil {
@@ -98,7 +98,7 @@ func seed(ctx context.Context, db *sql.DB, encryptionKey []byte) (bool, error) {
 		return false, err
 	}
 
-	projectID := store.NewID()
+	workspaceID := store.NewID()
 	clusterID := store.NewID()
 	globalCredentialID := store.NewID()
 	paymentsCredentialID := store.NewID()
@@ -117,22 +117,22 @@ func seed(ctx context.Context, db *sql.DB, encryptionKey []byte) (bool, error) {
 		return false, err
 	}
 
-	if _, err := tx.ExecContext(ctx, `INSERT INTO projects(id,name,description) VALUES($1,$2,$3)`, projectID, demoProjectName, demoDescription); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO workspaces(id,name,description) VALUES($1,$2,$3)`, workspaceID, demoWorkspaceName, demoDescription); err != nil {
 		return false, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO project_memberships(project_id,user_id,role) VALUES($1,$2,'owner')`, projectID, ownerID); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,'owner')`, workspaceID, ownerID); err != nil {
 		return false, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO credentials(id,project_id,name,kind,secret_cipher) VALUES($1,NULL,'DEMO ONLY - shared token (invalid)', 'kubernetes-token',$2)`, globalCredentialID, globalCipher); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO credentials(id,workspace_id,name,kind,secret_cipher) VALUES($1,NULL,'DEMO ONLY - shared token (invalid)', 'kubernetes-token',$2)`, globalCredentialID, globalCipher); err != nil {
 		return false, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO credentials(id,project_id,name,kind,secret_cipher) VALUES($1,$2,'DEMO ONLY - payments namespace token (invalid)', 'kubernetes-token',$3)`, paymentsCredentialID, projectID, paymentsCipher); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO credentials(id,workspace_id,name,kind,secret_cipher) VALUES($1,$2,'DEMO ONLY - payments namespace token (invalid)', 'kubernetes-token',$3)`, paymentsCredentialID, workspaceID, paymentsCipher); err != nil {
 		return false, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO clusters(id,name,api_server,default_credential_id) VALUES($1,'DEMO ONLY - unreachable .invalid cluster','https://kubernetes.justcd-demo.invalid',$2)`, clusterID, globalCredentialID); err != nil {
 		return false, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO git_sources(id,project_id,name,repository_url) VALUES($1,$2,'DEMO ONLY - unreachable .invalid Git source','https://git.justcd-demo.invalid/demo/platform.git')`, gitSourceID, projectID); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO git_sources(id,workspace_id,name,repository_url) VALUES($1,$2,'DEMO ONLY - unreachable .invalid Git source','https://git.justcd-demo.invalid/demo/platform.git')`, gitSourceID, workspaceID); err != nil {
 		return false, err
 	}
 
@@ -147,7 +147,7 @@ func seed(ctx context.Context, db *sql.DB, encryptionKey []byte) (bool, error) {
 		{name: "checkout"},
 	}
 	for _, namespace := range namespaces {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO namespace_bindings(id,project_id,cluster_id,namespace,credential_id) VALUES($1,$2,$3,$4,$5)`, store.NewID(), projectID, clusterID, namespace.name, namespace.credentialID); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO namespace_bindings(id,workspace_id,cluster_id,namespace,credential_id) VALUES($1,$2,$3,$4,$5)`, store.NewID(), workspaceID, clusterID, namespace.name, namespace.credentialID); err != nil {
 			return false, err
 		}
 	}
@@ -173,7 +173,7 @@ func seed(ctx context.Context, db *sql.DB, encryptionKey []byte) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id,project_id,name,source_id,revision,manifest_path,renderer,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,last_synced_revision,health) VALUES($1,$2,$3,$4,'main',$5,'yaml',$6,$7,$8,86400,$9,$10,$11)`, applicationID, projectID, fixture.name, gitSourceID, "manifests/"+fixture.namespace, clusterID, namespaceJSON, fixture.syncPolicy, createdAt, fixture.lastSynced, fixture.health); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id,workspace_id,name,source_id,revision,manifest_path,renderer,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,last_synced_revision,health) VALUES($1,$2,$3,$4,'main',$5,'yaml',$6,$7,$8,86400,$9,$10,$11)`, applicationID, workspaceID, fixture.name, gitSourceID, "manifests/"+fixture.namespace, clusterID, namespaceJSON, fixture.syncPolicy, createdAt, fixture.lastSynced, fixture.health); err != nil {
 			return false, err
 		}
 
@@ -204,11 +204,11 @@ func seed(ctx context.Context, db *sql.DB, encryptionKey []byte) (bool, error) {
 			}
 		}
 	}
-	if _, err := seedHelmTopology(ctx, tx, projectID); err != nil {
+	if _, err := seedHelmTopology(ctx, tx, workspaceID); err != nil {
 		return false, err
 	}
 
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'demo.seeded','project',$2,$3)`, ownerID, projectID, jsonBytes(map[string]any{"project": demoProjectName, "applications": len(fixtures), "clusterEndpoint": "reserved .invalid"})); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'demo.seeded','workspace',$2,$3)`, ownerID, workspaceID, jsonBytes(map[string]any{"workspace": demoWorkspaceName, "applications": len(fixtures), "clusterEndpoint": "reserved .invalid"})); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -217,10 +217,10 @@ func seed(ctx context.Context, db *sql.DB, encryptionKey []byte) (bool, error) {
 	return true, nil
 }
 
-func seedHelmTopology(ctx context.Context, tx *sql.Tx, projectID string) (bool, error) {
+func seedHelmTopology(ctx context.Context, tx *sql.Tx, workspaceID string) (bool, error) {
 	const name = "Demo Helm Shop · Topology"
 	var existing string
-	err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE project_id=$1 AND name=$2`, projectID, name).Scan(&existing)
+	err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE workspace_id=$1 AND name=$2`, workspaceID, name).Scan(&existing)
 	if err == nil {
 		return false, nil
 	}
@@ -228,10 +228,10 @@ func seedHelmTopology(ctx context.Context, tx *sql.Tx, projectID string) (bool, 
 		return false, err
 	}
 	var clusterID, sourceID, ownerID string
-	if err := tx.QueryRowContext(ctx, `SELECT cluster_id,source_id FROM applications WHERE project_id=$1 ORDER BY created_at LIMIT 1`, projectID).Scan(&clusterID, &sourceID); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT cluster_id,source_id FROM applications WHERE workspace_id=$1 ORDER BY created_at LIMIT 1`, workspaceID).Scan(&clusterID, &sourceID); err != nil {
 		return false, err
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT user_id FROM project_memberships WHERE project_id=$1 AND role='owner' LIMIT 1`, projectID).Scan(&ownerID); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT user_id FROM workspace_memberships WHERE workspace_id=$1 AND role='owner' LIMIT 1`, workspaceID).Scan(&ownerID); err != nil {
 		return false, err
 	}
 	appID := store.NewID()
@@ -244,7 +244,7 @@ func seedHelmTopology(ctx context.Context, tx *sql.Tx, projectID string) (bool, 
 	}
 	namespaces := jsonBytes([]store.NamespaceBinding{{Namespace: "storefront"}})
 	now := time.Now().UTC()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id,project_id,name,source_id,revision,manifest_path,renderer,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,last_synced_revision,health) VALUES($1,$2,$3,$4,'main','charts/demo-shop','helm',$5,$6,'manual',86400,$7,'5555555555555555555555555555555555555555','out_of_sync')`, appID, projectID, name, sourceID, clusterID, namespaces, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id,workspace_id,name,source_id,revision,manifest_path,renderer,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,last_synced_revision,health) VALUES($1,$2,$3,$4,'main','charts/demo-shop','helm',$5,$6,'manual',86400,$7,'5555555555555555555555555555555555555555','out_of_sync')`, appID, workspaceID, name, sourceID, clusterID, namespaces, now); err != nil {
 		return false, err
 	}
 	bindings := []core.Binding{{ClusterID: clusterID, Namespace: "storefront", CredentialRef: "demo-topology-credential"}}

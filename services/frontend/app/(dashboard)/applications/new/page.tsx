@@ -11,14 +11,14 @@ import { FormField, PageHeading, Panel } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
 import { api, apiPost, errorMessage } from "@/lib/api"
-import type { Application, Cluster, GitSource, ListResponse, NamespaceBinding, Project } from "@/lib/types"
+import type { Application, Cluster, GitSource, ListResponse, NamespaceBinding, Workspace } from "@/lib/types"
 
 export default function NewApplicationPage() {
   const router = useRouter()
   const toast = useToast()
-  const [projects, setProjects] = useState<Project[]>([])
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [clusters, setClusters] = useState<Cluster[]>([])
-  const [projectId, setProjectId] = useState("")
+  const [workspaceId, setWorkspaceId] = useState("")
   const [clusterId, setClusterId] = useState("")
   const [sources, setSources] = useState<GitSource[]>([])
   const [bindings, setBindings] = useState<NamespaceBinding[]>([])
@@ -43,45 +43,45 @@ export default function NewApplicationPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const queryProject = new URLSearchParams(window.location.search).get("projectId") ?? ""
+    const queryWorkspace = new URLSearchParams(window.location.search).get("workspaceId") ?? ""
     Promise.all([
-      api<ListResponse<Project>>("/api/v1/projects"),
+      api<ListResponse<Workspace>>("/api/v1/workspaces"),
       api<ListResponse<Cluster>>("/api/v1/clusters"),
-    ]).then(([projectResult, clusterResult]) => {
-      const writable = projectResult.items.filter((project) => project.role !== "viewer")
-      setProjects(writable)
-      setProjectId(writable.find((project) => project.id === queryProject)?.id ?? writable[0]?.id ?? "")
+    ]).then(([workspaceResult, clusterResult]) => {
+      const writable = workspaceResult.items.filter((workspace) => workspace.role !== "viewer")
+      setWorkspaces(writable)
+      setWorkspaceId(writable.find((workspace) => workspace.id === queryWorkspace)?.id ?? writable[0]?.id ?? "")
       setClusters(clusterResult.items)
       setClusterId(clusterResult.items[0]?.id ?? "")
     }).catch((cause) => setError(cause)).finally(() => setLoading(false))
   }, [])
 
   useEffect(() => {
-    if (!projectId) return
-    api<ListResponse<GitSource>>(`/api/v1/git-sources?projectId=${encodeURIComponent(projectId)}`).then((result) => {
+    if (!workspaceId) return
+    api<ListResponse<GitSource>>(`/api/v1/git-sources?workspaceId=${encodeURIComponent(workspaceId)}`).then((result) => {
       setSources(result.items)
       setSourceId(result.items[0]?.id ?? "")
     }).catch((cause) => setError(cause))
-  }, [projectId])
+  }, [workspaceId])
 
   useEffect(() => {
-    if (!projectId || !clusterId) return
-    api<ListResponse<NamespaceBinding>>(`/api/v1/clusters/${encodeURIComponent(clusterId)}/bindings?projectId=${encodeURIComponent(projectId)}`).then((result) => {
+    if (!workspaceId || !clusterId) return
+    api<ListResponse<NamespaceBinding>>(`/api/v1/clusters/${encodeURIComponent(clusterId)}/bindings?workspaceId=${encodeURIComponent(workspaceId)}`).then((result) => {
       setBindings(result.items)
       setNamespaces((current) => current.filter((namespace) => result.items.some((item) => item.namespace === namespace)))
       setNamespaceHelmValues((current) => Object.fromEntries(Object.entries(current).filter(([namespace]) => result.items.some((item) => item.namespace === namespace))))
       setNamespaceManifestPaths((current) => Object.fromEntries(Object.entries(current).filter(([namespace]) => result.items.some((item) => item.namespace === namespace))))
     }).catch((cause) => setError(cause))
-  }, [projectId, clusterId])
+  }, [workspaceId, clusterId])
 
-  const selectedProject = useMemo(() => projects.find((project) => project.id === projectId), [projects, projectId])
+  const selectedWorkspace = useMemo(() => workspaces.find((workspace) => workspace.id === workspaceId), [workspaces, workspaceId])
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError(null)
-    if (!projectId || !sourceId || !clusterId || !namespaces.length) { toast.error("Choose a project, Git source, cluster, and at least one namespace."); setBusy(false); return }
+    if (!workspaceId || !sourceId || !clusterId || !namespaces.length) { toast.error("Choose a workspace, Git source, cluster, and at least one namespace."); setBusy(false); return }
     try {
       const app = await apiPost<Application>("/api/v1/applications", {
-        projectId, name, sourceId, revision, manifestPath, renderer,
+        workspaceId, name, sourceId, revision, manifestPath, renderer,
         kustomizeHelmEnabled: renderer === "kustomize" && kustomizeHelmEnabled,
         kustomizeNamespaceOverride: renderer === "kustomize" && kustomizeNamespaceOverride,
         targetManifestPath: renderer === "kustomize" ? targetManifestPath : "",
@@ -105,8 +105,8 @@ export default function NewApplicationPage() {
     {error && <ErrorNotice error={error} />}
     <form className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]" onSubmit={submit}>
       <div className="space-y-5">
-        <Panel title="Source" description="Select the project repository and the exact Git path to render."><div className="grid gap-4 p-5 sm:grid-cols-2">
-          <FormField label="Project" htmlFor="project"><FormSelect id="project" value={projectId} onValueChange={(value) => { setProjectId(value); setNamespaces([]); setNamespaceHelmValues({}); setNamespaceManifestPaths({}); setTargetManifestPath("") }} placeholder="Select project" required items={projects.map((project) => ({ value: project.id, label: project.name }))} /></FormField>
+        <Panel title="Source" description="Select the workspace repository and the exact Git path to render."><div className="grid gap-4 p-5 sm:grid-cols-2">
+          <FormField label="Workspace" htmlFor="workspace"><FormSelect id="workspace" value={workspaceId} onValueChange={(value) => { setWorkspaceId(value); setNamespaces([]); setNamespaceHelmValues({}); setNamespaceManifestPaths({}); setTargetManifestPath("") }} placeholder="Select workspace" required items={workspaces.map((workspace) => ({ value: workspace.id, label: workspace.name }))} /></FormField>
           <FormField label="Git source" htmlFor="source"><FormSelect id="source" value={sourceId} onValueChange={setSourceId} placeholder="Select source" required items={sources.map((source) => ({ value: source.id, label: `${source.name} · ${source.repositoryUrl}` }))} /></FormField>
           <FormField label="Application name" htmlFor="name" hint="Lowercase letters, numbers, dots, and dashes."><Input id="name" placeholder="billing-api" value={name} onChange={(event) => setName(event.target.value)} required pattern="[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?" /></FormField>
           <FormField label="Git revision" htmlFor="revision" hint="Branch, tag, or commit; JustCD pins the reviewed commit SHA."><Input id="revision" placeholder="main" value={revision} onChange={(event) => setRevision(event.target.value)} required /></FormField>
@@ -118,7 +118,7 @@ export default function NewApplicationPage() {
           </div>}
           {renderer === "helm" && <div className="space-y-4 sm:col-span-2"><FormField label="Helm values files" htmlFor="helm-values-files" hint="One repository-relative YAML path per line. Later files override earlier files."><Textarea id="helm-values-files" value={helmValuesFiles} onChange={(event) => setHelmValuesFiles(event.target.value)} placeholder={"values/common.yaml\nvalues/production.yaml"} className="font-mono text-xs" /></FormField><FormField label="Helm values overrides" htmlFor="helm-values-yaml" hint="Optional JustCD values applied after the Git files."><Textarea id="helm-values-yaml" value={helmValuesYaml} onChange={(event) => setHelmValuesYaml(event.target.value)} placeholder={"agent:\n  logLevel: info"} className="min-h-32 font-mono text-xs" spellCheck={false} /></FormField></div>}
         </div></Panel>
-        <Panel title="Cluster target" description="Applications are restricted to the namespaces already bound to this project."><div className="space-y-5 p-5">
+        <Panel title="Cluster target" description="Applications are restricted to the namespaces already bound to this workspace."><div className="space-y-5 p-5">
           <FormField label="Cluster" htmlFor="cluster"><FormSelect id="cluster" value={clusterId} onValueChange={(value) => { setClusterId(value); setNamespaces([]); setNamespaceHelmValues({}); setNamespaceManifestPaths({}); setTargetManifestPath("") }} placeholder="Select cluster" required items={clusters.map((cluster) => ({ value: cluster.id, label: `${cluster.name} · ${cluster.apiServer}` }))} /></FormField>
           <div><p className="mb-2 text-xs font-medium">Namespace bindings</p>{bindings.length ? <div className="grid gap-2 sm:grid-cols-2">{bindings.map((binding) => <label key={binding.namespace} className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-xs transition-colors ${namespaces.includes(binding.namespace) ? "border-primary/40 bg-primary/5" : "hover:bg-muted/40"}`}><Checkbox checked={namespaces.includes(binding.namespace)} onCheckedChange={(checked) => {
             if (checked) {
@@ -130,7 +130,7 @@ export default function NewApplicationPage() {
               setNamespaceHelmValues((current) => { const next = { ...current }; delete next[binding.namespace]; return next })
               setNamespaceManifestPaths((current) => { const next = { ...current }; delete next[binding.namespace]; return next })
             }
-          }} /><span className="flex-1 font-medium">{binding.namespace}</span><span className="text-[10px] text-muted-foreground">{binding.credentialId ? "namespace credential" : "cluster default"}</span></label>)}</div> : <div className="rounded-lg border border-dashed px-4 py-5 text-xs text-muted-foreground">No namespaces are bound to this project on this cluster. <a href={`/projects/${projectId}/connections/namespaces`} className="font-medium text-primary hover:underline">Configure a binding</a></div>}</div>
+          }} /><span className="flex-1 font-medium">{binding.namespace}</span><span className="text-[10px] text-muted-foreground">{binding.credentialId ? "namespace credential" : "cluster default"}</span></label>)}</div> : <div className="rounded-lg border border-dashed px-4 py-5 text-xs text-muted-foreground">No namespaces are bound to this workspace on this cluster. <a href={`/workspaces/${workspaceId}/connections/namespaces`} className="font-medium text-primary hover:underline">Configure a binding</a></div>}</div>
           {renderer === "kustomize" && <FormField label="Cluster overlay path" htmlFor="cluster-overlay-path" hint="Optional Kustomize path for this cluster; blank uses the shared path. This overlay should include its shared base."><Input id="cluster-overlay-path" value={targetManifestPath} onChange={(event) => setTargetManifestPath(event.target.value)} placeholder="overlays/clusters/prod-eu" /></FormField>}
           {renderer === "helm" && namespaces.length > 0 && <div className="space-y-3 border-t pt-4"><p className="text-xs font-medium">Namespace Helm overrides</p>{namespaces.map((namespace) => {
             const override = namespaceHelmValues[namespace] ?? { files: [], yaml: "" }
@@ -153,9 +153,9 @@ export default function NewApplicationPage() {
             </div>
             <p className="text-[10px] leading-4 text-muted-foreground">Only transient failures are retried. Each attempt recalculates the plan from live cluster state; authorization, validation, approval, and interrupted operations require review.</p>
           </div>
-          <div className="rounded-lg bg-muted/50 p-3 text-[11px] leading-5 text-muted-foreground"><span className="font-medium text-foreground">Safe by default.</span> Review a plan before syncing. Project or application approval rules determine who must approve syncs and deletions; cluster-scoped changes always require explicit approval.</div>
+          <div className="rounded-lg bg-muted/50 p-3 text-[11px] leading-5 text-muted-foreground"><span className="font-medium text-foreground">Safe by default.</span> Review a plan before syncing. Workspace or application approval rules determine who must approve syncs and deletions; cluster-scoped changes always require explicit approval.</div>
         </div></Panel>
-        <Panel title="Ready to review?" description="Creating the application will not make cluster changes."><div className="p-5"><p className="text-xs leading-5 text-muted-foreground">JustCD stores the configuration and waits for you to calculate a diff. You can review every rendered resource before applying the plan.</p>{selectedProject?.role === "viewer" && <p className="mt-3 text-xs text-destructive">Your role cannot create applications.</p>}<Button className="mt-4 w-full" type="submit" loading={busy} loadingText="Creating application…" disabled={loading || !projectId || !sourceId || !clusterId || !namespaces.length || selectedProject?.role === "viewer"}>Create application</Button></div></Panel>
+        <Panel title="Ready to review?" description="Creating the application will not make cluster changes."><div className="p-5"><p className="text-xs leading-5 text-muted-foreground">JustCD stores the configuration and waits for you to calculate a diff. You can review every rendered resource before applying the plan.</p>{selectedWorkspace?.role === "viewer" && <p className="mt-3 text-xs text-destructive">Your role cannot create applications.</p>}<Button className="mt-4 w-full" type="submit" loading={busy} loadingText="Creating application…" disabled={loading || !workspaceId || !sourceId || !clusterId || !namespaces.length || selectedWorkspace?.role === "viewer"}>Create application</Button></div></Panel>
       </div>
     </form>
   </>

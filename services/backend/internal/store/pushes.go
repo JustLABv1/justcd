@@ -17,7 +17,7 @@ type GitPushTrigger struct {
 
 // RecordPushEvent atomically deduplicates a delivery and wakes every matching
 // application, including children of application groups using the same source.
-func (s *Store) RecordPushEvent(ctx context.Context, projectID, sourceID, sourceKey, provider, deliveryID, ref, sha string) (bool, int, error) {
+func (s *Store) RecordPushEvent(ctx context.Context, workspaceID, sourceID, sourceKey, provider, deliveryID, ref, sha string) (bool, int, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return false, 0, err
@@ -42,11 +42,13 @@ func (s *Store) RecordPushEvent(ctx context.Context, projectID, sourceID, source
 		SELECT a.id,$1,$2,$3,$4,$5 FROM applications a
 		JOIN git_sources candidate ON candidate.id=a.source_id
 		JOIN git_sources origin ON origin.id=$6
-		WHERE a.project_id=$7 AND candidate.project_id=$7 AND origin.project_id=$7
-		AND candidate.repository_url=origin.repository_url AND NOT a.decommissioning
+		WHERE origin.workspace_id=$7 AND NOT a.decommissioning AND (
+			(a.workspace_id=$7 AND candidate.workspace_id=$7 AND candidate.repository_url=origin.repository_url)
+			OR (candidate.id=origin.id AND EXISTS (SELECT 1 FROM workspace_git_source_shares sh WHERE sh.git_source_id=origin.id AND sh.target_workspace_id=a.workspace_id AND sh.status='accepted'))
+		)
 		AND (a.revision=$4 OR a.revision=$8)
 		ON CONFLICT(application_id) DO UPDATE SET source_key=EXCLUDED.source_key,provider=EXCLUDED.provider,delivery_id=EXCLUDED.delivery_id,
-		ref=EXCLUDED.ref,reported_sha=EXCLUDED.reported_sha,received_at=NOW()`, sourceKey, provider, deliveryID, ref, sha, sourceID, projectID, branch)
+		ref=EXCLUDED.ref,reported_sha=EXCLUDED.reported_sha,received_at=NOW()`, sourceKey, provider, deliveryID, ref, sha, sourceID, workspaceID, branch)
 	if err != nil {
 		return false, 0, err
 	}

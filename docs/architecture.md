@@ -95,12 +95,12 @@ incomplete or unauthorized.
 The first four milestones are implemented: Go planning and exact approval
 checks; encrypted credential storage and scoped Kubernetes clients; isolated
 Git fetch/rendering; persisted plans, operations, audit, and a guarded apply
-executor; and a Next.js UI for projects, connections, applications, diffs,
+executor; and a Next.js UI for workspaces, connections, applications, diffs,
 approvals, inventory, and operation history.
 
 Background polling checks every application's drift at its configured
 interval. `auto-safe` may apply only non-destructive, namespace-scoped creates
-and updates. Deletions and cluster-scoped changes stop for a project owner.
+and updates. Deletions and cluster-scoped changes stop for a workspace owner.
 Webhooks, retries/backoff controls, fine-grained status conditions, and
 permission self-tests during binding creation remain follow-up work.
 

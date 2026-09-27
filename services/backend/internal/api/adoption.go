@@ -14,7 +14,7 @@ func (s *Server) getOwnershipConflict(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "viewer") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "viewer") {
 		return
 	}
 	conflicts, err := s.Syncer.OwnershipConflicts(r.Context(), app)
@@ -35,7 +35,7 @@ func (s *Server) adoptApplicationResources(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "owner") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
 	var input struct {
@@ -83,7 +83,7 @@ func (s *Server) adoptApplicationResource(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "owner") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
 	var input struct {

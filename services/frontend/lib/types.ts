@@ -8,7 +8,7 @@ export type User = {
   createdAt: string
 }
 
-export type Project = {
+export type Workspace = {
   id: string
   name: string
   description: string
@@ -33,7 +33,7 @@ export type ApprovalPolicyOverride = {
   deletion?: ApprovalRule
 }
 
-export type ProjectMember = {
+export type WorkspaceMember = {
   id: string
   email: string
   displayName: string
@@ -45,7 +45,7 @@ export type ProjectMember = {
 
 export type Credential = {
   id: string
-  projectId?: string
+  workspaceId?: string
   name: string
   kind: "git-ssh" | "git-https" | "kubernetes-token" | "kubeconfig"
   username?: string
@@ -55,6 +55,7 @@ export type Credential = {
 
 export type Cluster = {
   id: string
+  workspaceId?: string
   name: string
   apiServer: string
   insecureSkipVerify: boolean
@@ -62,10 +63,31 @@ export type Cluster = {
   clusterScopeCredentialId?: string
   maxConcurrentOperations: number
   operationsPerMinute: number
+  shared?: boolean
+  ownerWorkspaceName?: string
   createdAt: string
 }
 
 export type NamespaceBinding = { namespace: string; credentialId?: string }
+
+export type OnboardingStep = {
+  id: string
+  title: string
+  status: "complete" | "action_required" | "failed"
+  category?: "configuration" | "permission" | "connectivity" | "service_health" | string
+  summary: string
+  remediation?: string
+  href?: string
+  docsHref?: string
+}
+
+export type OnboardingStatus = {
+  steps: OnboardingStep[]
+  completed: number
+  total: number
+  nextStepId?: string
+  firstWorkspaceId?: string
+}
 
 export type KubernetesPermissionCheck = {
   id: string
@@ -111,7 +133,7 @@ export type KubernetesPermissionReport = {
 }
 
 export type KubernetesPermissionTest = {
-  projectId: string
+  workspaceId: string
   clusterId: string
   namespace: string
   report: KubernetesPermissionReport
@@ -120,16 +142,34 @@ export type KubernetesPermissionTest = {
 
 export type GitSource = {
   id: string
-  projectId: string
+  workspaceId: string
   name: string
   repositoryUrl: string
   credentialId?: string
+  shared?: boolean
+  ownerWorkspaceName?: string
   createdAt: string
+}
+
+export type WorkspaceConnectionShare = {
+  id: string
+  kind: "cluster" | "git-source"
+  resourceId: string
+  resourceName: string
+  repositoryUrl?: string
+  ownerWorkspaceId: string
+  ownerWorkspaceName: string
+  targetWorkspaceId: string
+  targetWorkspaceName: string
+  credentialId?: string
+  status: "pending" | "accepted" | "declined" | "revoked"
+  createdAt: string
+  acceptedAt?: string
 }
 
 export type Application = {
   id: string
-  projectId: string
+  workspaceId: string
   name: string
   sourceId: string
   revision: string
@@ -217,7 +257,7 @@ export type ApplicationHealthTransition = {
 
 export type ApplicationGroup = {
   id: string
-  projectId: string
+  workspaceId: string
   name: string
   sourceId: string
   revision: string

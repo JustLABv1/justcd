@@ -20,8 +20,8 @@ func (s *Server) updateCredential(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "credential not found")
 		return
 	}
-	if c.ProjectID != nil {
-		if !s.requireProjectRole(w, r, *c.ProjectID, "owner") {
+	if c.WorkspaceID != nil {
+		if !s.requireWorkspaceRole(w, r, *c.WorkspaceID, "owner") {
 			return
 		}
 	} else if !currentUser(r).IsAdmin {
@@ -128,7 +128,7 @@ func (s *Server) updateGitSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Git source not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, source.ProjectID, "owner") {
+	if !s.requireWorkspaceRole(w, r, source.WorkspaceID, "owner") {
 		return
 	}
 	var input struct {
@@ -140,6 +140,7 @@ func (s *Server) updateGitSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	previousCredentialID := source.CredentialID
 	source.Name, source.RepositoryURL, source.CredentialID = strings.TrimSpace(input.Name), strings.TrimSpace(input.RepositoryURL), input.CredentialID
 	if source.Name == "" || len(source.Name) > 100 || !validGitURL(source.RepositoryURL) {
 		writeError(w, http.StatusBadRequest, "name and a supported SSH or HTTPS Git URL are required")
@@ -147,8 +148,9 @@ func (s *Server) updateGitSource(w http.ResponseWriter, r *http.Request) {
 	}
 	if source.CredentialID != nil {
 		c, err := s.Store.CredentialByID(r.Context(), *source.CredentialID)
-		if err != nil || (c.ProjectID != nil && *c.ProjectID != source.ProjectID) || (c.Kind != "git-ssh" && c.Kind != "git-https") {
-			writeError(w, http.StatusBadRequest, "credential must be a Git credential available to this project")
+		legacyReferenceUnchanged := previousCredentialID != nil && *previousCredentialID == *source.CredentialID && c.WorkspaceID == nil
+		if err != nil || (!legacyReferenceUnchanged && (c.WorkspaceID == nil || *c.WorkspaceID != source.WorkspaceID)) || (c.Kind != "git-ssh" && c.Kind != "git-https") {
+			writeError(w, http.StatusBadRequest, "new Git source credentials must be owned by this workspace")
 			return
 		}
 	}
@@ -156,24 +158,24 @@ func (s *Server) updateGitSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "could not update Git source")
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "git_source.updated", "git_source", source.ID, map[string]string{"projectId": source.ProjectID, "name": source.Name})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "git_source.updated", "git_source", source.ID, map[string]string{"workspaceId": source.WorkspaceID, "name": source.Name})
 	writeJSON(w, http.StatusOK, source)
 }
 
 func (s *Server) updateNamespaceBinding(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		ProjectID    string  `json:"projectId"`
+		WorkspaceID  string  `json:"workspaceId"`
 		CredentialID *string `json:"credentialId"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if !s.requireProjectRole(w, r, input.ProjectID, "owner") {
+	if !s.requireWorkspaceRole(w, r, input.WorkspaceID, "owner") {
 		return
 	}
 	clusterID, namespace := r.PathValue("clusterID"), r.PathValue("namespace")
-	if _, err := s.Store.NamespaceBinding(r.Context(), input.ProjectID, clusterID, namespace); err != nil {
+	if _, err := s.Store.NamespaceBinding(r.Context(), input.WorkspaceID, clusterID, namespace); err != nil {
 		writeError(w, http.StatusNotFound, "namespace binding not found")
 		return
 	}
@@ -182,38 +184,42 @@ func (s *Server) updateNamespaceBinding(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "cluster not found")
 		return
 	}
+	if !s.requireWorkspaceCluster(w, r, input.WorkspaceID, clusterID) {
+		return
+	}
 	if input.CredentialID != nil {
 		c, err := s.Store.CredentialByID(r.Context(), *input.CredentialID)
-		if err != nil || (c.Kind != "kubernetes-token" && c.Kind != "kubeconfig") || (c.ProjectID != nil && *c.ProjectID != input.ProjectID) {
-			writeError(w, http.StatusBadRequest, "credential must be a Kubernetes credential available to this project")
+		if err != nil || (c.Kind != "kubernetes-token" && c.Kind != "kubeconfig") || (c.WorkspaceID != nil && *c.WorkspaceID != input.WorkspaceID) {
+			writeError(w, http.StatusBadRequest, "credential must be a Kubernetes credential available to this workspace")
 			return
 		}
 	} else {
-		projectID, err := s.Store.ProjectClusterCredential(r.Context(), input.ProjectID, clusterID)
+		workspaceID, err := s.Store.WorkspaceClusterCredential(r.Context(), input.WorkspaceID, clusterID)
 		if err != nil {
-			writeStoreError(w, "could not load project cluster credential")
+			writeStoreError(w, "could not load workspace cluster credential")
 			return
 		}
-		if projectID == nil && cluster.DefaultCredentialID == nil {
+		if workspaceID == nil && cluster.DefaultCredentialID == nil {
 			writeError(w, http.StatusBadRequest, "a namespace or cluster default credential is required")
 			return
 		}
 	}
-	if err := s.Store.UpdateNamespaceBinding(r.Context(), input.ProjectID, clusterID, namespace, input.CredentialID); err != nil {
+	if err := s.Store.UpdateNamespaceBinding(r.Context(), input.WorkspaceID, clusterID, namespace, input.CredentialID); err != nil {
 		writeStoreError(w, "could not update namespace binding")
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "namespace_binding.updated", "cluster", clusterID, map[string]string{"projectId": input.ProjectID, "namespace": namespace, "credentialId": valueOf(input.CredentialID)})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "namespace_binding.updated", "cluster", clusterID, map[string]string{"workspaceId": input.WorkspaceID, "namespace": namespace, "credentialId": valueOf(input.CredentialID)})
 	writeJSON(w, http.StatusOK, map[string]any{"namespace": namespace, "credentialId": input.CredentialID})
 }
 
 func (s *Server) testGitSource(w http.ResponseWriter, r *http.Request) {
-	source, err := s.Store.GitSourceByID(r.Context(), r.PathValue("sourceID"))
-	if err != nil {
-		writeError(w, http.StatusNotFound, "Git source not found")
+	workspaceID := r.URL.Query().Get("workspaceId")
+	if !s.requireWorkspaceRole(w, r, workspaceID, "viewer") || !s.requireWorkspaceGitSource(w, r, workspaceID, r.PathValue("sourceID")) {
 		return
 	}
-	if !s.requireProjectRole(w, r, source.ProjectID, "viewer") {
+	source, err := s.Store.GitSourceForWorkspace(r.Context(), r.PathValue("sourceID"), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Git source not found")
 		return
 	}
 	checkout, err := gitops.Fetch(r.Context(), s.Store, s.EncryptionKey, source, "HEAD")
@@ -237,6 +243,14 @@ func (s *Server) updateCluster(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "cluster not found")
 		return
 	}
+	if cluster.WorkspaceID == nil {
+		if !currentUser(r).IsAdmin {
+			writeError(w, http.StatusForbidden, "instance administrator role required to edit a legacy cluster")
+			return
+		}
+	} else if !s.requireWorkspaceRole(w, r, *cluster.WorkspaceID, "owner") {
+		return
+	}
 	var input struct {
 		Name                     string  `json:"name"`
 		APIServer                string  `json:"apiServer"`
@@ -249,6 +263,10 @@ func (s *Server) updateCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if cluster.WorkspaceID != nil && (input.DefaultCredentialID != nil || input.ClusterScopeCredentialID != nil) {
+		writeError(w, http.StatusBadRequest, "workspace clusters use a private workspace credential instead of instance-wide cluster defaults")
 		return
 	}
 	maxConcurrentOperations, operationsPerMinute := cluster.MaxConcurrentOperations, cluster.OperationsPerMinute
@@ -290,7 +308,7 @@ func (s *Server) updateCluster(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		c, err := s.Store.CredentialByID(r.Context(), *id)
-		if err != nil || (c.Kind != "kubernetes-token" && c.Kind != "kubeconfig") || c.ProjectID != nil {
+		if err != nil || (c.Kind != "kubernetes-token" && c.Kind != "kubeconfig") || c.WorkspaceID != nil {
 			writeError(w, http.StatusBadRequest, "cluster credentials must be global Kubernetes credentials")
 			return
 		}
@@ -319,7 +337,7 @@ func validClusterOperationLimits(maxConcurrent, operationsPerMinute int) bool {
 
 func (s *Server) testCluster(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		ProjectID           string `json:"projectId"`
+		WorkspaceID         string `json:"workspaceId"`
 		Namespace           string `json:"namespace"`
 		IncludeClusterScope bool   `json:"includeClusterScope"`
 	}
@@ -331,7 +349,7 @@ func (s *Server) testCluster(w http.ResponseWriter, r *http.Request) {
 	if input.IncludeClusterScope {
 		minimumRole = "owner"
 	}
-	if !s.requireProjectRole(w, r, input.ProjectID, minimumRole) {
+	if !s.requireWorkspaceRole(w, r, input.WorkspaceID, minimumRole) {
 		return
 	}
 	cluster, err := s.Store.ClusterByID(r.Context(), r.PathValue("clusterID"))
@@ -339,22 +357,25 @@ func (s *Server) testCluster(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "cluster not found")
 		return
 	}
-	credentialID, err := s.Store.ProjectClusterCredential(r.Context(), input.ProjectID, cluster.ID)
+	if !s.requireWorkspaceCluster(w, r, input.WorkspaceID, cluster.ID) {
+		return
+	}
+	credentialID, err := s.Store.WorkspaceClusterCredential(r.Context(), input.WorkspaceID, cluster.ID)
 	if err != nil {
-		writeStoreError(w, "could not load project cluster credential")
+		writeStoreError(w, "could not load workspace cluster credential")
 		return
 	}
 	if input.Namespace != "" {
-		binding, err := s.Store.NamespaceBinding(r.Context(), input.ProjectID, cluster.ID, input.Namespace)
+		binding, err := s.Store.NamespaceBinding(r.Context(), input.WorkspaceID, cluster.ID, input.Namespace)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "namespace is not bound to this project")
+			writeError(w, http.StatusBadRequest, "namespace is not bound to this workspace")
 			return
 		}
 		if binding.CredentialID != nil {
 			credentialID = binding.CredentialID
 		}
 	} else {
-		bindings, err := s.Store.ListNamespaceBindings(r.Context(), input.ProjectID, cluster.ID)
+		bindings, err := s.Store.ListNamespaceBindings(r.Context(), input.WorkspaceID, cluster.ID)
 		if err != nil {
 			writeStoreError(w, "could not load namespace bindings")
 			return
@@ -412,27 +433,30 @@ func (s *Server) testCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Store.SaveKubernetesPermissionTest(r.Context(), store.KubernetesPermissionTest{
-		ProjectID: input.ProjectID, ClusterID: cluster.ID, Namespace: namespace,
+		WorkspaceID: input.WorkspaceID, ClusterID: cluster.ID, Namespace: namespace,
 		Report: reportJSON, CheckedAt: report.CheckedAt,
 	}); err != nil {
 		writeStoreError(w, "could not save Kubernetes permission report")
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "kubernetes.permission_tested", "cluster", cluster.ID, map[string]any{"projectId": input.ProjectID, "namespace": namespace, "includeClusterScope": input.IncludeClusterScope, "status": report.Status})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "kubernetes.permission_tested", "cluster", cluster.ID, map[string]any{"workspaceId": input.WorkspaceID, "namespace": namespace, "includeClusterScope": input.IncludeClusterScope, "status": report.Status})
 	writeJSON(w, http.StatusOK, report)
 }
 
 func (s *Server) listClusterPermissionTests(w http.ResponseWriter, r *http.Request) {
-	projectID := r.URL.Query().Get("projectId")
-	if !s.requireProjectRole(w, r, projectID, "viewer") {
+	workspaceID := r.URL.Query().Get("workspaceId")
+	if !s.requireWorkspaceRole(w, r, workspaceID, "viewer") {
 		return
 	}
 	clusterID := r.PathValue("clusterID")
+	if !s.requireWorkspaceCluster(w, r, workspaceID, clusterID) {
+		return
+	}
 	if _, err := s.Store.ClusterByID(r.Context(), clusterID); err != nil {
 		writeError(w, http.StatusNotFound, "cluster not found")
 		return
 	}
-	items, err := s.Store.ListKubernetesPermissionTests(r.Context(), projectID, clusterID)
+	items, err := s.Store.ListKubernetesPermissionTests(r.Context(), workspaceID, clusterID)
 	if err != nil {
 		writeStoreError(w, "could not load Kubernetes permission reports")
 		return

@@ -13,18 +13,18 @@ import { FormField, PageHeading, Panel } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
 import { api, errorMessage } from "@/lib/api"
-import type { Application, ApprovalPolicyOverride, Cluster, GitSource, ListResponse, NamespaceBinding, Project, ProjectMember } from "@/lib/types"
+import type { Application, ApprovalPolicyOverride, Cluster, GitSource, ListResponse, NamespaceBinding, Workspace, WorkspaceMember } from "@/lib/types"
 
 export default function EditApplicationPage() {
   const { applicationID } = useParams<{ applicationID: string }>()
   const router = useRouter()
   const toast = useToast()
   const [app, setApp] = useState<Application | null>(null)
-  const [project, setProject] = useState<Project | null>(null)
+  const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [sources, setSources] = useState<GitSource[]>([])
   const [clusters, setClusters] = useState<Cluster[]>([])
   const [bindings, setBindings] = useState<NamespaceBinding[]>([])
-  const [members, setMembers] = useState<ProjectMember[]>([])
+  const [members, setMembers] = useState<WorkspaceMember[]>([])
   const [namespaces, setNamespaces] = useState<string[]>([])
   const [approvalPolicyOverride, setApprovalPolicyOverride] = useState<ApprovalPolicyOverride>({})
   const [busy, setBusy] = useState(false)
@@ -33,28 +33,28 @@ export default function EditApplicationPage() {
 
   useEffect(() => {
     let active = true
-    Promise.all([api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`), api<ListResponse<Project>>( "/api/v1/projects"), api<ListResponse<Cluster>>( "/api/v1/clusters")])
-      .then(([application, projects, clusterList]) => {
+    Promise.all([api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`), api<ListResponse<Workspace>>( "/api/v1/workspaces"), api<ListResponse<Cluster>>( "/api/v1/clusters")])
+      .then(([application, workspaces, clusterList]) => {
         if (!active) return
         setApp(application); setNamespaces(application.namespaces.map((item) => item.namespace)); setApprovalPolicyOverride(application.approvalPolicyOverride ?? {})
-        setProject(projects.items.find((item) => item.id === application.projectId) ?? null)
+        setWorkspace(workspaces.items.find((item) => item.id === application.workspaceId) ?? null)
         setClusters(clusterList.items)
       }).catch((cause) => active && setError(cause))
     return () => { active = false }
   }, [applicationID])
 
-  const projectId = app?.projectId
+  const workspaceId = app?.workspaceId
   const clusterId = app?.clusterId
   useEffect(() => {
-    if (!projectId || !clusterId) return
+    if (!workspaceId || !clusterId) return
     let active = true
     Promise.all([
-      api<ListResponse<GitSource>>(`/api/v1/git-sources?projectId=${encodeURIComponent(projectId)}`),
-      api<ListResponse<NamespaceBinding>>(`/api/v1/clusters/${encodeURIComponent(clusterId)}/bindings?projectId=${encodeURIComponent(projectId)}`),
-      api<ListResponse<ProjectMember>>(`/api/v1/projects/${encodeURIComponent(projectId)}/members`),
+      api<ListResponse<GitSource>>(`/api/v1/git-sources?workspaceId=${encodeURIComponent(workspaceId)}`),
+      api<ListResponse<NamespaceBinding>>(`/api/v1/clusters/${encodeURIComponent(clusterId)}/bindings?workspaceId=${encodeURIComponent(workspaceId)}`),
+      api<ListResponse<WorkspaceMember>>(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/members`),
     ]).then(([sourceList, bindingList, memberList]) => { if (active) { setSources(sourceList.items); setBindings(bindingList.items); setMembers(memberList.items) } }).catch((cause) => active && setError(cause))
     return () => { active = false }
-  }, [projectId, clusterId])
+  }, [workspaceId, clusterId])
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -100,7 +100,7 @@ export default function EditApplicationPage() {
     setApprovalPolicyOverride((current) => {
       const next = { ...current }
       if (enabled) {
-        const inherited = project?.approvalPolicy[kind]
+        const inherited = workspace?.approvalPolicy[kind]
         if (inherited) next[kind] ??= { ...inherited, approverRoles: [...inherited.approverRoles], approverUserIds: [...inherited.approverUserIds] }
       } else {
         delete next[kind]
@@ -112,7 +112,7 @@ export default function EditApplicationPage() {
   return <>
     <PageHeading title={app ? `Edit ${app.name}` : "Edit application"} description="Changes invalidate existing plans. Review a fresh plan before the next sync." />
     {error && <ErrorNotice error={error} />}
-    {!app ? <p className="text-sm text-muted-foreground">Loading application…</p> : project?.role !== "owner" ? <p className="text-sm text-muted-foreground">Only project owners can edit applications.</p> : <form className="max-w-4xl space-y-5" onSubmit={save}>
+    {!app ? <p className="text-sm text-muted-foreground">Loading application…</p> : workspace?.role !== "owner" ? <p className="text-sm text-muted-foreground">Only workspace owners can edit applications.</p> : <form className="max-w-4xl space-y-5" onSubmit={save}>
       <Panel title="Source" description="The Git revision and repository path used for future plans."><div className="grid gap-4 p-5 sm:grid-cols-2">
         <FormField label="Application name" htmlFor="edit-app-name"><Input id="edit-app-name" value={app.name} onChange={(event) => setApp({ ...app, name: event.target.value })} required pattern="[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?" /></FormField>
         <FormField label="Git source" htmlFor="edit-app-source"><FormSelect id="edit-app-source" value={app.sourceId} onValueChange={(value) => setApp({ ...app, sourceId: value })} disabled={Boolean(app.applicationGroupId)} items={sources.map((source) => ({ value: source.id, label: source.name }))} /></FormField>
@@ -150,15 +150,15 @@ export default function EditApplicationPage() {
         })}</div>}
       </div></Panel>
       <Panel title="Reconciliation"><div className="space-y-4 p-5"><div className="grid gap-4 sm:grid-cols-2"><FormField label="Sync policy" htmlFor="edit-app-policy"><FormSelect id="edit-app-policy" value={app.syncPolicy} onValueChange={(value) => setApp({ ...app, syncPolicy: value as Application["syncPolicy"] })} disabled={Boolean(app.applicationGroupId)} items={[{ value: "manual", label: "Manual" }, { value: "auto-safe", label: "Auto-safe" }]} /></FormField><FormField label="Poll interval (seconds)" htmlFor="edit-app-poll"><Input id="edit-app-poll" type="number" min={30} max={86400} value={app.pollSeconds} onChange={(event) => setApp({ ...app, pollSeconds: Number(event.target.value) })} disabled={Boolean(app.applicationGroupId)} /></FormField>{app.applicationGroupId && <p className="text-xs text-muted-foreground sm:col-span-2">Sync policy and polling come from the deployment group. Retry policy remains application-specific.</p>}</div><div className="space-y-3 border-t pt-4"><label className="flex items-center gap-2 text-xs font-medium"><Checkbox checked={app.retryPolicy.enabled} onCheckedChange={(checked) => setApp({ ...app, retryPolicy: { ...app.retryPolicy, enabled: Boolean(checked) } })} />Retry transient reconciliation failures automatically</label><div className="grid gap-3 sm:grid-cols-2"><FormField label="Maximum attempts" htmlFor="edit-retry-attempts"><Input id="edit-retry-attempts" type="number" min={1} max={20} value={app.retryPolicy.maxAttempts} onChange={(event) => setApp({ ...app, retryPolicy: { ...app.retryPolicy, maxAttempts: Number(event.target.value) } })} disabled={!app.retryPolicy.enabled} /></FormField><FormField label="Initial backoff (seconds)" htmlFor="edit-retry-initial"><Input id="edit-retry-initial" type="number" min={1} max={3600} value={app.retryPolicy.initialDelaySeconds} onChange={(event) => setApp({ ...app, retryPolicy: { ...app.retryPolicy, initialDelaySeconds: Number(event.target.value) } })} disabled={!app.retryPolicy.enabled} /></FormField><FormField label="Maximum backoff (seconds)" htmlFor="edit-retry-max"><Input id="edit-retry-max" type="number" min={1} max={86400} value={app.retryPolicy.maxDelaySeconds} onChange={(event) => setApp({ ...app, retryPolicy: { ...app.retryPolicy, maxDelaySeconds: Number(event.target.value) } })} disabled={!app.retryPolicy.enabled} /></FormField><FormField label="Jitter (%)" htmlFor="edit-retry-jitter"><Input id="edit-retry-jitter" type="number" min={0} max={50} value={app.retryPolicy.jitterPercent} onChange={(event) => setApp({ ...app, retryPolicy: { ...app.retryPolicy, jitterPercent: Number(event.target.value) } })} disabled={!app.retryPolicy.enabled} /></FormField></div><p className="text-[10px] leading-4 text-muted-foreground">Attempts always rebuild a fresh plan from live cluster state. Authorization, validation, approval, and interrupted operations require review.</p></div></div></Panel>
-      <Panel title="Approval rules" description="Each rule inherits the project default until you turn on an application override.">
+      <Panel title="Approval rules" description="Each rule inherits the workspace default until you turn on an application override.">
         <div className="space-y-4 p-5">
           <div className="space-y-3">
-            <label className="flex items-center gap-2 text-xs font-medium"><Checkbox checked={Boolean(approvalPolicyOverride.sync)} disabled={approvalBusy} onCheckedChange={(checked) => toggleOverride("sync", Boolean(checked))} />Override project sync rule</label>
-            {approvalPolicyOverride.sync && project && <ApprovalRuleEditor id="application-sync-approvals" title="Application sync approvals" rule={approvalPolicyOverride.sync} members={members} disabled={approvalBusy} onChange={(sync) => setApprovalPolicyOverride((current) => ({ ...current, sync }))} />}
+            <label className="flex items-center gap-2 text-xs font-medium"><Checkbox checked={Boolean(approvalPolicyOverride.sync)} disabled={approvalBusy} onCheckedChange={(checked) => toggleOverride("sync", Boolean(checked))} />Override workspace sync rule</label>
+            {approvalPolicyOverride.sync && workspace && <ApprovalRuleEditor id="application-sync-approvals" title="Application sync approvals" rule={approvalPolicyOverride.sync} members={members} disabled={approvalBusy} onChange={(sync) => setApprovalPolicyOverride((current) => ({ ...current, sync }))} />}
           </div>
           <div className="space-y-3 border-t pt-4">
-            <label className="flex items-center gap-2 text-xs font-medium"><Checkbox checked={Boolean(approvalPolicyOverride.deletion)} disabled={approvalBusy} onCheckedChange={(checked) => toggleOverride("deletion", Boolean(checked))} />Override project deletion rule</label>
-            {approvalPolicyOverride.deletion && project && <ApprovalRuleEditor id="application-deletion-approvals" title="Application deletion approvals" rule={approvalPolicyOverride.deletion} members={members} deletion disabled={approvalBusy} onChange={(deletion) => setApprovalPolicyOverride((current) => ({ ...current, deletion }))} />}
+            <label className="flex items-center gap-2 text-xs font-medium"><Checkbox checked={Boolean(approvalPolicyOverride.deletion)} disabled={approvalBusy} onCheckedChange={(checked) => toggleOverride("deletion", Boolean(checked))} />Override workspace deletion rule</label>
+            {approvalPolicyOverride.deletion && workspace && <ApprovalRuleEditor id="application-deletion-approvals" title="Application deletion approvals" rule={approvalPolicyOverride.deletion} members={members} deletion disabled={approvalBusy} onChange={(deletion) => setApprovalPolicyOverride((current) => ({ ...current, deletion }))} />}
           </div>
           <div className="flex justify-end"><Button type="button" size="sm" variant="outline" loading={approvalBusy} loadingText="Saving rules…" onClick={() => void saveApprovalOverrides()}>Save approval overrides</Button></div>
         </div>

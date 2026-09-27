@@ -20,7 +20,7 @@ func normalizeApprovalRule(rule *store.ApprovalRule) {
 	}
 }
 
-func (s *Server) validateApprovalRule(r *http.Request, projectID string, rule store.ApprovalRule, deletion bool) error {
+func (s *Server) validateApprovalRule(r *http.Request, workspaceID string, rule store.ApprovalRule, deletion bool) error {
 	minimum, maximum := 0, 5
 	if deletion {
 		minimum = 1
@@ -37,16 +37,16 @@ func (s *Server) validateApprovalRule(r *http.Request, projectID string, rule st
 	seenRoles := make(map[string]bool, len(rule.ApproverRoles))
 	for _, role := range rule.ApproverRoles {
 		if !validApproverRole(role) || seenRoles[role] {
-			return errors.New("approver roles must be unique project roles")
+			return errors.New("approver roles must be unique workspace roles")
 		}
 		seenRoles[role] = true
 	}
 	var members []map[string]any
 	if rule.RequiredApprovals > 0 || len(rule.ApproverUserIDs) > 0 {
 		var err error
-		members, err = s.Store.ListProjectMembers(r.Context(), projectID)
+		members, err = s.Store.ListWorkspaceMembers(r.Context(), workspaceID)
 		if err != nil {
-			return errors.New("could not validate project approvers")
+			return errors.New("could not validate workspace approvers")
 		}
 	}
 	memberIDs := make(map[string]bool, len(members))
@@ -59,12 +59,12 @@ func (s *Server) validateApprovalRule(r *http.Request, projectID string, rule st
 	seenUsers := make(map[string]bool, len(rule.ApproverUserIDs))
 	for _, userID := range rule.ApproverUserIDs {
 		if userID == "" || seenUsers[userID] || !memberIDs[userID] {
-			return errors.New("selected approvers must be unique project members")
+			return errors.New("selected approvers must be unique workspace members")
 		}
 		seenUsers[userID] = true
 	}
 	if rule.RequiredApprovals > 0 && len(rule.ApproverRoles) == 0 && len(rule.ApproverUserIDs) == 0 {
-		return errors.New("choose at least one project role or member who can approve")
+		return errors.New("choose at least one workspace role or member who can approve")
 	}
 	if rule.RequiredApprovals > 0 {
 		eligible := 0
@@ -77,15 +77,15 @@ func (s *Server) validateApprovalRule(r *http.Request, projectID string, rule st
 			}
 		}
 		if eligible < rule.RequiredApprovals {
-			return errors.New("approval count exceeds the number of eligible project members")
+			return errors.New("approval count exceeds the number of eligible workspace members")
 		}
 	}
 	return nil
 }
 
-func (s *Server) updateProjectApprovalPolicy(w http.ResponseWriter, r *http.Request) {
-	projectID := r.PathValue("projectID")
-	if !s.requireProjectRole(w, r, projectID, "owner") {
+func (s *Server) updateWorkspaceApprovalPolicy(w http.ResponseWriter, r *http.Request) {
+	workspaceID := r.PathValue("workspaceID")
+	if !s.requireWorkspaceRole(w, r, workspaceID, "owner") {
 		return
 	}
 	var policy store.ApprovalPolicy
@@ -95,19 +95,19 @@ func (s *Server) updateProjectApprovalPolicy(w http.ResponseWriter, r *http.Requ
 	}
 	normalizeApprovalRule(&policy.Sync)
 	normalizeApprovalRule(&policy.Deletion)
-	if err := s.validateApprovalRule(r, projectID, policy.Sync, false); err != nil {
+	if err := s.validateApprovalRule(r, workspaceID, policy.Sync, false); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := s.validateApprovalRule(r, projectID, policy.Deletion, true); err != nil {
+	if err := s.validateApprovalRule(r, workspaceID, policy.Deletion, true); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := s.Store.UpdateProjectApprovalPolicy(r.Context(), projectID, policy); err != nil {
-		writeError(w, http.StatusConflict, "could not update project approval rules")
+	if err := s.Store.UpdateWorkspaceApprovalPolicy(r.Context(), workspaceID, policy); err != nil {
+		writeError(w, http.StatusConflict, "could not update workspace approval rules")
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "project.approval_policy_updated", "project", projectID, policy)
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "workspace.approval_policy_updated", "workspace", workspaceID, policy)
 	writeJSON(w, http.StatusOK, map[string]any{"approvalPolicy": policy})
 }
 
@@ -117,7 +117,7 @@ func (s *Server) updateApplicationApprovalPolicy(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "owner") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
 	var input struct {
@@ -130,14 +130,14 @@ func (s *Server) updateApplicationApprovalPolicy(w http.ResponseWriter, r *http.
 	if input.Override != nil {
 		if input.Override.Sync != nil {
 			normalizeApprovalRule(input.Override.Sync)
-			if err := s.validateApprovalRule(r, app.ProjectID, *input.Override.Sync, false); err != nil {
+			if err := s.validateApprovalRule(r, app.WorkspaceID, *input.Override.Sync, false); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
 		}
 		if input.Override.Deletion != nil {
 			normalizeApprovalRule(input.Override.Deletion)
-			if err := s.validateApprovalRule(r, app.ProjectID, *input.Override.Deletion, true); err != nil {
+			if err := s.validateApprovalRule(r, app.WorkspaceID, *input.Override.Deletion, true); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}

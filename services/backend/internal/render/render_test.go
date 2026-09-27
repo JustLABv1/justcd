@@ -90,7 +90,7 @@ func TestJSONPointerRejectsIdentityAndArrayIndexes(t *testing.T) {
 	}
 }
 
-func TestIgnoredFieldIsOmittedFromDriftProjectionAndReported(t *testing.T) {
+func TestIgnoredFieldIsOmittedFromDriftWorkspaceionAndReported(t *testing.T) {
 	object := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "v1", "kind": "ConfigMap",
 		"metadata": map[string]interface{}{"name": "settings", "namespace": "team-a", "labels": map[string]interface{}{"justcd.io/application-id": "app-a"}},

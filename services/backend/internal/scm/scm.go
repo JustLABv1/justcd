@@ -132,9 +132,9 @@ func VerifyAndParse(provider, secret string, header http.Header, body []byte, no
 				ObjectKind string `json:"object_kind"`
 				Ref        string `json:"ref"`
 				After      string `json:"after"`
-				Project    struct {
+				Workspace  struct {
 					PathWithNamespace string `json:"path_with_namespace"`
-				} `json:"project"`
+				} `json:"workspace"`
 			}
 			if err := json.Unmarshal(body, &p); err != nil {
 				return Event{}, err
@@ -149,25 +149,25 @@ func VerifyAndParse(provider, secret string, header http.Header, body []byte, no
 			if id == "" {
 				id = header.Get("X-Gitlab-Webhook-UUID")
 			}
-			return validatePushEvent(Event{Kind: "push", DeliveryID: id, Repository: p.Project.PathWithNamespace, Ref: p.Ref, HeadSHA: p.After})
+			return validatePushEvent(Event{Kind: "push", DeliveryID: id, Repository: p.Workspace.PathWithNamespace, Ref: p.Ref, HeadSHA: p.After})
 		}
 		if header.Get("X-Gitlab-Event") != "Merge Request Hook" {
 			return Event{}, errors.New("event ignored")
 		}
 		var p struct {
 			ObjectKind string `json:"object_kind"`
-			Project    struct {
+			Workspace  struct {
 				PathWithNamespace string `json:"path_with_namespace"`
-			} `json:"project"`
+			} `json:"workspace"`
 			ObjectAttributes struct {
-				Action          string    `json:"action"`
-				State           string    `json:"state"`
-				IID             int       `json:"iid"`
-				URL             string    `json:"url"`
-				UpdatedAt       time.Time `json:"updated_at"`
-				SourceProjectID int       `json:"source_project_id"`
-				TargetProjectID int       `json:"target_project_id"`
-				LastCommit      struct {
+				Action            string    `json:"action"`
+				State             string    `json:"state"`
+				IID               int       `json:"iid"`
+				URL               string    `json:"url"`
+				UpdatedAt         time.Time `json:"updated_at"`
+				SourceWorkspaceID int       `json:"source_workspace_id"`
+				TargetWorkspaceID int       `json:"target_workspace_id"`
+				LastCommit        struct {
 					ID string `json:"id"`
 				} `json:"last_commit"`
 			} `json:"object_attributes"`
@@ -181,7 +181,7 @@ func VerifyAndParse(provider, secret string, header http.Header, body []byte, no
 		if p.ObjectAttributes.Action != "open" && p.ObjectAttributes.Action != "reopen" && p.ObjectAttributes.Action != "update" && p.ObjectAttributes.Action != "close" && p.ObjectAttributes.Action != "merge" {
 			return Event{}, errors.New("event ignored")
 		}
-		e := Event{DeliveryID: header.Get("webhook-id"), Repository: p.Project.PathWithNamespace, Number: p.ObjectAttributes.IID, HeadSHA: p.ObjectAttributes.LastCommit.ID, URL: p.ObjectAttributes.URL, Fork: p.ObjectAttributes.SourceProjectID == 0 || p.ObjectAttributes.TargetProjectID == 0 || p.ObjectAttributes.SourceProjectID != p.ObjectAttributes.TargetProjectID, Closed: p.ObjectAttributes.State == "closed" || p.ObjectAttributes.State == "merged", EventAt: p.ObjectAttributes.UpdatedAt}
+		e := Event{DeliveryID: header.Get("webhook-id"), Repository: p.Workspace.PathWithNamespace, Number: p.ObjectAttributes.IID, HeadSHA: p.ObjectAttributes.LastCommit.ID, URL: p.ObjectAttributes.URL, Fork: p.ObjectAttributes.SourceWorkspaceID == 0 || p.ObjectAttributes.TargetWorkspaceID == 0 || p.ObjectAttributes.SourceWorkspaceID != p.ObjectAttributes.TargetWorkspaceID, Closed: p.ObjectAttributes.State == "closed" || p.ObjectAttributes.State == "merged", EventAt: p.ObjectAttributes.UpdatedAt}
 		if e.DeliveryID == "" {
 			e.DeliveryID = header.Get("X-Gitlab-Event-UUID")
 		}
@@ -258,7 +258,7 @@ func (c Client) Current(ctx context.Context, provider, apiURL, repository, token
 	if provider == "github" {
 		endpoint = strings.TrimRight(apiURL, "/") + "/repos/" + repository + "/pulls/" + strconv.Itoa(number)
 	} else if provider == "gitlab" {
-		endpoint = strings.TrimRight(apiURL, "/") + "/projects/" + url.PathEscape(repository) + "/merge_requests/" + strconv.Itoa(number)
+		endpoint = strings.TrimRight(apiURL, "/") + "/workspaces/" + url.PathEscape(repository) + "/merge_requests/" + strconv.Itoa(number)
 	} else {
 		return Event{}, errors.New("unsupported provider")
 	}
@@ -302,8 +302,8 @@ func (c Client) Current(ctx context.Context, provider, apiURL, repository, token
 				FullName string `json:"full_name"`
 			} `json:"repo"`
 		} `json:"base"`
-		SourceProjectID int `json:"source_project_id"`
-		TargetProjectID int `json:"target_project_id"`
+		SourceWorkspaceID int `json:"source_workspace_id"`
+		TargetWorkspaceID int `json:"target_workspace_id"`
 	}
 	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&raw); err != nil {
 		return Event{}, err
@@ -318,7 +318,7 @@ func (c Client) Current(ctx context.Context, provider, apiURL, repository, token
 	if provider == "gitlab" {
 		e.HeadSHA = raw.SHA
 		e.URL = raw.WebURL
-		e.Fork = raw.SourceProjectID == 0 || raw.TargetProjectID == 0 || raw.SourceProjectID != raw.TargetProjectID
+		e.Fork = raw.SourceWorkspaceID == 0 || raw.TargetWorkspaceID == 0 || raw.SourceWorkspaceID != raw.TargetWorkspaceID
 		e.Closed = raw.State == "closed" || raw.State == "merged"
 	}
 	if len(e.HeadSHA) != 40 {
@@ -349,7 +349,7 @@ func (c Client) Report(ctx context.Context, provider, apiURL, repository, token,
 		}
 		payload, _ = json.Marshal(map[string]string{"state": githubState, "description": description, "context": "JustCD/preview/" + strconv.Itoa(number), "target_url": targetURL})
 	} else if provider == "gitlab" {
-		endpoint = strings.TrimRight(apiURL, "/") + "/projects/" + url.PathEscape(repository) + "/statuses/" + sha
+		endpoint = strings.TrimRight(apiURL, "/") + "/workspaces/" + url.PathEscape(repository) + "/statuses/" + sha
 		values := url.Values{"state": {state}, "description": {description}, "name": {"JustCD/preview/" + strconv.Itoa(number)}, "target_url": {targetURL}}
 		payload = []byte(values.Encode())
 	} else {

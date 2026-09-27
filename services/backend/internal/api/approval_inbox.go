@@ -20,8 +20,8 @@ type approvalInboxItem struct {
 	ApplicationID      string    `json:"applicationId"`
 	ApplicationName    string    `json:"applicationName"`
 	ApplicationGroupID *string   `json:"applicationGroupId,omitempty"`
-	ProjectID          string    `json:"projectId"`
-	ProjectName        string    `json:"projectName"`
+	WorkspaceID        string    `json:"workspaceId"`
+	WorkspaceName      string    `json:"workspaceName"`
 	Kind               string    `json:"kind"`
 	CreatedAt          time.Time `json:"createdAt"`
 	ExpiresAt          time.Time `json:"expiresAt"`
@@ -66,7 +66,7 @@ func (s *Server) listApprovalInbox(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid expiry filter")
 		return
 	}
-	candidates, err := s.Store.ListApprovalCandidates(r.Context(), currentUser(r), q.Get("projectId"), "")
+	candidates, err := s.Store.ListApprovalCandidates(r.Context(), currentUser(r), q.Get("workspaceId"), "")
 	if err != nil {
 		writeStoreError(w, "could not load approval inbox")
 		return
@@ -85,14 +85,14 @@ func (s *Server) listApprovalInbox(w http.ResponseWriter, r *http.Request) {
 		if required < 1 {
 			continue
 		}
-		role, ok := roleCache[candidate.ProjectID]
+		role, ok := roleCache[candidate.WorkspaceID]
 		if !ok {
-			role, err = s.Store.ProjectRole(r.Context(), currentUser(r), candidate.ProjectID)
+			role, err = s.Store.WorkspaceRole(r.Context(), currentUser(r), candidate.WorkspaceID)
 			if err != nil {
 				writeStoreError(w, "could not check approval access")
 				return
 			}
-			roleCache[candidate.ProjectID] = role
+			roleCache[candidate.WorkspaceID] = role
 		}
 		if role == "" || !core.ApprovalRoleAllows(record.Plan, role, currentUser(r).ID) {
 			continue
@@ -112,7 +112,7 @@ func (s *Server) listApprovalInbox(w http.ResponseWriter, r *http.Request) {
 			if err != nil || actor.Disabled || actor.DeletedAt != nil {
 				continue
 			}
-			actorRole, err := s.Store.ProjectRole(r.Context(), actor, candidate.ProjectID)
+			actorRole, err := s.Store.WorkspaceRole(r.Context(), actor, candidate.WorkspaceID)
 			if err == nil && core.ApprovalRoleAllows(record.Plan, actorRole, actor.ID) {
 				approved[actor.ID] = true
 			}
@@ -124,7 +124,7 @@ func (s *Server) listApprovalInbox(w http.ResponseWriter, r *http.Request) {
 		if q.Get("applicationId") != "" && candidate.ApplicationID != q.Get("applicationId") {
 			continue
 		}
-		item := approvalInboxItem{PlanID: record.ID, PlanDigest: record.Plan.Digest, ApplicationID: candidate.ApplicationID, ApplicationName: candidate.ApplicationName, ApplicationGroupID: candidate.GroupID, ProjectID: candidate.ProjectID, ProjectName: candidate.ProjectName, Kind: record.Plan.ApprovalKind, CreatedAt: record.CreatedAt, ExpiresAt: record.ExpiresAt, RequiredApprovals: required, ApprovedApprovals: len(approved), Deletions: []string{}, ClusterScoped: []string{}, Takeovers: []string{}, ChangeCount: len(record.Plan.Changes)}
+		item := approvalInboxItem{PlanID: record.ID, PlanDigest: record.Plan.Digest, ApplicationID: candidate.ApplicationID, ApplicationName: candidate.ApplicationName, ApplicationGroupID: candidate.GroupID, WorkspaceID: candidate.WorkspaceID, WorkspaceName: candidate.WorkspaceName, Kind: record.Plan.ApprovalKind, CreatedAt: record.CreatedAt, ExpiresAt: record.ExpiresAt, RequiredApprovals: required, ApprovedApprovals: len(approved), Deletions: []string{}, ClusterScoped: []string{}, Takeovers: []string{}, ChangeCount: len(record.Plan.Changes)}
 		if item.Kind == "" {
 			item.Kind = "sync"
 		}

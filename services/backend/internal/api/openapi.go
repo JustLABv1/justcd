@@ -56,37 +56,56 @@ paths:
       summary: Revoke the current session
       responses:
         '200': { description: Session revoked }
-  /projects:
+  /onboarding:
     get:
-      summary: List projects visible to the current user
+      summary: Return the deterministic first-run readiness checklist (instance admin only)
+      description: Derives progress from persisted configuration, acknowledgements, and saved safe connection tests. Credential values are never returned.
       responses:
-        '200': { description: Project list }
-    post:
-      summary: Create a project
-      responses:
-        '201': { description: Created project }
-  /projects/{projectID}/members:
-    get:
-      summary: List project members
+        '200': { description: Ordered readiness steps, completion count, and next required step }
+        '403': { description: Instance administrator role required }
+  /onboarding/steps/{stepID}/complete:
+    put:
+      summary: Acknowledge a manually verified onboarding step (instance admin only)
+      description: Currently accepts only encryption-key after an administrator confirms that the stable key is durably backed up.
       parameters:
         - in: path
-          name: projectID
+          name: stepID
+          required: true
+          schema: { type: string, enum: [encryption-key] }
+      responses:
+        '200': { description: Acknowledgement persisted }
+        '400': { description: Step is derived automatically or unknown }
+  /workspaces:
+    get:
+      summary: List workspaces visible to the current user
+      responses:
+        '200': { description: Workspace list }
+    post:
+      summary: Create a workspace
+      responses:
+        '201': { description: Created workspace }
+  /workspaces/{workspaceID}/members:
+    get:
+      summary: List workspace members
+      parameters:
+        - in: path
+          name: workspaceID
           required: true
           schema: { type: string }
       responses:
         '200': { description: Member list }
     post:
-      summary: Add a member or update a project role (owner only)
+      summary: Add a member or update a workspace role (owner only)
       responses:
         '200': { description: Membership updated }
-  /projects/{projectID}/members/{userID}:
+  /workspaces/{workspaceID}/members/{userID}:
     put:
-      summary: Change a direct project member's role (owner only)
+      summary: Change a direct workspace member's role (owner only)
       responses:
         '200': { description: Membership updated }
         '409': { description: Last-owner protection or membership managed by SSO }
     delete:
-      summary: Remove a direct project member (owner only)
+      summary: Remove a direct workspace member (owner only)
       responses:
         '204': { description: Membership removed }
         '409': { description: Last-owner protection or membership managed by SSO }
@@ -104,24 +123,24 @@ paths:
       summary: Edit, lock, unlock, or reset a platform user (instance admin only)
       responses:
         '200': { description: Updated user }
-        '409': { description: Last-admin, last-project-owner, or deleted-account protection }
+        '409': { description: Last-admin, last-workspace-owner, or deleted-account protection }
     delete:
       summary: Revoke access and anonymize a platform user while preserving history (instance admin only)
       responses:
         '204': { description: User anonymized and access revoked }
-        '409': { description: Last-admin, last-project-owner, or deleted-account protection }
-  /projects/{projectID}/approval-policy:
+        '409': { description: Last-admin, last-workspace-owner, or deleted-account protection }
+  /workspaces/{workspaceID}/approval-policy:
     put:
-      summary: Set project sync and application deletion approval rules (owner only)
+      summary: Set workspace sync and application deletion approval rules (owner only)
       responses:
-        '200': { description: Saved project approval rules }
+        '200': { description: Saved workspace approval rules }
         '400': { description: Invalid approval count or approver selection }
   /credentials:
     get:
-      summary: List credential metadata for a project
+      summary: List credential metadata for a workspace
       parameters:
         - in: query
-          name: projectId
+          name: workspaceId
           required: true
           schema: { type: string }
       responses:
@@ -141,40 +160,40 @@ paths:
         '201': { description: Created cluster }
   /clusters/{clusterID}/bindings:
     get:
-      summary: List project namespace bindings
+      summary: List workspace namespace bindings
       parameters:
         - in: path
           name: clusterID
           required: true
           schema: { type: string }
         - in: query
-          name: projectId
+          name: workspaceId
           required: true
           schema: { type: string }
       responses:
         '200': { description: Bound namespaces }
     post:
-      summary: Bind a project to a namespace and optional credential
+      summary: Bind a workspace to a namespace and optional credential
       responses:
         '201': { description: Namespace binding }
   /clusters/{clusterID}/test:
     post:
       summary: Run and persist Kubernetes permission self-tests for a namespace
-      description: Uses API discovery and SelfSubjectAccessReview only; it does not create, patch, or delete workload resources. Cluster-wide checks are opt-in and require project owner access.
+      description: Uses API discovery and SelfSubjectAccessReview only; it does not create, patch, or delete workload resources. Cluster-wide checks are opt-in and require workspace owner access.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [projectId]
+              required: [workspaceId]
               properties:
-                projectId: { type: string }
+                workspaceId: { type: string }
                 namespace: { type: string }
                 includeClusterScope: { type: boolean, default: false }
       responses:
         '200': { description: Permission report, including classified failures and suggested RBAC YAML }
-        '403': { description: Project owner access is required for cluster-wide checks }
+        '403': { description: Workspace owner access is required for cluster-wide checks }
   /clusters/{clusterID}/tests:
     get:
       summary: List the latest saved Kubernetes permission report per namespace
@@ -184,17 +203,17 @@ paths:
           required: true
           schema: { type: string }
         - in: query
-          name: projectId
+          name: workspaceId
           required: true
           schema: { type: string }
       responses:
         '200': { description: Latest permission reports and timestamps }
   /git-sources:
     get:
-      summary: List project Git sources
+      summary: List workspace Git sources
       parameters:
         - in: query
-          name: projectId
+          name: workspaceId
           required: true
           schema: { type: string }
       responses:
@@ -205,10 +224,10 @@ paths:
         '201': { description: Created Git source }
   /applications:
     get:
-      summary: List applications for a project
+      summary: List applications for a workspace
       parameters:
         - in: query
-          name: projectId
+          name: workspaceId
           required: true
           schema: { type: string }
       responses:
@@ -233,7 +252,7 @@ paths:
       responses:
         '200': { description: Inferred source details, nullable connection, preview profile, and webhook URL }
     put:
-      summary: Configure PR reporting for the application's existing Git source (project owner)
+      summary: Configure PR reporting for the application's existing Git source (workspace owner)
       description: Provider and repository are derived from the Git source; unknown hosts require explicit self-hosted GitLab confirmation. A webhook secret and status API token are required on creation. Empty secret fields preserve existing encrypted values on update. A preview profile is optional and disabled by default.
       responses:
         '200': { description: Connection saved }
@@ -256,7 +275,7 @@ paths:
     get:
       summary: Read generic signed push webhook configuration without exposing the secret
     put:
-      summary: Configure a generic signed push webhook for a Git source (project owner)
+      summary: Configure a generic signed push webhook for a Git source (workspace owner)
   /webhooks/git-sources/{sourceID}:
     post:
       summary: Receive a signed GitHub, GitLab, or generic branch push event
@@ -294,7 +313,7 @@ paths:
         '200': { description: Rollback target metadata; encrypted manifest contents are not returned }
   /applications/{applicationID}/rollback-plans:
     post:
-      summary: Create a reviewed rollback plan from a snapshot or Git revision (project owner only)
+      summary: Create a reviewed rollback plan from a snapshot or Git revision (workspace owner only)
       description: Creates a new immutable plan only. No cluster resources are changed until the plan is approved and applied.
       responses:
         '201': { description: Rollback plan with target provenance and normal resource diffs }
@@ -302,7 +321,7 @@ paths:
         '422': { description: Git target, scope, or Kubernetes dry-run could not be validated }
   /applications/{applicationID}/rollback-state:
     post:
-      summary: Keep a rollback pin or resume the previously tracked source (project owner only)
+      summary: Keep a rollback pin or resume the previously tracked source (workspace owner only)
       responses:
         '200': { description: Updated application tracking state }
         '422': { description: The selected Git revision is required or could not be verified }
@@ -314,14 +333,14 @@ paths:
         '422': { description: Plan inspection failed for another reason }
   /applications/{applicationID}/adopt:
     post:
-      summary: Claim an unchanged, reviewed resource for this application (project owner only)
+      summary: Claim an unchanged, reviewed resource for this application (workspace owner only)
       description: Claims the ownership label and inventory record, pauses auto-sync, and requires a fresh plan before workload changes. A later marked takeover update requires owner approval before transferring field ownership.
       responses:
         '201': { description: Resource claimed without changing workload fields }
         '409': { description: Git, UID, resource version, or existing ownership changed }
   /applications/{applicationID}/adopt-batch:
     post:
-      summary: Claim selected, freshly reviewed resources for this application (project owner only)
+      summary: Claim selected, freshly reviewed resources for this application (workspace owner only)
       description: Validates the full selection before claiming any resource. Each claim has UID and resource-version preconditions; a mid-run change is reported as a partial result. Auto-sync is paused and a fresh approved plan is required before workload changes.
       responses:
         '200': { description: Per-resource claimed or failed results }
@@ -332,13 +351,13 @@ paths:
       responses:
         '200': { description: Persistent ignore rules }
     post:
-      summary: Add an audited ignore rule (project owner only)
+      summary: Add an audited ignore rule (workspace owner only)
       responses:
         '201': { description: Created ignore rule }
         '422': { description: Invalid path or unsafe field ownership handoff }
   /applications/{applicationID}/ignore-rules/{ruleID}:
     delete:
-      summary: Remove an audited ignore rule (project owner only)
+      summary: Remove an audited ignore rule (workspace owner only)
       responses:
         '204': { description: Rule deleted }
   /plans/{planID}/selections:
@@ -377,7 +396,7 @@ paths:
       summary: List current plans requiring this user's approval
       parameters:
         - in: query
-          name: projectId
+          name: workspaceId
           schema: { type: string }
         - in: query
           name: applicationId
@@ -434,7 +453,7 @@ paths:
       responses:
         '200': { description: Approval rule, count, and current approvals }
     post:
-      summary: Approve the exact plan as an eligible project member
+      summary: Approve the exact plan as an eligible workspace member
       requestBody:
         content:
           application/json:

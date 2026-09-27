@@ -69,28 +69,37 @@ func (s *Server) routes() {
 
 	s.Mux.Handle("GET /api/v1/auth/session", s.requireAuth(http.HandlerFunc(s.session)))
 	s.Mux.Handle("POST /api/v1/auth/logout", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.logout))))
-	s.Mux.Handle("GET /api/v1/projects", s.requireAuth(http.HandlerFunc(s.listProjects)))
-	s.Mux.Handle("POST /api/v1/projects", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createProject))))
-	s.Mux.Handle("PUT /api/v1/projects/{projectID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateProject))))
-	s.Mux.Handle("PUT /api/v1/projects/{projectID}/approval-policy", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateProjectApprovalPolicy))))
-	s.Mux.Handle("DELETE /api/v1/projects/{projectID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.deleteProject))))
-	s.Mux.Handle("GET /api/v1/projects/{projectID}/members", s.requireAuth(http.HandlerFunc(s.listProjectMembers)))
-	s.Mux.Handle("POST /api/v1/projects/{projectID}/members", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.setProjectMember))))
-	s.Mux.Handle("PUT /api/v1/projects/{projectID}/members/{userID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateProjectMember))))
-	s.Mux.Handle("DELETE /api/v1/projects/{projectID}/members/{userID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.removeProjectMember))))
+	s.Mux.Handle("GET /api/v1/onboarding", s.requireAuth(s.requireAdmin(http.HandlerFunc(s.onboardingStatus))))
+	s.Mux.Handle("PUT /api/v1/onboarding/steps/{stepID}/complete", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.completeOnboardingStep)))))
+	s.Mux.Handle("GET /api/v1/workspaces", s.requireAuth(http.HandlerFunc(s.listWorkspaces)))
+	s.Mux.Handle("POST /api/v1/workspaces", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createWorkspace))))
+	s.Mux.Handle("PUT /api/v1/workspaces/{workspaceID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateWorkspace))))
+	s.Mux.Handle("PUT /api/v1/workspaces/{workspaceID}/approval-policy", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateWorkspaceApprovalPolicy))))
+	s.Mux.Handle("DELETE /api/v1/workspaces/{workspaceID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.deleteWorkspace))))
+	s.Mux.Handle("GET /api/v1/workspaces/{workspaceID}/members", s.requireAuth(http.HandlerFunc(s.listWorkspaceMembers)))
+	s.Mux.Handle("POST /api/v1/workspaces/{workspaceID}/members", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.setWorkspaceMember))))
+	s.Mux.Handle("PUT /api/v1/workspaces/{workspaceID}/members/{userID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateWorkspaceMember))))
+	s.Mux.Handle("DELETE /api/v1/workspaces/{workspaceID}/members/{userID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.removeWorkspaceMember))))
 	s.Mux.Handle("GET /api/v1/credentials", s.requireAuth(http.HandlerFunc(s.listCredentials)))
 	s.Mux.Handle("POST /api/v1/credentials", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createCredential))))
 	s.Mux.Handle("PUT /api/v1/credentials/{credentialID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateCredential))))
 	s.Mux.Handle("GET /api/v1/clusters", s.requireAuth(http.HandlerFunc(s.listClusters)))
-	s.Mux.Handle("POST /api/v1/clusters", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.createCluster)))))
-	s.Mux.Handle("PUT /api/v1/clusters/{clusterID}", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.updateCluster)))))
+	s.Mux.Handle("POST /api/v1/clusters", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createCluster))))
+	s.Mux.Handle("PUT /api/v1/clusters/{clusterID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateCluster))))
+	s.Mux.Handle("GET /api/v1/workspace-connection-shares", s.requireAuth(http.HandlerFunc(s.listWorkspaceConnectionShares)))
+	s.Mux.Handle("POST /api/v1/clusters/{clusterID}/shares", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.shareCluster))))
+	s.Mux.Handle("POST /api/v1/git-sources/{sourceID}/shares", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.shareGitSource))))
+	s.Mux.Handle("POST /api/v1/workspace-connection-shares/{shareID}/accept", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.acceptWorkspaceConnectionShare))))
+	s.Mux.Handle("POST /api/v1/workspace-connection-shares/{shareID}/decline", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.declineWorkspaceConnectionShare))))
+	s.Mux.Handle("DELETE /api/v1/workspace-connection-shares/{shareID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.revokeWorkspaceConnectionShare))))
+	s.Mux.Handle("PUT /api/v1/workspace-connection-shares/{shareID}/credential", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.setSharedGitCredential))))
 	s.Mux.Handle("POST /api/v1/clusters/{clusterID}/test", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.testCluster))))
 	s.Mux.Handle("GET /api/v1/clusters/{clusterID}/tests", s.requireAuth(http.HandlerFunc(s.listClusterPermissionTests)))
 	s.Mux.Handle("POST /api/v1/clusters/{clusterID}/bindings", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createNamespaceBinding))))
 	s.Mux.Handle("PUT /api/v1/clusters/{clusterID}/bindings/{namespace}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateNamespaceBinding))))
 	s.Mux.Handle("GET /api/v1/clusters/{clusterID}/bindings", s.requireAuth(http.HandlerFunc(s.listNamespaceBindings)))
-	s.Mux.Handle("GET /api/v1/clusters/{clusterID}/project-credential", s.requireAuth(http.HandlerFunc(s.getProjectClusterCredential)))
-	s.Mux.Handle("PUT /api/v1/clusters/{clusterID}/project-credential", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.setProjectClusterCredential))))
+	s.Mux.Handle("GET /api/v1/clusters/{clusterID}/workspace-credential", s.requireAuth(http.HandlerFunc(s.getWorkspaceClusterCredential)))
+	s.Mux.Handle("PUT /api/v1/clusters/{clusterID}/workspace-credential", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.setWorkspaceClusterCredential))))
 	s.Mux.Handle("GET /api/v1/git-sources", s.requireAuth(http.HandlerFunc(s.listGitSources)))
 	s.Mux.Handle("POST /api/v1/git-sources", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createGitSource))))
 	s.Mux.Handle("PUT /api/v1/git-sources/{sourceID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateGitSource))))
@@ -216,23 +225,49 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) requireProjectRole(w http.ResponseWriter, r *http.Request, projectID string, minimum string) bool {
-	if projectID == "" {
-		writeError(w, http.StatusBadRequest, "projectId is required")
+func (s *Server) requireWorkspaceRole(w http.ResponseWriter, r *http.Request, workspaceID string, minimum string) bool {
+	if workspaceID == "" {
+		writeError(w, http.StatusBadRequest, "workspaceId is required")
 		return false
 	}
-	role, err := s.Store.ProjectRole(r.Context(), currentUser(r), projectID)
+	role, err := s.Store.WorkspaceRole(r.Context(), currentUser(r), workspaceID)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			writeError(w, http.StatusRequestTimeout, "request cancelled")
 		} else {
-			writeError(w, http.StatusForbidden, "project access denied")
+			writeError(w, http.StatusForbidden, "workspace access denied")
 		}
 		return false
 	}
 	allowed := role == "owner" || (minimum != "owner" && role == "deployer") || (minimum == "viewer" && role == "viewer")
 	if !allowed {
-		writeError(w, http.StatusForbidden, "project role is not permitted")
+		writeError(w, http.StatusForbidden, "workspace role is not permitted")
+		return false
+	}
+	return true
+}
+
+func (s *Server) requireWorkspaceCluster(w http.ResponseWriter, r *http.Request, workspaceID, clusterID string) bool {
+	allowed, err := s.Store.WorkspaceCanUseCluster(r.Context(), workspaceID, clusterID)
+	if err != nil {
+		writeStoreError(w, "could not verify cluster access")
+		return false
+	}
+	if !allowed {
+		writeError(w, http.StatusNotFound, "cluster is not available to this workspace")
+		return false
+	}
+	return true
+}
+
+func (s *Server) requireWorkspaceGitSource(w http.ResponseWriter, r *http.Request, workspaceID, sourceID string) bool {
+	allowed, err := s.Store.WorkspaceCanUseGitSource(r.Context(), workspaceID, sourceID)
+	if err != nil {
+		writeStoreError(w, "could not verify Git source access")
+		return false
+	}
+	if !allowed {
+		writeError(w, http.StatusNotFound, "Git source is not available to this workspace")
 		return false
 	}
 	return true
@@ -265,15 +300,15 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
-func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
-	items, err := s.Store.ListProjects(r.Context(), currentUser(r))
+func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
+	items, err := s.Store.ListWorkspaces(r.Context(), currentUser(r))
 	if err != nil {
-		writeStoreError(w, "could not load projects")
+		writeStoreError(w, "could not load workspaces")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
-func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
+func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
@@ -284,18 +319,18 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 	input.Name = strings.TrimSpace(input.Name)
 	if input.Name == "" || len(input.Name) > 100 {
-		writeError(w, http.StatusBadRequest, "project name is required and must be at most 100 characters")
+		writeError(w, http.StatusBadRequest, "workspace name is required and must be at most 100 characters")
 		return
 	}
-	project := store.Project{ID: store.NewID(), Name: input.Name, Description: strings.TrimSpace(input.Description), ApprovalPolicy: store.DefaultApprovalPolicy()}
+	workspace := store.Workspace{ID: store.NewID(), Name: input.Name, Description: strings.TrimSpace(input.Description), ApprovalPolicy: store.DefaultApprovalPolicy()}
 	user := currentUser(r)
-	if err := s.Store.CreateProject(r.Context(), project, user.ID); err != nil {
-		writeError(w, http.StatusConflict, "could not create project")
+	if err := s.Store.CreateWorkspace(r.Context(), workspace, user.ID); err != nil {
+		writeError(w, http.StatusConflict, "could not create workspace")
 		return
 	}
-	_ = s.Store.Audit(r.Context(), user.ID, "project.created", "project", project.ID, map[string]string{"name": project.Name})
-	project.Role = "owner"
-	writeJSON(w, http.StatusCreated, project)
+	_ = s.Store.Audit(r.Context(), user.ID, "workspace.created", "workspace", workspace.ID, map[string]string{"name": workspace.Name})
+	workspace.Role = "owner"
+	writeJSON(w, http.StatusCreated, workspace)
 }
 
 func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
@@ -432,7 +467,7 @@ func writeAdminUserError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		writeError(w, http.StatusNotFound, "user not found")
-	case errors.Is(err, store.ErrLastInstanceAdmin), errors.Is(err, store.ErrUserLastProjectOwner), errors.Is(err, store.ErrUserDeleted), errors.Is(err, store.ErrSystemUser):
+	case errors.Is(err, store.ErrLastInstanceAdmin), errors.Is(err, store.ErrUserLastWorkspaceOwner), errors.Is(err, store.ErrUserDeleted), errors.Is(err, store.ErrSystemUser):
 		writeError(w, http.StatusConflict, err.Error())
 	default:
 		var sqlStateErr interface{ SQLState() string }

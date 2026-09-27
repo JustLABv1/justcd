@@ -7,6 +7,7 @@ import Link from "next/link"
 import { WorkspaceIcon } from "@/components/workspace-ui"
 import { ErrorDetailsButton } from "@/components/error-details"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
+import { ConnectionDialog } from "@/components/connection-dialog"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -16,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { EmptyState, FormField, PageHeading } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
 import { api, apiPost, errorMessage } from "@/lib/api"
+import { WorkspaceConnectionShares } from "@/components/workspace-connection-shares"
 import type {
   Cluster,
   Credential,
@@ -25,25 +27,25 @@ import type {
   ListResponse,
   NamespaceBinding,
   OIDCProvider,
-  Project,
+  Workspace,
   User,
 } from "@/lib/types"
 
 const inputClass = "min-h-24 font-mono text-xs"
 
-const projectSections = ["git-sources", "clusters", "namespaces", "credentials"]
+const workspaceSections = ["git-sources", "clusters", "namespaces", "credentials", "shares"]
 
-export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedProjectId?: string; sectionOverride?: string }) {
+export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixedWorkspaceId?: string; sectionOverride?: string }) {
   const router = useRouter()
   const pathname = usePathname()
   const toast = useToast()
-  const projectScoped = Boolean(fixedProjectId)
+  const workspaceScoped = Boolean(fixedWorkspaceId)
   const section = sectionOverride ?? pathname.split("/")[2] ?? ""
   const sections = [
     {
       id: "git-sources",
       title: "Git sources",
-      description: "Repositories tracked by your projects",
+      description: "Repositories tracked by your workspaces",
     },
     {
       id: "clusters",
@@ -53,12 +55,17 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
     {
       id: "namespaces",
       title: "Namespace bindings",
-      description: "Project targets and per-namespace access",
+      description: "Workspace targets and per-namespace access",
     },
     {
       id: "credentials",
       title: "Credentials",
       description: "Encrypted Git and Kubernetes secrets",
+    },
+    {
+      id: "shares",
+      title: "Shared connections",
+      description: "Review connection offers and workspace access",
     },
     {
       id: "oidc",
@@ -73,16 +80,16 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
       adminOnly: true,
     },
   ]
-  const visibleSections = sections.filter((item) => projectScoped ? projectSections.includes(item.id) : !projectSections.includes(item.id))
+  const visibleSections = sections.filter((item) => workspaceScoped ? workspaceSections.includes(item.id) : !workspaceSections.includes(item.id))
   const current = visibleSections.find((item) => item.id === section)
-  const sectionHref = (id: string) => projectScoped ? `/projects/${fixedProjectId}/connections/${id}` : `/settings/${id}`
+  const sectionHref = (id: string) => workspaceScoped ? `/workspaces/${fixedWorkspaceId}/connections/${id}` : `/settings/${id}`
   const [user, setUser] = useState<User | null>(null)
-  const [projects, setProjects] = useState<Project[]>([])
-  const [projectId, setProjectId] = useState("")
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+  const [workspaceId, setWorkspaceId] = useState("")
   const [clusters, setClusters] = useState<Cluster[]>([])
   const [clusterId, setClusterId] = useState("")
   const [credentials, setCredentials] = useState<Credential[]>([])
-  const [loadedProjectId, setLoadedProjectId] = useState("")
+  const [loadedWorkspaceId, setLoadedWorkspaceId] = useState("")
   const [loadedBindingsKey, setLoadedBindingsKey] = useState("")
   const [sources, setSources] = useState<GitSource[]>([])
   const [bindings, setBindings] = useState<NamespaceBinding[]>([])
@@ -93,25 +100,24 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
   const [loading, setLoading] = useState(true)
 
   const loadBase = useCallback(async () => {
-    const [session, projectList, clusterList] = await Promise.all([
+    const [session, workspaceList] = await Promise.all([
       api<{ user: User }>("/api/v1/auth/session"),
-      api<ListResponse<Project>>("/api/v1/projects"),
-      api<ListResponse<Cluster>>("/api/v1/clusters"),
+      api<ListResponse<Workspace>>("/api/v1/workspaces"),
     ])
     setUser(session.user)
-    const writable = projectList.items.filter(
-      (project) => project.role !== "viewer"
-    )
-    setProjects(writable)
-    setClusters(clusterList.items)
+    setWorkspaces(workspaceList.items)
     const queryId =
-      new URLSearchParams(window.location.search).get("projectId") ?? ""
+      new URLSearchParams(window.location.search).get("workspaceId") ?? ""
     const selected =
-      writable.find((project) => project.id === (fixedProjectId ?? queryId)) ?? (!projectScoped ? writable[0] : undefined)
-    if (selected) setProjectId(selected.id)
+      workspaceList.items.find((workspace) => workspace.id === (fixedWorkspaceId ?? queryId)) ?? (!workspaceScoped ? workspaceList.items[0] : undefined)
+    if (selected) setWorkspaceId(selected.id)
+    const clusterList = selected
+      ? await api<ListResponse<Cluster>>(`/api/v1/clusters?workspaceId=${encodeURIComponent(selected.id)}`)
+      : { items: [] as Cluster[] }
+    setClusters(clusterList.items)
     const initialCluster = clusterList.items[0]
     if (initialCluster) setClusterId(initialCluster.id)
-  }, [fixedProjectId, projectScoped])
+  }, [fixedWorkspaceId, workspaceScoped])
 
   useEffect(() => {
     Promise.resolve()
@@ -121,27 +127,27 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
   }, [loadBase])
 
   useEffect(() => {
-    if (!projectScoped && projectSections.includes(section) && !loading) {
-      router.replace(projectId ? `/projects/${projectId}/connections/${section}` : "/projects")
+    if (!workspaceScoped && workspaceSections.includes(section) && !loading) {
+      router.replace(workspaceId ? `/workspaces/${workspaceId}/connections/${section}` : "/workspaces")
     }
-  }, [projectScoped, section, loading, projectId, router])
+  }, [workspaceScoped, section, loading, workspaceId, router])
 
   useEffect(() => {
-    if (!projectId) return
+    if (!workspaceId) return
     let active = true
     Promise.all([
       api<ListResponse<Credential>>(
-        `/api/v1/credentials?projectId=${encodeURIComponent(projectId)}`
+        `/api/v1/credentials?workspaceId=${encodeURIComponent(workspaceId)}`
       ),
       api<ListResponse<GitSource>>(
-        `/api/v1/git-sources?projectId=${encodeURIComponent(projectId)}`
+        `/api/v1/git-sources?workspaceId=${encodeURIComponent(workspaceId)}`
       ),
     ])
       .then(([credentialList, sourceList]) => {
         if (active) {
           setCredentials(credentialList.items)
           setSources(sourceList.items)
-          setLoadedProjectId(projectId)
+          setLoadedWorkspaceId(workspaceId)
         }
       })
       .catch((cause) => {
@@ -150,18 +156,18 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
     return () => {
       active = false
     }
-  }, [projectId])
+  }, [workspaceId])
 
   useEffect(() => {
-    if (!projectId || !clusterId) return
+    if (!workspaceId || !clusterId) return
     let active = true
     api<ListResponse<NamespaceBinding>>(
-      `/api/v1/clusters/${encodeURIComponent(clusterId)}/bindings?projectId=${encodeURIComponent(projectId)}`
+      `/api/v1/clusters/${encodeURIComponent(clusterId)}/bindings?workspaceId=${encodeURIComponent(workspaceId)}`
     )
       .then((result) => {
         if (active) {
           setBindings(result.items)
-          setLoadedBindingsKey(`${projectId}:${clusterId}`)
+          setLoadedBindingsKey(`${workspaceId}:${clusterId}`)
         }
       })
       .catch((cause) => {
@@ -170,7 +176,7 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
     return () => {
       active = false
     }
-  }, [projectId, clusterId])
+  }, [workspaceId, clusterId])
 
   useEffect(() => {
     if (!user?.isAdmin) return
@@ -186,19 +192,19 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
       active = false
     }
   }, [user])
-  const scopeLoading = !!projectId && loadedProjectId !== projectId
+  const scopeLoading = !!workspaceId && loadedWorkspaceId !== workspaceId
   const bindingsLoading =
-    !!projectId &&
+    !!workspaceId &&
     !!clusterId &&
-    loadedBindingsKey !== `${projectId}:${clusterId}`
+    loadedBindingsKey !== `${workspaceId}:${clusterId}`
 
-  const project = useMemo(
-    () => projects.find((item) => item.id === projectId),
-    [projects, projectId]
+  const workspace = useMemo(
+    () => workspaces.find((item) => item.id === workspaceId),
+    [workspaces, workspaceId]
   )
   const globalKubeCredentials = credentials.filter(
     (item) =>
-      !item.projectId && ["kubernetes-token", "kubeconfig"].includes(item.kind)
+      !item.workspaceId && ["kubernetes-token", "kubeconfig"].includes(item.kind)
   )
   const gitCredentials = credentials.filter((item) =>
     ["git-ssh", "git-https"].includes(item.kind)
@@ -227,17 +233,17 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
     }
   }
 
-  if (!projectScoped && projectSections.includes(section)) {
-    return <div role="status" className="rounded-xl border bg-card p-6 text-sm text-muted-foreground">Opening project connections…</div>
+  if (!workspaceScoped && workspaceSections.includes(section)) {
+    return <div role="status" className="rounded-xl border bg-card p-6 text-sm text-muted-foreground">Opening workspace connections…</div>
   }
 
   return (
     <>
       <PageHeading
-        title={current?.title ?? (projectScoped ? "Project connections" : "Instance settings")}
+        title={current?.title ?? (workspaceScoped ? "Workspace connections" : "Instance settings")}
         description={
           current?.description ??
-          (projectScoped ? "Repositories, Kubernetes access, and credentials for this project." : "Sign-in providers and accounts for the JustCD instance.")
+          (workspaceScoped ? "Repositories, Kubernetes access, and credentials for this workspace." : "Sign-in providers and accounts for the JustCD instance.")
         }
       />
       {error && (
@@ -261,7 +267,7 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
         </div>
       ) : (
         <>
-          {section && !current && !(!projectScoped && projectSections.includes(section)) ? (
+          {section && !current && !(!workspaceScoped && workspaceSections.includes(section)) ? (
             <EmptyState
               title="Section not found"
               description="Choose a settings section to continue."
@@ -272,21 +278,21 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
             <>
               <div
                 className={
-                  current
+                  current && !workspaceScoped
                     ? "grid items-start gap-8 lg:grid-cols-[200px_minmax(0,1fr)]"
                     : ""
                 }
               >
-                {current && (
+                {current && !workspaceScoped && (
                   <nav
                     aria-label="Settings sections"
                     className="flex min-w-0 gap-2 overflow-x-auto rounded-xl border bg-card p-2 lg:sticky lg:top-24 lg:block"
                   >
                     <Link
-                      href={projectScoped ? `/projects/${fixedProjectId}?tab=connections` : "/settings"}
+                      href={workspaceScoped ? `/workspaces/${fixedWorkspaceId}?tab=connections` : "/settings"}
                       className="block shrink-0 rounded-lg px-3 py-3 text-xs font-medium whitespace-nowrap text-muted-foreground hover:bg-muted lg:mb-2 lg:border-b"
                     >
-                      ← {projectScoped ? "Project connections" : "All settings"}
+                      ← {workspaceScoped ? "Workspace connections" : "All settings"}
                     </Link>
                     {[
                       {
@@ -295,7 +301,7 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
                       },
                       {
                         title: "Security & access",
-                        ids: ["credentials", "oidc", "users"],
+                        ids: ["credentials", "shares", "oidc", "users"],
                       },
                     ].filter((group) => group.ids.some((id) => visibleSections.some((item) => item.id === id))).map((group) => (
                       <div
@@ -340,7 +346,7 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
                         </p>
                         <p className="mt-1 text-xs text-muted-foreground">
                           These settings apply to the whole workspace, across
-                          all projects.
+                          all workspaces.
                         </p>
                       </div>
                     </div>
@@ -354,9 +360,8 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
                     />
                   )}
 
-                  {projectScoped && project && <div className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border bg-card p-4 text-xs"><span className="font-semibold">{project.name}</span><span className="text-muted-foreground">Project-scoped connections</span><Link href={`/projects/${project.id}?tab=connections`} className="ml-auto font-medium text-primary hover:underline">Back to project →</Link></div>}
-                  {projectScoped && !project && <EmptyState title="Project unavailable" description="You need project access to manage its connections." href="/projects" action="View projects" />}
-                  {projectScoped && section === "namespaces" && (
+                  {workspaceScoped && !workspace && <EmptyState title="Workspace unavailable" description="You need workspace access to manage its connections." href="/workspaces" action="View workspaces" />}
+                  {workspaceScoped && section === "namespaces" && (
                     <div className="mb-6 max-w-sm">
                           <FormField
                             label="Active cluster"
@@ -380,7 +385,7 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
                     </div>
                   )}
 
-                  {!section && !user?.isAdmin ? <EmptyState title="Administrator access required" description="Instance settings are available to administrators. Project connections live on each project page." href="/projects" action="View projects" /> : !section ? (
+                  {!section && !user?.isAdmin ? <EmptyState title="Administrator access required" description="Instance settings are available to administrators. Workspace connections live on each workspace page." href="/workspaces" action="View workspaces" /> : !section ? (
                     <div className="space-y-8">
                       <div className="flex flex-col justify-between gap-4 rounded-2xl border bg-card p-6 sm:flex-row sm:items-center">
                         <div className="flex items-start gap-4">
@@ -471,13 +476,13 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
                           role="status"
                           className="rounded-xl border bg-card p-6 text-sm text-muted-foreground"
                         >
-                          Loading project connections…
+                          Loading workspace connections…
                         </p>
                       )}
-                      {projectScoped && project && section === "credentials" && !scopeLoading && (
+                      {workspaceScoped && workspace && section === "credentials" && !scopeLoading && (
                         <CredentialPanel
-                          key={projectId}
-                          project={project}
+                          key={workspaceId}
+                          workspace={workspace}
                           user={user}
                           credentials={credentials}
                           busy={busy}
@@ -494,15 +499,15 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
                           }
                         />
                       )}
-                      {projectScoped && project && section === "clusters" && !scopeLoading && (
+                      {workspaceScoped && workspace && section === "clusters" && !scopeLoading && (
                         <ClusterPanel
-                          key={project?.id}
+                          key={workspace?.id}
                           user={user}
-                          project={project}
+                          workspace={workspace}
                           clusters={clusters}
                           globalCredentials={globalKubeCredentials}
-                          projectCredentials={namespaceCredentials.filter(
-                            (item) => item.projectId === projectId
+                          workspaceCredentials={namespaceCredentials.filter(
+                            (item) => item.workspaceId === workspaceId
                           )}
                           busy={busy}
                           action={action}
@@ -519,10 +524,10 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
                           }
                         />
                       )}
-                      {projectScoped && project && section === "git-sources" && !scopeLoading && (
+                      {workspaceScoped && workspace && section === "git-sources" && !scopeLoading && (
                         <GitSourcePanel
-                          key={projectId}
-                          project={project}
+                          key={workspaceId}
+                          workspace={workspace}
                           credentials={gitCredentials}
                           sources={sources}
                           busy={busy}
@@ -539,7 +544,16 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
                           }
                         />
                       )}
-                      {projectScoped && project && section === "namespaces" && bindingsLoading && (
+                      {workspaceScoped && workspace && section === "shares" && !scopeLoading && (
+                        <WorkspaceConnectionShares
+                          workspace={workspace}
+                          workspaces={workspaces}
+                          clusters={clusters}
+                          sources={sources}
+                          credentials={credentials}
+                        />
+                      )}
+                      {workspaceScoped && workspace && section === "namespaces" && bindingsLoading && (
                         <p
                           role="status"
                           className="rounded-xl border bg-card p-6 text-sm text-muted-foreground"
@@ -547,12 +561,12 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
                           Loading namespace access…
                         </p>
                       )}
-                      {projectScoped && project && section === "namespaces" &&
+                      {workspaceScoped && workspace && section === "namespaces" &&
                         !scopeLoading &&
                         !bindingsLoading && (
                           <NamespacePanel
-                            key={`${projectId}:${clusterId}`}
-                            project={project}
+                            key={`${workspaceId}:${clusterId}`}
+                            workspace={workspace}
                             cluster={clusters.find(
                               (item) => item.id === clusterId
                             )}
@@ -581,7 +595,7 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
                       {section === "oidc" && user?.isAdmin && (
                         <OIDCPanel
                           providers={providers}
-                          projects={projects}
+                          workspaces={workspaces}
                           busy={busy}
                           action={action}
                           onCreated={(provider) =>
@@ -627,7 +641,7 @@ export function SettingsWorkspace({ fixedProjectId, sectionOverride }: { fixedPr
 }
 
 function CredentialPanel({
-  project,
+  workspace,
   user,
   credentials,
   busy,
@@ -635,7 +649,7 @@ function CredentialPanel({
   onCreated,
   onUpdated,
 }: {
-  project?: Project
+  workspace?: Workspace
   user: User | null
   credentials: Credential[]
   busy: boolean
@@ -651,9 +665,9 @@ function CredentialPanel({
   const [kind, setKind] = useState<Credential["kind"]>("kubernetes-token")
   const [secretOne, setSecretOne] = useState("")
   const [secretTwo, setSecretTwo] = useState("")
-  const [global, setGlobal] = useState(false)
   const [username, setUsername] = useState("")
   const [editing, setEditing] = useState<Credential | null>(null)
+  const [dialogOpen, setDialogOpen] = useState(false)
   const isAdmin = user?.isAdmin ?? false
   const fields =
     kind === "git-ssh"
@@ -685,7 +699,7 @@ function CredentialPanel({
             }
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const projectId = global ? undefined : project?.id
+    const workspaceId = workspace?.id
     await action(
       async () => {
         const secret = {
@@ -706,7 +720,7 @@ function CredentialPanel({
               }
             )
           : await apiPost<Credential>("/api/v1/credentials", {
-              projectId,
+              workspaceId,
               name,
               kind,
               secret,
@@ -716,6 +730,7 @@ function CredentialPanel({
         setSecretTwo("")
         setUsername("")
         setEditing(null)
+        setDialogOpen(false)
         return result
       },
       editing
@@ -728,21 +743,18 @@ function CredentialPanel({
     setEditing(credential)
     setName(credential.name)
     setKind(credential.kind)
-    setGlobal(!credential.projectId)
     setSecretOne("")
     setSecretTwo("")
     setUsername(credential.username ?? "")
-    focusSettingsEditor("credential-name")
+    setDialogOpen(true)
   }
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-6">
         <div className="rounded-2xl border bg-card p-6">
-          <div className="mb-3 flex items-center justify-between">
+          <div className="mb-3 flex items-center justify-between gap-3">
             <p className="text-[11px] font-medium">Available credentials</p>
-            <span className="text-[10px] text-muted-foreground">
-              {credentials.length} total
-            </span>
+            <div className="flex items-center gap-3"><span className="text-[10px] text-muted-foreground">{credentials.length} total</span>{workspace?.role === "owner" && <Button size="sm" type="button" onClick={() => { setEditing(null); setName(""); setKind("kubernetes-token"); setSecretOne(""); setSecretTwo(""); setUsername(""); setDialogOpen(true) }}>Add credential</Button>}</div>
           </div>
           {credentials.length ? (
             <div className="space-y-2">
@@ -759,10 +771,8 @@ function CredentialPanel({
                       {credential.name}
                     </span>
                     <span className="block text-[9px] text-muted-foreground capitalize">
-                      {credential.kind.replaceAll("-", " ")} ·{" "}
-                      {credential.projectId
-                        ? "project scoped"
-                        : "instance wide"}
+                      {credential.kind.replaceAll("-", " ")}
+                      {!credential.workspaceId && " · legacy instance-wide"}
                     </span>
                   </span>
                   {credential.expiresAt && (
@@ -777,8 +787,8 @@ function CredentialPanel({
                     type="button"
                     disabled={
                       busy ||
-                      (!!credential.projectId && project?.role !== "owner") ||
-                      (!credential.projectId && !isAdmin)
+                      (!!credential.workspaceId && workspace?.role !== "owner") ||
+                      (!credential.workspaceId && !isAdmin)
                     }
                     onClick={() => edit(credential)}
                   >
@@ -793,18 +803,11 @@ function CredentialPanel({
             </p>
           )}
         </div>
+        <ConnectionDialog open={dialogOpen} onOpenChange={setDialogOpen} busy={busy} title={editing ? "Edit credential" : "Add credential"} description="Credentials are encrypted and their secret values are never shown again.">
         <form
-          className="settings-editor space-y-5 rounded-2xl border bg-card p-6"
+          className="space-y-5"
           onSubmit={submit}
         >
-          <div className="border-b pb-4">
-            <h2 className="text-base font-semibold">
-              {editing ? "Edit credential" : "Add credential"}
-            </h2>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">
-              Choose a type and scope, then provide the connection secret.
-            </p>
-          </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <FormField label="Name" htmlFor="credential-name">
               <Input
@@ -882,18 +885,9 @@ function CredentialPanel({
               />
             </FormField>
           )}
-          {isAdmin && !editing && (
-            <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
-              <Checkbox
-                checked={global}
-                onCheckedChange={(checked) => setGlobal(Boolean(checked))}
-              />
-              Store as an instance-wide credential (admin only)
-            </label>
-          )}
-          {!global && !project && (
+          {!workspace && (
             <p className="text-[11px] text-amber-700">
-              Select a project to add a scoped credential.
+              Select a workspace to add a scoped credential.
             </p>
           )}
           <div className="flex gap-2">
@@ -904,30 +898,28 @@ function CredentialPanel({
               loadingText={editing ? "Saving credential…" : "Adding credential…"}
               disabled={
                 busy ||
-                (!global && project?.role !== "owner") ||
-                (global && !isAdmin)
+                (editing
+                  ? editing.workspaceId
+                    ? workspace?.role !== "owner"
+                    : !isAdmin
+                  : workspace?.role !== "owner")
               }
             >
               {editing ? "Save credential" : "Add credential"}
             </Button>
-            {editing && (
-              <Button
+            <Button
                 size="sm"
                 type="button"
                 variant="outline"
                 onClick={() => {
-                  setEditing(null)
-                  setName("")
-                  setSecretOne("")
-                  setSecretTwo("")
-                  setUsername("")
+                  setDialogOpen(false)
                 }}
               >
                 Cancel
               </Button>
-            )}
           </div>
         </form>
+        </ConnectionDialog>
       </div>
     </div>
   )
@@ -935,20 +927,20 @@ function CredentialPanel({
 
 function ClusterPanel({
   user,
-  project,
+  workspace,
   clusters,
   globalCredentials,
-  projectCredentials,
+  workspaceCredentials,
   busy,
   action,
   onCreated,
   onUpdated,
 }: {
   user: User | null
-  project?: Project
+  workspace?: Workspace
   clusters: Cluster[]
   globalCredentials: Credential[]
-  projectCredentials: Credential[]
+  workspaceCredentials: Credential[]
   busy: boolean
   action: <T>(
     work: () => Promise<T>,
@@ -965,24 +957,46 @@ function ClusterPanel({
   const [clusterScopeCredentialId, setClusterScopeCredentialId] = useState("")
   const [maxConcurrentOperations, setMaxConcurrentOperations] = useState("2")
   const [operationsPerMinute, setOperationsPerMinute] = useState("30")
-  const [projectCredentialId, setProjectCredentialId] = useState("")
-  const [newProjectCredentialId, setNewProjectCredentialId] = useState("")
+  const [workspaceCredentialId, setWorkspaceCredentialId] = useState("")
+  const [authDialogOpen, setAuthDialogOpen] = useState(false)
+  const [newWorkspaceCredentialId, setNewWorkspaceCredentialId] = useState("")
   const [selectedClusterId, setSelectedClusterId] = useState("")
   const [credentialLoadedFor, setCredentialLoadedFor] = useState("")
   const [credentialLoadError, setCredentialLoadError] = useState<unknown | null>(null)
   const [insecure, setInsecure] = useState(false)
   const [editing, setEditing] = useState<Cluster | null>(null)
   const [testingClusterId, setTestingClusterId] = useState("")
+  const [latestTests, setLatestTests] = useState<Record<string, KubernetesPermissionTest>>({})
+  const [workspaceCredentialByCluster, setWorkspaceCredentialByCluster] = useState<Record<string, string | null>>({})
+  const activeClusterId = selectedClusterId || clusters[0]?.id || ""
+  const activeCluster = clusters.find((cluster) => cluster.id === activeClusterId)
   useEffect(() => {
-    if (!project || !selectedClusterId) return
+    if (!workspace) return
+    let active = true
+    Promise.all(clusters.map(async (cluster) => {
+      const [testResult, credentialResult] = await Promise.all([
+        api<ListResponse<KubernetesPermissionTest>>(`/api/v1/clusters/${encodeURIComponent(cluster.id)}/tests?workspaceId=${encodeURIComponent(workspace.id)}`).catch(() => ({ items: [] })),
+        api<{ credentialId: string | null }>(`/api/v1/clusters/${encodeURIComponent(cluster.id)}/workspace-credential?workspaceId=${encodeURIComponent(workspace.id)}`).catch(() => ({ credentialId: null })),
+      ])
+      const latest = [...testResult.items].sort((left, right) => right.checkedAt.localeCompare(left.checkedAt))[0]
+      return [cluster.id, latest, credentialResult.credentialId] as const
+    })).then((results) => {
+      if (!active) return
+      setLatestTests(Object.fromEntries(results.flatMap(([id, latest]) => latest ? [[id, latest]] : [])))
+      setWorkspaceCredentialByCluster(Object.fromEntries(results.map((result) => [result[0], result[2]])))
+    })
+    return () => { active = false }
+  }, [clusters, workspace])
+  useEffect(() => {
+    if (!workspace || !activeClusterId) return
     let active = true
     api<{ credentialId: string | null }>(
-      `/api/v1/clusters/${encodeURIComponent(selectedClusterId)}/project-credential?projectId=${encodeURIComponent(project.id)}`
+      `/api/v1/clusters/${encodeURIComponent(activeClusterId)}/workspace-credential?workspaceId=${encodeURIComponent(workspace.id)}`
     )
       .then((result) => {
         if (active) {
-          setProjectCredentialId(result.credentialId ?? "")
-          setCredentialLoadedFor(selectedClusterId)
+          setWorkspaceCredentialId(result.credentialId ?? "")
+          setCredentialLoadedFor(activeClusterId)
           setCredentialLoadError(null)
         }
       })
@@ -992,22 +1006,26 @@ function ClusterPanel({
     return () => {
       active = false
     }
-  }, [project, selectedClusterId])
-  async function saveProjectCredential() {
-    if (!project || !selectedClusterId) return
+  }, [workspace, activeClusterId])
+  async function saveWorkspaceCredential() {
+    if (!workspace || !activeClusterId) return
     await action(
       () =>
         api<{ credentialId: string | null }>(
-          `/api/v1/clusters/${encodeURIComponent(selectedClusterId)}/project-credential`,
+          `/api/v1/clusters/${encodeURIComponent(activeClusterId)}/workspace-credential`,
           {
             method: "PUT",
             body: JSON.stringify({
-              projectId: project.id,
-              credentialId: projectCredentialId || null,
+              workspaceId: workspace.id,
+              credentialId: workspaceCredentialId || null,
             }),
           }
         ),
-      "Project credential saved for this cluster."
+      "Workspace credential saved for this cluster.",
+      (result) => {
+        setWorkspaceCredentialByCluster((current) => ({ ...current, [activeClusterId]: result.credentialId }))
+        setAuthDialogOpen(false)
+      }
     )
   }
   async function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -1040,13 +1058,13 @@ function ClusterPanel({
               clusterScopeCredentialId: clusterScopeCredentialId || undefined,
               maxConcurrentOperations: Number(maxConcurrentOperations),
               operationsPerMinute: Number(operationsPerMinute),
-              projectId: project?.id,
-              projectCredentialId: newProjectCredentialId || undefined,
+              workspaceId: workspace?.id,
+              workspaceCredentialId: newWorkspaceCredentialId || undefined,
             })
         setName("")
         setApiServer("")
         setCaDataBase64("")
-        setNewProjectCredentialId("")
+        setNewWorkspaceCredentialId("")
         setDefaultCredentialId("")
         setClusterScopeCredentialId("")
         setMaxConcurrentOperations("2")
@@ -1057,7 +1075,7 @@ function ClusterPanel({
       },
       editing
         ? "Cluster updated. Existing CA certificate was kept unless replaced."
-        : "Cluster connected. Add a namespace binding to a project before creating applications.",
+        : "Cluster connected. Add a namespace binding to a workspace before creating applications.",
       editing ? onUpdated : onCreated
     )
   }
@@ -1071,10 +1089,9 @@ function ClusterPanel({
     setClusterScopeCredentialId(cluster.clusterScopeCredentialId ?? "")
     setMaxConcurrentOperations(String(cluster.maxConcurrentOperations || 2))
     setOperationsPerMinute(String(cluster.operationsPerMinute || 30))
-    focusSettingsEditor("cluster-name")
   }
   async function test(cluster: Cluster) {
-    if (!project) return
+    if (!workspace) return
     setTestingClusterId(cluster.id)
     try {
       await action(
@@ -1082,7 +1099,7 @@ function ClusterPanel({
           apiPost<KubernetesPermissionReport>(
             `/api/v1/clusters/${encodeURIComponent(cluster.id)}/test`,
             {
-              projectId: project.id,
+              workspaceId: workspace.id,
             }
           ),
         (result) => {
@@ -1094,7 +1111,8 @@ function ClusterPanel({
             : result.status === "partial"
               ? `${cluster.name}: ${missing} Kubernetes permission${missing === 1 ? "" : "s"} missing in ${result.namespace}.`
               : `${cluster.name}: ${result.failure?.message ?? "Kubernetes permission test failed."}`
-        }
+        },
+        (result) => setLatestTests((current) => ({ ...current, [cluster.id]: { workspaceId: workspace.id, clusterId: cluster.id, namespace: result.namespace, report: result, checkedAt: result.checkedAt } }))
       )
     } finally {
       setTestingClusterId("")
@@ -1120,6 +1138,15 @@ function ClusterPanel({
                   <span className="block truncate font-mono text-[9px] text-muted-foreground">
                     {cluster.apiServer}
                   </span>
+                  <span className="mt-1 inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
+                    {cluster.shared ? `Shared by ${cluster.ownerWorkspaceName ?? "another workspace"}` : cluster.workspaceId ? "Private to this workspace" : "Legacy instance-owned"}
+                  </span>
+                  <span className="ml-1 mt-1 inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
+                    {workspaceCredentialByCluster[cluster.id] ? "Workspace default configured" : cluster.shared ? "Workspace credential needed" : cluster.defaultCredentialId ? "Legacy instance default" : "No workspace default"}
+                  </span>
+                  <span className="ml-1 mt-1 inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
+                    {latestTests[cluster.id] ? `Last test: ${latestTests[cluster.id].report.status} · ${new Date(latestTests[cluster.id].checkedAt).toLocaleString()}` : "Not tested yet"}
+                  </span>
                 </span>
                 <Button
                   size="sm"
@@ -1127,12 +1154,12 @@ function ClusterPanel({
                   type="button"
                   loading={testingClusterId === cluster.id}
                   loadingText="Testing…"
-                  disabled={busy || !project}
+                  disabled={busy || !workspace}
                   onClick={() => test(cluster)}
                 >
                   Test
                 </Button>
-                {user?.isAdmin && (
+                {workspace?.role === "owner" && (cluster.workspaceId === workspace.id || (!cluster.workspaceId && user?.isAdmin)) && (
                   <Button
                     size="sm"
                     variant="outline"
@@ -1148,24 +1175,18 @@ function ClusterPanel({
           </div>
         ) : null}
         {!clusters.length && (
-          <p className="px-6 py-5 text-sm text-muted-foreground">
-            No connected clusters yet. Use the form below to get started.
-          </p>
+          <EmptyState title="No connected clusters yet" description="Connect a new cluster or ask another workspace owner to offer one. Credentials stay private to each workspace." href={workspace?.role === "owner" ? `/workspaces/${workspace.id}/clusters/new` : undefined} action={workspace?.role === "owner" ? "Connect a cluster" : undefined} />
         )}
       </SettingsInventory>
-      {project && clusters.length > 0 && (
-        <div className="space-y-4 rounded-2xl border bg-card p-6">
-          <h2 className="text-base font-semibold">Project authentication</h2>
-          <p className="text-xs font-medium text-primary">{project.name}</p>
-          <p className="text-[11px] text-muted-foreground">
-            This project credential is used for its namespace bindings on the
-            selected cluster. It is never shared with other projects.
-          </p>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <FormField label="Cluster" htmlFor="project-cluster">
+      {workspace?.role === "owner" && clusters.length > 0 && <div className="flex justify-end"><Link href={`/workspaces/${workspace.id}/clusters/new`}><Button variant="outline">Connect a cluster</Button></Link></div>}
+      {workspace && clusters.length > 0 && (
+        <div className="flex flex-wrap items-end gap-4 rounded-2xl border bg-card p-5 sm:p-6">
+          <div className="min-w-0 flex-1"><h2 className="text-sm font-semibold">Workspace authentication</h2><p className="mt-1 text-xs text-muted-foreground">Choose a cluster to review its workspace credential.</p></div>
+          <div className="w-full sm:w-56">
+            <FormField label="Cluster" htmlFor="workspace-cluster">
               <FormSelect
-                id="project-cluster"
-                value={selectedClusterId}
+                id="workspace-cluster"
+                value={activeClusterId}
                 onValueChange={(value) => {
                   setSelectedClusterId(value)
                   setCredentialLoadedFor("")
@@ -1178,64 +1199,54 @@ function ClusterPanel({
                 }))}
               />
             </FormField>
-            <FormField
-              label="Project Kubernetes credential"
-              htmlFor="project-cluster-credential"
+          </div>
+          <div className="flex items-center gap-3 pb-0.5"><span className="text-xs text-muted-foreground">{workspaceCredentialByCluster[activeClusterId] ? "Credential configured" : "No workspace credential"}</span><Button size="sm" variant="outline" type="button" disabled={workspace.role !== "owner" || !activeClusterId || credentialLoadedFor !== activeClusterId} onClick={() => setAuthDialogOpen(true)}>Configure</Button></div>
+          {credentialLoadError != null && (
+            <div role="alert" className="flex basis-full flex-wrap items-center justify-between gap-3 text-sm text-destructive"><span>{errorMessage(credentialLoadError)}</span><ErrorDetailsButton error={credentialLoadError} /></div>
+          )}
+        </div>
+      )}
+      <ConnectionDialog open={authDialogOpen} onOpenChange={setAuthDialogOpen} busy={busy} title="Configure workspace authentication" description={`Choose the credential used for namespace bindings on ${activeCluster?.name ?? "this cluster"}. It is never shared with other workspaces.`}>
+          <div className="space-y-5"><FormField
+              label="Workspace Kubernetes credential"
+              htmlFor="workspace-cluster-credential"
             >
               <FormSelect
-                id="project-cluster-credential"
+                id="workspace-cluster-credential"
                 disabled={
-                  !selectedClusterId ||
-                  credentialLoadedFor !== selectedClusterId
+                  !activeClusterId ||
+                  credentialLoadedFor !== activeClusterId
                 }
-                value={projectCredentialId}
-                onValueChange={setProjectCredentialId}
-                emptyOption="Use global default"
-                items={projectCredentials.map((credential) => ({
+                value={workspaceCredentialId}
+                onValueChange={setWorkspaceCredentialId}
+                emptyOption={activeCluster?.shared || activeCluster?.workspaceId ? "No workspace credential" : "Use legacy instance default"}
+                items={workspaceCredentials.map((credential) => ({
                   value: credential.id,
                   label: credential.name,
                 }))}
               />
             </FormField>
-          </div>
           <Button
             size="sm"
             type="button"
             disabled={
               busy ||
-              !selectedClusterId ||
-              credentialLoadedFor !== selectedClusterId ||
-              project.role !== "owner"
+              !activeClusterId ||
+              credentialLoadedFor !== activeClusterId ||
+              workspace?.role !== "owner"
             }
-            onClick={saveProjectCredential}
+            onClick={saveWorkspaceCredential}
           >
-            Save project credential
+            Save workspace credential
           </Button>
-          {credentialLoadError != null && (
-            <div
-              role="alert"
-              className="flex flex-wrap items-center justify-between gap-3 text-sm text-destructive"
-            >
-              <span>{errorMessage(credentialLoadError)}</span>
-              <ErrorDetailsButton error={credentialLoadError} />
-            </div>
-          )}
-        </div>
-      )}
-      {user?.isAdmin ? (
+          </div>
+      </ConnectionDialog>
+      {editing ? (
+        <ConnectionDialog open={!!editing} onOpenChange={(open) => { if (!open) setEditing(null) }} busy={busy} title="Edit cluster connection" description="Update the endpoint and authentication settings for this cluster.">
         <form
-          className="settings-editor space-y-5 rounded-2xl border bg-card p-6"
+          className="space-y-5"
           onSubmit={submit}
         >
-          <div className="border-b pb-4">
-            <h2 className="text-base font-semibold">
-              {editing ? "Edit cluster connection" : "Connect a cluster"}
-            </h2>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">
-              Instance administrators manage the API endpoint and shared
-              defaults.
-            </p>
-          </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <FormField label="Cluster name" htmlFor="cluster-name">
               <Input
@@ -1282,7 +1293,7 @@ function ClusterPanel({
                   onChange={(event) => setCaDataBase64(event.target.value)}
                 />
               </FormField>
-              <div className="grid gap-3 sm:grid-cols-2">
+              {editing && !editing.workspaceId && user?.isAdmin && <div className="grid gap-3 sm:grid-cols-2">
                 <FormField
                   label="Default cluster credential"
                   htmlFor="cluster-default"
@@ -1313,28 +1324,10 @@ function ClusterPanel({
                     }))}
                   />
                 </FormField>
-              </div>
-              {project && !editing && (
-                <FormField
-                  label={`Credential for ${project.name}`}
-                  htmlFor="new-project-cluster-credential"
-                  hint="Only this project can use this token. Namespace credentials override it."
-                >
-                  <FormSelect
-                    id="new-project-cluster-credential"
-                    value={newProjectCredentialId}
-                    onValueChange={setNewProjectCredentialId}
-                    emptyOption="None yet"
-                    items={projectCredentials.map((credential) => ({
-                      value: credential.id,
-                      label: credential.name,
-                    }))}
-                  />
-                </FormField>
-              )}
+              </div>}
               <p className="text-[11px] text-muted-foreground">
-                Instance-wide credentials are optional. Project credentials are
-                kept separate and are never shared across projects.
+                Instance-wide credentials are optional. Workspace credentials are
+                kept separate and are never shared across workspaces.
               </p>
               <label className="flex items-start gap-2 text-[11px] leading-4 text-muted-foreground">
                 <Checkbox
@@ -1362,9 +1355,9 @@ function ClusterPanel({
               size="sm"
               type="submit"
               loading={busy}
-              loadingText={editing ? "Saving cluster…" : "Adding cluster…"}
+              loadingText="Saving cluster…"
             >
-              {editing ? "Save cluster" : "Add cluster"}
+              Save cluster
             </Button>
             {editing && (
               <Button
@@ -1388,18 +1381,14 @@ function ClusterPanel({
             )}
           </div>
         </form>
-      ) : (
-        <div className="px-5 py-4 text-[11px] leading-5 text-muted-foreground">
-          Only instance administrators can add cluster API endpoints and global
-          credentials.
-        </div>
-      )}
+        </ConnectionDialog>
+      ) : null}
     </div>
   )
 }
 
 function GitSourcePanel({
-  project,
+  workspace,
   credentials,
   sources,
   busy,
@@ -1407,7 +1396,7 @@ function GitSourcePanel({
   onCreated,
   onUpdated,
 }: {
-  project?: Project
+  workspace?: Workspace
   credentials: Credential[]
   sources: GitSource[]
   busy: boolean
@@ -1427,12 +1416,13 @@ function GitSourcePanel({
   const [webhookSource, setWebhookSource] = useState<GitSource | null>(null)
   const [webhookInfo, setWebhookInfo] = useState<{ configured: boolean; webhookUrl: string } | null>(null)
   const [webhookSecret, setWebhookSecret] = useState("")
+  const [lastTestResults, setLastTestResults] = useState<Record<string, { commit: string; testedAt: string }>>({})
   async function openWebhook(source: GitSource) {
     setWebhookSource(source)
     setWebhookInfo(null)
     setWebhookSecret("")
     await action(
-      () => api<{ configured: boolean; webhookUrl: string }>(`/api/v1/git-sources/${encodeURIComponent(source.id)}/push-webhook`),
+      () => api<{ configured: boolean; webhookUrl: string; managedByOwner?: boolean }>(`/api/v1/git-sources/${encodeURIComponent(source.id)}/push-webhook?workspaceId=${encodeURIComponent(workspace?.id ?? "")}`),
       "Webhook settings loaded.",
       setWebhookInfo
     )
@@ -1441,7 +1431,7 @@ function GitSourcePanel({
     event.preventDefault()
     if (!webhookSource) return
     await action(
-      () => api<{ configured: boolean; webhookUrl: string }>(`/api/v1/git-sources/${encodeURIComponent(webhookSource.id)}/push-webhook`, { method: "PUT", body: JSON.stringify({ secret: webhookSecret }) }),
+      () => api<{ configured: boolean; webhookUrl: string; managedByOwner?: boolean }>(`/api/v1/git-sources/${encodeURIComponent(webhookSource.id)}/push-webhook`, { method: "PUT", body: JSON.stringify({ secret: webhookSecret }) }),
       "Push webhook configured.",
       (value) => { setWebhookInfo(value); setWebhookSecret("") }
     )
@@ -1463,7 +1453,7 @@ function GitSourcePanel({
               }
             )
           : await apiPost<GitSource>("/api/v1/git-sources", {
-              projectId: project?.id,
+              workspaceId: workspace?.id,
               name,
               repositoryUrl,
               credentialId: credentialId || undefined,
@@ -1483,15 +1473,15 @@ function GitSourcePanel({
     setName(source.name)
     setRepositoryUrl(source.repositoryUrl)
     setCredentialId(source.credentialId ?? "")
-    focusSettingsEditor("source-name")
   }
   async function test(source: GitSource) {
     setTestingSourceId(source.id)
     try { await action(
       () => apiPost<{ status: string; commit: string }>(
-        `/api/v1/git-sources/${encodeURIComponent(source.id)}/test`
+        `/api/v1/git-sources/${encodeURIComponent(source.id)}/test?workspaceId=${encodeURIComponent(workspace?.id ?? "")}`
       ),
-      (result) => `${source.name}: HEAD ${result.commit.slice(0, 12)} reachable`
+      (result) => `${source.name}: HEAD ${result.commit.slice(0, 12)} reachable`,
+      (result) => setLastTestResults((current) => ({ ...current, [source.id]: { commit: result.commit, testedAt: new Date().toISOString() } }))
     ) } finally { setTestingSourceId("") }
   }
   return (
@@ -1509,6 +1499,11 @@ function GitSourcePanel({
                   <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
                     {source.repositoryUrl}
                   </p>
+                  <span className="mt-1 inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
+                    {source.shared ? `Shared by ${source.ownerWorkspaceName ?? "another workspace"}` : "Private to this workspace"}
+                  </span>
+                  <span className="ml-2 inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">{source.credentialId ? "Credential configured" : "No Git credential"}</span>
+                  <span className="ml-1 mt-1 inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">{lastTestResults[source.id] ? `Last test: HEAD ${lastTestResults[source.id].commit.slice(0, 8)} · ${new Date(lastTestResults[source.id].testedAt).toLocaleString()}` : "Not tested in this session"}</span>
                 </div>
                 <Button
                   size="sm"
@@ -1525,40 +1520,33 @@ function GitSourcePanel({
                   size="sm"
                   variant="outline"
                   type="button"
-                  disabled={busy || project?.role !== "owner"}
+                  disabled={busy || workspace?.role !== "owner" || source.shared || source.workspaceId !== workspace.id}
                   onClick={() => edit(source)}
                 >
                   Edit
                 </Button>
-                <Button size="sm" variant="outline" type="button" disabled={busy || project?.role !== "owner"} onClick={() => void openWebhook(source)}>Push webhook</Button>
+                {!source.shared && <Button size="sm" variant="outline" type="button" disabled={busy || workspace?.role !== "owner"} onClick={() => void openWebhook(source)}>Push webhook</Button>}
               </div>
             ))}
           </div>
         ) : null}
         {!sources.length && (
           <p className="px-6 py-5 text-sm text-muted-foreground">
-            No connected repositories yet. Use the form below to get started.
+            No Git sources are connected yet. Use the guided flow to reuse an accessible source or connect a repository with workspace-owned credentials.
           </p>
         )}
       </SettingsInventory>
-      {webhookSource && <form className="rounded-2xl border bg-card p-6" onSubmit={(event) => void saveWebhook(event)}>
-        <div className="flex items-start justify-between gap-3"><div><h2 className="text-base font-semibold">Push webhook · {webhookSource.name}</h2><p className="mt-1 text-sm text-muted-foreground">Use this for native GitHub/GitLab push events or a generic Git provider. An existing PR webhook already accepts pushes too.</p></div><Button size="sm" variant="outline" type="button" onClick={() => setWebhookSource(null)}>Close</Button></div>
+      {sources.length === 0 && workspace?.role === "owner" && <div className="flex justify-end"><Link href={`/workspaces/${workspace.id}/git-sources/new`}><Button>Connect a Git source</Button></Link></div>}
+      {sources.length > 0 && workspace?.role === "owner" && <div className="flex justify-end"><Link href={`/workspaces/${workspace.id}/git-sources/new`}><Button variant="outline">Connect a Git source</Button></Link></div>}
+      {webhookSource && <ConnectionDialog open={!!webhookSource} onOpenChange={(open) => { if (!open) setWebhookSource(null) }} busy={busy} title={`Push webhook · ${webhookSource.name}`} description="Configure push events for this Git source. An existing PR webhook already accepts pushes too."><form className="space-y-4" onSubmit={(event) => void saveWebhook(event)}>
         {webhookInfo && <div className="mt-4 rounded-lg border bg-muted/30 p-3 text-xs"><p>{webhookInfo.configured ? "Configured" : "Not configured"}</p><code className="mt-1 block break-all">{webhookInfo.webhookUrl}</code><p className="mt-2 text-muted-foreground">For GitHub/GitLab, enable push events with this secret. For other senders, POST JSON with ref and after (commit SHA), sign the raw body with HMAC-SHA256 in X-JustCD-Signature-256, and send a unique X-JustCD-Delivery ID.</p></div>}
         <div className="mt-4"><FormField label={webhookInfo?.configured ? "Rotate webhook secret" : "Webhook secret"} htmlFor="generic-push-secret" hint="At least 16 characters. The value is never shown again."><Input id="generic-push-secret" type="password" minLength={16} required value={webhookSecret} onChange={(event) => setWebhookSecret(event.target.value)} autoComplete="new-password" /></FormField></div>
         <Button className="mt-4" size="sm" type="submit" disabled={busy || !webhookInfo || webhookSecret.length < 16}>Save push webhook</Button>
-      </form>}
-      <form
-        className="settings-editor space-y-5 rounded-2xl border bg-card p-6"
+      </form></ConnectionDialog>}
+      {editing && <ConnectionDialog open={!!editing} onOpenChange={(open) => { if (!open) setEditing(null) }} busy={busy} title="Edit Git source" description="Update this repository and its workspace credential."><form
+        className="space-y-5"
         onSubmit={submit}
       >
-        <div className="border-b pb-4">
-          <h2 className="text-base font-semibold">
-            {editing ? "Edit repository" : "Connect a repository"}
-          </h2>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            Choose a repository and how JustCD authenticates to it.
-          </p>
-        </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <FormField label="Source name" htmlFor="source-name">
             <Input
@@ -1591,14 +1579,14 @@ function GitSourcePanel({
             }))}
           />
         </FormField>
-        {!project && (
+        {!workspace && (
           <p className="text-[11px] text-amber-700">
-            Select a project to configure Git sources.
+            Select a workspace to configure Git sources.
           </p>
         )}
         {!credentials.length && (
           <Link
-            href={project ? `/projects/${project.id}/connections/credentials` : "/projects"}
+            href={workspace ? `/workspaces/${workspace.id}/connections/credentials` : "/workspaces"}
             className="inline-flex text-xs font-medium text-primary hover:underline"
           >
             Add credentials for a private repository →
@@ -1610,7 +1598,7 @@ function GitSourcePanel({
             type="submit"
             loading={busy}
             loadingText={editing ? "Saving Git source…" : "Adding Git source…"}
-            disabled={busy || !project || project.role !== "owner"}
+            disabled={busy || !workspace || workspace.role !== "owner"}
           >
             {editing ? "Save Git source" : "Add Git source"}
           </Button>
@@ -1630,13 +1618,13 @@ function GitSourcePanel({
             </Button>
           )}
         </div>
-      </form>
+      </form></ConnectionDialog>}
     </div>
   )
 }
 
 function NamespacePanel({
-  project,
+  workspace,
   cluster,
   credentials,
   bindings,
@@ -1645,7 +1633,7 @@ function NamespacePanel({
   onCreated,
   onUpdated,
 }: {
-  project?: Project
+  workspace?: Workspace
   cluster?: Cluster
   credentials: Credential[]
   bindings: NamespaceBinding[]
@@ -1661,25 +1649,26 @@ function NamespacePanel({
   const [namespace, setNamespace] = useState("")
   const [credentialId, setCredentialId] = useState("")
   const [editing, setEditing] = useState<NamespaceBinding | null>(null)
-  const [projectDefault, setProjectDefault] = useState(false)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [workspaceDefault, setWorkspaceDefault] = useState(false)
   const [reports, setReports] = useState<
     Record<string, KubernetesPermissionTest>
   >({})
   const [testingNamespace, setTestingNamespace] = useState("")
   const [includeClusterScope, setIncludeClusterScope] = useState(false)
   useEffect(() => {
-    if (!project || !cluster) return
+    if (!workspace || !cluster) return
     api<{ credentialId: string | null }>(
-      `/api/v1/clusters/${encodeURIComponent(cluster.id)}/project-credential?projectId=${encodeURIComponent(project.id)}`
+      `/api/v1/clusters/${encodeURIComponent(cluster.id)}/workspace-credential?workspaceId=${encodeURIComponent(workspace.id)}`
     )
-      .then((result) => setProjectDefault(!!result.credentialId))
-      .catch(() => setProjectDefault(false))
-  }, [project, cluster])
+      .then((result) => setWorkspaceDefault(!!result.credentialId))
+      .catch(() => setWorkspaceDefault(false))
+  }, [workspace, cluster])
   useEffect(() => {
-    if (!project || !cluster) return
+    if (!workspace || !cluster) return
     let active = true
     api<ListResponse<KubernetesPermissionTest>>(
-      `/api/v1/clusters/${encodeURIComponent(cluster.id)}/tests?projectId=${encodeURIComponent(project.id)}`
+      `/api/v1/clusters/${encodeURIComponent(cluster.id)}/tests?workspaceId=${encodeURIComponent(workspace.id)}`
     )
       .then((result) => {
         if (active) {
@@ -1696,9 +1685,9 @@ function NamespacePanel({
     return () => {
       active = false
     }
-  }, [project, cluster])
+  }, [workspace, cluster])
   async function runSelfTest(targetNamespace: string, clusterScope = false) {
-    if (!project || !cluster) return
+    if (!workspace || !cluster) return
     setTestingNamespace(targetNamespace)
     try {
       await action(
@@ -1706,7 +1695,7 @@ function NamespacePanel({
           apiPost<KubernetesPermissionReport>(
             `/api/v1/clusters/${encodeURIComponent(cluster.id)}/test`,
             {
-              projectId: project.id,
+              workspaceId: workspace.id,
               namespace: targetNamespace,
               includeClusterScope: clusterScope,
             }
@@ -1720,7 +1709,7 @@ function NamespacePanel({
           setReports((current) => ({
             ...current,
             [report.namespace]: {
-              projectId: project.id,
+              workspaceId: workspace.id,
               clusterId: cluster.id,
               namespace: report.namespace,
               report,
@@ -1734,7 +1723,7 @@ function NamespacePanel({
   }
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!project || !cluster) return
+    if (!workspace || !cluster) return
     if (editing) {
       const updatedNamespace = editing.namespace
       let updatedBinding = false
@@ -1745,7 +1734,7 @@ function NamespacePanel({
             {
               method: "PUT",
               body: JSON.stringify({
-                projectId: project.id,
+                workspaceId: workspace.id,
                 credentialId: credentialId || null,
               }),
             }
@@ -1753,6 +1742,7 @@ function NamespacePanel({
           setNamespace("")
           setCredentialId("")
           setEditing(null)
+          setDialogOpen(false)
           return binding
         },
         "Namespace credential updated.",
@@ -1770,13 +1760,14 @@ function NamespacePanel({
         const binding = await apiPost<NamespaceBinding>(
           `/api/v1/clusters/${encodeURIComponent(cluster.id)}/bindings`,
           {
-            projectId: project.id,
+            workspaceId: workspace.id,
             namespace,
             credentialId: credentialId || undefined,
           }
         )
         setNamespace("")
         setCredentialId("")
+        setDialogOpen(false)
         return binding
       },
       "Namespace access binding added.",
@@ -1789,6 +1780,7 @@ function NamespacePanel({
   }
   return (
     <div className="space-y-6">
+      {workspace?.role === "owner" && cluster && <div className="flex justify-end"><Button type="button" onClick={() => { setEditing(null); setNamespace(""); setCredentialId(""); setDialogOpen(true) }}>Grant namespace access</Button></div>}
       <SettingsInventory title="Allowed namespaces" count={bindings.length}>
         {bindings.length ? (
           <div className="divide-y border-b">
@@ -1806,8 +1798,8 @@ function NamespacePanel({
                       ? credentials.find(
                           (item) => item.id === binding.credentialId
                         )?.name || "namespace credential"
-                      : projectDefault
-                        ? "Project credential"
+                      : workspaceDefault
+                        ? "Workspace credential"
                         : "Cluster default"}
                   </span>
                   <div className="flex gap-2">
@@ -1817,7 +1809,7 @@ function NamespacePanel({
                       type="button"
                       loading={testingNamespace === binding.namespace}
                       loadingText="Testing…"
-                      disabled={busy || !project || !cluster}
+                      disabled={busy || !workspace || !cluster}
                       onClick={() =>
                         void runSelfTest(binding.namespace, includeClusterScope)
                       }
@@ -1828,12 +1820,12 @@ function NamespacePanel({
                       size="sm"
                       variant="outline"
                       type="button"
-                      disabled={busy || project?.role !== "owner"}
+                      disabled={busy || workspace?.role !== "owner"}
                       onClick={() => {
                         setEditing(binding)
                         setNamespace(binding.namespace)
                         setCredentialId(binding.credentialId ?? "")
-                        focusSettingsEditor("namespace-credential")
+                        setDialogOpen(true)
                       }}
                     >
                       Edit
@@ -1868,7 +1860,7 @@ function NamespacePanel({
         ) : null}
         {!bindings.length && (
           <p className="px-6 py-5 text-sm text-muted-foreground">
-            No allowed namespaces yet. Use the form below to get started.
+            No allowed namespaces yet. Grant access to a namespace to get started.
           </p>
         )}
       </SettingsInventory>
@@ -1878,7 +1870,7 @@ function NamespacePanel({
             checked={includeClusterScope}
             disabled={
               busy ||
-              project?.role !== "owner" ||
+              workspace?.role !== "owner" ||
               !cluster?.clusterScopeCredentialId
             }
             onCheckedChange={(checked) =>
@@ -1902,24 +1894,16 @@ function NamespacePanel({
             these checks.
           </p>
         )}
-        {project?.role !== "owner" && (
+        {workspace?.role !== "owner" && (
           <p className="mt-2 pl-7 text-[10px] text-muted-foreground">
-            Only project owners can request cluster-wide permission checks.
+            Only workspace owners can request cluster-wide permission checks.
           </p>
         )}
       </div>
-      <form
-        className="settings-editor space-y-5 rounded-2xl border bg-card p-6"
+      <ConnectionDialog open={dialogOpen} onOpenChange={setDialogOpen} busy={busy} title={editing ? "Edit namespace access" : "Grant namespace access"} description="Choose the namespace and credential this workspace will use on the selected cluster."><form
+        className="space-y-5"
         onSubmit={submit}
       >
-        <div className="border-b pb-4">
-          <h2 className="text-base font-semibold">
-            {editing ? "Edit namespace access" : "Grant namespace access"}
-          </h2>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            Allow this project to deploy to a namespace on the selected cluster.
-          </p>
-        </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <FormField
             label="Namespace"
@@ -1945,8 +1929,8 @@ function NamespacePanel({
               value={credentialId}
               onValueChange={setCredentialId}
               emptyOption={
-                projectDefault
-                  ? "Use project credential"
+                workspaceDefault
+                  ? "Use workspace credential"
                   : "Use cluster default"
               }
               items={credentials.map((credential) => ({
@@ -1956,7 +1940,7 @@ function NamespacePanel({
             />
           </FormField>
         </div>
-        {!cluster?.defaultCredentialId && !projectDefault && !credentialId && (
+        {!cluster?.defaultCredentialId && !workspaceDefault && !credentialId && (
           <p className="text-[10px] text-amber-700">
             Choose a namespace credential or configure a cluster default
             credential.
@@ -1968,26 +1952,24 @@ function NamespacePanel({
             type="submit"
             loading={busy}
             loadingText={editing ? "Saving binding…" : "Binding namespace…"}
-            disabled={busy || !project || project.role !== "owner" || !cluster}
+            disabled={busy || !workspace || workspace.role !== "owner" || !cluster}
           >
             {editing ? "Save binding" : "Bind namespace"}
           </Button>
-          {editing && (
+          {(
             <Button
               size="sm"
               variant="outline"
               type="button"
               onClick={() => {
-                setEditing(null)
-                setNamespace("")
-                setCredentialId("")
+                setDialogOpen(false)
               }}
             >
               Cancel
             </Button>
           )}
         </div>
-      </form>
+      </form></ConnectionDialog>
     </div>
   )
 }
@@ -2083,13 +2065,13 @@ function PermissionReportDetails({
 
 function OIDCPanel({
   providers,
-  projects,
+  workspaces,
   busy,
   action,
   onCreated,
 }: {
   providers: OIDCProvider[]
-  projects: Project[]
+  workspaces: Workspace[]
   busy: boolean
   action: <T>(
     work: () => Promise<T>,
@@ -2104,7 +2086,7 @@ function OIDCPanel({
   const [clientSecret, setClientSecret] = useState("")
   const [groupsClaim, setGroupsClaim] = useState("groups")
   const [providerId, setProviderId] = useState("")
-  const [projectId, setProjectId] = useState("")
+  const [workspaceId, setWorkspaceId] = useState("")
   const [groupName, setGroupName] = useState("")
   const [groupRole, setGroupRole] = useState("viewer")
   const [oidcPending, setOidcPending] = useState<"provider" | "group" | null>(
@@ -2135,15 +2117,15 @@ function OIDCPanel({
   async function mapGroup(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const selectedProvider = providerId || providers[0]?.id
-    const selectedProject = projectId || projects[0]?.id
-    if (!selectedProvider || !selectedProject) return
+    const selectedWorkspace = workspaceId || workspaces[0]?.id
+    if (!selectedProvider || !selectedWorkspace) return
     setOidcPending("group")
     try {
       await action(
         () =>
           apiPost(
             `/api/v1/admin/oidc-providers/${encodeURIComponent(selectedProvider)}/groups`,
-            { group: groupName, projectId: selectedProject, role: groupRole }
+            { group: groupName, workspaceId: selectedWorkspace, role: groupRole }
           ),
         "OIDC group mapping saved.",
         () => setGroupName("")
@@ -2194,7 +2176,7 @@ function OIDCPanel({
             Connect an identity provider
           </h2>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            Set up organization sign-in before assigning groups to project
+            Set up organization sign-in before assigning groups to workspace
             roles.
           </p>
         </div>
@@ -2261,7 +2243,7 @@ function OIDCPanel({
           Add OIDC provider
         </Button>
       </form>
-      {providers.length > 0 && projects.length > 0 && (
+      {providers.length > 0 && workspaces.length > 0 && (
         <form
           className="settings-editor space-y-5 rounded-2xl border bg-card p-6"
           onSubmit={mapGroup}
@@ -2269,7 +2251,7 @@ function OIDCPanel({
           <div>
             <h2 className="text-base font-semibold">Assign group access</h2>
             <p className="mt-1 text-[10px] text-muted-foreground">
-              Verified ID-token groups grant the selected project role at each
+              Verified ID-token groups grant the selected workspace role at each
               login.
             </p>
           </div>
@@ -2286,15 +2268,15 @@ function OIDCPanel({
                 }))}
               />
             </FormField>
-            <FormField label="Project" htmlFor="mapping-project">
+            <FormField label="Workspace" htmlFor="mapping-workspace">
               <FormSelect
-                id="mapping-project"
-                value={projectId || projects[0]?.id || ""}
-                onValueChange={setProjectId}
-                placeholder="Choose project"
-                items={projects.map((project) => ({
-                  value: project.id,
-                  label: project.name,
+                id="mapping-workspace"
+                value={workspaceId || workspaces[0]?.id || ""}
+                onValueChange={setWorkspaceId}
+                placeholder="Choose workspace"
+                items={workspaces.map((workspace) => ({
+                  value: workspace.id,
+                  label: workspace.name,
                 }))}
               />
             </FormField>
@@ -2524,7 +2506,7 @@ function PlatformUsersPanel({
                         <ConfirmDisclosure
                           trigger="Delete"
                           title={`Delete ${user.displayName || user.email}?`}
-                          description="This removes the account's project and SSO access, revokes sessions, and anonymizes its identity. Plan, approval, and audit history remains attached to a Deleted user record. Transfer ownership first if this user is the last active owner of a project."
+                          description="This removes the account's workspace and SSO access, revokes sessions, and anonymizes its identity. Plan, approval, and audit history remains attached to a Deleted user record. Transfer ownership first if this user is the last active owner of a workspace."
                           confirmLabel="Delete user"
                           onConfirm={() => deleteUser(user)}
                           disabled={rowBusy || self}
@@ -2651,14 +2633,4 @@ function SettingsInventory({
       {children}
     </section>
   )
-}
-
-function focusSettingsEditor(id: string) {
-  window.requestAnimationFrame(() => {
-    const input = document.getElementById(id)
-    input?.focus({ preventScroll: true })
-    input
-      ?.closest("form")
-      ?.scrollIntoView({ block: "nearest", behavior: "instant" })
-  })
 }

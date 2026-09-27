@@ -101,15 +101,16 @@ type Session struct {
 var ErrAlreadyInitialized = errors.New("instance already has a user")
 
 var (
-	ErrLastInstanceAdmin       = errors.New("the instance must keep at least one active administrator")
-	ErrUserDeleted             = errors.New("deleted users cannot be changed")
-	ErrSystemUser              = errors.New("the system user cannot be changed")
-	ErrLastProjectOwner        = errors.New("a project must keep at least one owner")
-	ErrProjectMemberNotFound   = errors.New("project member not found")
-	ErrProjectMemberManagedSSO = errors.New("project member access is managed by SSO")
-	ErrProjectNotFound         = errors.New("project not found")
-	ErrUserUnavailable         = errors.New("user is locked or deleted")
-	ErrUserLastProjectOwner    = errors.New("transfer ownership of every project before locking or deleting this user")
+	ErrLastInstanceAdmin         = errors.New("the instance must keep at least one active administrator")
+	ErrUserDeleted               = errors.New("deleted users cannot be changed")
+	ErrSystemUser                = errors.New("the system user cannot be changed")
+	ErrLastWorkspaceOwner        = errors.New("a workspace must keep at least one owner")
+	ErrWorkspaceMemberNotFound   = errors.New("workspace member not found")
+	ErrWorkspaceMemberManagedSSO = errors.New("workspace member access is managed by SSO")
+	ErrWorkspaceNotFound         = errors.New("workspace not found")
+	ErrConnectionNotShared       = errors.New("connection is not shared with this workspace")
+	ErrUserUnavailable           = errors.New("user is locked or deleted")
+	ErrUserLastWorkspaceOwner    = errors.New("transfer ownership of every workspace before locking or deleting this user")
 )
 
 func (s *Store) SignupAvailable(ctx context.Context) (bool, error) {
@@ -294,25 +295,25 @@ func (s *Store) ResolveOIDCUser(ctx context.Context, providerID, subject, email,
 		}
 	}
 	var previousGrants []byte
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(jsonb_object_agg(project_id,role),'{}'::jsonb) FROM oidc_membership_grants WHERE provider_id=$1 AND user_id=$2`, providerID, user.ID).Scan(&previousGrants); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(jsonb_object_agg(workspace_id,role),'{}'::jsonb) FROM oidc_membership_grants WHERE provider_id=$1 AND user_id=$2`, providerID, user.ID).Scan(&previousGrants); err != nil {
 		return User{}, err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM oidc_membership_grants WHERE provider_id=$1 AND user_id=$2`, providerID, user.ID); err != nil {
 		return User{}, err
 	}
 	if len(groups) > 0 {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO oidc_membership_grants(provider_id,user_id,project_id,role)
-			SELECT provider_id,$2,project_id,CASE
+		if _, err = tx.ExecContext(ctx, `INSERT INTO oidc_membership_grants(provider_id,user_id,workspace_id,role)
+			SELECT provider_id,$2,workspace_id,CASE
 			WHEN BOOL_OR(role='owner') THEN 'owner'
 			WHEN BOOL_OR(role='deployer') THEN 'deployer'
 			ELSE 'viewer' END
-			FROM oidc_group_roles WHERE provider_id=$1 AND group_name=ANY($3) GROUP BY provider_id,project_id
-			ON CONFLICT(provider_id,user_id,project_id) DO UPDATE SET role=EXCLUDED.role`, providerID, user.ID, groups); err != nil {
+			FROM oidc_group_roles WHERE provider_id=$1 AND group_name=ANY($3) GROUP BY provider_id,workspace_id
+			ON CONFLICT(provider_id,user_id,workspace_id) DO UPDATE SET role=EXCLUDED.role`, providerID, user.ID, groups); err != nil {
 			return User{}, err
 		}
 	}
 	var currentGrants []byte
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(jsonb_object_agg(project_id,role),'{}'::jsonb) FROM oidc_membership_grants WHERE provider_id=$1 AND user_id=$2`, providerID, user.ID).Scan(&currentGrants); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(jsonb_object_agg(workspace_id,role),'{}'::jsonb) FROM oidc_membership_grants WHERE provider_id=$1 AND user_id=$2`, providerID, user.ID).Scan(&currentGrants); err != nil {
 		return User{}, err
 	}
 	if created {
@@ -337,8 +338,8 @@ func (s *Store) ResolveOIDCUser(ctx context.Context, providerID, subject, email,
 	return user, tx.Commit()
 }
 
-func (s *Store) AddOIDCGroupRole(ctx context.Context, providerID, groupName, projectID, role string) error {
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO oidc_group_roles(provider_id,group_name,project_id,role) VALUES($1,$2,$3,$4) ON CONFLICT(provider_id,group_name,project_id) DO UPDATE SET role=EXCLUDED.role`, providerID, groupName, projectID, role)
+func (s *Store) AddOIDCGroupRole(ctx context.Context, providerID, groupName, workspaceID, role string) error {
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO oidc_group_roles(provider_id,group_name,workspace_id,role) VALUES($1,$2,$3,$4) ON CONFLICT(provider_id,group_name,workspace_id) DO UPDATE SET role=EXCLUDED.role`, providerID, groupName, workspaceID, role)
 	return err
 }
 
@@ -396,7 +397,7 @@ func (s *Store) UpdateAdminUser(ctx context.Context, id, email, displayName stri
 	}
 	defer tx.Rollback()
 
-	if err := lockUserProjectRows(ctx, tx, id); err != nil {
+	if err := lockUserWorkspaceRows(ctx, tx, id); err != nil {
 		return User{}, err
 	}
 	activeAdmins, err := lockActiveAdmins(ctx, tx)
@@ -419,12 +420,12 @@ func (s *Store) UpdateAdminUser(ctx context.Context, id, email, displayName stri
 		return User{}, ErrLastInstanceAdmin
 	}
 	if disabled && !wasDisabled {
-		lastOwner, err := userIsLastActiveProjectOwner(ctx, tx, id)
+		lastOwner, err := userIsLastActiveWorkspaceOwner(ctx, tx, id)
 		if err != nil {
 			return User{}, err
 		}
 		if lastOwner {
-			return User{}, ErrUserLastProjectOwner
+			return User{}, ErrUserLastWorkspaceOwner
 		}
 	}
 
@@ -460,7 +461,7 @@ func (s *Store) DeleteAdminUser(ctx context.Context, id string) error {
 	}
 	defer tx.Rollback()
 
-	if err := lockUserProjectRows(ctx, tx, id); err != nil {
+	if err := lockUserWorkspaceRows(ctx, tx, id); err != nil {
 		return err
 	}
 	activeAdmins, err := lockActiveAdmins(ctx, tx)
@@ -483,18 +484,18 @@ func (s *Store) DeleteAdminUser(ctx context.Context, id string) error {
 		return ErrLastInstanceAdmin
 	}
 	if !wasDisabled {
-		lastOwner, err := userIsLastActiveProjectOwner(ctx, tx, id)
+		lastOwner, err := userIsLastActiveWorkspaceOwner(ctx, tx, id)
 		if err != nil {
 			return err
 		}
 		if lastOwner {
-			return ErrUserLastProjectOwner
+			return ErrUserLastWorkspaceOwner
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=$1`, id); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM project_memberships WHERE user_id=$1`, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM workspace_memberships WHERE user_id=$1`, id); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM oidc_membership_grants WHERE user_id=$1`, id); err != nil {
@@ -510,131 +511,131 @@ func (s *Store) DeleteAdminUser(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 
-func (s *Store) SetProjectMember(ctx context.Context, projectID, userID, role string) error {
+func (s *Store) SetWorkspaceMember(ctx context.Context, workspaceID, userID, role string) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if err := lockProject(ctx, tx, projectID); err != nil {
+	if err := lockWorkspace(ctx, tx, workspaceID); err != nil {
 		return err
 	}
 	var currentRole string
-	err = tx.QueryRowContext(ctx, `SELECT role FROM project_memberships WHERE project_id=$1 AND user_id=$2`, projectID, userID).Scan(&currentRole)
+	err = tx.QueryRowContext(ctx, `SELECT role FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2`, workspaceID, userID).Scan(&currentRole)
 	if err == sql.ErrNoRows {
 		if err := ensureActiveUser(ctx, tx, userID); err != nil {
 			return err
 		}
 		var managedBySSO bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM oidc_membership_grants WHERE project_id=$1 AND user_id=$2)`, projectID, userID).Scan(&managedBySSO); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM oidc_membership_grants WHERE workspace_id=$1 AND user_id=$2)`, workspaceID, userID).Scan(&managedBySSO); err != nil {
 			return err
 		}
 		if managedBySSO {
-			return ErrProjectMemberManagedSSO
+			return ErrWorkspaceMemberManagedSSO
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO project_memberships(project_id,user_id,role) VALUES($1,$2,$3)`, projectID, userID, role); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,$3)`, workspaceID, userID, role); err != nil {
 			return err
 		}
 	} else if err != nil {
 		return err
 	} else {
 		var managedBySSO bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM oidc_membership_grants WHERE project_id=$1 AND user_id=$2)`, projectID, userID).Scan(&managedBySSO); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM oidc_membership_grants WHERE workspace_id=$1 AND user_id=$2)`, workspaceID, userID).Scan(&managedBySSO); err != nil {
 			return err
 		}
 		if managedBySSO {
-			return ErrProjectMemberManagedSSO
+			return ErrWorkspaceMemberManagedSSO
 		}
 		var targetActive bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND disabled=FALSE AND deleted_at IS NULL)`, userID).Scan(&targetActive); err != nil {
 			return err
 		}
 		if currentRole == "owner" && role != "owner" && targetActive {
-			owners, err := projectOwnerCountTx(ctx, tx, projectID)
+			owners, err := workspaceOwnerCountTx(ctx, tx, workspaceID)
 			if err != nil {
 				return err
 			}
 			if owners <= 1 {
-				return ErrLastProjectOwner
+				return ErrLastWorkspaceOwner
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE project_memberships SET role=$3 WHERE project_id=$1 AND user_id=$2`, projectID, userID, role); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE workspace_memberships SET role=$3 WHERE workspace_id=$1 AND user_id=$2`, workspaceID, userID, role); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
 }
 
-func (s *Store) RemoveProjectMember(ctx context.Context, projectID, userID string) error {
+func (s *Store) RemoveWorkspaceMember(ctx context.Context, workspaceID, userID string) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if err := lockProject(ctx, tx, projectID); err != nil {
+	if err := lockWorkspace(ctx, tx, workspaceID); err != nil {
 		return err
 	}
 	var role string
-	err = tx.QueryRowContext(ctx, `SELECT role FROM project_memberships WHERE project_id=$1 AND user_id=$2`, projectID, userID).Scan(&role)
+	err = tx.QueryRowContext(ctx, `SELECT role FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2`, workspaceID, userID).Scan(&role)
 	if err == sql.ErrNoRows {
 		var managedBySSO bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM oidc_membership_grants WHERE project_id=$1 AND user_id=$2)`, projectID, userID).Scan(&managedBySSO); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM oidc_membership_grants WHERE workspace_id=$1 AND user_id=$2)`, workspaceID, userID).Scan(&managedBySSO); err != nil {
 			return err
 		}
 		if managedBySSO {
-			return ErrProjectMemberManagedSSO
+			return ErrWorkspaceMemberManagedSSO
 		}
-		return ErrProjectMemberNotFound
+		return ErrWorkspaceMemberNotFound
 	}
 	if err != nil {
 		return err
 	}
 	var managedBySSO bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM oidc_membership_grants WHERE project_id=$1 AND user_id=$2)`, projectID, userID).Scan(&managedBySSO); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM oidc_membership_grants WHERE workspace_id=$1 AND user_id=$2)`, workspaceID, userID).Scan(&managedBySSO); err != nil {
 		return err
 	}
 	if managedBySSO {
-		return ErrProjectMemberManagedSSO
+		return ErrWorkspaceMemberManagedSSO
 	}
 	var targetActive bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND disabled=FALSE AND deleted_at IS NULL)`, userID).Scan(&targetActive); err != nil {
 		return err
 	}
 	if role == "owner" && targetActive {
-		owners, err := projectOwnerCountTx(ctx, tx, projectID)
+		owners, err := workspaceOwnerCountTx(ctx, tx, workspaceID)
 		if err != nil {
 			return err
 		}
 		if owners <= 1 {
-			return ErrLastProjectOwner
+			return ErrLastWorkspaceOwner
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM project_memberships WHERE project_id=$1 AND user_id=$2`, projectID, userID); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2`, workspaceID, userID); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func lockProject(ctx context.Context, tx *sql.Tx, projectID string) error {
+func lockWorkspace(ctx context.Context, tx *sql.Tx, workspaceID string) error {
 	var id string
-	err := tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE id=$1 FOR UPDATE`, projectID).Scan(&id)
+	err := tx.QueryRowContext(ctx, `SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, workspaceID).Scan(&id)
 	if err == sql.ErrNoRows {
-		return ErrProjectNotFound
+		return ErrWorkspaceNotFound
 	}
 	return err
 }
 
-func lockUserProjectRows(ctx context.Context, tx *sql.Tx, userID string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT p.id FROM projects p WHERE
-		EXISTS(SELECT 1 FROM project_memberships pm WHERE pm.project_id=p.id AND pm.user_id=$1) OR
-		EXISTS(SELECT 1 FROM oidc_membership_grants gm WHERE gm.project_id=p.id AND gm.user_id=$1)
+func lockUserWorkspaceRows(ctx context.Context, tx *sql.Tx, userID string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT p.id FROM workspaces p WHERE
+		EXISTS(SELECT 1 FROM workspace_memberships pm WHERE pm.workspace_id=p.id AND pm.user_id=$1) OR
+		EXISTS(SELECT 1 FROM oidc_membership_grants gm WHERE gm.workspace_id=p.id AND gm.user_id=$1)
 		ORDER BY p.id FOR UPDATE OF p`, userID)
 	if err != nil {
 		return err
 	}
 	for rows.Next() {
-		var projectID string
-		if err := rows.Scan(&projectID); err != nil {
+		var workspaceID string
+		if err := rows.Scan(&workspaceID); err != nil {
 			rows.Close()
 			return err
 		}
@@ -646,21 +647,21 @@ func lockUserProjectRows(ctx context.Context, tx *sql.Tx, userID string) error {
 	return rows.Close()
 }
 
-func userIsLastActiveProjectOwner(ctx context.Context, tx *sql.Tx, userID string) (bool, error) {
+func userIsLastActiveWorkspaceOwner(ctx context.Context, tx *sql.Tx, userID string) (bool, error) {
 	var lastOwner bool
 	err := tx.QueryRowContext(ctx, `WITH effective AS (
-		SELECT project_id,user_id,MAX(CASE role WHEN 'owner' THEN 3 WHEN 'deployer' THEN 2 ELSE 1 END) AS rank
+		SELECT workspace_id,user_id,MAX(CASE role WHEN 'owner' THEN 3 WHEN 'deployer' THEN 2 ELSE 1 END) AS rank
 		FROM (
-			SELECT project_id,user_id,role FROM project_memberships
-			UNION ALL SELECT project_id,user_id,role FROM oidc_membership_grants
-		) grants GROUP BY project_id,user_id
+			SELECT workspace_id,user_id,role FROM workspace_memberships
+			UNION ALL SELECT workspace_id,user_id,role FROM oidc_membership_grants
+		) grants GROUP BY workspace_id,user_id
 	), owners AS (
-		SELECT effective.project_id,effective.user_id FROM effective
+		SELECT effective.workspace_id,effective.user_id FROM effective
 		JOIN users u ON u.id=effective.user_id
 		WHERE effective.rank=3 AND u.disabled=FALSE AND u.deleted_at IS NULL
 	)
 	SELECT EXISTS(
-		SELECT project_id FROM owners GROUP BY project_id
+		SELECT workspace_id FROM owners GROUP BY workspace_id
 		HAVING COUNT(*)=1 AND BOOL_OR(user_id=$1)
 	)`, userID).Scan(&lastOwner)
 	return lastOwner, err
@@ -675,30 +676,30 @@ func ensureActiveUser(ctx context.Context, tx *sql.Tx, userID string) error {
 	return err
 }
 
-func projectOwnerCountTx(ctx context.Context, tx *sql.Tx, projectID string) (int, error) {
+func workspaceOwnerCountTx(ctx context.Context, tx *sql.Tx, workspaceID string) (int, error) {
 	var count int
 	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM (
 		SELECT user_id,MAX(CASE role WHEN 'owner' THEN 3 WHEN 'deployer' THEN 2 ELSE 1 END) AS rank
 		FROM (
-			SELECT user_id,role FROM project_memberships WHERE project_id=$1
-			UNION ALL SELECT user_id,role FROM oidc_membership_grants WHERE project_id=$1
+			SELECT user_id,role FROM workspace_memberships WHERE workspace_id=$1
+			UNION ALL SELECT user_id,role FROM oidc_membership_grants WHERE workspace_id=$1
 		) members GROUP BY user_id
-	) effective JOIN users u ON u.id=effective.user_id WHERE effective.rank=3 AND u.disabled=FALSE AND u.deleted_at IS NULL`, projectID).Scan(&count)
+	) effective JOIN users u ON u.id=effective.user_id WHERE effective.rank=3 AND u.disabled=FALSE AND u.deleted_at IS NULL`, workspaceID).Scan(&count)
 	return count, err
 }
 
-func (s *Store) ListProjectMembers(ctx context.Context, projectID string) ([]map[string]any, error) {
+func (s *Store) ListWorkspaceMembers(ctx context.Context, workspaceID string) ([]map[string]any, error) {
 	rows, err := s.DB.QueryContext(ctx, `WITH effective AS (
-		SELECT user_id,role FROM project_memberships WHERE project_id=$1
-		UNION ALL SELECT user_id,role FROM oidc_membership_grants WHERE project_id=$1
+		SELECT user_id,role FROM workspace_memberships WHERE workspace_id=$1
+		UNION ALL SELECT user_id,role FROM oidc_membership_grants WHERE workspace_id=$1
 	), ranked AS (
 		SELECT user_id,MAX(CASE role WHEN 'owner' THEN 3 WHEN 'deployer' THEN 2 ELSE 1 END) AS rank FROM effective GROUP BY user_id
 	)
 	SELECT u.id,u.email,u.display_name,CASE ranked.rank WHEN 3 THEN 'owner' WHEN 2 THEN 'deployer' ELSE 'viewer' END,
 		u.disabled,
-		EXISTS(SELECT 1 FROM project_memberships direct WHERE direct.project_id=$1 AND direct.user_id=u.id),
-		EXISTS(SELECT 1 FROM oidc_membership_grants sso WHERE sso.project_id=$1 AND sso.user_id=u.id)
-	FROM ranked JOIN users u ON u.id=ranked.user_id ORDER BY u.email`, projectID)
+		EXISTS(SELECT 1 FROM workspace_memberships direct WHERE direct.workspace_id=$1 AND direct.user_id=u.id),
+		EXISTS(SELECT 1 FROM oidc_membership_grants sso WHERE sso.workspace_id=$1 AND sso.user_id=u.id)
+	FROM ranked JOIN users u ON u.id=ranked.user_id ORDER BY u.email`, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -715,7 +716,7 @@ func (s *Store) ListProjectMembers(ctx context.Context, projectID string) ([]map
 	return out, rows.Err()
 }
 
-type Project struct {
+type Workspace struct {
 	ID             string         `json:"id"`
 	Name           string         `json:"name"`
 	Description    string         `json:"description"`
@@ -776,68 +777,68 @@ func DefaultApprovalPolicy() ApprovalPolicy {
 	}
 }
 
-func (s *Store) ListProjects(ctx context.Context, user User) ([]Project, error) {
+func (s *Store) ListWorkspaces(ctx context.Context, user User) ([]Workspace, error) {
 	query := `WITH effective AS (
-		SELECT project_id,user_id,role FROM project_memberships WHERE user_id=$1
+		SELECT workspace_id,user_id,role FROM workspace_memberships WHERE user_id=$1
 		UNION ALL
-		SELECT project_id,user_id,role FROM oidc_membership_grants WHERE user_id=$1
+		SELECT workspace_id,user_id,role FROM oidc_membership_grants WHERE user_id=$1
 	), ranked AS (
-		SELECT project_id,MAX(CASE role WHEN 'owner' THEN 3 WHEN 'deployer' THEN 2 ELSE 1 END) AS rank FROM effective GROUP BY project_id
+		SELECT workspace_id,MAX(CASE role WHEN 'owner' THEN 3 WHEN 'deployer' THEN 2 ELSE 1 END) AS rank FROM effective GROUP BY workspace_id
 	)
 	SELECT p.id,p.name,p.description,CASE COALESCE(ranked.rank,3) WHEN 3 THEN 'owner' WHEN 2 THEN 'deployer' ELSE 'viewer' END,p.approval_policy,p.created_at
-	FROM projects p LEFT JOIN ranked ON ranked.project_id=p.id WHERE $2 OR ranked.project_id IS NOT NULL ORDER BY p.name`
+	FROM workspaces p LEFT JOIN ranked ON ranked.workspace_id=p.id WHERE $2 OR ranked.workspace_id IS NOT NULL ORDER BY p.name`
 	rows, err := s.DB.QueryContext(ctx, query, user.ID, user.IsAdmin)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	projects := make([]Project, 0)
+	workspaces := make([]Workspace, 0)
 	for rows.Next() {
-		var project Project
+		var workspace Workspace
 		var rawPolicy []byte
-		if err := rows.Scan(&project.ID, &project.Name, &project.Description, &project.Role, &rawPolicy, &project.CreatedAt); err != nil {
+		if err := rows.Scan(&workspace.ID, &workspace.Name, &workspace.Description, &workspace.Role, &rawPolicy, &workspace.CreatedAt); err != nil {
 			return nil, err
 		}
-		project.ApprovalPolicy = DefaultApprovalPolicy()
-		if err := json.Unmarshal(rawPolicy, &project.ApprovalPolicy); err != nil {
+		workspace.ApprovalPolicy = DefaultApprovalPolicy()
+		if err := json.Unmarshal(rawPolicy, &workspace.ApprovalPolicy); err != nil {
 			return nil, err
 		}
-		projects = append(projects, project)
+		workspaces = append(workspaces, workspace)
 	}
-	return projects, rows.Err()
+	return workspaces, rows.Err()
 }
 
-func (s *Store) ProjectByID(ctx context.Context, id string) (Project, error) {
-	var project Project
+func (s *Store) WorkspaceByID(ctx context.Context, id string) (Workspace, error) {
+	var workspace Workspace
 	var rawPolicy []byte
-	err := s.DB.QueryRowContext(ctx, `SELECT id,name,description,approval_policy,created_at FROM projects WHERE id=$1`, id).Scan(&project.ID, &project.Name, &project.Description, &rawPolicy, &project.CreatedAt)
+	err := s.DB.QueryRowContext(ctx, `SELECT id,name,description,approval_policy,created_at FROM workspaces WHERE id=$1`, id).Scan(&workspace.ID, &workspace.Name, &workspace.Description, &rawPolicy, &workspace.CreatedAt)
 	if err != nil {
-		return Project{}, err
+		return Workspace{}, err
 	}
-	project.ApprovalPolicy = DefaultApprovalPolicy()
-	if err := json.Unmarshal(rawPolicy, &project.ApprovalPolicy); err != nil {
-		return Project{}, err
+	workspace.ApprovalPolicy = DefaultApprovalPolicy()
+	if err := json.Unmarshal(rawPolicy, &workspace.ApprovalPolicy); err != nil {
+		return Workspace{}, err
 	}
-	return project, nil
+	return workspace, nil
 }
 
-func (s *Store) CreateProject(ctx context.Context, project Project, ownerID string) error {
+func (s *Store) CreateWorkspace(ctx context.Context, workspace Workspace, ownerID string) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO projects(id,name,description) VALUES($1,$2,$3)`, project.ID, project.Name, project.Description); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO workspaces(id,name,description) VALUES($1,$2,$3)`, workspace.ID, workspace.Name, workspace.Description); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO project_memberships(project_id,user_id,role) VALUES($1,$2,'owner')`, project.ID, ownerID); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,'owner')`, workspace.ID, ownerID); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func (s *Store) UpdateProject(ctx context.Context, id, name, description string) error {
-	result, err := s.DB.ExecContext(ctx, `UPDATE projects SET name=$2,description=$3,updated_at=NOW() WHERE id=$1`, id, name, description)
+func (s *Store) UpdateWorkspace(ctx context.Context, id, name, description string) error {
+	result, err := s.DB.ExecContext(ctx, `UPDATE workspaces SET name=$2,description=$3,updated_at=NOW() WHERE id=$1`, id, name, description)
 	if err != nil {
 		return err
 	}
@@ -847,7 +848,7 @@ func (s *Store) UpdateProject(ctx context.Context, id, name, description string)
 	return nil
 }
 
-func (s *Store) UpdateProjectApprovalPolicy(ctx context.Context, id string, policy ApprovalPolicy) error {
+func (s *Store) UpdateWorkspaceApprovalPolicy(ctx context.Context, id string, policy ApprovalPolicy) error {
 	encoded, err := json.Marshal(policy)
 	if err != nil {
 		return err
@@ -858,39 +859,39 @@ func (s *Store) UpdateProjectApprovalPolicy(ctx context.Context, id string, poli
 	}
 	defer tx.Rollback()
 	var lockedID string
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE id=$1 FOR UPDATE`, id).Scan(&lockedID); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, id).Scan(&lockedID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE projects SET approval_policy=$2,updated_at=NOW() WHERE id=$1`, id, encoded); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE workspaces SET approval_policy=$2,updated_at=NOW() WHERE id=$1`, id, encoded); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE status='current' AND application_id IN (SELECT id FROM applications WHERE project_id=$1)`, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE status='current' AND application_id IN (SELECT id FROM applications WHERE workspace_id=$1)`, id); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func (s *Store) DeleteProjectKeepingResources(ctx context.Context, id string, requireEmpty bool) (int, int, error) {
+func (s *Store) DeleteWorkspaceKeepingResources(ctx context.Context, id string, requireEmpty bool) (int, int, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, 0, err
 	}
 	defer tx.Rollback()
 	var lockedID string
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE id=$1 FOR UPDATE`, id).Scan(&lockedID); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, id).Scan(&lockedID); err != nil {
 		return 0, 0, err
 	}
 	var apps, managed, active int
-	if err := tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM applications WHERE project_id=$1), (SELECT COUNT(*) FROM managed_resources m JOIN applications a ON a.id=m.application_id WHERE a.project_id=$1), (SELECT COUNT(*) FROM operations o JOIN applications a ON a.id=o.application_id WHERE a.project_id=$1 AND o.status IN ('queued','running'))`, id).Scan(&apps, &managed, &active); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM applications WHERE workspace_id=$1), (SELECT COUNT(*) FROM managed_resources m JOIN applications a ON a.id=m.application_id WHERE a.workspace_id=$1), (SELECT COUNT(*) FROM operations o JOIN applications a ON a.id=o.application_id WHERE a.workspace_id=$1 AND o.status IN ('queued','running'))`, id).Scan(&apps, &managed, &active); err != nil {
 		return 0, 0, err
 	}
 	if active > 0 {
-		return 0, 0, errors.New("project has active sync operations")
+		return 0, 0, errors.New("workspace has active sync operations")
 	}
 	if requireEmpty && managed > 0 {
-		return 0, 0, errors.New("project still manages Kubernetes resources")
+		return 0, 0, errors.New("workspace still manages Kubernetes resources")
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM projects WHERE id=$1`, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM workspaces WHERE id=$1`, id); err != nil {
 		return 0, 0, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -899,55 +900,55 @@ func (s *Store) DeleteProjectKeepingResources(ctx context.Context, id string, re
 	return apps, managed, nil
 }
 
-func (s *Store) ProjectRole(ctx context.Context, user User, projectID string) (string, error) {
+func (s *Store) WorkspaceRole(ctx context.Context, user User, workspaceID string) (string, error) {
 	if user.IsAdmin {
 		return "owner", nil
 	}
 	var role string
 	err := s.DB.QueryRowContext(ctx, `SELECT role FROM (
-		SELECT role FROM project_memberships WHERE project_id=$1 AND user_id=$2
-		UNION ALL SELECT role FROM oidc_membership_grants WHERE project_id=$1 AND user_id=$2
-	) roles ORDER BY CASE role WHEN 'owner' THEN 3 WHEN 'deployer' THEN 2 ELSE 1 END DESC LIMIT 1`, projectID, user.ID).Scan(&role)
+		SELECT role FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2
+		UNION ALL SELECT role FROM oidc_membership_grants WHERE workspace_id=$1 AND user_id=$2
+	) roles ORDER BY CASE role WHEN 'owner' THEN 3 WHEN 'deployer' THEN 2 ELSE 1 END DESC LIMIT 1`, workspaceID, user.ID).Scan(&role)
 	return role, err
 }
 
-func (s *Store) ProjectRoleForUser(ctx context.Context, projectID, userID string) (string, error) {
+func (s *Store) WorkspaceRoleForUser(ctx context.Context, workspaceID, userID string) (string, error) {
 	var role string
 	err := s.DB.QueryRowContext(ctx, `SELECT role FROM (
-		SELECT role FROM project_memberships WHERE project_id=$1 AND user_id=$2
-		UNION ALL SELECT role FROM oidc_membership_grants WHERE project_id=$1 AND user_id=$2
-	) roles ORDER BY CASE role WHEN 'owner' THEN 3 WHEN 'deployer' THEN 2 ELSE 1 END DESC LIMIT 1`, projectID, userID).Scan(&role)
+		SELECT role FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2
+		UNION ALL SELECT role FROM oidc_membership_grants WHERE workspace_id=$1 AND user_id=$2
+	) roles ORDER BY CASE role WHEN 'owner' THEN 3 WHEN 'deployer' THEN 2 ELSE 1 END DESC LIMIT 1`, workspaceID, userID).Scan(&role)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
 	return role, err
 }
 
-func (s *Store) ProjectOwnerCount(ctx context.Context, projectID string) (int, error) {
+func (s *Store) WorkspaceOwnerCount(ctx context.Context, workspaceID string) (int, error) {
 	var count int
 	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM (
 		SELECT user_id,MAX(CASE role WHEN 'owner' THEN 3 WHEN 'deployer' THEN 2 ELSE 1 END) AS rank
 		FROM (
-			SELECT user_id,role FROM project_memberships WHERE project_id=$1
-			UNION ALL SELECT user_id,role FROM oidc_membership_grants WHERE project_id=$1
+			SELECT user_id,role FROM workspace_memberships WHERE workspace_id=$1
+			UNION ALL SELECT user_id,role FROM oidc_membership_grants WHERE workspace_id=$1
 		) members GROUP BY user_id
-	) effective JOIN users u ON u.id=effective.user_id WHERE effective.rank=3 AND u.disabled=FALSE AND u.deleted_at IS NULL`, projectID).Scan(&count)
+	) effective JOIN users u ON u.id=effective.user_id WHERE effective.rank=3 AND u.disabled=FALSE AND u.deleted_at IS NULL`, workspaceID).Scan(&count)
 	return count, err
 }
 
 type Credential struct {
-	ID        string     `json:"id"`
-	ProjectID *string    `json:"projectId,omitempty"`
-	Name      string     `json:"name"`
-	Kind      string     `json:"kind"`
-	Username  string     `json:"username,omitempty"`
-	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
-	CreatedAt time.Time  `json:"createdAt"`
-	Cipher    []byte     `json:"-"`
+	ID          string     `json:"id"`
+	WorkspaceID *string    `json:"workspaceId,omitempty"`
+	Name        string     `json:"name"`
+	Kind        string     `json:"kind"`
+	Username    string     `json:"username,omitempty"`
+	ExpiresAt   *time.Time `json:"expiresAt,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	Cipher      []byte     `json:"-"`
 }
 
 func (s *Store) CreateCredential(ctx context.Context, c Credential) error {
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO credentials(id,project_id,name,kind,secret_cipher,expires_at) VALUES($1,$2,$3,$4,$5,$6)`, c.ID, c.ProjectID, c.Name, c.Kind, c.Cipher, c.ExpiresAt)
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO credentials(id,workspace_id,name,kind,secret_cipher,expires_at) VALUES($1,$2,$3,$4,$5,$6)`, c.ID, c.WorkspaceID, c.Name, c.Kind, c.Cipher, c.ExpiresAt)
 	return err
 }
 
@@ -972,12 +973,12 @@ func (s *Store) updateConnectionAndInvalidate(ctx context.Context, query string,
 
 func (s *Store) CredentialByID(ctx context.Context, id string) (Credential, error) {
 	var c Credential
-	err := s.DB.QueryRowContext(ctx, `SELECT id,project_id,name,kind,secret_cipher,expires_at,created_at FROM credentials WHERE id=$1`, id).Scan(&c.ID, &c.ProjectID, &c.Name, &c.Kind, &c.Cipher, &c.ExpiresAt, &c.CreatedAt)
+	err := s.DB.QueryRowContext(ctx, `SELECT id,workspace_id,name,kind,secret_cipher,expires_at,created_at FROM credentials WHERE id=$1`, id).Scan(&c.ID, &c.WorkspaceID, &c.Name, &c.Kind, &c.Cipher, &c.ExpiresAt, &c.CreatedAt)
 	return c, err
 }
 
-func (s *Store) ListCredentials(ctx context.Context, projectID string) ([]Credential, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,project_id,name,kind,secret_cipher,expires_at,created_at FROM credentials WHERE project_id=$1 OR project_id IS NULL ORDER BY name`, projectID)
+func (s *Store) ListCredentials(ctx context.Context, workspaceID string) ([]Credential, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,workspace_id,name,kind,secret_cipher,expires_at,created_at FROM credentials WHERE workspace_id=$1 OR workspace_id IS NULL ORDER BY name`, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -985,7 +986,7 @@ func (s *Store) ListCredentials(ctx context.Context, projectID string) ([]Creden
 	items := make([]Credential, 0)
 	for rows.Next() {
 		var c Credential
-		if err := rows.Scan(&c.ID, &c.ProjectID, &c.Name, &c.Kind, &c.Cipher, &c.ExpiresAt, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.WorkspaceID, &c.Name, &c.Kind, &c.Cipher, &c.ExpiresAt, &c.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, c)
@@ -995,6 +996,9 @@ func (s *Store) ListCredentials(ctx context.Context, projectID string) ([]Creden
 
 type Cluster struct {
 	ID                      string    `json:"id"`
+	WorkspaceID             *string   `json:"workspaceId,omitempty"`
+	Shared                  bool      `json:"shared,omitempty"`
+	OwnerWorkspaceName      string    `json:"ownerWorkspaceName,omitempty"`
 	Name                    string    `json:"name"`
 	APIServer               string    `json:"apiServer"`
 	CAData                  []byte    `json:"-"`
@@ -1008,29 +1012,36 @@ type Cluster struct {
 
 func (s *Store) CreateCluster(ctx context.Context, c Cluster) error {
 	c = normalizeClusterLimits(c)
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO clusters(id,name,api_server,ca_data,insecure_skip_verify,default_credential_id,cluster_scope_credential_id,max_concurrent_operations,operations_per_minute) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, c.ID, c.Name, c.APIServer, c.CAData, c.InsecureSkipVerify, c.DefaultCredentialID, c.ClusterScopeCredential, c.MaxConcurrentOperations, c.OperationsPerMinute)
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO clusters(id,workspace_id,name,api_server,ca_data,insecure_skip_verify,default_credential_id,cluster_scope_credential_id,max_concurrent_operations,operations_per_minute) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, c.ID, c.WorkspaceID, c.Name, c.APIServer, c.CAData, c.InsecureSkipVerify, c.DefaultCredentialID, c.ClusterScopeCredential, c.MaxConcurrentOperations, c.OperationsPerMinute)
 	return err
 }
 
-func (s *Store) CreateClusterWithProjectCredential(ctx context.Context, c Cluster, projectID, credentialID string) error {
+func (s *Store) CreateClusterWithWorkspaceCredential(ctx context.Context, c Cluster, workspaceID, credentialID string) error {
 	c = normalizeClusterLimits(c)
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO clusters(id,name,api_server,ca_data,insecure_skip_verify,default_credential_id,cluster_scope_credential_id,max_concurrent_operations,operations_per_minute) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, c.ID, c.Name, c.APIServer, c.CAData, c.InsecureSkipVerify, c.DefaultCredentialID, c.ClusterScopeCredential, c.MaxConcurrentOperations, c.OperationsPerMinute); err != nil {
+	c.WorkspaceID = &workspaceID
+	if _, err := tx.ExecContext(ctx, `INSERT INTO clusters(id,workspace_id,name,api_server,ca_data,insecure_skip_verify,default_credential_id,cluster_scope_credential_id,max_concurrent_operations,operations_per_minute) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, c.ID, c.WorkspaceID, c.Name, c.APIServer, c.CAData, c.InsecureSkipVerify, c.DefaultCredentialID, c.ClusterScopeCredential, c.MaxConcurrentOperations, c.OperationsPerMinute); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO project_cluster_credentials(project_id,cluster_id,credential_id) VALUES($1,$2,$3)`, projectID, c.ID, credentialID); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO workspace_cluster_credentials(workspace_id,cluster_id,credential_id) VALUES($1,$2,$3)`, workspaceID, c.ID, credentialID); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func (s *Store) ProjectClusterCredential(ctx context.Context, projectID, clusterID string) (*string, error) {
+func (s *Store) CreateWorkspaceCluster(ctx context.Context, c Cluster) error {
+	c = normalizeClusterLimits(c)
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO clusters(id,workspace_id,name,api_server,ca_data,insecure_skip_verify,default_credential_id,cluster_scope_credential_id,max_concurrent_operations,operations_per_minute) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, c.ID, c.WorkspaceID, c.Name, c.APIServer, c.CAData, c.InsecureSkipVerify, c.DefaultCredentialID, c.ClusterScopeCredential, c.MaxConcurrentOperations, c.OperationsPerMinute)
+	return err
+}
+
+func (s *Store) WorkspaceClusterCredential(ctx context.Context, workspaceID, clusterID string) (*string, error) {
 	var id string
-	err := s.DB.QueryRowContext(ctx, `SELECT credential_id FROM project_cluster_credentials WHERE project_id=$1 AND cluster_id=$2`, projectID, clusterID).Scan(&id)
+	err := s.DB.QueryRowContext(ctx, `SELECT credential_id FROM workspace_cluster_credentials WHERE workspace_id=$1 AND cluster_id=$2`, workspaceID, clusterID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -1040,21 +1051,24 @@ func (s *Store) ProjectClusterCredential(ctx context.Context, projectID, cluster
 	return &id, nil
 }
 
-func (s *Store) SetProjectClusterCredential(ctx context.Context, projectID, clusterID string, credentialID *string) error {
+func (s *Store) SetWorkspaceClusterCredential(ctx context.Context, workspaceID, clusterID string, credentialID *string) error {
 	if credentialID == nil {
-		_, err := s.DB.ExecContext(ctx, `DELETE FROM project_cluster_credentials WHERE project_id=$1 AND cluster_id=$2`, projectID, clusterID)
+		_, err := s.DB.ExecContext(ctx, `DELETE FROM workspace_cluster_credentials WHERE workspace_id=$1 AND cluster_id=$2`, workspaceID, clusterID)
 		return err
 	}
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO project_cluster_credentials(project_id,cluster_id,credential_id) VALUES($1,$2,$3) ON CONFLICT (project_id,cluster_id) DO UPDATE SET credential_id=EXCLUDED.credential_id,updated_at=NOW()`, projectID, clusterID, *credentialID)
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO workspace_cluster_credentials(workspace_id,cluster_id,credential_id) VALUES($1,$2,$3) ON CONFLICT (workspace_id,cluster_id) DO UPDATE SET credential_id=EXCLUDED.credential_id,updated_at=NOW()`, workspaceID, clusterID, *credentialID)
 	return err
 }
 func (s *Store) ClusterByID(ctx context.Context, id string) (Cluster, error) {
 	var c Cluster
-	err := s.DB.QueryRowContext(ctx, `SELECT id,name,api_server,ca_data,insecure_skip_verify,default_credential_id,cluster_scope_credential_id,max_concurrent_operations,operations_per_minute,created_at FROM clusters WHERE id=$1`, id).Scan(&c.ID, &c.Name, &c.APIServer, &c.CAData, &c.InsecureSkipVerify, &c.DefaultCredentialID, &c.ClusterScopeCredential, &c.MaxConcurrentOperations, &c.OperationsPerMinute, &c.CreatedAt)
+	err := s.DB.QueryRowContext(ctx, `SELECT id,workspace_id,name,api_server,ca_data,insecure_skip_verify,default_credential_id,cluster_scope_credential_id,max_concurrent_operations,operations_per_minute,created_at FROM clusters WHERE id=$1`, id).Scan(&c.ID, &c.WorkspaceID, &c.Name, &c.APIServer, &c.CAData, &c.InsecureSkipVerify, &c.DefaultCredentialID, &c.ClusterScopeCredential, &c.MaxConcurrentOperations, &c.OperationsPerMinute, &c.CreatedAt)
 	return c, err
 }
-func (s *Store) ListClusters(ctx context.Context) ([]Cluster, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,name,api_server,insecure_skip_verify,default_credential_id,cluster_scope_credential_id,max_concurrent_operations,operations_per_minute,created_at FROM clusters ORDER BY name`)
+func (s *Store) ListClusters(ctx context.Context, workspaceID string) ([]Cluster, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT c.id,c.workspace_id,c.name,c.api_server,c.insecure_skip_verify,c.default_credential_id,c.cluster_scope_credential_id,c.max_concurrent_operations,c.operations_per_minute,(c.workspace_id IS NOT NULL AND c.workspace_id<>$1),COALESCE(owner.name,''),c.created_at
+		FROM clusters c LEFT JOIN workspaces owner ON owner.id=c.workspace_id WHERE c.workspace_id IS NULL OR c.workspace_id=$1 OR EXISTS (
+			SELECT 1 FROM workspace_cluster_shares sh WHERE sh.cluster_id=c.id AND sh.target_workspace_id=$1 AND sh.status='accepted'
+		) ORDER BY c.name`, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1062,12 +1076,22 @@ func (s *Store) ListClusters(ctx context.Context) ([]Cluster, error) {
 	out := make([]Cluster, 0)
 	for rows.Next() {
 		var c Cluster
-		if err := rows.Scan(&c.ID, &c.Name, &c.APIServer, &c.InsecureSkipVerify, &c.DefaultCredentialID, &c.ClusterScopeCredential, &c.MaxConcurrentOperations, &c.OperationsPerMinute, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.WorkspaceID, &c.Name, &c.APIServer, &c.InsecureSkipVerify, &c.DefaultCredentialID, &c.ClusterScopeCredential, &c.MaxConcurrentOperations, &c.OperationsPerMinute, &c.Shared, &c.OwnerWorkspaceName, &c.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) WorkspaceCanUseCluster(ctx context.Context, workspaceID, clusterID string) (bool, error) {
+	var allowed bool
+	err := s.DB.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM clusters c WHERE c.id=$2 AND (c.workspace_id IS NULL OR c.workspace_id=$1 OR EXISTS (
+			SELECT 1 FROM workspace_cluster_shares sh WHERE sh.cluster_id=c.id AND sh.target_workspace_id=$1 AND sh.status='accepted'
+		))
+	)`, workspaceID, clusterID).Scan(&allowed)
+	return allowed, err
 }
 
 func (s *Store) UpdateCluster(ctx context.Context, c Cluster) error {
@@ -1085,23 +1109,23 @@ func normalizeClusterLimits(c Cluster) Cluster {
 	return c
 }
 
-func (s *Store) CreateNamespaceBinding(ctx context.Context, projectID, clusterID, namespace string, credentialID *string) error {
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO namespace_bindings(id,project_id,cluster_id,namespace,credential_id) VALUES($1,$2,$3,$4,$5)`, NewID(), projectID, clusterID, namespace, credentialID)
+func (s *Store) CreateNamespaceBinding(ctx context.Context, workspaceID, clusterID, namespace string, credentialID *string) error {
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO namespace_bindings(id,workspace_id,cluster_id,namespace,credential_id) VALUES($1,$2,$3,$4,$5)`, NewID(), workspaceID, clusterID, namespace, credentialID)
 	return err
 }
 
-func (s *Store) UpdateNamespaceBinding(ctx context.Context, projectID, clusterID, namespace string, credentialID *string) error {
-	return s.updateConnectionAndInvalidate(ctx, `UPDATE namespace_bindings SET credential_id=$4 WHERE project_id=$1 AND cluster_id=$2 AND namespace=$3`, projectID, clusterID, namespace, credentialID)
+func (s *Store) UpdateNamespaceBinding(ctx context.Context, workspaceID, clusterID, namespace string, credentialID *string) error {
+	return s.updateConnectionAndInvalidate(ctx, `UPDATE namespace_bindings SET credential_id=$4 WHERE workspace_id=$1 AND cluster_id=$2 AND namespace=$3`, workspaceID, clusterID, namespace, credentialID)
 }
 
-func (s *Store) NamespaceBinding(ctx context.Context, projectID, clusterID, namespace string) (NamespaceBinding, error) {
+func (s *Store) NamespaceBinding(ctx context.Context, workspaceID, clusterID, namespace string) (NamespaceBinding, error) {
 	var binding NamespaceBinding
-	err := s.DB.QueryRowContext(ctx, `SELECT namespace,credential_id FROM namespace_bindings WHERE project_id=$1 AND cluster_id=$2 AND namespace=$3`, projectID, clusterID, namespace).Scan(&binding.Namespace, &binding.CredentialID)
+	err := s.DB.QueryRowContext(ctx, `SELECT namespace,credential_id FROM namespace_bindings WHERE workspace_id=$1 AND cluster_id=$2 AND namespace=$3`, workspaceID, clusterID, namespace).Scan(&binding.Namespace, &binding.CredentialID)
 	return binding, err
 }
 
-func (s *Store) ListNamespaceBindings(ctx context.Context, projectID, clusterID string) ([]NamespaceBinding, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT namespace,credential_id FROM namespace_bindings WHERE project_id=$1 AND cluster_id=$2 ORDER BY namespace`, projectID, clusterID)
+func (s *Store) ListNamespaceBindings(ctx context.Context, workspaceID, clusterID string) ([]NamespaceBinding, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT namespace,credential_id FROM namespace_bindings WHERE workspace_id=$1 AND cluster_id=$2 ORDER BY namespace`, workspaceID, clusterID)
 	if err != nil {
 		return nil, err
 	}
@@ -1123,24 +1147,24 @@ type NamespaceBinding struct {
 }
 
 type KubernetesPermissionTest struct {
-	ProjectID string          `json:"projectId"`
-	ClusterID string          `json:"clusterId"`
-	Namespace string          `json:"namespace"`
-	Report    json.RawMessage `json:"report"`
-	CheckedAt time.Time       `json:"checkedAt"`
+	WorkspaceID string          `json:"workspaceId"`
+	ClusterID   string          `json:"clusterId"`
+	Namespace   string          `json:"namespace"`
+	Report      json.RawMessage `json:"report"`
+	CheckedAt   time.Time       `json:"checkedAt"`
 }
 
 func (s *Store) SaveKubernetesPermissionTest(ctx context.Context, test KubernetesPermissionTest) error {
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO kubernetes_permission_tests(project_id,cluster_id,namespace,report,checked_at)
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO kubernetes_permission_tests(workspace_id,cluster_id,namespace,report,checked_at)
 		VALUES($1,$2,$3,$4::jsonb,$5)
-		ON CONFLICT (project_id,cluster_id,namespace) DO UPDATE SET report=EXCLUDED.report,checked_at=EXCLUDED.checked_at`,
-		test.ProjectID, test.ClusterID, test.Namespace, string(test.Report), test.CheckedAt)
+		ON CONFLICT (workspace_id,cluster_id,namespace) DO UPDATE SET report=EXCLUDED.report,checked_at=EXCLUDED.checked_at`,
+		test.WorkspaceID, test.ClusterID, test.Namespace, string(test.Report), test.CheckedAt)
 	return err
 }
 
-func (s *Store) ListKubernetesPermissionTests(ctx context.Context, projectID, clusterID string) ([]KubernetesPermissionTest, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT project_id,cluster_id,namespace,report::text,checked_at
-		FROM kubernetes_permission_tests WHERE project_id=$1 AND cluster_id=$2 ORDER BY namespace`, projectID, clusterID)
+func (s *Store) ListKubernetesPermissionTests(ctx context.Context, workspaceID, clusterID string) ([]KubernetesPermissionTest, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT workspace_id,cluster_id,namespace,report::text,checked_at
+		FROM kubernetes_permission_tests WHERE workspace_id=$1 AND cluster_id=$2 ORDER BY namespace`, workspaceID, clusterID)
 	if err != nil {
 		return nil, err
 	}
@@ -1148,7 +1172,7 @@ func (s *Store) ListKubernetesPermissionTests(ctx context.Context, projectID, cl
 	items := make([]KubernetesPermissionTest, 0)
 	for rows.Next() {
 		var item KubernetesPermissionTest
-		if err := rows.Scan(&item.ProjectID, &item.ClusterID, &item.Namespace, &item.Report, &item.CheckedAt); err != nil {
+		if err := rows.Scan(&item.WorkspaceID, &item.ClusterID, &item.Namespace, &item.Report, &item.CheckedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -1157,16 +1181,18 @@ func (s *Store) ListKubernetesPermissionTests(ctx context.Context, projectID, cl
 }
 
 type GitSource struct {
-	ID            string    `json:"id"`
-	ProjectID     string    `json:"projectId"`
-	Name          string    `json:"name"`
-	RepositoryURL string    `json:"repositoryUrl"`
-	CredentialID  *string   `json:"credentialId,omitempty"`
-	CreatedAt     time.Time `json:"createdAt"`
+	ID                 string    `json:"id"`
+	WorkspaceID        string    `json:"workspaceId"`
+	Name               string    `json:"name"`
+	RepositoryURL      string    `json:"repositoryUrl"`
+	CredentialID       *string   `json:"credentialId,omitempty"`
+	Shared             bool      `json:"shared,omitempty"`
+	OwnerWorkspaceName string    `json:"ownerWorkspaceName,omitempty"`
+	CreatedAt          time.Time `json:"createdAt"`
 }
 
 func (s *Store) CreateGitSource(ctx context.Context, v GitSource) error {
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO git_sources(id,project_id,name,repository_url,credential_id) VALUES($1,$2,$3,$4,$5)`, v.ID, v.ProjectID, v.Name, v.RepositoryURL, v.CredentialID)
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO git_sources(id,workspace_id,name,repository_url,credential_id) VALUES($1,$2,$3,$4,$5)`, v.ID, v.WorkspaceID, v.Name, v.RepositoryURL, v.CredentialID)
 	return err
 }
 func (s *Store) UpdateGitSource(ctx context.Context, v GitSource) error {
@@ -1174,11 +1200,16 @@ func (s *Store) UpdateGitSource(ctx context.Context, v GitSource) error {
 }
 func (s *Store) GitSourceByID(ctx context.Context, id string) (GitSource, error) {
 	var v GitSource
-	err := s.DB.QueryRowContext(ctx, `SELECT id,project_id,name,repository_url,credential_id,created_at FROM git_sources WHERE id=$1`, id).Scan(&v.ID, &v.ProjectID, &v.Name, &v.RepositoryURL, &v.CredentialID, &v.CreatedAt)
+	err := s.DB.QueryRowContext(ctx, `SELECT id,workspace_id,name,repository_url,credential_id,created_at FROM git_sources WHERE id=$1`, id).Scan(&v.ID, &v.WorkspaceID, &v.Name, &v.RepositoryURL, &v.CredentialID, &v.CreatedAt)
 	return v, err
 }
-func (s *Store) ListGitSources(ctx context.Context, projectID string) ([]GitSource, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,project_id,name,repository_url,credential_id,created_at FROM git_sources WHERE project_id=$1 ORDER BY name`, projectID)
+func (s *Store) ListGitSources(ctx context.Context, workspaceID string) ([]GitSource, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT g.id,g.workspace_id,g.name,g.repository_url,
+		CASE WHEN g.workspace_id=$1 THEN g.credential_id ELSE sh.credential_id END,
+		(g.workspace_id<>$1), owner.name, g.created_at
+		FROM git_sources g JOIN workspaces owner ON owner.id=g.workspace_id
+		LEFT JOIN workspace_git_source_shares sh ON sh.git_source_id=g.id AND sh.target_workspace_id=$1 AND sh.status='accepted'
+		WHERE g.workspace_id=$1 OR sh.id IS NOT NULL ORDER BY g.name`, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1186,12 +1217,42 @@ func (s *Store) ListGitSources(ctx context.Context, projectID string) ([]GitSour
 	out := make([]GitSource, 0)
 	for rows.Next() {
 		var v GitSource
-		if err := rows.Scan(&v.ID, &v.ProjectID, &v.Name, &v.RepositoryURL, &v.CredentialID, &v.CreatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.WorkspaceID, &v.Name, &v.RepositoryURL, &v.CredentialID, &v.Shared, &v.OwnerWorkspaceName, &v.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) GitSourceForWorkspace(ctx context.Context, sourceID, workspaceID string) (GitSource, error) {
+	source, err := s.GitSourceByID(ctx, sourceID)
+	if err != nil {
+		return GitSource{}, err
+	}
+	if source.WorkspaceID == workspaceID {
+		return source, nil
+	}
+	err = s.DB.QueryRowContext(ctx, `SELECT credential_id FROM workspace_git_source_shares
+		WHERE git_source_id=$1 AND target_workspace_id=$2 AND status='accepted'`, sourceID, workspaceID).Scan(&source.CredentialID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return GitSource{}, ErrConnectionNotShared
+	}
+	if err != nil {
+		return GitSource{}, err
+	}
+	source.Shared = true
+	return source, nil
+}
+
+func (s *Store) WorkspaceCanUseGitSource(ctx context.Context, workspaceID, sourceID string) (bool, error) {
+	var allowed bool
+	err := s.DB.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM git_sources g WHERE g.id=$2 AND (g.workspace_id=$1 OR EXISTS (
+			SELECT 1 FROM workspace_git_source_shares sh WHERE sh.git_source_id=g.id AND sh.target_workspace_id=$1 AND sh.status='accepted'
+		))
+	)`, workspaceID, sourceID).Scan(&allowed)
+	return allowed, err
 }
 
 type RetryPolicy struct {
@@ -1231,7 +1292,7 @@ func (policy RetryPolicy) Validate() error {
 
 type Application struct {
 	ID                             string                             `json:"id"`
-	ProjectID                      string                             `json:"projectId"`
+	WorkspaceID                    string                             `json:"workspaceId"`
 	Name                           string                             `json:"name"`
 	SourceID                       string                             `json:"sourceId"`
 	Revision                       string                             `json:"revision"`
@@ -1278,7 +1339,7 @@ type ApplicationStatusIssue struct {
 
 type ApplicationGroup struct {
 	ID                         string    `json:"id"`
-	ProjectID                  string    `json:"projectId"`
+	WorkspaceID                string    `json:"workspaceId"`
 	Name                       string    `json:"name"`
 	SourceID                   string    `json:"sourceId"`
 	Revision                   string    `json:"revision"`
@@ -1347,14 +1408,14 @@ func (s *Store) CreateApplication(ctx context.Context, a Application) error {
 	if a.NamespaceHelmValues == nil {
 		namespaceValues = []byte(`{}`)
 	}
-	_, err = s.DB.ExecContext(ctx, `INSERT INTO applications(id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,application_group_id,target_manifest_path,namespace_manifest_paths,target_helm_values_files,target_helm_values_yaml,namespace_helm_values,cluster_id,namespaces,sync_policy,poll_seconds,retry_enabled,retry_max_attempts,retry_initial_delay_seconds,retry_max_delay_seconds,retry_jitter_percent) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,''),$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`, a.ID, a.ProjectID, a.Name, a.SourceID, a.Revision, a.ManifestPath, a.Renderer, a.KustomizeHelmEnabled, a.KustomizeNamespaceOverride, valuesFiles, a.HelmValuesYAML, a.ApplicationGroupID, a.TargetManifestPath, namespaceManifestPaths, targetValuesFiles, a.TargetHelmValuesYAML, namespaceValues, a.ClusterID, namespaces, a.SyncPolicy, a.PollSeconds, a.RetryPolicy.Enabled, a.RetryPolicy.MaxAttempts, a.RetryPolicy.InitialDelaySeconds, a.RetryPolicy.MaxDelaySeconds, a.RetryPolicy.JitterPercent)
+	_, err = s.DB.ExecContext(ctx, `INSERT INTO applications(id,workspace_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,application_group_id,target_manifest_path,namespace_manifest_paths,target_helm_values_files,target_helm_values_yaml,namespace_helm_values,cluster_id,namespaces,sync_policy,poll_seconds,retry_enabled,retry_max_attempts,retry_initial_delay_seconds,retry_max_delay_seconds,retry_jitter_percent) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,''),$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`, a.ID, a.WorkspaceID, a.Name, a.SourceID, a.Revision, a.ManifestPath, a.Renderer, a.KustomizeHelmEnabled, a.KustomizeNamespaceOverride, valuesFiles, a.HelmValuesYAML, a.ApplicationGroupID, a.TargetManifestPath, namespaceManifestPaths, targetValuesFiles, a.TargetHelmValuesYAML, namespaceValues, a.ClusterID, namespaces, a.SyncPolicy, a.PollSeconds, a.RetryPolicy.Enabled, a.RetryPolicy.MaxAttempts, a.RetryPolicy.InitialDelaySeconds, a.RetryPolicy.MaxDelaySeconds, a.RetryPolicy.JitterPercent)
 	return err
 }
 
 func scanApplication(row interface{ Scan(...any) error }) (Application, error) {
 	var a Application
 	var namespaces, helmValuesFiles, namespaceManifestPaths, targetValuesFiles, namespaceValues, rawApprovalOverride, rawRollbackState, rawStatusIssues, rawHealthResources, rawHealthWarnings []byte
-	err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.SourceID, &a.Revision, &a.ManifestPath, &a.Renderer, &a.KustomizeHelmEnabled, &a.KustomizeNamespaceOverride, &helmValuesFiles, &a.HelmValuesYAML, &a.ApplicationGroupID, &a.TargetManifestPath, &namespaceManifestPaths, &targetValuesFiles, &a.TargetHelmValuesYAML, &namespaceValues, &a.ClusterID, &namespaces, &a.SyncPolicy, &a.PollSeconds, &a.LastCheckedAt, &a.LastSyncedRevision, &a.Health, &rawStatusIssues, &a.Decommissioning, &rawApprovalOverride, &a.AutoSyncPaused, &rawRollbackState, &a.RollbackResumeRequiresRevision, &a.CreatedAt, &a.RetryPolicy.Enabled, &a.RetryPolicy.MaxAttempts, &a.RetryPolicy.InitialDelaySeconds, &a.RetryPolicy.MaxDelaySeconds, &a.RetryPolicy.JitterPercent, &a.RetryAttemptCount, &a.RetryNextAt, &a.RetryTerminalReason, &a.RetryLastErrorCode, &a.HealthCondition.Status, &a.HealthCondition.Reason, &a.HealthCondition.Message, &a.HealthCondition.LastTransitionTime, &a.HealthCondition.ObservedAt, &rawHealthResources, &rawHealthWarnings)
+	err := row.Scan(&a.ID, &a.WorkspaceID, &a.Name, &a.SourceID, &a.Revision, &a.ManifestPath, &a.Renderer, &a.KustomizeHelmEnabled, &a.KustomizeNamespaceOverride, &helmValuesFiles, &a.HelmValuesYAML, &a.ApplicationGroupID, &a.TargetManifestPath, &namespaceManifestPaths, &targetValuesFiles, &a.TargetHelmValuesYAML, &namespaceValues, &a.ClusterID, &namespaces, &a.SyncPolicy, &a.PollSeconds, &a.LastCheckedAt, &a.LastSyncedRevision, &a.Health, &rawStatusIssues, &a.Decommissioning, &rawApprovalOverride, &a.AutoSyncPaused, &rawRollbackState, &a.RollbackResumeRequiresRevision, &a.CreatedAt, &a.RetryPolicy.Enabled, &a.RetryPolicy.MaxAttempts, &a.RetryPolicy.InitialDelaySeconds, &a.RetryPolicy.MaxDelaySeconds, &a.RetryPolicy.JitterPercent, &a.RetryAttemptCount, &a.RetryNextAt, &a.RetryTerminalReason, &a.RetryLastErrorCode, &a.HealthCondition.Status, &a.HealthCondition.Reason, &a.HealthCondition.Message, &a.HealthCondition.LastTransitionTime, &a.HealthCondition.ObservedAt, &rawHealthResources, &rawHealthWarnings)
 	if err == nil {
 		err = json.Unmarshal(rawStatusIssues, &a.StatusIssues)
 	}
@@ -1419,7 +1480,7 @@ func scanApplication(row interface{ Scan(...any) error }) (Application, error) {
 	return a, err
 }
 
-const applicationColumns = `id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,COALESCE(application_group_id,''),target_manifest_path,namespace_manifest_paths,target_helm_values_files,target_helm_values_yaml,namespace_helm_values,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,COALESCE(last_synced_revision,''),health,status_issues,decommissioning,approval_policy_override,auto_sync_paused,rollback_resume_state,rollback_resume_requires_revision,created_at,retry_enabled,retry_max_attempts,retry_initial_delay_seconds,retry_max_delay_seconds,retry_jitter_percent,retry_attempt_count,retry_next_at,retry_terminal_reason,retry_last_error_code,health_condition_status,health_condition_reason,health_condition_message,health_condition_last_transition_at,health_condition_observed_at,health_condition_resources,health_condition_warnings`
+const applicationColumns = `id,workspace_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,COALESCE(application_group_id,''),target_manifest_path,namespace_manifest_paths,target_helm_values_files,target_helm_values_yaml,namespace_helm_values,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,COALESCE(last_synced_revision,''),health,status_issues,decommissioning,approval_policy_override,auto_sync_paused,rollback_resume_state,rollback_resume_requires_revision,created_at,retry_enabled,retry_max_attempts,retry_initial_delay_seconds,retry_max_delay_seconds,retry_jitter_percent,retry_attempt_count,retry_next_at,retry_terminal_reason,retry_last_error_code,health_condition_status,health_condition_reason,health_condition_message,health_condition_last_transition_at,health_condition_observed_at,health_condition_resources,health_condition_warnings`
 
 func (s *Store) ApplicationByID(ctx context.Context, id string) (Application, error) {
 	return scanApplication(s.DB.QueryRowContext(ctx, `SELECT `+applicationColumns+` FROM applications WHERE id=$1`, id))
@@ -1540,7 +1601,7 @@ func (s *Store) UpdateApplicationApprovalPolicyOverride(ctx context.Context, id 
 func (s *Store) EffectiveApprovalPolicy(ctx context.Context, app Application) (ApprovalPolicy, error) {
 	policy := DefaultApprovalPolicy()
 	var rawPolicy []byte
-	if err := s.DB.QueryRowContext(ctx, `SELECT approval_policy FROM projects WHERE id=$1`, app.ProjectID).Scan(&rawPolicy); err != nil {
+	if err := s.DB.QueryRowContext(ctx, `SELECT approval_policy FROM workspaces WHERE id=$1`, app.WorkspaceID).Scan(&rawPolicy); err != nil {
 		return ApprovalPolicy{}, err
 	}
 	if err := json.Unmarshal(rawPolicy, &policy); err != nil {
@@ -1633,8 +1694,8 @@ func (s *Store) CancelApplicationDecommission(ctx context.Context, id string) er
 	}
 	return tx.Commit()
 }
-func (s *Store) ListApplications(ctx context.Context, projectID string) ([]Application, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+applicationColumns+` FROM applications WHERE project_id=$1 ORDER BY name`, projectID)
+func (s *Store) ListApplications(ctx context.Context, workspaceID string) ([]Application, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+applicationColumns+` FROM applications WHERE workspace_id=$1 ORDER BY name`, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1660,7 +1721,7 @@ func (s *Store) CreateApplicationGroup(ctx context.Context, group ApplicationGro
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO application_groups(id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,sync_policy,poll_seconds) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, group.ID, group.ProjectID, group.Name, group.SourceID, group.Revision, group.ManifestPath, group.Renderer, group.KustomizeHelmEnabled, group.KustomizeNamespaceOverride, valuesFiles, group.HelmValuesYAML, group.SyncPolicy, group.PollSeconds); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO application_groups(id,workspace_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,sync_policy,poll_seconds) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, group.ID, group.WorkspaceID, group.Name, group.SourceID, group.Revision, group.ManifestPath, group.Renderer, group.KustomizeHelmEnabled, group.KustomizeNamespaceOverride, valuesFiles, group.HelmValuesYAML, group.SyncPolicy, group.PollSeconds); err != nil {
 		return err
 	}
 	for _, app := range apps {
@@ -1686,7 +1747,7 @@ func (s *Store) CreateApplicationGroup(ctx context.Context, group ApplicationGro
 		if app.NamespaceHelmValues == nil {
 			namespaceValues = []byte(`{}`)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,application_group_id,target_manifest_path,namespace_manifest_paths,target_helm_values_files,target_helm_values_yaml,namespace_helm_values,cluster_id,namespaces,sync_policy,poll_seconds) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`, app.ID, group.ProjectID, app.Name, group.SourceID, group.Revision, group.ManifestPath, group.Renderer, group.KustomizeHelmEnabled, group.KustomizeNamespaceOverride, valuesFiles, group.HelmValuesYAML, group.ID, app.TargetManifestPath, namespaceManifestPaths, targetFiles, app.TargetHelmValuesYAML, namespaceValues, app.ClusterID, namespaces, group.SyncPolicy, group.PollSeconds); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id,workspace_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,application_group_id,target_manifest_path,namespace_manifest_paths,target_helm_values_files,target_helm_values_yaml,namespace_helm_values,cluster_id,namespaces,sync_policy,poll_seconds) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`, app.ID, group.WorkspaceID, app.Name, group.SourceID, group.Revision, group.ManifestPath, group.Renderer, group.KustomizeHelmEnabled, group.KustomizeNamespaceOverride, valuesFiles, group.HelmValuesYAML, group.ID, app.TargetManifestPath, namespaceManifestPaths, targetFiles, app.TargetHelmValuesYAML, namespaceValues, app.ClusterID, namespaces, group.SyncPolicy, group.PollSeconds); err != nil {
 			return err
 		}
 	}
@@ -1696,7 +1757,7 @@ func (s *Store) CreateApplicationGroup(ctx context.Context, group ApplicationGro
 func (s *Store) ApplicationGroupByID(ctx context.Context, id string) (ApplicationGroup, error) {
 	var group ApplicationGroup
 	var valuesFiles []byte
-	err := s.DB.QueryRowContext(ctx, `SELECT id,project_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,sync_policy,poll_seconds,created_at,updated_at FROM application_groups WHERE id=$1`, id).Scan(&group.ID, &group.ProjectID, &group.Name, &group.SourceID, &group.Revision, &group.ManifestPath, &group.Renderer, &group.KustomizeHelmEnabled, &group.KustomizeNamespaceOverride, &valuesFiles, &group.HelmValuesYAML, &group.SyncPolicy, &group.PollSeconds, &group.CreatedAt, &group.UpdatedAt)
+	err := s.DB.QueryRowContext(ctx, `SELECT id,workspace_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,sync_policy,poll_seconds,created_at,updated_at FROM application_groups WHERE id=$1`, id).Scan(&group.ID, &group.WorkspaceID, &group.Name, &group.SourceID, &group.Revision, &group.ManifestPath, &group.Renderer, &group.KustomizeHelmEnabled, &group.KustomizeNamespaceOverride, &valuesFiles, &group.HelmValuesYAML, &group.SyncPolicy, &group.PollSeconds, &group.CreatedAt, &group.UpdatedAt)
 	if err == nil {
 		err = json.Unmarshal(valuesFiles, &group.HelmValuesFiles)
 	}
@@ -2557,11 +2618,11 @@ func (s *Store) CreateApproval(ctx context.Context, id, planID string, approval 
 	}
 	defer tx.Rollback()
 	var status, digest string
-	var projectID string
+	var workspaceID string
 	var planExpires time.Time
 	var required int
 	var changesRaw, approverRolesRaw, approverUserIDsRaw []byte
-	if err := tx.QueryRowContext(ctx, `SELECT p.status,p.digest,p.expires_at,p.required_approvals,p.changes,p.approver_roles,p.approver_user_ids,a.project_id FROM plans p JOIN applications a ON a.id=p.application_id WHERE p.id=$1 FOR UPDATE OF p`, planID).Scan(&status, &digest, &planExpires, &required, &changesRaw, &approverRolesRaw, &approverUserIDsRaw, &projectID); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT p.status,p.digest,p.expires_at,p.required_approvals,p.changes,p.approver_roles,p.approver_user_ids,a.workspace_id FROM plans p JOIN applications a ON a.id=p.application_id WHERE p.id=$1 FOR UPDATE OF p`, planID).Scan(&status, &digest, &planExpires, &required, &changesRaw, &approverRolesRaw, &approverUserIDsRaw, &workspaceID); err != nil {
 		return err
 	}
 	if status != "current" || digest != approval.PlanDigest || !time.Now().Before(planExpires) {
@@ -2601,15 +2662,15 @@ func (s *Store) CreateApproval(ctx context.Context, id, planID string, approval 
 		return err
 	}
 	rule.RequiredApprovals = required
-	projectRole := func(actorID string) (string, error) {
+	workspaceRole := func(actorID string) (string, error) {
 		var role string
 		err := tx.QueryRowContext(ctx, `SELECT CASE WHEN u.is_admin THEN 'owner' ELSE COALESCE((SELECT member_roles.role FROM (
-			SELECT role FROM project_memberships WHERE project_id=$1 AND user_id=u.id
-			UNION ALL SELECT role FROM oidc_membership_grants WHERE project_id=$1 AND user_id=u.id
-		) member_roles ORDER BY CASE member_roles.role WHEN 'owner' THEN 3 WHEN 'deployer' THEN 2 ELSE 1 END DESC LIMIT 1),'') END FROM users u WHERE u.id=$2 AND u.disabled=FALSE AND u.deleted_at IS NULL`, projectID, actorID).Scan(&role)
+			SELECT role FROM workspace_memberships WHERE workspace_id=$1 AND user_id=u.id
+			UNION ALL SELECT role FROM oidc_membership_grants WHERE workspace_id=$1 AND user_id=u.id
+		) member_roles ORDER BY CASE member_roles.role WHEN 'owner' THEN 3 WHEN 'deployer' THEN 2 ELSE 1 END DESC LIMIT 1),'') END FROM users u WHERE u.id=$2 AND u.disabled=FALSE AND u.deleted_at IS NULL`, workspaceID, actorID).Scan(&role)
 		return role, err
 	}
-	currentRole, err := projectRole(approval.ActorID)
+	currentRole, err := workspaceRole(approval.ActorID)
 	if err != nil || currentRole == "" || !ApprovalRuleAllows(rule, currentRole, approval.ActorID) {
 		return errors.New("approver is no longer eligible for this plan")
 	}
@@ -2633,7 +2694,7 @@ func (s *Store) CreateApproval(ctx context.Context, id, planID string, approval 
 	rows.Close()
 	eligibleApprovals := 0
 	for _, actorID := range actors {
-		role, err := projectRole(actorID)
+		role, err := workspaceRole(actorID)
 		if err != nil {
 			return err
 		}

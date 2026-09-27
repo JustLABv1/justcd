@@ -34,7 +34,7 @@ func classifyAPIError(status int) apiErrorMetadata {
 	case http.StatusUnauthorized:
 		return apiErrorMetadata{"authentication.required", "authentication", false, "Sign in again to continue.", "/login"}
 	case http.StatusForbidden:
-		return apiErrorMetadata{"authorization.denied", "authorization", false, "Confirm that your account has the required project role or administrator access.", ""}
+		return apiErrorMetadata{"authorization.denied", "authorization", false, "Confirm that your account has the required workspace role or administrator access.", ""}
 	case http.StatusNotFound:
 		return apiErrorMetadata{"resource.not_found", "not_found", false, "Refresh the page and confirm that the resource still exists.", ""}
 	case http.StatusRequestTimeout:

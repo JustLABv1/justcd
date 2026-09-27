@@ -27,7 +27,7 @@ func TestRollbackPlanRequiresOwnerAndDistinctApprovals(t *testing.T) {
 		t.Fatal("rollback deletion policy count should remain enforced")
 	}
 	if !ApprovalRoleAllows(plan, "owner", "owner-1") || ApprovalRoleAllows(plan, "deployer", "deployer-1") {
-		t.Fatal("rollback approval must be restricted to project owners")
+		t.Fatal("rollback approval must be restricted to workspace owners")
 	}
 	now := time.Now()
 	first := DeletionApproval{PlanDigest: plan.Digest, ActorID: "owner-1", ExpiresAt: now.Add(time.Minute)}

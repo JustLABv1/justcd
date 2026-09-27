@@ -946,15 +946,15 @@ func CanonicalLiveAgainstIgnoring(object *unstructured.Unstructured, clusterID, 
 			unique = append(unique, path)
 		}
 	}
-	projectedDesired := projectFields(desired, unique)
-	projectedLive := projectFields(live.Object, unique)
-	projectListItems(projectedDesired, projectedLive, previous)
-	normalizeEmptyEquivalents(projectedDesired, projectedLive)
-	desiredJSON, err := json.Marshal(projectedDesired)
+	workspaceedDesired := workspaceFields(desired, unique)
+	workspaceedLive := workspaceFields(live.Object, unique)
+	workspaceListItems(workspaceedDesired, workspaceedLive, previous)
+	normalizeEmptyEquivalents(workspaceedDesired, workspaceedLive)
+	desiredJSON, err := json.Marshal(workspaceedDesired)
 	if err != nil {
 		return core.Resource{}, "", nil, err
 	}
-	liveProjectionJSON, err := json.Marshal(projectedLive)
+	liveWorkspaceionJSON, err := json.Marshal(workspaceedLive)
 	if err != nil {
 		return core.Resource{}, "", nil, err
 	}
@@ -963,11 +963,11 @@ func CanonicalLiveAgainstIgnoring(object *unstructured.Unstructured, clusterID, 
 		return core.Resource{}, "", nil, err
 	}
 	identity := core.Identity{ClusterID: clusterID, APIVersion: live.GetAPIVersion(), Kind: live.GetKind(), Namespace: live.GetNamespace(), Name: live.GetName(), ClusterScoped: clusterScoped}
-	resource := core.Resource{Identity: identity, Fingerprint: fingerprint(liveProjectionJSON), UID: string(object.GetUID()), ResourceVersion: object.GetResourceVersion(), Owner: object.GetLabels()["justcd.io/application-id"], Manifest: canonical}
+	resource := core.Resource{Identity: identity, Fingerprint: fingerprint(liveWorkspaceionJSON), UID: string(object.GetUID()), ResourceVersion: object.GetResourceVersion(), Owner: object.GetLabels()["justcd.io/application-id"], Manifest: canonical}
 	return resource, fingerprint(desiredJSON), changedIgnored, nil
 }
 
-// ComparisonManifests returns the same Git-owned field projection used for
+// ComparisonManifests returns the same Git-owned field workspaceion used for
 // drift checks. These are review documents only; the original desired manifest
 // must be retained for server-side apply.
 func ComparisonManifests(liveManifest, desiredManifest, previousManifest []byte) ([]byte, []byte, error) {
@@ -986,19 +986,19 @@ func ComparisonManifests(liveManifest, desiredManifest, previousManifest []byte)
 	paths := make([][]string, 0, 64)
 	collectManagedPaths(desired, nil, &paths)
 	collectManagedPaths(previous, nil, &paths)
-	projectedDesired := projectFields(desired, paths)
-	projectedLive := projectFields(live, paths)
-	projectListItems(projectedDesired, projectedLive, previous)
-	normalizeEmptyEquivalents(projectedDesired, projectedLive)
-	before, err := json.Marshal(projectedLive)
+	workspaceedDesired := workspaceFields(desired, paths)
+	workspaceedLive := workspaceFields(live, paths)
+	workspaceListItems(workspaceedDesired, workspaceedLive, previous)
+	normalizeEmptyEquivalents(workspaceedDesired, workspaceedLive)
+	before, err := json.Marshal(workspaceedLive)
 	if err != nil {
 		return nil, nil, err
 	}
-	after, err := json.Marshal(projectedDesired)
+	after, err := json.Marshal(workspaceedDesired)
 	return before, after, err
 }
 
-func projectListItems(desired, live map[string]interface{}, previous map[string]interface{}) {
+func workspaceListItems(desired, live map[string]interface{}, previous map[string]interface{}) {
 	for key, value := range live {
 		want, wantExists := desired[key]
 		prior := previous[key]
@@ -1006,14 +1006,14 @@ func projectListItems(desired, live map[string]interface{}, previous map[string]
 		case map[string]interface{}:
 			wantMap, _ := want.(map[string]interface{})
 			priorMap, _ := prior.(map[string]interface{})
-			projectListItems(wantMap, current, priorMap)
+			workspaceListItems(wantMap, current, priorMap)
 		case []interface{}:
 			wantList, _ := want.([]interface{})
 			priorList, _ := prior.([]interface{})
 			if !wantExists && len(priorList) == 0 {
 				continue
 			}
-			live[key] = projectList(current, wantList, priorList)
+			live[key] = workspaceList(current, wantList, priorList)
 		}
 	}
 }
@@ -1142,7 +1142,7 @@ func isEmptyCollection(value interface{}) bool {
 	}
 }
 
-func projectList(live, desired, previous []interface{}) []interface{} {
+func workspaceList(live, desired, previous []interface{}) []interface{} {
 	if len(desired) == 0 && len(previous) == 0 {
 		return live
 	}
@@ -1168,8 +1168,8 @@ func projectList(live, desired, previous []interface{}) []interface{} {
 		if shape == nil {
 			continue
 		}
-		projected := projectByShape(itemMap, shape)
-		result = append(result, projected)
+		workspaceed := workspaceByShape(itemMap, shape)
+		result = append(result, workspaceed)
 	}
 	return result
 }
@@ -1209,7 +1209,7 @@ func mergeShape(target map[string]interface{}, value interface{}) {
 	}
 }
 
-func projectByShape(source, shape map[string]interface{}) map[string]interface{} {
+func workspaceByShape(source, shape map[string]interface{}) map[string]interface{} {
 	result := map[string]interface{}{}
 	for key, shapeValue := range shape {
 		value, exists := source[key]
@@ -1219,11 +1219,11 @@ func projectByShape(source, shape map[string]interface{}) map[string]interface{}
 		switch nested := shapeValue.(type) {
 		case map[string]interface{}:
 			if sourceMap, ok := value.(map[string]interface{}); ok {
-				result[key] = projectByShape(sourceMap, nested)
+				result[key] = workspaceByShape(sourceMap, nested)
 			}
 		case []interface{}:
 			if sourceList, ok := value.([]interface{}); ok {
-				result[key] = projectList(sourceList, nested, nil)
+				result[key] = workspaceList(sourceList, nested, nil)
 			}
 		default:
 			result[key] = value
@@ -1542,15 +1542,15 @@ func collectManagedPaths(value interface{}, prefix []string, out *[][]string) {
 		collectManagedPaths(object[key], append(prefix, key), out)
 	}
 }
-func projectFields(source map[string]interface{}, paths [][]string) map[string]interface{} {
-	projected := map[string]interface{}{}
+func workspaceFields(source map[string]interface{}, paths [][]string) map[string]interface{} {
+	workspaceed := map[string]interface{}{}
 	for _, fieldPath := range paths {
 		value, ok := lookupPath(source, fieldPath)
 		if ok {
-			setPath(projected, fieldPath, value)
+			setPath(workspaceed, fieldPath, value)
 		}
 	}
-	return projected
+	return workspaceed
 }
 func lookupPath(source map[string]interface{}, fieldPath []string) (interface{}, bool) {
 	var current interface{} = source

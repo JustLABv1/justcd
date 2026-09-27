@@ -28,7 +28,7 @@ type PreviewProfile struct {
 
 type SourceControlConnection struct {
 	ID                  string         `json:"id"`
-	ProjectID           string         `json:"projectId"`
+	WorkspaceID         string         `json:"workspaceId"`
 	ApplicationID       string         `json:"applicationId"`
 	Provider            string         `json:"provider"`
 	APIURL              string         `json:"apiUrl"`
@@ -39,12 +39,12 @@ type SourceControlConnection struct {
 	CreatedAt           time.Time      `json:"createdAt"`
 }
 
-const connectionColumns = `id,project_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile,created_at`
+const connectionColumns = `id,workspace_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile,created_at`
 
 func scanSourceControlConnection(row interface{ Scan(...any) error }) (SourceControlConnection, error) {
 	var c SourceControlConnection
 	var profile []byte
-	err := row.Scan(&c.ID, &c.ProjectID, &c.ApplicationID, &c.Provider, &c.APIURL, &c.Repository, &c.WebhookSecretCipher, &c.StatusTokenCipher, &profile, &c.CreatedAt)
+	err := row.Scan(&c.ID, &c.WorkspaceID, &c.ApplicationID, &c.Provider, &c.APIURL, &c.Repository, &c.WebhookSecretCipher, &c.StatusTokenCipher, &profile, &c.CreatedAt)
 	if err == nil {
 		err = json.Unmarshal(profile, &c.PreviewProfile)
 	}
@@ -56,12 +56,12 @@ func (s *Store) SaveSourceControlConnection(ctx context.Context, c SourceControl
 	if err != nil {
 		return err
 	}
-	_, err = s.DB.ExecContext(ctx, `INSERT INTO source_control_connections(id,project_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile)
+	_, err = s.DB.ExecContext(ctx, `INSERT INTO source_control_connections(id,workspace_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
 		ON CONFLICT(application_id) DO UPDATE SET provider=EXCLUDED.provider,api_url=EXCLUDED.api_url,repository=EXCLUDED.repository,
 		webhook_secret_cipher=EXCLUDED.webhook_secret_cipher,status_token_cipher=EXCLUDED.status_token_cipher,
 		preview_profile=EXCLUDED.preview_profile,updated_at=NOW()`,
-		c.ID, c.ProjectID, c.ApplicationID, c.Provider, c.APIURL, c.Repository, c.WebhookSecretCipher, c.StatusTokenCipher, string(profile))
+		c.ID, c.WorkspaceID, c.ApplicationID, c.Provider, c.APIURL, c.Repository, c.WebhookSecretCipher, c.StatusTokenCipher, string(profile))
 	return err
 }
 
@@ -280,8 +280,8 @@ func (s *Store) PreviewSlotCount(ctx context.Context, connectionID string) (int,
 	return count, err
 }
 
-func (s *Store) DeletePreviewNamespaceBinding(ctx context.Context, projectID, clusterID, namespace string) error {
-	_, err := s.DB.ExecContext(ctx, `DELETE FROM namespace_bindings WHERE project_id=$1 AND cluster_id=$2 AND namespace=$3`, projectID, clusterID, namespace)
+func (s *Store) DeletePreviewNamespaceBinding(ctx context.Context, workspaceID, clusterID, namespace string) error {
+	_, err := s.DB.ExecContext(ctx, `DELETE FROM namespace_bindings WHERE workspace_id=$1 AND cluster_id=$2 AND namespace=$3`, workspaceID, clusterID, namespace)
 	return err
 }
 

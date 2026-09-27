@@ -232,7 +232,7 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 		return core.Plan{}, nil, err
 	}
 	selection = normalizeSelection(selection)
-	source, err := s.Store.GitSourceByID(ctx, app.SourceID)
+	source, err := s.Store.GitSourceForWorkspace(ctx, app.SourceID, app.WorkspaceID)
 	if err != nil {
 		return core.Plan{}, nil, &planStageError{stage: "git", err: errors.New("application Git source is unavailable")}
 	}
@@ -749,6 +749,10 @@ func healthForPlan(plan core.Plan) string {
 }
 
 func (s *Service) loadPlanInput(ctx context.Context, app store.Application) (planInput, error) {
+	canUseCluster, err := s.Store.WorkspaceCanUseCluster(ctx, app.WorkspaceID, app.ClusterID)
+	if err != nil || !canUseCluster {
+		return planInput{}, errors.New("application cluster is no longer available to this workspace")
+	}
 	cluster, err := s.Store.ClusterByID(ctx, app.ClusterID)
 	if err != nil {
 		return planInput{}, errors.New("application cluster is unavailable")
@@ -757,18 +761,18 @@ func (s *Service) loadPlanInput(ctx context.Context, app store.Application) (pla
 	if len(app.Namespaces) == 0 {
 		return planInput{}, errors.New("application has no namespace bindings")
 	}
-	projectCredentialID, err := s.Store.ProjectClusterCredential(ctx, app.ProjectID, app.ClusterID)
+	workspaceCredentialID, err := s.Store.WorkspaceClusterCredential(ctx, app.WorkspaceID, app.ClusterID)
 	if err != nil {
-		return planInput{}, fmt.Errorf("load project cluster credential: %w", err)
+		return planInput{}, fmt.Errorf("load workspace cluster credential: %w", err)
 	}
 	for _, binding := range app.Namespaces {
-		stored, err := s.Store.NamespaceBinding(ctx, app.ProjectID, app.ClusterID, binding.Namespace)
+		stored, err := s.Store.NamespaceBinding(ctx, app.WorkspaceID, app.ClusterID, binding.Namespace)
 		if err != nil {
-			return planInput{}, fmt.Errorf("namespace %q is no longer bound to this project", binding.Namespace)
+			return planInput{}, fmt.Errorf("namespace %q is no longer bound to this workspace", binding.Namespace)
 		}
 		credentialID := stored.CredentialID
 		if credentialID == nil {
-			credentialID = projectCredentialID
+			credentialID = workspaceCredentialID
 		}
 		if credentialID == nil {
 			credentialID = cluster.DefaultCredentialID

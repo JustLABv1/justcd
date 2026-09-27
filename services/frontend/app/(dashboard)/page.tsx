@@ -6,13 +6,14 @@ import {
   ActionLink,
   CollectionSkeleton,
   LoadError,
-  ProjectCard,
   WorkspaceIcon,
 } from "@/components/workspace-ui"
 import { useWorkspace, needsAttention } from "@/hooks/use-workspace"
+import { useWorkspaceSelection } from "@/hooks/workspace-selection"
 
 export default function OverviewPage() {
-  const { projects, applications, loading, error, refresh } = useWorkspace()
+  const { applications, loading, error, refresh } = useWorkspace()
+  const { workspace, workspaceId } = useWorkspaceSelection()
   const attention = applications.filter(needsAttention)
   const synced = applications.filter((app) => app.health === "synced").length
   const other = applications.length - synced - attention.length
@@ -27,14 +28,14 @@ export default function OverviewPage() {
   return (
     <>
       <PageHeading
-        title="Overview"
-        description="A clear view of what’s running and what needs you next."
+        title={workspace ? `${workspace.name} overview` : "Overview"}
+        description={workspace ? "A clear view of what’s running and what needs you next in this workspace." : "Select a workspace to view its delivery status."}
         actions={
           <>
-            <ActionLink href="/projects/new" secondary>
-              New project
+            <ActionLink href="/workspaces/new" secondary>
+              New workspace
             </ActionLink>
-            <ActionLink href="/applications/new">
+            <ActionLink href={workspaceId ? `/applications/new?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces"}>
               <span aria-hidden="true">＋</span> New application
             </ActionLink>
           </>
@@ -65,25 +66,25 @@ export default function OverviewPage() {
                   label: "Applications",
                   value: applications.length,
                   color: "bg-primary",
-                  href: "/applications",
+                  href: workspaceId ? `/applications?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces",
                 },
                 {
                   label: "In sync",
                   value: synced,
                   color: "bg-emerald-500",
-                  href: "/applications?status=synced",
+                  href: workspaceId ? `/applications?workspaceId=${encodeURIComponent(workspaceId)}&status=synced` : "/workspaces",
                 },
                 {
                   label: "Needs attention",
                   value: attention.length,
                   color: "bg-amber-500",
-                  href: "/applications?status=attention",
+                  href: workspaceId ? `/applications?workspaceId=${encodeURIComponent(workspaceId)}&status=attention` : "/workspaces",
                 },
                 {
                   label: "Other states",
                   value: other,
                   color: "bg-muted-foreground",
-                  href: "/applications?status=other",
+                  href: workspaceId ? `/applications?workspaceId=${encodeURIComponent(workspaceId)}&status=other` : "/workspaces",
                 },
               ].map((item) => (
                 <Link
@@ -103,19 +104,17 @@ export default function OverviewPage() {
             </div>
             <div className="flex flex-wrap items-center justify-between gap-2 border-t px-6 py-3 text-xs text-muted-foreground">
               <span>
-                {projects.length} project{projects.length === 1 ? "" : "s"} ·{" "}
+                {workspace?.name ?? "No workspace selected"} ·{" "}
                 {applications.length
                   ? `${Math.round((synced / applications.length) * 100)}% of applications in sync`
                   : "No applications connected yet"}
               </span>
               {!applications.length && (
                 <Link
-                  href={projects.length ? "/applications/new" : "/projects/new"}
+                  href={workspaceId ? `/applications/new?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces/new"}
                   className="font-medium text-primary hover:underline"
                 >
-                  {projects.length
-                    ? "Create an application"
-                    : "Create your first project"}{" "}
+                  {workspaceId ? "Create an application" : "Create your first workspace"}{" "}
                   →
                 </Link>
               )}
@@ -131,7 +130,7 @@ export default function OverviewPage() {
                   </span>
                 </h2>
                 <Link
-                  href="/applications?status=attention"
+                  href={workspaceId ? `/applications?status=attention&workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces"}
                   className="text-xs text-muted-foreground hover:text-foreground"
                 >
                   View all →
@@ -154,7 +153,7 @@ export default function OverviewPage() {
                             {app.name}
                           </span>
                           <span className="mt-1 block truncate text-xs text-muted-foreground">
-                            {app.projectName} · {app.revision}
+                            {app.workspaceName} · {app.revision}
                           </span>
                         </span>
                         <StatusBadge status={app.health} />
@@ -180,49 +179,12 @@ export default function OverviewPage() {
                   />
                 )}
               </div>
-              <div className="mt-8 mb-4 flex items-center justify-between">
-                <h2 className="text-base font-semibold tracking-tight">
-                  Projects{" "}
-                  <span className="ml-1 text-sm font-normal text-muted-foreground">
-                    {projects.length}
-                  </span>
-                </h2>
-                <Link
-                  href="/projects"
-                  className="text-xs text-muted-foreground hover:text-foreground"
-                >
-                  View all →
-                </Link>
+              <div className="mt-8 rounded-2xl border bg-card p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div><h2 className="text-sm font-semibold">Workspace connections</h2><p className="mt-1 text-xs text-muted-foreground">Manage repositories, deployment clusters, and credentials for {workspace?.name ?? "this workspace"}.</p></div>
+                  {workspaceId && <Link href={`/workspaces/${workspaceId}?tab=connections`} className="text-xs font-medium text-primary hover:underline">Manage connections →</Link>}
+                </div>
               </div>
-              {projects.length ? (
-                <div className="grid gap-4 md:grid-cols-2">
-                  {projects.slice(0, 4).map((project) => {
-                    const apps = applications.filter(
-                      (app) => app.projectId === project.id
-                    )
-                    return (
-                      <ProjectCard
-                        key={project.id}
-                        project={project}
-                        total={apps.length}
-                        synced={
-                          apps.filter((app) => app.health === "synced").length
-                        }
-                        attention={apps.filter(needsAttention).length}
-                      />
-                    )
-                  })}
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-dashed bg-card">
-                  <EmptyState
-                    title="Create your first project"
-                    description="Give your applications a home, connect repositories, and invite your team."
-                    href="/projects/new"
-                    action="Create project"
-                  />
-                </div>
-              )}
             </section>
             <aside className="space-y-6">
               <section className="rounded-2xl border bg-card p-5">

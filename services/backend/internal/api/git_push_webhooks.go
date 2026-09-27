@@ -20,7 +20,8 @@ func (s *Server) getGitPushWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Git source not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, source.ProjectID, "viewer") {
+	workspaceID := r.URL.Query().Get("workspaceId")
+	if !s.requireWorkspaceRole(w, r, workspaceID, "viewer") || !s.requireWorkspaceGitSource(w, r, workspaceID, source.ID) {
 		return
 	}
 	_, err = s.Store.GitPushWebhookSecret(r.Context(), source.ID)
@@ -28,7 +29,7 @@ func (s *Server) getGitPushWebhook(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, "could not load webhook settings")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"configured": err == nil, "webhookUrl": s.Config.PublicURL + "/api/v1/webhooks/git-sources/" + source.ID})
+	writeJSON(w, http.StatusOK, map[string]any{"configured": err == nil, "managedByOwner": source.WorkspaceID != workspaceID, "webhookUrl": s.Config.PublicURL + "/api/v1/webhooks/git-sources/" + source.ID})
 }
 
 func (s *Server) putGitPushWebhook(w http.ResponseWriter, r *http.Request) {
@@ -37,7 +38,7 @@ func (s *Server) putGitPushWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Git source not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, source.ProjectID, "owner") {
+	if !s.requireWorkspaceRole(w, r, source.WorkspaceID, "owner") {
 		return
 	}
 	var input struct {
@@ -127,7 +128,7 @@ func (s *Server) genericGitPushWebhook(w http.ResponseWriter, r *http.Request) {
 		sum := sha256.Sum256(body)
 		event.DeliveryID = hex.EncodeToString(sum[:])
 	}
-	accepted, count, err := s.Store.RecordPushEvent(r.Context(), source.ProjectID, source.ID, "source:"+source.ID, provider, event.DeliveryID, event.Ref, event.HeadSHA)
+	accepted, count, err := s.Store.RecordPushEvent(r.Context(), source.WorkspaceID, source.ID, "source:"+source.ID, provider, event.DeliveryID, event.Ref, event.HeadSHA)
 	if err != nil {
 		writeStoreError(w, "could not record Git push event")
 		return

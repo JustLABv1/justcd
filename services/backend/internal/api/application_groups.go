@@ -27,7 +27,7 @@ type applicationGroupTargetInput struct {
 }
 
 type applicationGroupInput struct {
-	ProjectID                  string                        `json:"projectId"`
+	WorkspaceID                string                        `json:"workspaceId"`
 	Name                       string                        `json:"name"`
 	SourceID                   string                        `json:"sourceId"`
 	Revision                   string                        `json:"revision"`
@@ -90,19 +90,19 @@ func (s *Server) createApplicationGroup(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if !s.requireProjectRole(w, r, input.ProjectID, "owner") {
+	if !s.requireWorkspaceRole(w, r, input.WorkspaceID, "owner") {
 		return
 	}
 	if err := cleanGroupSource(&input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	source, err := s.Store.GitSourceByID(r.Context(), input.SourceID)
-	if err != nil || source.ProjectID != input.ProjectID {
-		writeError(w, http.StatusBadRequest, "Git source is not available to this project")
+	canUseSource, sourceErr := s.Store.WorkspaceCanUseGitSource(r.Context(), input.WorkspaceID, input.SourceID)
+	if sourceErr != nil || !canUseSource {
+		writeError(w, http.StatusBadRequest, "Git source is not available to this workspace")
 		return
 	}
-	group := store.ApplicationGroup{ID: store.NewID(), ProjectID: input.ProjectID, Name: input.Name, SourceID: input.SourceID, Revision: input.Revision, ManifestPath: input.ManifestPath, Renderer: input.Renderer, KustomizeHelmEnabled: input.KustomizeHelmEnabled, KustomizeNamespaceOverride: input.KustomizeNamespaceOverride, HelmValuesFiles: input.HelmValuesFiles, HelmValuesYAML: input.HelmValuesYAML, SyncPolicy: input.SyncPolicy, PollSeconds: input.PollSeconds}
+	group := store.ApplicationGroup{ID: store.NewID(), WorkspaceID: input.WorkspaceID, Name: input.Name, SourceID: input.SourceID, Revision: input.Revision, ManifestPath: input.ManifestPath, Renderer: input.Renderer, KustomizeHelmEnabled: input.KustomizeHelmEnabled, KustomizeNamespaceOverride: input.KustomizeNamespaceOverride, HelmValuesFiles: input.HelmValuesFiles, HelmValuesYAML: input.HelmValuesYAML, SyncPolicy: input.SyncPolicy, PollSeconds: input.PollSeconds}
 	apps := make([]store.Application, 0, len(input.Targets))
 	seenClusters, seenNames := map[string]bool{}, map[string]bool{}
 	for _, target := range input.Targets {
@@ -125,23 +125,25 @@ func (s *Server) createApplicationGroup(w http.ResponseWriter, r *http.Request) 
 		for _, namespace := range target.Namespaces {
 			namespaceNames = append(namespaceNames, namespace.Namespace)
 		}
-		target.TargetManifestPath, target.NamespaceManifestPaths, err = validateKustomizeManifestPaths(input.Renderer, target.TargetManifestPath, target.NamespaceManifestPaths, namespaceNames)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "target "+target.Name+": "+err.Error())
+		targetManifestPath, namespaceManifestPaths, pathErr := validateKustomizeManifestPaths(input.Renderer, target.TargetManifestPath, target.NamespaceManifestPaths, namespaceNames)
+		if pathErr != nil {
+			writeError(w, http.StatusBadRequest, "target "+target.Name+": "+pathErr.Error())
 			return
 		}
+		target.TargetManifestPath, target.NamespaceManifestPaths = targetManifestPath, namespaceManifestPaths
 		targetFiles, targetValues, err := validateHelmValuesInput(input.Renderer, target.TargetHelmValuesFiles, target.TargetHelmValuesYAML)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "target "+target.Name+": "+err.Error())
 			return
 		}
-		if _, err := s.Store.ClusterByID(r.Context(), target.ClusterID); err != nil {
+		canUseCluster, clusterErr := s.Store.WorkspaceCanUseCluster(r.Context(), input.WorkspaceID, target.ClusterID)
+		if clusterErr != nil || !canUseCluster {
 			writeError(w, http.StatusBadRequest, "target cluster not found")
 			return
 		}
 		bindings := make([]store.NamespaceBinding, 0, len(target.Namespaces))
 		namespaceValues := make(map[string]core.HelmValuesOverride, len(target.Namespaces))
-		namespaceManifestPaths := make(map[string]string, len(target.NamespaceManifestPaths))
+		namespaceManifestPathOverrides := make(map[string]string, len(target.NamespaceManifestPaths))
 		seenNamespaces := map[string]bool{}
 		for _, namespace := range target.Namespaces {
 			namespace.Namespace = strings.TrimSpace(namespace.Namespace)
@@ -155,22 +157,22 @@ func (s *Server) createApplicationGroup(w http.ResponseWriter, r *http.Request) 
 				writeError(w, http.StatusBadRequest, "namespace "+namespace.Namespace+": "+err.Error())
 				return
 			}
-			binding, err := s.Store.NamespaceBinding(r.Context(), input.ProjectID, target.ClusterID, namespace.Namespace)
+			binding, err := s.Store.NamespaceBinding(r.Context(), input.WorkspaceID, target.ClusterID, namespace.Namespace)
 			if err != nil {
-				writeError(w, http.StatusBadRequest, "every target namespace must have a project binding")
+				writeError(w, http.StatusBadRequest, "every target namespace must have a workspace binding")
 				return
 			}
 			bindings = append(bindings, binding)
 			namespaceValues[namespace.Namespace] = core.HelmValuesOverride{Files: files, YAML: values}
 			if path := target.NamespaceManifestPaths[namespace.Namespace]; path != "" {
-				namespaceManifestPaths[namespace.Namespace] = path
+				namespaceManifestPathOverrides[namespace.Namespace] = path
 			}
 		}
 		if len(namespaceValues) == 0 {
 			writeError(w, http.StatusBadRequest, "each cluster target must include at least one bound namespace")
 			return
 		}
-		apps = append(apps, store.Application{ID: store.NewID(), ProjectID: input.ProjectID, Name: target.Name, SourceID: input.SourceID, Revision: input.Revision, ManifestPath: input.ManifestPath, TargetManifestPath: target.TargetManifestPath, NamespaceManifestPaths: namespaceManifestPaths, Renderer: input.Renderer, KustomizeHelmEnabled: input.KustomizeHelmEnabled, KustomizeNamespaceOverride: input.KustomizeNamespaceOverride, ApplicationGroupID: group.ID, HelmValuesFiles: input.HelmValuesFiles, HelmValuesYAML: input.HelmValuesYAML, TargetHelmValuesFiles: targetFiles, TargetHelmValuesYAML: targetValues, NamespaceHelmValues: namespaceValues, ClusterID: target.ClusterID, Namespaces: bindings, SyncPolicy: input.SyncPolicy, PollSeconds: input.PollSeconds, Health: "unknown"})
+		apps = append(apps, store.Application{ID: store.NewID(), WorkspaceID: input.WorkspaceID, Name: target.Name, SourceID: input.SourceID, Revision: input.Revision, ManifestPath: input.ManifestPath, TargetManifestPath: target.TargetManifestPath, NamespaceManifestPaths: namespaceManifestPathOverrides, Renderer: input.Renderer, KustomizeHelmEnabled: input.KustomizeHelmEnabled, KustomizeNamespaceOverride: input.KustomizeNamespaceOverride, ApplicationGroupID: group.ID, HelmValuesFiles: input.HelmValuesFiles, HelmValuesYAML: input.HelmValuesYAML, TargetHelmValuesFiles: targetFiles, TargetHelmValuesYAML: targetValues, NamespaceHelmValues: namespaceValues, ClusterID: target.ClusterID, Namespaces: bindings, SyncPolicy: input.SyncPolicy, PollSeconds: input.PollSeconds, Health: "unknown"})
 	}
 	if err := s.Store.CreateApplicationGroup(r.Context(), group, apps); err != nil {
 		writeError(w, http.StatusConflict, "could not create deployment group; verify its name and target application names are unique")
@@ -193,7 +195,7 @@ func applicationIDs(apps []store.Application) []string {
 
 func applicationGroupAuditDetails(group store.ApplicationGroup) map[string]any {
 	return map[string]any{
-		"name": group.Name, "projectId": group.ProjectID, "sourceId": group.SourceID,
+		"name": group.Name, "workspaceId": group.WorkspaceID, "sourceId": group.SourceID,
 		"revision": group.Revision, "manifestPath": group.ManifestPath, "renderer": group.Renderer,
 		"syncPolicy": group.SyncPolicy, "pollSeconds": group.PollSeconds,
 		"kustomizeHelmEnabled": group.KustomizeHelmEnabled, "kustomizeNamespaceOverride": group.KustomizeNamespaceOverride,
@@ -207,7 +209,7 @@ func (s *Server) getApplicationGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "deployment group not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, group.ProjectID, "viewer") {
+	if !s.requireWorkspaceRole(w, r, group.WorkspaceID, "viewer") {
 		return
 	}
 	apps, err := s.Store.ApplicationsByGroupID(r.Context(), group.ID)
@@ -224,7 +226,7 @@ func (s *Server) updateApplicationGroup(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "deployment group not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, group.ProjectID, "owner") {
+	if !s.requireWorkspaceRole(w, r, group.WorkspaceID, "owner") {
 		return
 	}
 	var input struct {
@@ -248,9 +250,9 @@ func (s *Server) updateApplicationGroup(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid Git revision or manifest path")
 		return
 	}
-	source, err := s.Store.GitSourceByID(r.Context(), input.SourceID)
-	if err != nil || source.ProjectID != group.ProjectID {
-		writeError(w, http.StatusBadRequest, "Git source is not available to this project")
+	canUseSource, sourceErr := s.Store.WorkspaceCanUseGitSource(r.Context(), group.WorkspaceID, input.SourceID)
+	if sourceErr != nil || !canUseSource {
+		writeError(w, http.StatusBadRequest, "Git source is not available to this workspace")
 		return
 	}
 	if (input.KustomizeHelmEnabled || input.KustomizeNamespaceOverride) && group.Renderer != "kustomize" {

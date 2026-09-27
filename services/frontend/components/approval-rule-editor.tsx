@@ -2,7 +2,7 @@
 
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
-import type { ApprovalRule, ProjectMember } from "@/lib/types"
+import type { ApprovalRule, WorkspaceMember } from "@/lib/types"
 
 const roles = [
   { value: "owner", label: "Owners" },
@@ -22,7 +22,7 @@ export function ApprovalRuleEditor({
   id: string
   title: string
   rule: ApprovalRule
-  members: ProjectMember[]
+  members: WorkspaceMember[]
   deletion?: boolean
   disabled?: boolean
   onChange: (rule: ApprovalRule) => void
@@ -84,7 +84,7 @@ export function ApprovalRuleEditor({
             </label>
           ))}
         </div>
-        <p className="text-[10px] leading-4 text-muted-foreground">A higher project role also qualifies. Selected members qualify regardless of role.</p>
+        <p className="text-[10px] leading-4 text-muted-foreground">A higher workspace role also qualifies. Selected members qualify regardless of role.</p>
         {members.length > 0 ? (
           <div className="mt-3 grid gap-2 border-t pt-3 sm:grid-cols-2">
             {members.map((member) => (
@@ -96,7 +96,7 @@ export function ApprovalRuleEditor({
             ))}
           </div>
         ) : (
-          <p className="mt-3 border-t pt-3 text-[11px] text-muted-foreground">Add project members to select individuals.</p>
+          <p className="mt-3 border-t pt-3 text-[11px] text-muted-foreground">Add workspace members to select individuals.</p>
         )}
       </fieldset>
     </section>

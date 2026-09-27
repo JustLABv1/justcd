@@ -112,7 +112,7 @@ func (s *Server) putSourceControl(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "owner") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
 	source, err := s.Store.GitSourceByID(r.Context(), app.SourceID)
@@ -168,7 +168,7 @@ func (s *Server) putSourceControl(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	c := store.SourceControlConnection{ID: id, ProjectID: app.ProjectID, ApplicationID: app.ID, Provider: input.Provider, APIURL: input.APIURL, Repository: input.Repository, WebhookSecretCipher: webhookCipher, StatusTokenCipher: statusCipher, PreviewProfile: input.PreviewProfile}
+	c := store.SourceControlConnection{ID: id, WorkspaceID: app.WorkspaceID, ApplicationID: app.ID, Provider: input.Provider, APIURL: input.APIURL, Repository: input.Repository, WebhookSecretCipher: webhookCipher, StatusTokenCipher: statusCipher, PreviewProfile: input.PreviewProfile}
 	if err := s.Store.SaveSourceControlConnection(r.Context(), c); err != nil {
 		writeStoreError(w, "could not save source control connection")
 		return
@@ -199,7 +199,7 @@ func (s *Server) getSourceControl(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "viewer") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "viewer") {
 		return
 	}
 	source, err := s.Store.GitSourceByID(r.Context(), app.SourceID)
@@ -230,7 +230,7 @@ func (s *Server) listPullRequestReviews(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "viewer") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "viewer") {
 		return
 	}
 	c, err := s.Store.SourceControlConnectionByApplication(r.Context(), app.ID)
@@ -292,7 +292,7 @@ func (s *Server) sourceControlWebhook(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "application Git source no longer matches source control connection")
 			return
 		}
-		accepted, count, err := s.Store.RecordPushEvent(r.Context(), c.ProjectID, app.SourceID, "connection:"+c.ID, c.Provider, event.DeliveryID, event.Ref, event.HeadSHA)
+		accepted, count, err := s.Store.RecordPushEvent(r.Context(), c.WorkspaceID, app.SourceID, "connection:"+c.ID, c.Provider, event.DeliveryID, event.Ref, event.HeadSHA)
 		if err != nil {
 			writeStoreError(w, "could not record Git push event")
 			return

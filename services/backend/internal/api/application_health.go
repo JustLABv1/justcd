@@ -11,7 +11,7 @@ func (s *Server) applicationHealthHistory(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "viewer") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "viewer") {
 		return
 	}
 	limit := 25

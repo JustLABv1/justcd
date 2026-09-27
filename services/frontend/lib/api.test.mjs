@@ -55,14 +55,14 @@ test("legacy error payloads remain readable and receive status-based guidance", 
       headers: { "content-type": "application/json" },
     }),
     async () => {
-      await assert.rejects(api("/api/v1/projects"), (error) => {
+      await assert.rejects(api("/api/v1/workspaces"), (error) => {
         assert.ok(error instanceof APIError)
         assert.equal(error.message, "permission denied")
         assert.equal(error.schemaVersion, null)
         assert.equal(error.code, "authorization.denied")
         assert.equal(error.category, "authorization")
         assert.equal(error.retryable, false)
-        assert.match(error.remediation, /project role/)
+        assert.match(error.remediation, /workspace role/)
         return true
       })
     }
@@ -84,7 +84,7 @@ test("error responses cannot direct remediation links off site", async () => {
       { status: 400, headers: { "content-type": "application/json" } }
     ),
     async () => {
-      await assert.rejects(api("/api/v1/projects"), (error) => {
+      await assert.rejects(api("/api/v1/workspaces"), (error) => {
         assert.ok(error instanceof APIError)
         assert.equal(error.remediationUrl, null)
         return true
@@ -95,7 +95,7 @@ test("error responses cannot direct remediation links off site", async () => {
 
 test("network failures explain that mutation state must be refreshed", async () => {
   await withFetch(new TypeError("offline"), async () => {
-    await assert.rejects(api("/api/v1/projects"), (error) => {
+    await assert.rejects(api("/api/v1/workspaces"), (error) => {
       assert.ok(error instanceof APIError)
       assert.equal(error.code, "network.unreachable")
       assert.equal(error.category, "network")

@@ -33,7 +33,7 @@ export default function SignupPage() {
     setBusy(true)
     try {
       await apiPost("/api/v1/auth/signup", { displayName, email, password })
-      router.replace("/")
+      router.replace("/onboarding")
     } catch (cause) { toast.error(errorMessage(cause), cause) }
     finally { setBusy(false) }
   }

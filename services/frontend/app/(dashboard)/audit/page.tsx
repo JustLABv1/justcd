@@ -36,7 +36,7 @@ function eventGroup(action: string): Exclude<EventFilter, "all"> {
   )
     return "deployments"
   if (
-    /^(user|project_member|oidc|credential)\./.test(action) ||
+    /^(user|workspace_member|oidc|credential)\./.test(action) ||
     action.includes("approval_policy")
   )
     return "access"

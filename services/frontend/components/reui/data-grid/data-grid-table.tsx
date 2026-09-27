@@ -1896,7 +1896,7 @@ function DataGridTableBodyRowCell<TData extends object>({
 
   if (!cellSelectionOn) return renderTd(null)
 
-  // Per-cell subscription with a projecting selector: the atom writes once
+  // Per-cell subscription with a workspaceing selector: the atom writes once
   // per cell crossed during a drag, and shallow-comparing this tuple limits
   // the re-render to cells whose selection state actually changed.
   return (

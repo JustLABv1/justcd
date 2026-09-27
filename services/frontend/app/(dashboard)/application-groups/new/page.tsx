@@ -12,7 +12,7 @@ import { FormField, PageHeading, Panel } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
 import { api, apiPost, errorMessage } from "@/lib/api"
-import type { ApplicationGroupResponse, Cluster, GitSource, ListResponse, NamespaceBinding, Project } from "@/lib/types"
+import type { ApplicationGroupResponse, Cluster, GitSource, ListResponse, NamespaceBinding, Workspace } from "@/lib/types"
 
 type TargetDraft = {
   id: string
@@ -33,11 +33,11 @@ const updateTarget = (targets: TargetDraft[], index: number, patch: Partial<Targ
 export default function NewApplicationGroupPage() {
   const router = useRouter()
   const toast = useToast()
-  const [projects, setProjects] = useState<Project[]>([])
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [clusters, setClusters] = useState<Cluster[]>([])
   const [sources, setSources] = useState<GitSource[]>([])
   const [bindingsByCluster, setBindingsByCluster] = useState<Record<string, NamespaceBinding[]>>({})
-  const [projectId, setProjectId] = useState("")
+  const [workspaceId, setWorkspaceId] = useState("")
   const [sourceId, setSourceId] = useState("")
   const [name, setName] = useState("")
   const [renderer, setRenderer] = useState<"helm" | "kustomize">("helm")
@@ -55,12 +55,12 @@ export default function NewApplicationGroupPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const queryProject = new URLSearchParams(window.location.search).get("projectId") ?? ""
-    Promise.all([api<ListResponse<Project>>("/api/v1/projects"), api<ListResponse<Cluster>>("/api/v1/clusters")])
-      .then(([projectResult, clusterResult]) => {
-        const writable = projectResult.items.filter((project) => project.role !== "viewer")
-        setProjects(writable)
-        setProjectId(writable.find((project) => project.id === queryProject)?.id ?? writable[0]?.id ?? "")
+    const queryWorkspace = new URLSearchParams(window.location.search).get("workspaceId") ?? ""
+    Promise.all([api<ListResponse<Workspace>>("/api/v1/workspaces"), api<ListResponse<Cluster>>("/api/v1/clusters")])
+      .then(([workspaceResult, clusterResult]) => {
+        const writable = workspaceResult.items.filter((workspace) => workspace.role !== "viewer")
+        setWorkspaces(writable)
+        setWorkspaceId(writable.find((workspace) => workspace.id === queryWorkspace)?.id ?? writable[0]?.id ?? "")
         setClusters(clusterResult.items)
         setTargets([{ ...firstTarget, clusterId: clusterResult.items[0]?.id ?? "" }])
       })
@@ -69,19 +69,19 @@ export default function NewApplicationGroupPage() {
   }, [])
 
   useEffect(() => {
-    if (!projectId) return
+    if (!workspaceId) return
     let active = true
-    api<ListResponse<GitSource>>("/api/v1/git-sources?projectId=" + encodeURIComponent(projectId))
+    api<ListResponse<GitSource>>("/api/v1/git-sources?workspaceId=" + encodeURIComponent(workspaceId))
       .then((result) => { if (active) { setSources(result.items); setSourceId(result.items[0]?.id ?? "") } })
       .catch((cause) => active && setError(cause))
     return () => { active = false }
-  }, [projectId])
+  }, [workspaceId])
 
   useEffect(() => {
-    if (!projectId || clusters.length === 0) return
+    if (!workspaceId || clusters.length === 0) return
     let active = true
     Promise.all(clusters.map(async (cluster) => {
-      const result = await api<ListResponse<NamespaceBinding>>("/api/v1/clusters/" + encodeURIComponent(cluster.id) + "/bindings?projectId=" + encodeURIComponent(projectId))
+      const result = await api<ListResponse<NamespaceBinding>>("/api/v1/clusters/" + encodeURIComponent(cluster.id) + "/bindings?workspaceId=" + encodeURIComponent(workspaceId))
       return [cluster.id, result.items] as const
     })).then((entries) => {
       if (!active) return
@@ -94,22 +94,22 @@ export default function NewApplicationGroupPage() {
       })))
     }).catch((cause) => active && setError(cause))
     return () => { active = false }
-  }, [projectId, clusters])
+  }, [workspaceId, clusters])
 
-  const selectedProject = useMemo(() => projects.find((project) => project.id === projectId), [projects, projectId])
+  const selectedWorkspace = useMemo(() => workspaces.find((workspace) => workspace.id === workspaceId), [workspaces, workspaceId])
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setBusy(true)
     setError(null)
-    if (!projectId || !sourceId || !name.trim() || targets.some((target) => !target.name.trim() || !target.clusterId || !target.namespaces.length)) {
-      setError(new Error("Choose a project and Git source, name the group and every target, and select at least one bound namespace for each cluster."))
+    if (!workspaceId || !sourceId || !name.trim() || targets.some((target) => !target.name.trim() || !target.clusterId || !target.namespaces.length)) {
+      setError(new Error("Choose a workspace and Git source, name the group and every target, and select at least one bound namespace for each cluster."))
       setBusy(false)
       return
     }
     try {
       const result = await apiPost<ApplicationGroupResponse>("/api/v1/application-groups", {
-        projectId, name: name.trim(), sourceId, revision: revision.trim(), manifestPath: manifestPath.trim(),
+        workspaceId, name: name.trim(), sourceId, revision: revision.trim(), manifestPath: manifestPath.trim(),
         renderer, kustomizeHelmEnabled: renderer === "kustomize" && kustomizeHelmEnabled,
         kustomizeNamespaceOverride: renderer === "kustomize" && kustomizeNamespaceOverride,
         helmValuesFiles: renderer === "helm" ? valuesFileList(helmValuesFiles) : [],
@@ -146,7 +146,7 @@ export default function NewApplicationGroupPage() {
     <form className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]" onSubmit={submit}>
       <div className="space-y-5">
         <Panel title="Shared source" description="Targets share a Git source and revision. Choose Helm values layering or Kustomize overlays."><div className="grid gap-4 p-5 sm:grid-cols-2">
-          <FormField label="Project" htmlFor="group-project"><FormSelect id="group-project" value={projectId} onValueChange={(value) => { setProjectId(value); setTargets((current) => current.map((target) => ({ ...target, namespaces: [], namespaceValues: {} }))) }} placeholder="Select project" required items={projects.map((project) => ({ value: project.id, label: project.name }))} /></FormField>
+          <FormField label="Workspace" htmlFor="group-workspace"><FormSelect id="group-workspace" value={workspaceId} onValueChange={(value) => { setWorkspaceId(value); setTargets((current) => current.map((target) => ({ ...target, namespaces: [], namespaceValues: {} }))) }} placeholder="Select workspace" required items={workspaces.map((workspace) => ({ value: workspace.id, label: workspace.name }))} /></FormField>
           <FormField label="Git source" htmlFor="group-source"><FormSelect id="group-source" value={sourceId} onValueChange={setSourceId} placeholder="Select source" required items={sources.map((source) => ({ value: source.id, label: source.name + " · " + source.repositoryUrl }))} /></FormField>
           <FormField label="Renderer" htmlFor="group-renderer"><FormSelect id="group-renderer" value={renderer} onValueChange={(value) => { const next = value as "helm" | "kustomize"; setRenderer(next); setHelmValuesFiles(""); setHelmValuesYaml(""); if (next === "helm") { setKustomizeHelmEnabled(false); setKustomizeNamespaceOverride(false) } setTargets((current) => current.map((target) => ({ ...target, valuesFiles: "", valuesYaml: "", manifestPath: "", namespaceValues: {} }))) }} items={[{ value: "helm", label: "Helm" }, { value: "kustomize", label: "Kustomize" }]} /></FormField>
           <FormField label="Group name" htmlFor="group-name" hint="A stable name for this set of deployments."><Input id="group-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="monitoring-agent" required pattern="[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?" /></FormField>
@@ -174,7 +174,7 @@ export default function NewApplicationGroupPage() {
                   if (checked) return { ...item, namespaces: [...item.namespaces, binding.namespace], namespaceValues: { ...item.namespaceValues, [binding.namespace]: item.namespaceValues[binding.namespace] ?? { manifestPath: "", valuesFiles: "", valuesYaml: "" } } }
                   const namespaceValues = { ...item.namespaceValues }; delete namespaceValues[binding.namespace]
                   return { ...item, namespaces: item.namespaces.filter((namespace) => namespace !== binding.namespace), namespaceValues }
-                }))} /><span className="flex-1 font-medium">{binding.namespace}</span><span className="text-[10px] text-muted-foreground">{binding.credentialId ? "namespace credential" : "cluster default"}</span></label>)}</div> : <div className="rounded-lg border border-dashed px-4 py-5 text-xs text-muted-foreground">No namespaces are bound to this project on this cluster. Configure a namespace binding in project connections.</div>}</div>
+                }))} /><span className="flex-1 font-medium">{binding.namespace}</span><span className="text-[10px] text-muted-foreground">{binding.credentialId ? "namespace credential" : "cluster default"}</span></label>)}</div> : <div className="rounded-lg border border-dashed px-4 py-5 text-xs text-muted-foreground">No namespaces are bound to this workspace on this cluster. Configure a namespace binding in workspace connections.</div>}</div>
                 {renderer === "kustomize" ? <div className="sm:col-span-2"><FormField label="Cluster overlay path" htmlFor={`target-overlay-${target.id}`} hint="Optional Kustomize path for this cluster; blank uses the shared path. Include the shared base in this entry point."><Input id={`target-overlay-${target.id}`} value={target.manifestPath} onChange={(event) => setTargets((current) => updateTarget(current, index, { manifestPath: event.target.value }))} placeholder="overlays/clusters/prod-eu" /></FormField></div> : <><div className="sm:col-span-2"><FormField label="Cluster values files" htmlFor={"target-files-" + target.id} hint="Optional repository YAML files applied after shared values for every namespace in this cluster."><Textarea id={"target-files-" + target.id} value={target.valuesFiles} onChange={(event) => setTargets((current) => updateTarget(current, index, { valuesFiles: event.target.value }))} placeholder="values/clusters/prod-eu.yaml" className="min-h-16 font-mono text-xs" /></FormField></div><div className="sm:col-span-2"><FormField label="Cluster JustCD overrides" htmlFor={"target-values-" + target.id} hint="These values take precedence over shared values for every namespace in this cluster. Use Kubernetes Secret references for sensitive values."><Textarea id={"target-values-" + target.id} value={target.valuesYaml} onChange={(event) => setTargets((current) => updateTarget(current, index, { valuesYaml: event.target.value }))} placeholder={"agent:\n  region: eu"} className="min-h-24 font-mono text-xs" spellCheck={false} /></FormField></div></>}
                 {target.namespaces.length > 0 && <div className="space-y-3 sm:col-span-2"><p className="text-xs font-medium">Namespace overrides</p>{target.namespaces.map((namespace) => {
                   const override = target.namespaceValues[namespace] ?? { manifestPath: "", valuesFiles: "", valuesYaml: "" }
@@ -191,7 +191,7 @@ export default function NewApplicationGroupPage() {
           <FormField label="Sync policy" htmlFor="group-policy"><FormSelect id="group-policy" value={syncPolicy} onValueChange={setSyncPolicy} items={[{ value: "manual", label: "Manual · review each sync" }, { value: "auto-safe", label: "Auto-safe · apply non-destructive changes" }]} /></FormField>
           <FormField label="Poll interval (seconds)" htmlFor="group-poll"><Input id="group-poll" type="number" min={30} max={86400} value={pollSeconds} onChange={(event) => setPollSeconds(event.target.value)} /></FormField>
         </div></Panel>
-        <Panel title="Before creating" description="This creates configuration only. It does not change any cluster."><div className="p-5"><p className="text-xs leading-5 text-muted-foreground">JustCD creates {targets.length} applications, one per cluster. Each has a separate reviewed plan and sync history and can cover multiple namespaces. {renderer === "helm" ? "Helm values layer from chart defaults, shared Git and JustCD values, cluster Git and JustCD values, then namespace Git and JustCD values. Use Kubernetes Secret references for sensitive values." : "Kustomize renders the shared overlay or selected cluster and namespace overlays. Identical cluster-scoped output is coalesced; conflicts stop planning."}</p>{selectedProject?.role !== "owner" && <p className="mt-3 text-xs text-destructive">Only project owners can create deployment groups.</p>}<Button className="mt-4 w-full" type="submit" loading={busy} loadingText="Creating targets…" disabled={loading || busy || !projectId || !sourceId || selectedProject?.role !== "owner"}>Create deployment group</Button></div></Panel>
+        <Panel title="Before creating" description="This creates configuration only. It does not change any cluster."><div className="p-5"><p className="text-xs leading-5 text-muted-foreground">JustCD creates {targets.length} applications, one per cluster. Each has a separate reviewed plan and sync history and can cover multiple namespaces. {renderer === "helm" ? "Helm values layer from chart defaults, shared Git and JustCD values, cluster Git and JustCD values, then namespace Git and JustCD values. Use Kubernetes Secret references for sensitive values." : "Kustomize renders the shared overlay or selected cluster and namespace overlays. Identical cluster-scoped output is coalesced; conflicts stop planning."}</p>{selectedWorkspace?.role !== "owner" && <p className="mt-3 text-xs text-destructive">Only workspace owners can create deployment groups.</p>}<Button className="mt-4 w-full" type="submit" loading={busy} loadingText="Creating targets…" disabled={loading || busy || !workspaceId || !sourceId || selectedWorkspace?.role !== "owner"}>Create deployment group</Button></div></Panel>
       </div>
     </form>
   </>

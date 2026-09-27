@@ -18,7 +18,7 @@ func (s *Server) retryApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "deployer") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "deployer") {
 		return
 	}
 	if _, _, err := s.Store.ReviewByPreviewApplication(r.Context(), app.ID); err == nil {
@@ -122,9 +122,9 @@ func (s *Server) retryApplication(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": "queued", "operation": operation, "plan": toPlanView(record)})
 }
 
-func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("projectID")
-	if !s.requireProjectRole(w, r, id, "owner") {
+func (s *Server) updateWorkspace(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("workspaceID")
+	if !s.requireWorkspaceRole(w, r, id, "owner") {
 		return
 	}
 	var input struct {
@@ -137,30 +137,30 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	input.Name, input.Description = strings.TrimSpace(input.Name), strings.TrimSpace(input.Description)
 	if input.Name == "" || len(input.Name) > 100 || len(input.Description) > 500 {
-		writeError(w, http.StatusBadRequest, "project name must be 1–100 characters and description at most 500 characters")
+		writeError(w, http.StatusBadRequest, "workspace name must be 1–100 characters and description at most 500 characters")
 		return
 	}
-	if err := s.Store.UpdateProject(r.Context(), id, input.Name, input.Description); err != nil {
+	if err := s.Store.UpdateWorkspace(r.Context(), id, input.Name, input.Description); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "project not found")
+			writeError(w, http.StatusNotFound, "workspace not found")
 			return
 		}
-		writeError(w, http.StatusConflict, "could not update project")
+		writeError(w, http.StatusConflict, "could not update workspace")
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "project.updated", "project", id, map[string]string{"name": input.Name, "description": input.Description})
-	project, err := s.Store.ProjectByID(r.Context(), id)
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "workspace.updated", "workspace", id, map[string]string{"name": input.Name, "description": input.Description})
+	workspace, err := s.Store.WorkspaceByID(r.Context(), id)
 	if err != nil {
-		writeStoreError(w, "project updated but could not reload it")
+		writeStoreError(w, "workspace updated but could not reload it")
 		return
 	}
-	project.Role = "owner"
-	writeJSON(w, http.StatusOK, project)
+	workspace.Role = "owner"
+	writeJSON(w, http.StatusOK, workspace)
 }
 
-func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("projectID")
-	if !s.requireProjectRole(w, r, id, "owner") {
+func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("workspaceID")
+	if !s.requireWorkspaceRole(w, r, id, "owner") {
 		return
 	}
 	policy := r.URL.Query().Get("resources")
@@ -169,14 +169,14 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var managed int
-	if err := s.Store.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM managed_resources m JOIN applications a ON a.id=m.application_id WHERE a.project_id=$1`, id).Scan(&managed); err != nil {
-		writeStoreError(w, "could not inspect project resources")
+	if err := s.Store.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM managed_resources m JOIN applications a ON a.id=m.application_id WHERE a.workspace_id=$1`, id).Scan(&managed); err != nil {
+		writeStoreError(w, "could not inspect workspace resources")
 		return
 	}
 	if policy == "delete" && managed > 0 {
 		apps, err := s.Store.ListApplications(r.Context(), id)
 		if err != nil {
-			writeStoreError(w, "could not list project applications")
+			writeStoreError(w, "could not list workspace applications")
 			return
 		}
 		plans := make([]map[string]any, 0)
@@ -191,7 +191,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 			}
 			record, err := s.Syncer.BuildDecommissionPlan(r.Context(), app, currentUser(r).ID)
 			if err != nil {
-				s.Logger.Warn("project decommission plan failed", "projectId", id, "applicationId", app.ID, "error", err)
+				s.Logger.Warn("workspace decommission plan failed", "workspaceId", id, "applicationId", app.ID, "error", err)
 				writeError(w, http.StatusUnprocessableEntity, "could not prepare all application deletion plans; inspect cluster permissions and try again")
 				return
 			}
@@ -200,16 +200,16 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusAccepted, map[string]any{"deleted": false, "plans": plans})
 		return
 	}
-	apps, orphaned, err := s.Store.DeleteProjectKeepingResources(r.Context(), id, policy == "delete")
+	apps, orphaned, err := s.Store.DeleteWorkspaceKeepingResources(r.Context(), id, policy == "delete")
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "project not found")
+			writeError(w, http.StatusNotFound, "workspace not found")
 			return
 		}
-		writeError(w, http.StatusConflict, "project has an active sync or connections still in use")
+		writeError(w, http.StatusConflict, "workspace has an active sync or connections still in use")
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "project.deleted", "project", id, map[string]any{"resourcePolicy": policy, "applications": apps, "orphanedResources": orphaned})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "workspace.deleted", "workspace", id, map[string]any{"resourcePolicy": policy, "applications": apps, "orphanedResources": orphaned})
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "applications": apps, "orphanedResources": orphaned})
 }
 
@@ -219,7 +219,7 @@ func (s *Server) updateApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "owner") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
 	if _, _, err := s.Store.ReviewByPreviewApplication(r.Context(), app.ID); err == nil {
@@ -301,12 +301,13 @@ func (s *Server) updateApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "edit shared source and values through the deployment group")
 		return
 	}
-	source, err := s.Store.GitSourceByID(r.Context(), input.SourceID)
-	if err != nil || source.ProjectID != app.ProjectID {
-		writeError(w, http.StatusBadRequest, "Git source is not available to this project")
+	canUseSource, sourceErr := s.Store.WorkspaceCanUseGitSource(r.Context(), app.WorkspaceID, input.SourceID)
+	if sourceErr != nil || !canUseSource {
+		writeError(w, http.StatusBadRequest, "Git source is not available to this workspace")
 		return
 	}
-	if _, err := s.Store.ClusterByID(r.Context(), input.ClusterID); err != nil {
+	canUseCluster, clusterErr := s.Store.WorkspaceCanUseCluster(r.Context(), app.WorkspaceID, input.ClusterID)
+	if clusterErr != nil || !canUseCluster {
 		writeError(w, http.StatusBadRequest, "cluster not found")
 		return
 	}
@@ -323,9 +324,9 @@ func (s *Server) updateApplication(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		seen[namespace] = true
-		binding, err := s.Store.NamespaceBinding(r.Context(), app.ProjectID, input.ClusterID, namespace)
+		binding, err := s.Store.NamespaceBinding(r.Context(), app.WorkspaceID, input.ClusterID, namespace)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "every namespace must have a project binding")
+			writeError(w, http.StatusBadRequest, "every namespace must have a workspace binding")
 			return
 		}
 		bindings = append(bindings, binding)
@@ -361,7 +362,7 @@ func (s *Server) deleteApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "owner") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
 	policy := r.URL.Query().Get("resources")
@@ -401,7 +402,7 @@ func (s *Server) cancelApplicationDecommission(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "owner") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
 	if err := s.Store.CancelApplicationDecommission(r.Context(), app.ID); err != nil {

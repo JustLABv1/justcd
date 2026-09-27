@@ -11,7 +11,7 @@ func (s *Server) listRollbackTargets(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "viewer") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "viewer") {
 		return
 	}
 	items, err := s.Syncer.RollbackTargets(r.Context(), app.ID)
@@ -28,7 +28,7 @@ func (s *Server) createRollbackPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "owner") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
 	var input struct {
@@ -64,7 +64,7 @@ func (s *Server) updateRollbackState(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireProjectRole(w, r, app.ProjectID, "owner") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
 	var input struct {

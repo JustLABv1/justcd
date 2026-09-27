@@ -122,7 +122,7 @@ func (selector IgnoreSelector) Matches(identity Identity, labels map[string]stri
 
 // RollbackSettings are the non-secret source/rendering settings associated
 // with a rollback target. Kubernetes credentials remain resolved from the
-// application's current project bindings when a plan is reviewed and applied.
+// application's current workspace bindings when a plan is reviewed and applied.
 type RollbackSettings struct {
 	SourceID                   string                        `json:"sourceId"`
 	Revision                   string                        `json:"revision"`
@@ -369,8 +369,8 @@ func RequiredApprovalCount(plan Plan) int {
 	return 0
 }
 
-// ApprovalRoleAllows checks the snapshotted project role or explicit member
-// list for a plan. A higher project role satisfies a lower role requirement.
+// ApprovalRoleAllows checks the snapshotted workspace role or explicit member
+// list for a plan. A higher workspace role satisfies a lower role requirement.
 func ApprovalRoleAllows(plan Plan, role, userID string) bool {
 	for _, selected := range plan.ApproverUserIDs {
 		if selected != "" && selected == userID {
@@ -429,7 +429,7 @@ func AuthorizeApplyMany(plan Plan, approvals []DeletionApproval, now time.Time) 
 			return errors.New("approval is expired or does not match this plan")
 		}
 		if _, exists := actors[approval.ActorID]; exists {
-			return errors.New("approvals must come from distinct project members")
+			return errors.New("approvals must come from distinct workspace members")
 		}
 		actors[approval.ActorID] = struct{}{}
 		if len(deletes) != len(approval.Deletes) || (len(deletes) > 0 && !reflect.DeepEqual(deletes, approval.Deletes)) {

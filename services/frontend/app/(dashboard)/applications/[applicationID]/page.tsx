@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button"
 import { ApplicationDetailSkeleton } from "@/components/application-detail-skeleton"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
 import { Checkbox } from "@/components/ui/checkbox"
-import { DataGridList } from "@/components/data-grid-table"
 import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -59,6 +58,7 @@ export default function ApplicationDetailPage() {
   const [activePlan, setActivePlan] = useState<PlanRecord | null>(null)
   const [expandedAppliedPlan, setExpandedAppliedPlan] = useState<string | null>(null)
   const [resources, setResources] = useState<ManagedResource[]>([])
+  const [topologyView, setTopologyView] = useState<"graph" | "list">("graph")
   const [topology, setTopology] = useState<ResourceTopology | null>(null)
   const [topologyError, setTopologyError] = useState<unknown | null>(null)
   const [topologyRefreshing, setTopologyRefreshing] = useState(false)
@@ -123,7 +123,8 @@ export default function ApplicationDetailPage() {
   useEffect(() => {
     const readTab = () => {
       const value = new URLSearchParams(window.location.search).get("tab")
-      setActiveTab(["overview", "topology", "changes", "components", "activity", "pull-requests", "settings"].includes(value ?? "") ? value! : "overview")
+      setTopologyView(value === "components" || new URLSearchParams(window.location.search).get("view") === "list" ? "list" : "graph")
+      setActiveTab(value === "components" ? "topology" : ["overview", "topology", "changes", "activity", "pull-requests", "settings"].includes(value ?? "") ? value! : "overview")
     }
     readTab()
     window.addEventListener("popstate", readTab)
@@ -632,7 +633,6 @@ export default function ApplicationDetailPage() {
             { id: "overview", label: "Overview" },
             { id: "topology", label: "Topology", count: pendingData.topology ? undefined : topology?.nodes.length },
             { id: "changes", label: "Plan & diff", count: pendingData.plans ? undefined : latestPlan?.status === "current" ? latestPlan.plan.changes.length + (latestPlan.plan.ignored?.length ?? 0) : 0 },
-            { id: "components", label: "Managed components", count: pendingData.resources ? undefined : resources.length },
             { id: "activity", label: "Activity & source", count: pendingData.operations ? undefined : operations.length },
             { id: "pull-requests", label: "Pull requests" },
             { id: "settings", label: "Settings" },
@@ -729,7 +729,7 @@ export default function ApplicationDetailPage() {
         <Tabs.Panel value="topology" className="outline-none">
       {pendingData.topology || pendingData.resources || pendingData.plans || pendingData.operations ? <SectionLoading label="Loading the resource map" /> : <>
       {topologyError && <div role="alert" className="mb-4 rounded-lg border border-destructive/30 p-3 text-xs">Saved topology could not be loaded. The map uses available inventory. <ErrorDetailsButton error={topologyError} /></div>}
-      <ResourceMap canManageResources={canApprove} resourceActionsDisabled={busy || hasPendingOperation} onResourceActionComplete={async () => { setApplication(await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`)); await refreshSummary() }} application={application} plan={plans[0]?.status === "current" ? plans[0] : null} inventory={resources} operations={operations} topology={topology} refreshing={topologyRefreshing} onRefresh={() => {
+      <ResourceMap view={topologyView} onViewChange={(view) => { setTopologyView(view); const url = new URL(window.location.href); url.searchParams.set("tab", "topology"); if (view === "list") url.searchParams.set("view", "list"); else url.searchParams.delete("view"); window.history.pushState(null, "", url) }} canManageResources={canApprove} resourceActionsDisabled={busy || hasPendingOperation} onResourceActionComplete={async () => { setApplication(await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`)); await refreshSummary() }} application={application} plan={plans[0]?.status === "current" ? plans[0] : null} inventory={resources} operations={operations} topology={topology} refreshing={topologyRefreshing} onRefresh={() => {
         setTopologyRefreshing(true)
         void api<ResourceTopology>(`/api/v1/applications/${encodeURIComponent(applicationID)}/topology?refresh=1`).then((result) => {
           setTopology(result); setTopologyError(null)
@@ -769,17 +769,6 @@ export default function ApplicationDetailPage() {
               {activePlan.status === "current" && !currentApprovalSummary?.canApprove && activePlan.plan.requiresApproval && !approvalsComplete && <p className="mt-2 text-right text-xs text-muted-foreground">Approvals can be added by workspace members eligible under this plan&apos;s approval rule.</p>}
               </>}
             </div>}
-          </Panel>
-        </Tabs.Panel>
-
-        <Tabs.Panel value="components" className="outline-none">
-          <Panel surface="flat" title="Managed components" description="JustCD tracks only resources that it created and owns on the cluster.">
-            {pendingData.resources ? <SectionLoading label="Loading managed components" /> : resources.length ? <div className="min-w-0"><DataGridList rows={resources} columns={[
-              { id: "resource", title: "Resource", cell: (item) => <span className="font-medium">{item.identity.name}<span className="mt-0.5 block text-[10px] font-normal text-muted-foreground">{item.identity.kind} · {item.identity.apiVersion}{item.adopted ? " · field handover pending" : ""}</span></span> },
-              { id: "namespace", title: "Namespace", cell: (item) => <span className="text-xs text-muted-foreground">{item.identity.namespace || "cluster scope"}</span> },
-              { id: "cluster", title: "Cluster", cell: (item) => <span className="font-mono text-[10px] text-muted-foreground">{item.identity.clusterId?.slice(0, 8)}</span> },
-              { id: "version", title: "Live version", cell: (item) => <span className="font-mono text-[10px] text-muted-foreground">{item.resourceVersion}</span> },
-            ]} empty="A component inventory appears after the first successful sync." /></div> : <EmptyState title="No managed components yet" description="After the first successful sync, this inventory shows every resource owned by this application." />}
           </Panel>
         </Tabs.Panel>
 

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { EmptyState, StatusBadge } from "@/components/ui-kit"
 import styles from "./resource-map.module.css"
 import { ResourceActions } from "@/components/resource-actions"
+import { DataGridList } from "@/components/data-grid-table"
 import { Input } from "@/components/ui/input"
 import { identityKey, observed, workload, relatedNodes, syncState, topologyLayout, nodeWidth, nodeHeight, type SyncState } from "@/lib/topology-view"
 import type { Application, Identity, ManagedResource, Operation, PlanRecord, ResourceTopology, TopologyNode } from "@/lib/types"
@@ -51,7 +52,8 @@ function fallback(plan: PlanRecord | null, inventory: ManagedResource[]): Resour
   return { nodes: [...nodes.values()], edges: [], warnings: ["Topology unavailable. Showing inventory without inferred relationships."] }
 }
 
-export function ResourceMap({ application, plan, inventory, operations, topology, onViewDiff, onRefresh, refreshing, canManageResources = false, resourceActionsDisabled = false, onResourceActionComplete }: {
+export function ResourceMap({ view, onViewChange, application, plan, inventory, operations, topology, onViewDiff, onRefresh, refreshing, canManageResources = false, resourceActionsDisabled = false, onResourceActionComplete }: {
+  view: "graph" | "list"; onViewChange: (view: "graph" | "list") => void
   canManageResources?: boolean; resourceActionsDisabled?: boolean; onResourceActionComplete?: () => Promise<void>
   application: Application; plan: PlanRecord | null; inventory: ManagedResource[]; operations: Operation[]
   topology: ResourceTopology | null; onViewDiff: (identity: Identity) => void; onRefresh: () => void; refreshing: boolean
@@ -119,26 +121,35 @@ export function ResourceMap({ application, plan, inventory, operations, topology
 
   return <section ref={root} aria-label="Application resource topology" className="mb-6 min-w-0 overflow-hidden rounded-xl border bg-card fullscreen:overflow-auto fullscreen:rounded-none">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
-      <div><h2 className="text-base font-semibold">Resource topology</h2><p className="mt-1 text-sm text-muted-foreground">{application.name} · {graph.nodes.length} resources · {changedCount} changes · {graph.nodes.filter(observed).length} observed</p></div>
+      <div><h2 className="text-base font-semibold">Resources</h2><p className="mt-1 text-sm text-muted-foreground">{application.name} · {graph.nodes.length} resources · {changedCount} changes · {graph.nodes.filter(observed).length} observed</p></div>
       <div className="flex gap-2"><Button type="button" variant="outline" onClick={onRefresh} loading={refreshing} loadingText="Refreshing…">Refresh cluster</Button><Button type="button" variant="outline" onClick={() => void toggleFullscreen()}>{fullscreen ? "Exit fullscreen" : "Fullscreen"}</Button></div>
     </header>
     <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
+      <div role="group" aria-label="Resource view" className="flex gap-1 rounded-lg border p-1">{(["graph", "list"] as const).map((value) => <Button key={value} size="sm" variant={view === value ? "secondary" : "ghost"} aria-pressed={view === value} onClick={() => onViewChange(value)} className="capitalize">{value}</Button>)}</div>
       <Input aria-label="Search resources" placeholder="Find a resource…" className="w-full sm:w-56" value={query} onChange={(event) => { setQuery(event.target.value); setMode("all"); setFocus(false) }} />
       <div role="group" aria-label="Topology filter" className="flex gap-1">{["all", "changes", "observed"].map((value) => <Button type="button" key={value} variant={mode === value ? "secondary" : "ghost"} aria-pressed={mode === value} onClick={() => setMode(value)} className="capitalize">{value}</Button>)}</div>
       <Button type="button" variant="outline" disabled={!selected} aria-pressed={focus} onClick={() => setFocus(!focus)}>{focus ? "Show all resources" : "Focus selection"}</Button>
-      <div className="ml-auto flex flex-wrap items-center gap-1">
+      {view === "graph" && <div className="ml-auto flex flex-wrap items-center gap-1">
         <Button type="button" variant="outline" onClick={fit}>Fit all</Button>
         <Button type="button" variant="outline" disabled={!selected || !layout.positions.has(selected.id)} onClick={() => selected && center(selected.id)}>Center selection</Button>
         <Button type="button" variant="ghost" aria-label="Zoom out" onClick={() => setZoom(Math.max(.15, zoom - .1))}>−</Button>
         <Button type="button" variant="ghost" aria-label="Reset zoom to 100 percent" onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</Button>
         <Button type="button" variant="ghost" aria-label="Zoom in" onClick={() => setZoom(Math.min(1.6, zoom + .1))}>+</Button>
       </div>
+      }
     </div>
     {query && <p role="status" className="px-5 py-2 text-sm text-muted-foreground">{matches.size} matching resources</p>}
     {(running || operation?.status === "failed") && <div role="status" className="border-b bg-muted/30 px-5 py-3 text-sm"><strong>{operation?.type === "rollback" ? "Rollback" : "Sync"} {operation?.status === "failed" ? "stopped" : operation?.status === "queued" ? "queued" : "running"}</strong> · {operation?.progress?.completed?.length ?? 0}/{operation?.progress?.total ?? 0} resource steps completed{operation?.progress?.current ? ` · ${operation.progress.current.kind}/${operation.progress.current.name}` : ""}<span className="mt-1 block text-muted-foreground">Applied does not mean Healthy. {operation?.status === "failed" ? operation.message : ""}</span></div>}
     {(notice || graph.warnings.length > 0) && <p role="status" className="border-b px-5 py-3 text-sm text-amber-700 dark:text-amber-300">{[notice, ...graph.warnings].filter(Boolean).join(" · ")}</p>}
     <div className={`grid min-w-0 ${selected ? "xl:grid-cols-[minmax(0,1fr)_360px]" : ""}`}>
-      <div ref={viewport} tabIndex={0} aria-label="Topology canvas. Drag empty space to pan; use arrow keys to scroll." className={`${styles.canvas} relative h-[min(72svh,900px)] min-h-96 min-w-0 touch-pan-x touch-pan-y overflow-auto bg-muted/10 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary fullscreen:h-[80svh]`} onPointerDown={(event) => {
+      {view === "list" ? <div className="min-w-0 p-4"><DataGridList rows={graph.nodes.filter((node) => (!query.trim() || matches.has(node.id)) && (mode === "all" || mode === "observed" && observed(node) || mode === "changes" && ["create", "update", "delete", "failed"].includes(stateFor(node))) && (!focus || !selected || related.has(node.id)))} columns={[
+        { id: "resource", title: "Resource", cell: (node) => <Button variant="link" className="h-auto max-w-full justify-start whitespace-normal p-0 text-left" onClick={() => setSelectedId(node.id)} aria-pressed={selectedId === node.id}>{node.identity.name}</Button> },
+        { id: "kind", title: "Kind", cell: (node) => <span className="text-xs">{node.identity.kind}</span> },
+        { id: "namespace", title: "Namespace", cell: (node) => <span className="text-xs text-muted-foreground">{node.identity.namespace || "Cluster scope"}</span> },
+        { id: "health", title: "Runtime health", cell: (node) => <span className={`text-xs ${healthTone(node)}`}>{health(node)}</span> },
+        { id: "sync", title: "Sync state", cell: (node) => <span className="text-xs">{labels[stateFor(node)]}</span> },
+        { id: "management", title: "Management", cell: (node) => <span className="text-xs text-muted-foreground">{inventory.some((resource) => identityKey(resource.identity) === identityKey(node.identity)) ? "Managed by JustCD" : observed(node) ? "Observed · managed by Kubernetes" : "Desired · not managed yet"}</span> },
+      ]} empty="No matching resources. Refresh the cluster or try another filter." /></div> : <div ref={viewport} tabIndex={0} aria-label="Topology canvas. Drag empty space to pan; use arrow keys to scroll." className={`${styles.canvas} relative h-[min(72svh,900px)] min-h-96 min-w-0 touch-pan-x touch-pan-y overflow-auto bg-muted/10 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary fullscreen:h-[80svh]`} onPointerDown={(event) => {
         if (event.button !== 0 || event.pointerType === "touch" || (event.target as HTMLElement).closest("button")) return
         const el = event.currentTarget
         drag.current = { x: event.clientX, y: event.clientY, left: el.scrollLeft, top: el.scrollTop }
@@ -187,7 +198,7 @@ export function ResourceMap({ application, plan, inventory, operations, topology
             </div>
           })}
         </div></div>}
-      </div>
+      </div>}
       {selected && <aside aria-label="Resource details" className={`${styles.inspector} min-w-0 space-y-5 border-t p-5 xl:h-[min(72svh,900px)] xl:overflow-auto xl:border-t-0 xl:border-l`}>
         <div className="flex items-start justify-between gap-2"><div className="flex min-w-0 items-center gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-xl border bg-muted/40 text-muted-foreground"><HugeiconsIcon icon={iconFor(selected.identity.kind)} strokeWidth={1.6} className="size-5" aria-hidden="true" /></span><div className="min-w-0"><p className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">{selected.identity.kind}</p><h3 className="mt-1 break-all text-base font-semibold">{selected.identity.name}</h3></div></div><Button type="button" variant="ghost" aria-label="Close resource details" onClick={() => { setSelectedId(null); setFocus(false) }}>×</Button></div>
 

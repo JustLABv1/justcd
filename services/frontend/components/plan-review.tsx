@@ -17,7 +17,7 @@ export function PlanReview({ changes, ignored, selected, onSelect, identityKey, 
   const [filter, setFilter] = useState("all")
   const [fullscreenError, setFullscreenError] = useState("")
   const root = useRef<HTMLElement>(null)
-  const entries = [...changes.map((change) => ({ change, ignored: false })), ...ignored.map((change) => ({ change, ignored: true }))]
+  const entries = [...[...changes].sort((a, b) => Number(b.kind === "delete") - Number(a.kind === "delete")).map((change) => ({ change, ignored: false })), ...ignored.map((change) => ({ change, ignored: true }))]
   const key = (entry: typeof entries[number]) => `${entry.ignored ? "ignored:" : ""}${identityKey(entry.change)}`
   const matching = entries.filter((entry) => {
     const id = entry.change.identity
@@ -40,7 +40,7 @@ export function PlanReview({ changes, ignored, selected, onSelect, identityKey, 
         <p className="mb-2 text-xs text-muted-foreground" role="status">{matching.length} of {entries.length} resources</p>
         <div className="h-48 overflow-auto lg:h-[60svh]">
           {matching.map((entry) => <Button type="button" key={key(entry)} variant={active === entry ? "secondary" : "ghost"} aria-current={active === entry ? "true" : undefined} className="mb-1 h-auto w-full justify-start whitespace-normal px-3 py-3 text-left" onClick={() => onSelect(key(entry))}>
-            <span className="min-w-0"><span className="block break-all text-sm font-medium">{entry.change.identity.name}</span><span className="mt-1 block text-xs text-muted-foreground">{entry.change.identity.kind} · {entry.change.identity.namespace || "cluster"}</span><span className={`mt-2 block text-xs capitalize ${entry.change.kind === "delete" ? "text-rose-600 dark:text-rose-300" : entry.change.kind === "create" ? "text-emerald-700 dark:text-emerald-300" : "text-blue-600 dark:text-blue-300"}`}>{entry.change.kind}{entry.ignored ? " · Excluded" : isExcluded(entry.change) ? " · Exclusion draft" : ""}{entry.change.takeover ? " · Takeover" : ""}</span></span>
+            <span className="min-w-0"><span className="block break-all text-sm font-medium">{entry.change.identity.name}</span><span className="mt-1 block text-xs text-muted-foreground">{entry.change.identity.kind} · {entry.change.identity.namespace || "cluster"}</span><span className={`mt-2 block text-xs capitalize ${entry.ignored ? "text-muted-foreground" : entry.change.kind === "delete" ? "text-rose-600 dark:text-rose-300" : entry.change.kind === "create" ? "text-emerald-700 dark:text-emerald-300" : "text-blue-600 dark:text-blue-300"}`}>{entry.ignored ? "Excluded · not applied" : `${entry.change.kind}${isExcluded(entry.change) ? " · Exclusion draft" : ""}`}{entry.change.takeover ? " · Takeover" : ""}</span></span>
           </Button>)}
         </div>
       </nav>

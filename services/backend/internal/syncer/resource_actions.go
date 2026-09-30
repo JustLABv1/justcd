@@ -115,6 +115,6 @@ func (s *Service) ResourceAction(ctx context.Context, app store.Application, act
 	if err != nil {
 		return fmt.Errorf("encode resource action: %w", err)
 	}
-	_, err = resourceClient.Patch(ctx, action.Identity.Name, types.MergePatchType, raw, metav1.PatchOptions{})
+	_, err = resourceClient.Patch(ctx, action.Identity.Name, types.MergePatchType, raw, applyPatchOptions(core.Change{}, "justcd/"+app.ID))
 	return err
 }

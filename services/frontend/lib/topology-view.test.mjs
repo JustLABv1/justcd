@@ -43,3 +43,13 @@ test("relationship cycles terminate and empty layouts stay valid", () => {
   const empty = topologyLayout({ nodes: [], edges: [] }, [])
   assert.ok(Number.isFinite(empty.width) && Number.isFinite(empty.height))
 })
+
+test("collapsed standalone workloads share a compact band without overlapping", () => {
+  const nodes = Array.from({ length: 7 }, (_, i) => node(`workload-${i}`))
+  const layout = topologyLayout({ nodes, edges: [] }, nodes)
+  assert.equal(layout.bands.length, 1)
+  assert.equal(layout.bands[0].label, "Workloads")
+  assert.equal(new Set([...layout.positions.values()].map(p => p.y)).size, 3)
+  const positions = [...layout.positions.values()]
+  positions.forEach((a, i) => positions.slice(i + 1).forEach(b => assert.ok(a.x + nodeWidth <= b.x || b.x + nodeWidth <= a.x || a.y + nodeHeight <= b.y || b.y + nodeHeight <= a.y)))
+})

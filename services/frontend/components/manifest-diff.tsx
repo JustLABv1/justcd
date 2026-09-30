@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { FormSelect } from "@/components/ui/form-select"
 import { contextRows, reviewRows } from "@/lib/line-diff"
 
-export function ManifestDiff({ before, after }: { before: unknown; after: unknown }) {
+export function ManifestDiff({ before, after, excluded = false }: { before: unknown; after: unknown; excluded?: boolean }) {
   const [mode, setMode] = useState("split")
   const [fontSize, setFontSize] = useState("14")
   const [wrap, setWrap] = useState(true)
@@ -30,6 +30,7 @@ export function ManifestDiff({ before, after }: { before: unknown; after: unknow
       <span className={`min-w-0 flex-1 pr-4 ${wrap || split ? "whitespace-pre-wrap break-all" : "whitespace-pre"}`}>{text ?? " "}</span>
     </div>
   }
+  if (before == null && after == null) return <section aria-label="Manifest comparison" className="px-4 py-5 text-sm text-muted-foreground">Manifest content is unavailable for this difference.{excluded ? " This entry is excluded and will not be applied." : ""}</section>
   return <section aria-label="Manifest comparison">
     <div className="flex flex-wrap items-center gap-2 border-b p-3">
       <FormSelect ariaLabel="Diff layout" value={mode} onValueChange={setMode} className="w-32" items={[{ value: "split", label: "Side by side" }, { value: "unified", label: "Unified" }]} />
@@ -44,8 +45,8 @@ export function ManifestDiff({ before, after }: { before: unknown; after: unknow
     </div>
     <div ref={scroll} tabIndex={0} aria-label="Scrollable manifest diff" className="relative h-[min(65svh,800px)] min-h-64 overflow-auto bg-card font-mono leading-6 focus-visible:outline-2 focus-visible:outline-ring" style={{ fontSize: Number(fontSize) }}>
       <div className={wrap || split ? "w-full min-w-0" : "w-max min-w-full"}>
-        <div className={`sticky top-0 z-10 grid border-b bg-muted px-3 py-2 font-sans text-sm font-medium ${split ? "hidden md:grid md:grid-cols-2" : ""}`}>{split ? <><span>Live before</span><span>Desired after</span></> : "Live before → Desired after"}</div>
-        {singleSide && <div className={`border-b px-4 py-3 font-sans text-sm text-muted-foreground ${split ? "md:hidden" : ""}`}>{before == null ? "Live before: Not present in cluster. This resource will be created." : "Desired after: Resource will be deleted."}</div>}
+        <div className={`sticky top-0 z-10 grid border-b bg-muted px-3 py-2 font-sans text-sm font-medium ${split ? "hidden md:grid md:grid-cols-2" : ""}`}>{split ? <><span>Live before</span><span>{excluded ? "Git reference · excluded" : "Desired after"}</span></> : excluded ? "Live state → Git reference · excluded" : "Live before → Desired after"}</div>
+        {singleSide && <div className={`border-b px-4 py-3 font-sans text-sm text-muted-foreground ${split ? "md:hidden" : ""}`}>{before == null ? excluded ? "Not present in cluster. Creation is excluded." : "Live before: Not present in cluster. This resource will be created." : excluded ? "Not present in Git. Deletion is excluded." : "Desired after: Resource will be deleted."}</div>}
         {rows.map((row, i) => {
           if (!expanded && visible.size > 0 && !visible.has(i)) {
             if (i > 0 && !visible.has(i - 1)) return null
@@ -55,7 +56,7 @@ export function ManifestDiff({ before, after }: { before: unknown; after: unknow
           }
           const unified = singleSide ? before == null ? row.after !== undefined && line(row.after, row.newLine, "added") : row.before !== undefined && line(row.before, row.oldLine, "removed") : <>{row.changed ? <>{row.before !== undefined && line(row.before, row.oldLine, "removed")}{row.after !== undefined && line(row.after, row.newLine, "added")}</> : line(row.after, row.newLine)}</>
           return <div key={i} data-row={i}>
-            {split ? <><div className="hidden min-w-0 grid-cols-2 divide-x md:grid">{before == null ? <div className="px-4 font-sans text-sm text-muted-foreground">{i === 0 ? "Not present in cluster" : ""}</div> : line(row.before, row.oldLine, row.changed && row.before !== undefined ? "removed" : undefined)}{after == null ? <div className="px-4 font-sans text-sm text-muted-foreground">{i === 0 ? "Resource will be deleted" : ""}</div> : line(row.after, row.newLine, row.changed && row.after !== undefined ? "added" : undefined)}</div><div className="md:hidden">{unified}</div></> : unified}
+            {split ? <><div className="hidden min-w-0 grid-cols-2 divide-x md:grid">{before == null ? <div className="px-4 font-sans text-sm text-muted-foreground">{i === 0 ? "Not present in cluster" : ""}</div> : line(row.before, row.oldLine, row.changed && row.before !== undefined ? "removed" : undefined)}{after == null ? <div className="px-4 font-sans text-sm text-muted-foreground">{i === 0 ? excluded ? "Not present in Git · deletion excluded" : "Resource will be deleted" : ""}</div> : line(row.after, row.newLine, row.changed && row.after !== undefined ? "added" : undefined)}</div><div className="md:hidden">{unified}</div></> : unified}
           </div>
         })}
       </div>

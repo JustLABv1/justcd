@@ -430,6 +430,9 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 			plan.Changes[index].Takeover = true
 		}
 	}
+	if err := s.detectFieldTakeovers(ctx, input, &plan, desired); err != nil {
+		return core.Plan{}, nil, err
+	}
 	policy, err := s.Store.EffectiveApprovalPolicy(ctx, app)
 	if err != nil {
 		return core.Plan{}, nil, err

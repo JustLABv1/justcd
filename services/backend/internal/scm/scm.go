@@ -132,9 +132,9 @@ func VerifyAndParse(provider, secret string, header http.Header, body []byte, no
 				ObjectKind string `json:"object_kind"`
 				Ref        string `json:"ref"`
 				After      string `json:"after"`
-				Workspace  struct {
+				Project    struct {
 					PathWithNamespace string `json:"path_with_namespace"`
-				} `json:"workspace"`
+				} `json:"project"`
 			}
 			if err := json.Unmarshal(body, &p); err != nil {
 				return Event{}, err
@@ -149,25 +149,25 @@ func VerifyAndParse(provider, secret string, header http.Header, body []byte, no
 			if id == "" {
 				id = header.Get("X-Gitlab-Webhook-UUID")
 			}
-			return validatePushEvent(Event{Kind: "push", DeliveryID: id, Repository: p.Workspace.PathWithNamespace, Ref: p.Ref, HeadSHA: p.After})
+			return validatePushEvent(Event{Kind: "push", DeliveryID: id, Repository: p.Project.PathWithNamespace, Ref: p.Ref, HeadSHA: p.After})
 		}
 		if header.Get("X-Gitlab-Event") != "Merge Request Hook" {
 			return Event{}, errors.New("event ignored")
 		}
 		var p struct {
 			ObjectKind string `json:"object_kind"`
-			Workspace  struct {
+			Project    struct {
 				PathWithNamespace string `json:"path_with_namespace"`
-			} `json:"workspace"`
+			} `json:"project"`
 			ObjectAttributes struct {
-				Action            string    `json:"action"`
-				State             string    `json:"state"`
-				IID               int       `json:"iid"`
-				URL               string    `json:"url"`
-				UpdatedAt         time.Time `json:"updated_at"`
-				SourceWorkspaceID int       `json:"source_workspace_id"`
-				TargetWorkspaceID int       `json:"target_workspace_id"`
-				LastCommit        struct {
+				Action          string    `json:"action"`
+				State           string    `json:"state"`
+				IID             int       `json:"iid"`
+				URL             string    `json:"url"`
+				UpdatedAt       time.Time `json:"updated_at"`
+				SourceProjectID int       `json:"source_project_id"`
+				TargetProjectID int       `json:"target_project_id"`
+				LastCommit      struct {
 					ID string `json:"id"`
 				} `json:"last_commit"`
 			} `json:"object_attributes"`
@@ -181,7 +181,7 @@ func VerifyAndParse(provider, secret string, header http.Header, body []byte, no
 		if p.ObjectAttributes.Action != "open" && p.ObjectAttributes.Action != "reopen" && p.ObjectAttributes.Action != "update" && p.ObjectAttributes.Action != "close" && p.ObjectAttributes.Action != "merge" {
 			return Event{}, errors.New("event ignored")
 		}
-		e := Event{DeliveryID: header.Get("webhook-id"), Repository: p.Workspace.PathWithNamespace, Number: p.ObjectAttributes.IID, HeadSHA: p.ObjectAttributes.LastCommit.ID, URL: p.ObjectAttributes.URL, Fork: p.ObjectAttributes.SourceWorkspaceID == 0 || p.ObjectAttributes.TargetWorkspaceID == 0 || p.ObjectAttributes.SourceWorkspaceID != p.ObjectAttributes.TargetWorkspaceID, Closed: p.ObjectAttributes.State == "closed" || p.ObjectAttributes.State == "merged", EventAt: p.ObjectAttributes.UpdatedAt}
+		e := Event{DeliveryID: header.Get("webhook-id"), Repository: p.Project.PathWithNamespace, Number: p.ObjectAttributes.IID, HeadSHA: p.ObjectAttributes.LastCommit.ID, URL: p.ObjectAttributes.URL, Fork: p.ObjectAttributes.SourceProjectID == 0 || p.ObjectAttributes.TargetProjectID == 0 || p.ObjectAttributes.SourceProjectID != p.ObjectAttributes.TargetProjectID, Closed: p.ObjectAttributes.State == "closed" || p.ObjectAttributes.State == "merged", EventAt: p.ObjectAttributes.UpdatedAt}
 		if e.DeliveryID == "" {
 			e.DeliveryID = header.Get("X-Gitlab-Event-UUID")
 		}
@@ -251,6 +251,87 @@ func VerifyGenericPush(secret string, header http.Header, body []byte) (Event, e
 
 type Client struct{ HTTP *http.Client }
 
+// ListOpen returns every open PR/MR. A truncated list is an error because callers
+// use it to detect closed reviews.
+func (c Client) ListOpen(ctx context.Context, provider, apiURL, repository, token string) ([]Event, error) {
+	if provider != "github" && provider != "gitlab" {
+		return nil, errors.New("unsupported provider")
+	}
+	client := c.HTTP
+	if client == nil {
+		client = &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	}
+	items := []Event{}
+	for page := 1; page <= 100; page++ {
+		var endpoint string
+		if provider == "github" {
+			endpoint = strings.TrimRight(apiURL, "/") + "/repos/" + repository + "/pulls?state=open&per_page=100&page=" + strconv.Itoa(page)
+		} else {
+			endpoint = strings.TrimRight(apiURL, "/") + "/projects/" + url.PathEscape(repository) + "/merge_requests?state=opened&scope=all&per_page=100&page=" + strconv.Itoa(page)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+		if provider == "github" {
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("Accept", "application/vnd.github+json")
+		} else {
+			req.Header.Set("PRIVATE-TOKEN", token)
+		}
+		res, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if res.StatusCode != http.StatusOK {
+			res.Body.Close()
+			return nil, fmt.Errorf("provider pull request list API returned HTTP %d", res.StatusCode)
+		}
+		var raw []struct {
+			Number    int       `json:"number"`
+			IID       int       `json:"iid"`
+			HTMLURL   string    `json:"html_url"`
+			WebURL    string    `json:"web_url"`
+			SHA       string    `json:"sha"`
+			UpdatedAt time.Time `json:"updated_at"`
+			Head      struct {
+				SHA  string `json:"sha"`
+				Repo struct {
+					FullName string `json:"full_name"`
+				} `json:"repo"`
+			} `json:"head"`
+			Base struct {
+				Repo struct {
+					FullName string `json:"full_name"`
+				} `json:"repo"`
+			} `json:"base"`
+			SourceProjectID int `json:"source_project_id"`
+			TargetProjectID int `json:"target_project_id"`
+		}
+		err = json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(&raw)
+		res.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		for _, v := range raw {
+			e := Event{Repository: repository, EventAt: v.UpdatedAt}
+			if provider == "github" {
+				e.Number, e.HeadSHA, e.URL, e.Fork = v.Number, v.Head.SHA, v.HTMLURL, v.Head.Repo.FullName != v.Base.Repo.FullName
+			} else {
+				e.Number, e.HeadSHA, e.URL, e.Fork = v.IID, v.SHA, v.WebURL, v.SourceProjectID == 0 || v.TargetProjectID == 0 || v.SourceProjectID != v.TargetProjectID
+			}
+			if e.Number <= 0 || len(e.HeadSHA) != 40 || e.EventAt.IsZero() {
+				return nil, errors.New("provider returned incomplete pull request")
+			}
+			items = append(items, e)
+		}
+		if len(raw) < 100 {
+			return items, nil
+		}
+	}
+	return nil, errors.New("provider has more than 10000 open pull requests")
+}
+
 // Current reads the provider's present PR/MR state before acting on a webhook.
 // This prevents delayed webhook delivery from deploying an old commit.
 func (c Client) Current(ctx context.Context, provider, apiURL, repository, token string, number int) (Event, error) {
@@ -258,7 +339,7 @@ func (c Client) Current(ctx context.Context, provider, apiURL, repository, token
 	if provider == "github" {
 		endpoint = strings.TrimRight(apiURL, "/") + "/repos/" + repository + "/pulls/" + strconv.Itoa(number)
 	} else if provider == "gitlab" {
-		endpoint = strings.TrimRight(apiURL, "/") + "/workspaces/" + url.PathEscape(repository) + "/merge_requests/" + strconv.Itoa(number)
+		endpoint = strings.TrimRight(apiURL, "/") + "/projects/" + url.PathEscape(repository) + "/merge_requests/" + strconv.Itoa(number)
 	} else {
 		return Event{}, errors.New("unsupported provider")
 	}
@@ -302,8 +383,8 @@ func (c Client) Current(ctx context.Context, provider, apiURL, repository, token
 				FullName string `json:"full_name"`
 			} `json:"repo"`
 		} `json:"base"`
-		SourceWorkspaceID int `json:"source_workspace_id"`
-		TargetWorkspaceID int `json:"target_workspace_id"`
+		SourceProjectID int `json:"source_project_id"`
+		TargetProjectID int `json:"target_project_id"`
 	}
 	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&raw); err != nil {
 		return Event{}, err
@@ -318,7 +399,7 @@ func (c Client) Current(ctx context.Context, provider, apiURL, repository, token
 	if provider == "gitlab" {
 		e.HeadSHA = raw.SHA
 		e.URL = raw.WebURL
-		e.Fork = raw.SourceWorkspaceID == 0 || raw.TargetWorkspaceID == 0 || raw.SourceWorkspaceID != raw.TargetWorkspaceID
+		e.Fork = raw.SourceProjectID == 0 || raw.TargetProjectID == 0 || raw.SourceProjectID != raw.TargetProjectID
 		e.Closed = raw.State == "closed" || raw.State == "merged"
 	}
 	if len(e.HeadSHA) != 40 {
@@ -327,7 +408,7 @@ func (c Client) Current(ctx context.Context, provider, apiURL, repository, token
 	return e, nil
 }
 
-func (c Client) Report(ctx context.Context, provider, apiURL, repository, token, sha, state, description, targetURL string, number int) error {
+func (c Client) Report(ctx context.Context, provider, apiURL, repository, token, sha, state, description, targetURL, applicationID string) error {
 	if len(sha) != 40 {
 		return errors.New("invalid commit SHA")
 	}
@@ -347,10 +428,10 @@ func (c Client) Report(ctx context.Context, provider, apiURL, repository, token,
 		if githubState == "" {
 			githubState = state
 		}
-		payload, _ = json.Marshal(map[string]string{"state": githubState, "description": description, "context": "JustCD/preview/" + strconv.Itoa(number), "target_url": targetURL})
+		payload, _ = json.Marshal(map[string]string{"state": githubState, "description": description, "context": "JustCD/" + applicationID, "target_url": targetURL})
 	} else if provider == "gitlab" {
-		endpoint = strings.TrimRight(apiURL, "/") + "/workspaces/" + url.PathEscape(repository) + "/statuses/" + sha
-		values := url.Values{"state": {state}, "description": {description}, "name": {"JustCD/preview/" + strconv.Itoa(number)}, "target_url": {targetURL}}
+		endpoint = strings.TrimRight(apiURL, "/") + "/projects/" + url.PathEscape(repository) + "/statuses/" + sha
+		values := url.Values{"state": {state}, "description": {description}, "name": {"JustCD/" + applicationID}, "target_url": {targetURL}}
 		payload = []byte(values.Encode())
 	} else {
 		return errors.New("unsupported source control provider")

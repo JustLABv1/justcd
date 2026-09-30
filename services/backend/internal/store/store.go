@@ -2975,6 +2975,17 @@ func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actor
 	if err := tx.QueryRowContext(ctx, `SELECT id,retry_attempt_count,retry_terminal_reason FROM applications WHERE id=$1 FOR UPDATE`, applicationID).Scan(&lockedApplicationID, &priorAttemptCount, &priorTerminalReason); err != nil {
 		return Operation{}, err
 	}
+	// Recheck under the same lock used by PauseApplication. A poller may
+	// have loaded the application before the user paused it.
+	if actorID == "justcd-system" {
+		var paused bool
+		if err := tx.QueryRowContext(ctx, `SELECT auto_sync_paused FROM applications WHERE id=$1`, applicationID).Scan(&paused); err != nil {
+			return Operation{}, err
+		}
+		if paused {
+			return Operation{}, errors.New("automatic reconciliation is paused")
+		}
+	}
 	attemptCount := priorAttemptCount + 1
 	if priorTerminalReason != "" {
 		attemptCount = 1
@@ -3161,6 +3172,14 @@ func (s *Store) SetOperationProgress(ctx context.Context, id string, progress Op
 }
 
 func (s *Store) AcquireOperation(ctx context.Context, applicationID, planID, actorID string, lease time.Duration) (string, error) {
+	return s.acquireOperation(ctx, applicationID, planID, actorID, lease, false)
+}
+
+func (s *Store) AcquireResourceAction(ctx context.Context, applicationID, actorID string, lease time.Duration) (string, error) {
+	return s.acquireOperation(ctx, applicationID, "", actorID, lease, true)
+}
+
+func (s *Store) acquireOperation(ctx context.Context, applicationID, planID, actorID string, lease time.Duration, resourceAction bool) (string, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err
@@ -3169,6 +3188,26 @@ func (s *Store) AcquireOperation(ctx context.Context, applicationID, planID, act
 	var lockedApplicationID string
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE id=$1 FOR UPDATE`, applicationID).Scan(&lockedApplicationID); err != nil {
 		return "", err
+	}
+	if resourceAction {
+		var active bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM operations WHERE application_id=$1 AND status IN ('queued','running'))`, applicationID).Scan(&active); err != nil {
+			return "", err
+		}
+		if active {
+			return "", errors.New("application already has an active operation")
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE applications SET auto_sync_paused=TRUE,retry_next_at=NULL,updated_at=NOW() WHERE id=$1 AND NOT decommissioning`, applicationID)
+		if err != nil {
+			return "", err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return "", err
+		}
+		if count != 1 {
+			return "", errors.New("application is being decommissioned")
+		}
 	}
 	if planID != "" {
 		var status string
@@ -3205,6 +3244,11 @@ func (s *Store) AcquireOperation(ctx context.Context, applicationID, planID, act
 	}
 	if count != 1 {
 		return "", errors.New("application already has an active operation")
+	}
+	if resourceAction {
+		if _, err := tx.ExecContext(ctx, `UPDATE operations SET operation_type='resource_action' WHERE id=$1`, id); err != nil {
+			return "", err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return "", err

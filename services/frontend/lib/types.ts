@@ -417,7 +417,7 @@ export type Operation = {
   applicationId: string
   planId?: string
   actorId?: string
-  type?: "sync" | "rollback"
+  type?: "sync" | "rollback" | "resource_action"
   rollbackCheckpointId?: string
   status: string
   message: string

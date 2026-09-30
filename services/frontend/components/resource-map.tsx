@@ -5,6 +5,7 @@ import { HugeiconsIcon } from "@hugeicons/react"
 import { Layers01Icon, Settings02Icon, Globe02Icon, DatabaseIcon, CubeIcon, Router02Icon, ServerStack01Icon, Files01Icon, FileTextIcon, Key01Icon, Shield01Icon, Clock01Icon, PlayIcon, Route01Icon, WorkflowSquare04Icon, Folder01Icon } from "@hugeicons/core-free-icons"
 import { Button } from "@/components/ui/button"
 import { EmptyState, StatusBadge } from "@/components/ui-kit"
+import { ResourceActions } from "@/components/resource-actions"
 import { Input } from "@/components/ui/input"
 import { identityKey, observed, workload, relatedNodes, syncState, topologyLayout, nodeWidth, nodeHeight, type SyncState } from "@/lib/topology-view"
 import type { Application, Identity, ManagedResource, Operation, PlanRecord, ResourceTopology, TopologyNode } from "@/lib/types"
@@ -49,7 +50,8 @@ function fallback(plan: PlanRecord | null, inventory: ManagedResource[]): Resour
   return { nodes: [...nodes.values()], edges: [], warnings: ["Topology unavailable. Showing inventory without inferred relationships."] }
 }
 
-export function ResourceMap({ application, plan, inventory, operations, topology, onViewDiff, onRefresh, refreshing }: {
+export function ResourceMap({ application, plan, inventory, operations, topology, onViewDiff, onRefresh, refreshing, canManageResources = false, resourceActionsDisabled = false, onResourceActionComplete }: {
+  canManageResources?: boolean; resourceActionsDisabled?: boolean; onResourceActionComplete?: () => Promise<void>
   application: Application; plan: PlanRecord | null; inventory: ManagedResource[]; operations: Operation[]
   topology: ResourceTopology | null; onViewDiff: (identity: Identity) => void; onRefresh: () => void; refreshing: boolean
 }) {
@@ -70,6 +72,7 @@ export function ResourceMap({ application, plan, inventory, operations, topology
   const running = operation && ["running", "queued"].includes(operation.status)
   const stateFor = (node: TopologyNode) => syncState(node, plan, operation)
   const selected = graph.nodes.find((node) => node.id === selectedId)
+  const selectedManagedResource = selected && inventory.find((resource) => identityKey(resource.identity) === identityKey(selected.identity))
   const related = useMemo(() => selectedId ? relatedNodes(graph, selectedId) : new Set<string>(), [graph, selectedId])
   const children = useMemo(() => {
     const result = new Map<string, TopologyNode[]>()
@@ -186,6 +189,7 @@ export function ResourceMap({ application, plan, inventory, operations, topology
       </div>
       {selected && <aside aria-label="Resource details" className="min-w-0 space-y-5 border-t bg-card p-5 xl:h-[min(72svh,900px)] xl:overflow-auto xl:border-t-0 xl:border-l">
         <div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="text-xs text-muted-foreground">{selected.identity.kind}</p><h3 className="mt-1 break-all text-base font-semibold">{selected.identity.name}</h3></div><Button type="button" variant="ghost" aria-label="Close resource details" onClick={() => { setSelectedId(null); setFocus(false) }}>×</Button></div>
+        {canManageResources && onResourceActionComplete && selectedManagedResource?.identity.namespace && !selectedManagedResource.identity.clusterScoped && <ResourceActions key={selectedManagedResource.uid} applicationID={application.id} resource={selectedManagedResource} disabled={resourceActionsDisabled} onComplete={onResourceActionComplete} />}
         <dl className="space-y-3 text-sm">{[["Namespace", selected.identity.namespace || "Cluster scope"], ["Sync", labels[stateFor(selected)]], ["Health", health(selected)], ["API version", selected.identity.apiVersion], ["Source", selected.source], ["Last observed", selected.observedAt ? new Date(selected.observedAt).toLocaleString() : "Not available"], ["Resource version", selected.resourceVersion || "Not available"]].map(([key, value]) => <div key={key}><dt className="text-xs text-muted-foreground">{key}</dt><dd className="mt-1 break-all">{value}</dd></div>)}</dl>
         {selected.healthSummary && <section aria-label="Kubernetes health details" className="space-y-3 border-t pt-4">
           <h4 className="text-sm font-semibold">Kubernetes health details</h4>

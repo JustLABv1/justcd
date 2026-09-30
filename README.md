@@ -128,21 +128,45 @@ Group-to-workspace role mappings are configured in Connections & access.
 Open an application's **Pull requests** tab and choose **Enable PR reporting**
 (or **Edit settings** for an existing connection). JustCD derives the provider
 and repository from the application's existing Git source; you do not connect
-the repository a second time. For an unknown Git host, confirm that it is a
-self-hosted GitLab instance and supply its HTTPS API URL if needed. The
+the repository a second time. For a custom Git host, JustCD treats a saved
+connection as self-managed GitLab, so verify that the host runs GitLab and
+check its HTTPS API URL. The
 review list remains the default view; reporting settings open only on
 request. For GitLab.com JustCD uses
 `https://gitlab.com/api/v4`; for a self hosted instance use its HTTPS API URL,
-such as `https://gitlab.example.com/api/v4`. Supply a webhook secret and a token permitted to read
-pull requests and write commit statuses. Copy the displayed webhook URL into
-the repository webhook settings and enable pull request or merge request
-and push events. A branch push triggers a fresh plan for every application in
+such as `https://gitlab.example.com/api/v4`. JustCD polls open PRs/MRs when
+reporting is enabled and checks previously tracked reviews for closure every
+two minutes. The API token lists and reads PRs/MRs and writes commit statuses.
+For GitHub, use a fine-grained token for the repository with **Pull requests:
+read** and **Commit statuses: read and write**. For GitLab, use a project or
+personal access token with the `api` scope and access to the project. A webhook
+is optional for faster PR updates: set a secret in JustCD, then copy the
+displayed URL and the same secret into the repository webhook settings and
+enable pull request or merge request events. GitHub uses its webhook Secret
+field; GitLab supports a signing token or legacy secret token. You can also
+enable push events. A branch push triggers a fresh plan for every application in
 the workspace tracking that repository and branch, including application-group
 children. Manual applications stop at plan review; auto-safe applications keep
-their existing safety and approval rules. The poller remains a fallback.
-GitLab's signed webhooks are supported; older instances can use the
-legacy secret token. The host running JustCD must trust the GitLab instance's
+their existing safety and approval rules. The host running JustCD must trust the GitLab instance's
 TLS certificate.
+
+Workspace owners can disable PR reporting without deleting the connection or
+its review history. Deleting the connection removes the saved credentials and
+review history; remove any optional repository webhook separately. Active preview
+deployments must be closed before either action.
+The optional webhook can be removed independently in PR reporting settings;
+polling, saved provider access, and review history remain available. Remove
+the repository webhook at the Git provider as well.
+
+PR reporting is configured per application. Each configured application discovers
+open PRs for the repository. Before planning, JustCD checks changed file paths
+against that application's manifest paths, Helm values files, and optional
+preview path. Renames check both old and new paths. PRs without a matching path
+are hidden from that application's review list and do not receive its status.
+Kustomize remains repository-wide because an overlay can import bases from
+outside its configured path. If a provider cannot return a complete file list,
+JustCD conservatively reviews the PR. Status contexts include the application
+ID so multiple applications do not overwrite each other's status.
 
 For a Git source without a PR reporting connection, a workspace owner can configure
 a push webhook in the Git source settings or with
@@ -259,3 +283,19 @@ Rebuild and rescan regularly as base images and vulnerability data change.
 Deploy with the [Helm chart](charts/justcd/README.md). It requires an external
 PostgreSQL database, a Secret holding `JUSTCD_DATABASE_URL` and
 `JUSTCD_ENCRYPTION_KEY`, and the browser-facing `publicUrl`.
+
+### Pausing reconciliation and resource actions
+
+Workspace owners can pause reconciliation from an application's detail page.
+Pausing preserves its sync policy and rejects queued or running operations; wait
+for the current operation to finish before making a manual hotfix. Automatic
+sync stays paused until an owner selects **Resume reconciliation**. Explicit,
+reviewed manual syncs are still available while paused.
+
+The **Topology** tab offers actions for namespaced managed resources: rescale
+Deployments and StatefulSets (including zero replicas), redeploy Deployments,
+StatefulSets and DaemonSets by restarting their current pod template, and delete
+live resources. Every action pauses the whole application before changing
+Kubernetes, checks ownership and resource identity, and records its outcome in
+activity and the audit trail. Sync stays paused after success or failure.
+Resuming can replace manual changes with Git's desired configuration.

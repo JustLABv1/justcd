@@ -28,6 +28,7 @@ type PreviewProfile struct {
 
 type SourceControlConnection struct {
 	ID                  string         `json:"id"`
+	Enabled             bool           `json:"enabled"`
 	WorkspaceID         string         `json:"workspaceId"`
 	ApplicationID       string         `json:"applicationId"`
 	Provider            string         `json:"provider"`
@@ -39,12 +40,12 @@ type SourceControlConnection struct {
 	CreatedAt           time.Time      `json:"createdAt"`
 }
 
-const connectionColumns = `id,workspace_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile,created_at`
+const connectionColumns = `id,enabled,workspace_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile,created_at`
 
 func scanSourceControlConnection(row interface{ Scan(...any) error }) (SourceControlConnection, error) {
 	var c SourceControlConnection
 	var profile []byte
-	err := row.Scan(&c.ID, &c.WorkspaceID, &c.ApplicationID, &c.Provider, &c.APIURL, &c.Repository, &c.WebhookSecretCipher, &c.StatusTokenCipher, &profile, &c.CreatedAt)
+	err := row.Scan(&c.ID, &c.Enabled, &c.WorkspaceID, &c.ApplicationID, &c.Provider, &c.APIURL, &c.Repository, &c.WebhookSecretCipher, &c.StatusTokenCipher, &profile, &c.CreatedAt)
 	if err == nil {
 		err = json.Unmarshal(profile, &c.PreviewProfile)
 	}
@@ -71,6 +72,86 @@ func (s *Store) SourceControlConnectionByID(ctx context.Context, id string) (Sou
 
 func (s *Store) SourceControlConnectionByApplication(ctx context.Context, id string) (SourceControlConnection, error) {
 	return scanSourceControlConnection(s.DB.QueryRowContext(ctx, `SELECT `+connectionColumns+` FROM source_control_connections WHERE application_id=$1`, id))
+}
+
+func (s *Store) RemoveSourceControlWebhookSecret(ctx context.Context, applicationID string) error {
+	var id string
+	return s.DB.QueryRowContext(ctx, `UPDATE source_control_connections SET webhook_secret_cipher=NULL,updated_at=NOW() WHERE application_id=$1 RETURNING id`, applicationID).Scan(&id)
+}
+
+func (s *Store) EnabledSourceControlConnections(ctx context.Context) ([]SourceControlConnection, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+connectionColumns+` FROM source_control_connections WHERE enabled ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SourceControlConnection{}
+	for rows.Next() {
+		item, err := scanSourceControlConnection(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+var ErrActivePreviews = errors.New("close active previews before changing PR reporting")
+var ErrSourceControlDisabled = errors.New("PR reporting is disabled")
+
+func sourceControlHasActivePreviews(ctx context.Context, tx *sql.Tx, connectionID string) (bool, error) {
+	var active bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM preview_slots WHERE connection_id=$1)
+		OR EXISTS(SELECT 1 FROM pull_request_reviews WHERE connection_id=$1 AND preview_application_id IS NOT NULL)`, connectionID).Scan(&active)
+	return active, err
+}
+
+func (s *Store) SetSourceControlConnectionEnabled(ctx context.Context, applicationID string, enabled bool) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var id string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM source_control_connections WHERE application_id=$1 FOR UPDATE`, applicationID).Scan(&id); err != nil {
+		return err
+	}
+	if !enabled {
+		active, err := sourceControlHasActivePreviews(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if active {
+			return ErrActivePreviews
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE source_control_connections SET enabled=$2,updated_at=NOW() WHERE id=$1`, id, enabled); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) DeleteSourceControlConnection(ctx context.Context, applicationID string) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var id string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM source_control_connections WHERE application_id=$1 FOR UPDATE`, applicationID).Scan(&id); err != nil {
+		return err
+	}
+	active, err := sourceControlHasActivePreviews(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if active {
+		return ErrActivePreviews
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM source_control_connections WHERE id=$1`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 type PullRequestReview struct {
@@ -119,7 +200,24 @@ func (s *Store) ReviewByPreviewApplication(ctx context.Context, applicationID st
 }
 
 func (s *Store) ListReviews(ctx context.Context, connectionID string) ([]PullRequestReview, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+reviewColumns+` FROM pull_request_reviews WHERE connection_id=$1 ORDER BY updated_at DESC LIMIT 100`, connectionID)
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+reviewColumns+` FROM pull_request_reviews WHERE connection_id=$1 AND phase<>'ignored' ORDER BY updated_at DESC LIMIT 100`, connectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PullRequestReview{}
+	for rows.Next() {
+		item, err := scanReview(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) ListOpenReviews(ctx context.Context, connectionID string) ([]PullRequestReview, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+reviewColumns+` FROM pull_request_reviews WHERE connection_id=$1 AND NOT closed`, connectionID)
 	if err != nil {
 		return nil, err
 	}
@@ -168,8 +266,9 @@ func (s *Store) RecordReviewEvent(ctx context.Context, connectionID, deliveryID 
 
 func (s *Store) DueReviews(ctx context.Context, limit int) ([]PullRequestReview, error) {
 	rows, err := s.DB.QueryContext(ctx, `UPDATE pull_request_reviews SET lease_until=NOW()+INTERVAL '5 minutes'
-		WHERE id IN (SELECT id FROM pull_request_reviews
-		WHERE (lease_until IS NULL OR lease_until<NOW()) AND (
+		WHERE id IN (SELECT r.id FROM pull_request_reviews r
+		WHERE EXISTS (SELECT 1 FROM source_control_connections c WHERE c.id=r.connection_id AND c.enabled)
+		AND (lease_until IS NULL OR lease_until<NOW()) AND (
 		phase='pending' OR (expires_at<=NOW() AND NOT closed AND phase NOT IN ('cleanup_pending','removed'))
 		OR (phase IN ('approval_required','syncing','ready','degraded','cleanup_pending') AND updated_at < NOW()-INTERVAL '30 seconds')
 		OR (phase='failed' AND updated_at < NOW()-INTERVAL '60 seconds')
@@ -243,9 +342,12 @@ func (s *Store) ReservePreviewSlot(ctx context.Context, connectionID string, num
 		return false, err
 	}
 	defer tx.Rollback()
-	var id string
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM source_control_connections WHERE id=$1 FOR UPDATE`, connectionID).Scan(&id); err != nil {
+	var enabled bool
+	if err := tx.QueryRowContext(ctx, `SELECT enabled FROM source_control_connections WHERE id=$1 FOR UPDATE`, connectionID).Scan(&enabled); err != nil {
 		return false, err
+	}
+	if !enabled {
+		return false, ErrSourceControlDisabled
 	}
 	var existing bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM preview_slots WHERE connection_id=$1 AND number=$2)`, connectionID, number).Scan(&existing); err != nil {

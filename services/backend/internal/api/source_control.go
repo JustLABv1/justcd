@@ -39,11 +39,11 @@ func validateSourceControlInput(input *sourceControlInput, source store.GitSourc
 		return err
 	}
 	input.Provider, input.APIURL, input.Repository = details.Provider, details.APIURL, details.Repository
-	if (previous == nil || input.WebhookSecret != "") && len(input.WebhookSecret) < 16 || (previous == nil || input.StatusToken != "") && len(input.StatusToken) < 16 {
-		return errors.New("webhookSecret and statusToken must each have at least 16 characters")
+	if input.WebhookSecret != "" && len(input.WebhookSecret) < 16 || (previous == nil || input.StatusToken != "") && len(input.StatusToken) < 16 {
+		return errors.New("webhookSecret, when supplied, and statusToken must each have at least 16 characters")
 	}
-	if previous != nil && previous.Provider != input.Provider && (input.WebhookSecret == "" || input.StatusToken == "") {
-		return errors.New("changing provider requires new webhookSecret and statusToken")
+	if previous != nil && previous.Provider != input.Provider && input.StatusToken == "" {
+		return errors.New("changing provider requires a new statusToken")
 	}
 	p := &input.PreviewProfile
 	if !p.Enabled {
@@ -152,7 +152,7 @@ func (s *Server) putSourceControl(w http.ResponseWriter, r *http.Request) {
 	var webhookCipher, statusCipher []byte
 	if input.WebhookSecret == "" && previous != nil {
 		webhookCipher = previous.WebhookSecretCipher
-	} else {
+	} else if input.WebhookSecret != "" {
 		webhookCipher, err = security.Encrypt(s.EncryptionKey, []byte(input.WebhookSecret), "source-control-webhook:"+id)
 		if err != nil {
 			writeStoreError(w, "could not encrypt webhook secret")
@@ -168,13 +168,14 @@ func (s *Server) putSourceControl(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	c := store.SourceControlConnection{ID: id, WorkspaceID: app.WorkspaceID, ApplicationID: app.ID, Provider: input.Provider, APIURL: input.APIURL, Repository: input.Repository, WebhookSecretCipher: webhookCipher, StatusTokenCipher: statusCipher, PreviewProfile: input.PreviewProfile}
+	enabled := previous == nil || previous.Enabled
+	c := store.SourceControlConnection{ID: id, Enabled: enabled, WorkspaceID: app.WorkspaceID, ApplicationID: app.ID, Provider: input.Provider, APIURL: input.APIURL, Repository: input.Repository, WebhookSecretCipher: webhookCipher, StatusTokenCipher: statusCipher, PreviewProfile: input.PreviewProfile}
 	if err := s.Store.SaveSourceControlConnection(r.Context(), c); err != nil {
 		writeStoreError(w, "could not save source control connection")
 		return
 	}
 	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "source_control.configured", "application", app.ID, map[string]any{"provider": c.Provider, "repository": c.Repository, "previewEnabled": c.PreviewProfile.Enabled})
-	writeJSON(w, http.StatusOK, map[string]any{"source": sourceControlSource{RepositoryURL: source.RepositoryURL, Provider: c.Provider, APIURL: c.APIURL, Repository: c.Repository, SelfHosted: c.Provider == "gitlab" && c.APIURL != "https://gitlab.com/api/v4"}, "connection": c, "webhookUrl": s.Config.PublicURL + "/api/v1/webhooks/source-control/" + c.ID})
+	writeJSON(w, http.StatusOK, map[string]any{"source": sourceControlSource{RepositoryURL: source.RepositoryURL, Provider: c.Provider, APIURL: c.APIURL, Repository: c.Repository, SelfHosted: c.Provider == "gitlab" && c.APIURL != "https://gitlab.com/api/v4"}, "connection": c, "webhookUrl": s.Config.PublicURL + "/api/v1/webhooks/source-control/" + c.ID, "webhookConfigured": len(c.WebhookSecretCipher) > 0})
 }
 
 func samePreviewProfile(a, b store.PreviewProfile) bool {
@@ -214,14 +215,96 @@ func (s *Server) getSourceControl(w http.ResponseWriter, r *http.Request) {
 	}
 	c, err := s.Store.SourceControlConnectionByApplication(r.Context(), app.ID)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeJSON(w, http.StatusOK, map[string]any{"source": suggestion, "connection": nil, "webhookUrl": ""})
+		writeJSON(w, http.StatusOK, map[string]any{"source": suggestion, "connection": nil, "webhookUrl": "", "webhookConfigured": false})
 		return
 	}
 	if err != nil {
 		writeStoreError(w, "could not load source control connection")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"source": suggestion, "connection": c, "webhookUrl": s.Config.PublicURL + "/api/v1/webhooks/source-control/" + c.ID})
+	writeJSON(w, http.StatusOK, map[string]any{"source": suggestion, "connection": c, "webhookUrl": s.Config.PublicURL + "/api/v1/webhooks/source-control/" + c.ID, "webhookConfigured": len(c.WebhookSecretCipher) > 0})
+}
+
+func (s *Server) removeSourceControlWebhook(w http.ResponseWriter, r *http.Request) {
+	app, err := s.Store.ApplicationByID(r.Context(), r.PathValue("applicationID"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "application not found")
+		return
+	}
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
+		return
+	}
+	if err := s.Store.RemoveSourceControlWebhookSecret(r.Context(), app.ID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "PR reporting is not configured")
+			return
+		}
+		writeStoreError(w, "could not remove webhook secret")
+		return
+	}
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "source_control.webhook_removed", "application", app.ID, nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) setSourceControlEnabled(w http.ResponseWriter, r *http.Request) {
+	app, err := s.Store.ApplicationByID(r.Context(), r.PathValue("applicationID"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "application not found")
+		return
+	}
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
+		return
+	}
+	var input struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if input.Enabled == nil {
+		writeError(w, http.StatusBadRequest, "enabled is required")
+		return
+	}
+	if err := s.Store.SetSourceControlConnectionEnabled(r.Context(), app.ID, *input.Enabled); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "PR reporting is not configured")
+			return
+		}
+		if errors.Is(err, store.ErrActivePreviews) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeStoreError(w, "could not change PR reporting state")
+		return
+	}
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "source_control.enabled_changed", "application", app.ID, map[string]any{"enabled": *input.Enabled})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) deleteSourceControl(w http.ResponseWriter, r *http.Request) {
+	app, err := s.Store.ApplicationByID(r.Context(), r.PathValue("applicationID"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "application not found")
+		return
+	}
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
+		return
+	}
+	if err := s.Store.DeleteSourceControlConnection(r.Context(), app.ID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "PR reporting is not configured")
+			return
+		}
+		if errors.Is(err, store.ErrActivePreviews) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeStoreError(w, "could not delete PR reporting")
+		return
+	}
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "source_control.deleted", "application", app.ID, nil)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) listPullRequestReviews(w http.ResponseWriter, r *http.Request) {
@@ -250,6 +333,14 @@ func (s *Server) sourceControlWebhook(w http.ResponseWriter, r *http.Request) {
 	c, err := s.Store.SourceControlConnectionByID(r.Context(), r.PathValue("connectionID"))
 	if err != nil {
 		writeError(w, http.StatusNotFound, "source control connection not found")
+		return
+	}
+	if !c.Enabled {
+		writeError(w, http.StatusGone, "PR reporting is disabled")
+		return
+	}
+	if len(c.WebhookSecretCipher) == 0 {
+		writeError(w, http.StatusGone, "webhook is not configured; pull requests are polled")
 		return
 	}
 	secret, err := security.Decrypt(s.EncryptionKey, c.WebhookSecretCipher, "source-control-webhook:"+c.ID)

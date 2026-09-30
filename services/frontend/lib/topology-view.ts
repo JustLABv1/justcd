@@ -48,6 +48,14 @@ export function topologyLayout(graph: ResourceTopology, nodes: TopologyNode[]) {
     const group = workload(node) ? node.id : candidates?.size === 1 ? [...candidates][0] : candidates?.size ? "shared" : "unconnected"
     groups.set(group, [...(groups.get(group) ?? []), node])
   }
+  // Collapsed workloads without visible dependencies share a compact band.
+  const standalone: TopologyNode[] = []
+  for (const [id, members] of groups) {
+    if (members.length === 1 && workload(members[0])) {
+      standalone.push(members[0]); groups.delete(id)
+    }
+  }
+  if (standalone.length) groups.set("workloads", standalone)
   const rank = (node: TopologyNode) => ["Ingress", "HTTPRoute", "Gateway"].includes(node.identity.kind) ? 0 : node.identity.kind === "Service" ? 1 : workload(node) ? 2 : ["ReplicaSet", "Pod"].includes(node.identity.kind) ? 3 : 4
   const positions = new Map<string, { x: number; y: number }>()
   const bands: { id: string; label: string; y: number; height: number }[] = []
@@ -56,13 +64,15 @@ export function topologyLayout(graph: ResourceTopology, nodes: TopologyNode[]) {
     const ranks = [...new Set(members.map(rank))].sort((a, b) => a - b)
     const counts = new Map<number, number>()
     for (const node of [...members].sort((a, b) => a.identity.kind.localeCompare(b.identity.kind) || a.identity.name.localeCompare(b.identity.name))) {
-      const col = ranks.indexOf(rank(node)), row = counts.get(col) ?? 0
+      const compact = id === "workloads"
+      const index = members.indexOf(node)
+      const col = compact ? index % 3 : ranks.indexOf(rank(node)), row = compact ? Math.floor(index / 3) : counts.get(col) ?? 0
       positions.set(node.id, { x: 28 + col * 352, y: y + 44 + row * 148 }); counts.set(col, row + 1)
     }
     const height = 44 + Math.max(...counts.values()) * 148
     const anchor = graph.nodes.find((node) => node.id === id)
-    bands.push({ id, label: id === "shared" ? "Shared resources" : id === "unconnected" ? "No detected relationships" : `${anchor?.identity.name} · ${anchor?.identity.namespace || "cluster"}`, y, height })
-    width = Math.max(width, 56 + ranks.length * 352 - 72); y += height + 16
+    bands.push({ id, label: id === "shared" ? "Shared resources" : id === "workloads" ? "Workloads" : id === "unconnected" ? "Other resources" : `${anchor?.identity.name} · ${anchor?.identity.namespace || "cluster"}`, y, height })
+    width = Math.max(width, 56 + (id === "workloads" ? Math.min(3, members.length) : ranks.length) * 352 - 72); y += height + 16
   }
   return { positions, bands, width, height: Math.max(320, y) }
 }

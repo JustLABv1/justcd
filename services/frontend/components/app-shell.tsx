@@ -206,7 +206,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             return <Link key={item.section} href={href} aria-current={selected ? "page" : undefined} className={`${styles.navItem} shrink-0 !px-3 !py-2 !text-xs`}>{item.label}</Link>
           })}
         </nav>
-        <main className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") ? "max-w-none" : "max-w-[1440px]"} px-5 pb-7 pt-5 sm:px-8 sm:pb-8 sm:pt-6 lg:pt-9 ${pathname === "/audit" ? "lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden" : ""}`}>
+        <main style={{ paddingBottom: "calc(2rem + var(--toast-clearance, 0px))" }} className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") ? "max-w-none" : "max-w-[1440px]"} px-5 pb-7 pt-5 sm:px-8 sm:pb-8 sm:pt-6 lg:pt-9 ${pathname === "/audit" ? "lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden" : ""}`}>
           {crumbs.length > 1 && <nav aria-label="Breadcrumb" className="mb-4 shrink-0 text-xs">
             <ol className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               {crumbs.map((crumb, index) => <li key={`${crumb.label}-${index}`} className="flex min-w-0 max-w-full items-center gap-2">

@@ -22,10 +22,16 @@ const reviewActorID = "justcd-system"
 func (s *Server) RunReviewWorker(ctx context.Context, logger *slog.Logger) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
+	pollTicker := time.NewTicker(2 * time.Minute)
+	defer pollTicker.Stop()
+	// Discover open PRs immediately after startup, then refresh every two minutes.
+	go s.pollPullRequests(ctx, logger)
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-pollTicker.C:
+			go s.pollPullRequests(ctx, logger)
 		case <-ticker.C:
 			items, err := s.Store.DueReviews(ctx, 10)
 			if err != nil {
@@ -47,10 +53,88 @@ func (s *Server) RunReviewWorker(ctx context.Context, logger *slog.Logger) {
 	}
 }
 
+func (s *Server) pollPullRequests(ctx context.Context, logger *slog.Logger) {
+	connections, err := s.Store.EnabledSourceControlConnections(ctx)
+	if err != nil {
+		logger.Error("could not list PR reporting connections", "error", err)
+		return
+	}
+	client := scm.Client{}
+	for _, connection := range connections {
+		if ctx.Err() != nil {
+			return
+		}
+		workCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+		err := s.pollConnection(workCtx, client, connection)
+		cancel()
+		if err != nil {
+			logger.Warn("could not poll pull requests", "connectionId", connection.ID, "error", err)
+		}
+	}
+}
+
+func (s *Server) pollConnection(ctx context.Context, client scm.Client, connection store.SourceControlConnection) error {
+	token, err := security.Decrypt(s.EncryptionKey, connection.StatusTokenCipher, "source-control-status:"+connection.ID)
+	if err != nil {
+		return err
+	}
+	open, err := client.ListOpen(ctx, connection.Provider, connection.APIURL, connection.Repository, string(token))
+	if err != nil {
+		return err
+	}
+	known, err := s.Store.ListOpenReviews(ctx, connection.ID)
+	if err != nil {
+		return err
+	}
+	previous := make(map[int]store.PullRequestReview, len(known))
+	for _, review := range known {
+		previous[review.Number] = review
+	}
+	seen := make(map[int]bool, len(open))
+	for _, item := range open {
+		seen[item.Number] = true
+		if old, ok := previous[item.Number]; ok && old.HeadSHA == item.HeadSHA && old.Fork == item.Fork {
+			continue
+		}
+		if err := s.recordPolledReview(ctx, connection.ID, item); err != nil {
+			return err
+		}
+	}
+	// Recheck missing reviews individually. This avoids interpreting a transient
+	// list omission as closure and gives the provider's final SHA and timestamp.
+	for _, old := range known {
+		if seen[old.Number] {
+			continue
+		}
+		current, err := client.Current(ctx, connection.Provider, connection.APIURL, connection.Repository, string(token), old.Number)
+		if err != nil {
+			return err
+		}
+		if current.Closed || current.HeadSHA != old.HeadSHA || current.Fork != old.Fork {
+			if err := s.recordPolledReview(ctx, connection.ID, current); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Server) recordPolledReview(ctx context.Context, connectionID string, item scm.Event) error {
+	// The stable ID deduplicates concurrent workers; changed provider timestamps
+	// allow a reopened PR at the same SHA to be recorded again.
+	id := "poll:" + strconv.Itoa(item.Number) + ":" + item.HeadSHA + ":" + strconv.FormatBool(item.Closed) + ":" + strconv.FormatInt(item.EventAt.UnixNano(), 10)
+	review := store.PullRequestReview{ID: store.NewID(), ConnectionID: connectionID, Number: item.Number, HeadSHA: item.HeadSHA, SourceURL: item.URL, Fork: item.Fork, Closed: item.Closed, EventAt: item.EventAt}
+	_, err := s.Store.RecordReviewEvent(ctx, connectionID, id, review)
+	return err
+}
+
 func (s *Server) processReview(ctx context.Context, review store.PullRequestReview) error {
 	connection, err := s.Store.SourceControlConnectionByID(ctx, review.ConnectionID)
 	if err != nil {
 		return err
+	}
+	if !connection.Enabled {
+		return nil
 	}
 	token, err := security.Decrypt(s.EncryptionKey, connection.StatusTokenCipher, "source-control-status:"+connection.ID)
 	if err != nil {
@@ -92,6 +176,22 @@ func (s *Server) processReview(ctx context.Context, review store.PullRequestRevi
 	if sourceErr != nil || parseErr != nil || !sourceMatchesConnection(source.RepositoryURL, connection.Provider, apiURL, connection.Repository) {
 		_ = s.Store.SetReviewWorkerError(ctx, review.ID, "application Git source no longer matches source control connection")
 		return errors.New("application Git source no longer matches source control connection")
+	}
+	if review.PreviewApplicationID == nil {
+		watched := reviewPaths(app, connection.PreviewProfile)
+		if watched != nil {
+			changedPaths, filesErr := (scm.Client{}).ChangedPaths(ctx, connection.Provider, connection.APIURL, connection.Repository, string(token), review.Number)
+			// Incomplete provider data must not hide a potentially relevant PR.
+			if filesErr == nil && !pathsAffectApplication(changedPaths, watched) {
+				ignored := review
+				ignored.Phase = "ignored"
+				ignored.Error = ""
+				ignored.Plan = nil
+				ignored.ProcessedSHA = review.HeadSHA
+				_, err := s.Store.UpdateReviewResult(ctx, ignored, review.HeadSHA, review.Closed)
+				return err
+			}
+		}
 	}
 	result := review
 	result.Error = ""
@@ -333,7 +433,7 @@ func (s *Server) reportReview(ctx context.Context, connection store.SourceContro
 		state, description = "failed", "JustCD could not prepare a healthy preview"
 	}
 	target := s.Config.FrontendURL + "/applications/" + connection.ApplicationID + "/pull-requests#review-" + strconv.Itoa(review.Number)
-	if err := (scm.Client{}).Report(ctx, connection.Provider, connection.APIURL, connection.Repository, token, review.HeadSHA, state, description, target, review.Number); err != nil {
+	if err := (scm.Client{}).Report(ctx, connection.Provider, connection.APIURL, connection.Repository, token, review.HeadSHA, state, description, target, connection.ApplicationID); err != nil {
 		_ = s.Store.SetReviewReportError(ctx, review.ID, "could not update provider commit status: "+err.Error())
 		return err
 	}

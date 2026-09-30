@@ -26,7 +26,7 @@ function ApplicationsContent() {
   })
   const { workspaceId } = useWorkspaceSelection()
   const searchParams = useSearchParams()
-  const initialFilter = ["attention", "synced", "other"].includes(
+  const initialFilter = ["attention", "synced", "other", "paused"].includes(
     searchParams.get("status") ?? ""
   )
     ? searchParams.get("status")!

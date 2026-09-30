@@ -94,3 +94,21 @@ func TestTakeoverChangesPlanDigest(t *testing.T) {
 		t.Fatal("approval digest must bind the ownership transfer flag")
 	}
 }
+
+func TestAdoptionAllowsDeletedApplicationOwner(t *testing.T) {
+	fresh := OwnershipConflict{Identity: core.Identity{Kind: "Secret", Name: "vault"}, UID: "uid", ResourceVersion: "1", DesiredFingerprint: "desired", Owner: "deleted-app", OwnerMissing: true}
+	expected := fresh
+	if err := validateAdoptionConflict(&fresh, &expected, "new-app"); err != nil {
+		t.Fatalf("orphan label blocked: %v", err)
+	}
+	// Client-provided ownerMissing must never authorize an existing owner's resource.
+	fresh.OwnerMissing = false
+	if err := validateAdoptionConflict(&fresh, &expected, "new-app"); !errors.Is(err, ErrAdoptionUnsafe) {
+		t.Fatalf("client forged deletion accepted: %v", err)
+	}
+	fresh.OwnerMissing = true
+	fresh.HasOwnerReferences = true
+	if err := validateAdoptionConflict(&fresh, &expected, "new-app"); !errors.Is(err, ErrAdoptionUnsafe) {
+		t.Fatalf("dependent object accepted: %v", err)
+	}
+}

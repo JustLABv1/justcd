@@ -56,24 +56,33 @@ export default function NewApplicationGroupPage() {
 
   useEffect(() => {
     const queryWorkspace = new URLSearchParams(window.location.search).get("workspaceId") ?? ""
-    Promise.all([api<ListResponse<Workspace>>("/api/v1/workspaces"), api<ListResponse<Cluster>>("/api/v1/clusters")])
-      .then(([workspaceResult, clusterResult]) => {
+    let active = true
+    api<ListResponse<Workspace>>("/api/v1/workspaces")
+      .then((workspaceResult) => {
+        if (!active) return
         const writable = workspaceResult.items.filter((workspace) => workspace.role !== "viewer")
         setWorkspaces(writable)
         setWorkspaceId(writable.find((workspace) => workspace.id === queryWorkspace)?.id ?? writable[0]?.id ?? "")
-        setClusters(clusterResult.items)
-        setTargets([{ ...firstTarget, clusterId: clusterResult.items[0]?.id ?? "" }])
       })
-      .catch(setError)
-      .finally(() => setLoading(false))
+      .catch((cause) => active && setError(cause))
+      .finally(() => active && setLoading(false))
+    return () => { active = false }
   }, [])
 
   useEffect(() => {
     if (!workspaceId) return
     let active = true
-    api<ListResponse<GitSource>>("/api/v1/git-sources?workspaceId=" + encodeURIComponent(workspaceId))
-      .then((result) => { if (active) { setSources(result.items); setSourceId(result.items[0]?.id ?? "") } })
-      .catch((cause) => active && setError(cause))
+    Promise.all([
+      api<ListResponse<GitSource>>("/api/v1/git-sources?workspaceId=" + encodeURIComponent(workspaceId)),
+      api<ListResponse<Cluster>>("/api/v1/clusters?workspaceId=" + encodeURIComponent(workspaceId)),
+    ]).then(([sourceList, clusterList]) => {
+      if (!active) return
+      setSources(sourceList.items)
+      setSourceId(sourceList.items[0]?.id ?? "")
+      setClusters(clusterList.items)
+      setTargets((current) => current.map((target) => ({ ...target, clusterId: clusterList.items.some((cluster) => cluster.id === target.clusterId) ? target.clusterId : clusterList.items[0]?.id ?? "", namespaces: [], namespaceValues: {} })))
+      setError(null)
+    }).catch((cause) => active && setError(cause))
     return () => { active = false }
   }, [workspaceId])
 
@@ -146,7 +155,7 @@ export default function NewApplicationGroupPage() {
     <form className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]" onSubmit={submit}>
       <div className="space-y-5">
         <Panel title="Shared source" description="Targets share a Git source and revision. Choose Helm values layering or Kustomize overlays."><div className="grid gap-4 p-5 sm:grid-cols-2">
-          <FormField label="Workspace" htmlFor="group-workspace"><FormSelect id="group-workspace" value={workspaceId} onValueChange={(value) => { setWorkspaceId(value); setTargets((current) => current.map((target) => ({ ...target, namespaces: [], namespaceValues: {} }))) }} placeholder="Select workspace" required items={workspaces.map((workspace) => ({ value: workspace.id, label: workspace.name }))} /></FormField>
+          <FormField label="Workspace" htmlFor="group-workspace"><FormSelect id="group-workspace" value={workspaceId} onValueChange={(value) => { setWorkspaceId(value); setSourceId(""); setSources([]); setClusters([]); setBindingsByCluster({}); setTargets((current) => current.map((target) => ({ ...target, clusterId: "", namespaces: [], namespaceValues: {} }))) }} placeholder="Select workspace" required items={workspaces.map((workspace) => ({ value: workspace.id, label: workspace.name }))} /></FormField>
           <FormField label="Git source" htmlFor="group-source"><FormSelect id="group-source" value={sourceId} onValueChange={setSourceId} placeholder="Select source" required items={sources.map((source) => ({ value: source.id, label: source.name + " · " + source.repositoryUrl }))} /></FormField>
           <FormField label="Renderer" htmlFor="group-renderer"><FormSelect id="group-renderer" value={renderer} onValueChange={(value) => { const next = value as "helm" | "kustomize"; setRenderer(next); setHelmValuesFiles(""); setHelmValuesYaml(""); if (next === "helm") { setKustomizeHelmEnabled(false); setKustomizeNamespaceOverride(false) } setTargets((current) => current.map((target) => ({ ...target, valuesFiles: "", valuesYaml: "", manifestPath: "", namespaceValues: {} }))) }} items={[{ value: "helm", label: "Helm" }, { value: "kustomize", label: "Kustomize" }]} /></FormField>
           <FormField label="Group name" htmlFor="group-name" hint="A stable name for this set of deployments."><Input id="group-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="monitoring-agent" required pattern="[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?" /></FormField>

@@ -1,0 +1,20 @@
+.canvas {
+  background-color: color-mix(in srgb, var(--muted) 28%, var(--background));
+  background-image: radial-gradient(color-mix(in srgb, var(--foreground) 12%, transparent) .75px, transparent .75px);
+  background-size: 20px 20px;
+}
+.card {
+  box-shadow: 0 2px 4px rgb(0 0 0 / .025), 0 8px 20px rgb(0 0 0 / .025);
+  transition: border-color 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
+}
+.card:hover { box-shadow: 0 3px 8px rgb(0 0 0 / .045), 0 10px 24px rgb(0 0 0 / .04); }
+.selected {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 13%, transparent), 0 8px 24px rgb(0 0 0 / .05);
+}
+.inspector { background: var(--card); }
+.inspector dl > div { min-width: 0; }
+@media (prefers-reduced-motion: reduce) { .card { transition: none; } }
+.inspector summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.inspector summary::after { content: "+"; color: var(--muted-foreground); font-size: 14px; }
+.inspector details[open] > summary::after { content: "−"; }

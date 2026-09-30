@@ -388,6 +388,9 @@ func safeApplyFailure(cause error, progress store.OperationProgress, operationTy
 	if len(progress.Completed) > 0 {
 		return fmt.Sprintf("%s stopped after %d of %d resources; completed resources remain applied and were not rolled back. Review cluster state and rebuild the plan before retrying.", name, len(progress.Completed), progress.Total)
 	}
+	if apierrors.IsConflict(cause) && strings.Contains(cause.Error(), "conflict with") {
+		return fmt.Sprintf("%s stopped because Kubernetes field ownership conflicts with another manager. Review the affected fields and create a fresh plan before retrying. No automatic rollback was attempted.", name)
+	}
 	if cause != nil && (strings.Contains(cause.Error(), "changed after") || strings.Contains(cause.Error(), "recheck")) {
 		return fmt.Sprintf("%s stopped because live state changed after review. No automatic rollback was attempted. Rebuild and review the plan.", name)
 	}

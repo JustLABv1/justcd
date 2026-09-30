@@ -55,6 +55,9 @@ func ClassifyRetryError(err error) RetryClassification {
 	if apierrors.IsUnauthorized(err) || apierrors.IsForbidden(err) {
 		return RetryClassification{ErrorCode: "kubernetes.authorization_failed", TerminalReason: "authorization_failure"}
 	}
+	if apierrors.IsConflict(err) {
+		return RetryClassification{ErrorCode: "kubernetes.conflict", TerminalReason: "conflict_requires_review"}
+	}
 	if apierrors.IsInvalid(err) || apierrors.IsBadRequest(err) {
 		return RetryClassification{ErrorCode: "kubernetes.validation_failed", TerminalReason: "validation_failure"}
 	}

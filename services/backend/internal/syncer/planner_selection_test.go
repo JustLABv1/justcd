@@ -22,3 +22,11 @@ func TestSelectedResourceRemainsInManagedLiveSnapshot(t *testing.T) {
 		t.Fatal("a permanently ignored resource should not be tracked in the live snapshot")
 	}
 }
+
+func TestGitKindExclusionSkipsPreviouslyManagedResource(t *testing.T) {
+	resource := store.ManagedResource{Identity: core.Identity{APIVersion: "secrets.hashicorp.com/v1beta1", Kind: "VaultStaticSecret", Namespace: "ntfy-dev", Name: "oauth2-proxy-secret"}, Manifest: []byte(`{"metadata":{"name":"oauth2-proxy-secret"}}`)}
+	input := planInput{IgnoreSelectors: []core.IgnoreSelector{{APIVersion: resource.Identity.APIVersion, Kind: resource.Identity.Kind, ManagedByGit: true}}}
+	if shouldTrackManagedResource(input, resource) {
+		t.Fatal("Git-excluded resources must not enter live reads or pruning")
+	}
+}

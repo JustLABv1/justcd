@@ -167,7 +167,24 @@ export type WorkspaceConnectionShare = {
   acceptedAt?: string
 }
 
+export type RepositoryConfiguration = {
+  id: string
+  workspaceId: string
+  sourceId: string
+  revision: string
+  enabled: boolean
+  lastCheckedAt?: string
+  lastCommit: string
+  lastError: string
+  createdAt: string
+}
+
 export type Application = {
+  helmReleaseName?: string
+  repositoryConfigurationId?: string
+  configurationPath?: string
+  configurationCommit?: string
+  configurationMissing?: boolean
   id: string
   workspaceId: string
   name: string
@@ -292,6 +309,7 @@ export type OwnershipConflict = {
   uid: string
   resourceVersion: string
   owner?: string
+  ownerMissing?: boolean
   desiredFingerprint: string
   hasOwnerReferences: boolean
 }
@@ -314,6 +332,7 @@ export type Change = {
 export type FieldExclusion = { identity: Identity; path: string }
 export type PlanSelection = { resources?: Identity[]; fields?: FieldExclusion[] }
 export type IgnoreRule = {
+  managedByGit?: boolean
   id: string
   applicationId: string
   identity: Identity
@@ -324,6 +343,7 @@ export type IgnoreRule = {
 }
 
 export type IgnoreSelector = {
+  managedByGit?: boolean
   id: string
   apiVersion?: string
   kind?: string
@@ -417,7 +437,7 @@ export type Operation = {
   applicationId: string
   planId?: string
   actorId?: string
-  type?: "sync" | "rollback"
+  type?: "sync" | "rollback" | "resource_action"
   rollbackCheckpointId?: string
   status: string
   message: string

@@ -33,8 +33,9 @@ export default function EditApplicationPage() {
 
   useEffect(() => {
     let active = true
-    Promise.all([api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`), api<ListResponse<Workspace>>( "/api/v1/workspaces"), api<ListResponse<Cluster>>( "/api/v1/clusters")])
-      .then(([application, workspaces, clusterList]) => {
+    Promise.all([api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`), api<ListResponse<Workspace>>( "/api/v1/workspaces")])
+      .then(async ([application, workspaces]) => {
+        const clusterList = await api<ListResponse<Cluster>>(`/api/v1/clusters?workspaceId=${encodeURIComponent(application.workspaceId)}`)
         if (!active) return
         setApp(application); setNamespaces(application.namespaces.map((item) => item.namespace)); setApprovalPolicyOverride(application.approvalPolicyOverride ?? {})
         setWorkspace(workspaces.items.find((item) => item.id === application.workspaceId) ?? null)
@@ -112,7 +113,7 @@ export default function EditApplicationPage() {
   return <>
     <PageHeading title={app ? `Edit ${app.name}` : "Edit application"} description="Changes invalidate existing plans. Review a fresh plan before the next sync." />
     {error && <ErrorNotice error={error} />}
-    {!app ? <p className="text-sm text-muted-foreground">Loading application…</p> : workspace?.role !== "owner" ? <p className="text-sm text-muted-foreground">Only workspace owners can edit applications.</p> : <form className="max-w-4xl space-y-5" onSubmit={save}>
+    {!app ? <p className="text-sm text-muted-foreground">Loading application…</p> : app.repositoryConfigurationId ? <p className="text-sm text-muted-foreground">Managed by Git. Edit <code>{app.configurationPath}</code> in the repository to change this application.</p> : workspace?.role !== "owner" ? <p className="text-sm text-muted-foreground">Only workspace owners can edit applications.</p> : <form className="max-w-4xl space-y-5" onSubmit={save}>
       <Panel title="Source" description="The Git revision and repository path used for future plans."><div className="grid gap-4 p-5 sm:grid-cols-2">
         <FormField label="Application name" htmlFor="edit-app-name"><Input id="edit-app-name" value={app.name} onChange={(event) => setApp({ ...app, name: event.target.value })} required pattern="[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?" /></FormField>
         <FormField label="Git source" htmlFor="edit-app-source"><FormSelect id="edit-app-source" value={app.sourceId} onValueChange={(value) => setApp({ ...app, sourceId: value })} disabled={Boolean(app.applicationGroupId)} items={sources.map((source) => ({ value: source.id, label: source.name }))} /></FormField>

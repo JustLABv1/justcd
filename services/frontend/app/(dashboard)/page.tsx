@@ -8,15 +8,16 @@ import {
   LoadError,
   WorkspaceIcon,
 } from "@/components/workspace-ui"
-import { useWorkspace, needsAttention } from "@/hooks/use-workspace"
+import { useWorkspace, needsAttention, isApplicationHealthy } from "@/hooks/use-workspace"
+import { applicationAttentionReason } from "@/lib/application-status"
 import { useWorkspaceSelection } from "@/hooks/workspace-selection"
 
 export default function OverviewPage() {
   const { applications, loading, error, refresh } = useWorkspace()
   const { workspace, workspaceId } = useWorkspaceSelection()
   const attention = applications.filter(needsAttention)
-  const synced = applications.filter((app) => app.health === "synced").length
-  const other = applications.length - synced - attention.length
+  const synced = applications.filter(isApplicationHealthy).length
+  const other = applications.filter((app) => !needsAttention(app) && !isApplicationHealthy(app)).length
   const recent = [...applications]
     .sort(
       (a, b) =>
@@ -106,7 +107,7 @@ export default function OverviewPage() {
               <span>
                 {workspace?.name ?? "No workspace selected"} ·{" "}
                 {applications.length
-                  ? `${Math.round((synced / applications.length) * 100)}% of applications in sync`
+                  ? `${Math.round((synced / applications.length) * 100)}% of applications healthy`
                   : "No applications connected yet"}
               </span>
               {!applications.length && (
@@ -155,8 +156,9 @@ export default function OverviewPage() {
                           <span className="mt-1 block truncate text-xs text-muted-foreground">
                             {app.workspaceName} · {app.revision}
                           </span>
+                          <span className="mt-1 block text-xs text-amber-700 dark:text-amber-300">{applicationAttentionReason(app)}</span>
                         </span>
-                        <StatusBadge status={app.health} />
+                        <StatusBadge status={app.health} />{app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}
                         <WorkspaceIcon
                           name="arrow"
                           className="size-4 text-muted-foreground"
@@ -207,7 +209,7 @@ export default function OverviewPage() {
                         className="group flex gap-3"
                       >
                         <span
-                          className={`mt-1.5 size-2 shrink-0 rounded-full ${app.health === "synced" ? "bg-emerald-500" : needsAttention(app) ? "bg-amber-500" : "bg-muted-foreground/40"}`}
+                          className={`mt-1.5 size-2 shrink-0 rounded-full ${isApplicationHealthy(app) ? "bg-emerald-500" : needsAttention(app) ? "bg-amber-500" : "bg-muted-foreground/40"}`}
                         />
                         <span className="min-w-0">
                           <span className="block truncate text-xs font-medium group-hover:text-primary">

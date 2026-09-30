@@ -52,7 +52,7 @@ func TestGitHubPushWebhook(t *testing.T) {
 
 func TestGitLabPushWebhook(t *testing.T) {
 	secret := "example-gitlab-secret-123"
-	body := []byte(`{"object_kind":"push","ref":"refs/heads/release/1","after":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","workspace":{"path_with_namespace":"group/app"}}`)
+	body := []byte(`{"object_kind":"push","ref":"refs/heads/release/1","after":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","project":{"path_with_namespace":"group/app"}}`)
 	header := http.Header{"X-Gitlab-Token": {secret}, "X-Gitlab-Event": {"Push Hook"}, "X-Gitlab-Event-Uuid": {"push-2"}}
 	event, err := VerifyAndParse("gitlab", secret, header, body, time.Now())
 	if err != nil || event.Kind != "push" || event.Ref != "refs/heads/release/1" {
@@ -63,7 +63,7 @@ func TestGitLabPushWebhook(t *testing.T) {
 		t.Fatal("unsigned push accepted")
 	}
 	header.Set("X-Gitlab-Token", secret)
-	deleted := []byte(`{"object_kind":"push","ref":"refs/heads/release/1","after":"0000000000000000000000000000000000000000","workspace":{"path_with_namespace":"group/app"}}`)
+	deleted := []byte(`{"object_kind":"push","ref":"refs/heads/release/1","after":"0000000000000000000000000000000000000000","project":{"path_with_namespace":"group/app"}}`)
 	if _, err := VerifyAndParse("gitlab", secret, header, deleted, time.Now()); err == nil || err.Error() != "event ignored" {
 		t.Fatalf("deleted branch was not ignored: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestGenericPushWebhook(t *testing.T) {
 
 func TestGitLabLegacyAndSignedWebhooks(t *testing.T) {
 	secret := "example-gitlab-secret-123"
-	body := []byte(`{"object_kind":"merge_request","workspace":{"path_with_namespace":"group/app"},"object_attributes":{"action":"update","state":"opened","iid":7,"url":"https://gitlab.example.com/group/app/-/merge_requests/7","updated_at":"2026-09-26T07:00:00Z","source_workspace_id":2,"target_workspace_id":1,"last_commit":{"id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}}`)
+	body := []byte(`{"object_kind":"merge_request","project":{"path_with_namespace":"group/app"},"object_attributes":{"action":"update","state":"opened","iid":7,"url":"https://gitlab.example.com/group/app/-/merge_requests/7","updated_at":"2026-09-26T07:00:00Z","source_project_id":2,"target_project_id":1,"last_commit":{"id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}}`)
 	header := http.Header{"X-Gitlab-Token": {secret}, "X-Gitlab-Event": {"Merge Request Hook"}, "X-Gitlab-Event-Uuid": {"delivery-2"}}
 	event, err := VerifyAndParse("gitlab", secret, header, body, time.Date(2026, 9, 26, 7, 0, 0, 0, time.UTC))
 	if err != nil {
@@ -128,13 +128,13 @@ func TestProviderStatusAndCurrentGitLabSelfHosted(t *testing.T) {
 		}
 		switch r.Method {
 		case http.MethodGet:
-			if r.URL.EscapedPath() != "/gitlab/api/v4/workspaces/group%2Fapp/merge_requests/9" {
+			if r.URL.EscapedPath() != "/gitlab/api/v4/projects/group%2Fapp/merge_requests/9" {
 				t.Errorf("unexpected GET path: %s", r.URL.EscapedPath())
 			}
-			body, _ := json.Marshal(map[string]any{"state": "opened", "sha": sha, "web_url": "https://gitlab.example.com/group/app/-/merge_requests/9", "updated_at": "2026-09-26T07:00:00Z", "source_workspace_id": 1, "target_workspace_id": 1})
+			body, _ := json.Marshal(map[string]any{"state": "opened", "sha": sha, "web_url": "https://gitlab.example.com/group/app/-/merge_requests/9", "updated_at": "2026-09-26T07:00:00Z", "source_project_id": 1, "target_project_id": 1})
 			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(body)), Header: http.Header{}}, nil
 		case http.MethodPost:
-			if r.URL.EscapedPath() != "/gitlab/api/v4/workspaces/group%2Fapp/statuses/"+sha {
+			if r.URL.EscapedPath() != "/gitlab/api/v4/projects/group%2Fapp/statuses/"+sha {
 				t.Errorf("unexpected POST path: %s", r.URL.EscapedPath())
 			}
 			statusBody, _ = io.ReadAll(r.Body)
@@ -150,12 +150,33 @@ func TestProviderStatusAndCurrentGitLabSelfHosted(t *testing.T) {
 	if event.HeadSHA != sha || event.Fork || event.Closed {
 		t.Fatalf("unexpected current MR: %+v", event)
 	}
-	err = client.Report(context.Background(), "gitlab", apiURL, "group/app", "private-token", sha, "running", "preview deploying", "https://justcd.example/review", 9)
+	err = client.Report(context.Background(), "gitlab", apiURL, "group/app", "private-token", sha, "running", "preview deploying", "https://justcd.example/review", "app-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(statusBody, []byte("name=JustCD%2Fpreview%2F9")) || !bytes.Contains(statusBody, []byte("state=running")) {
+	if !bytes.Contains(statusBody, []byte("name=JustCD%2Fapp-1")) || !bytes.Contains(statusBody, []byte("state=running")) {
 		t.Fatalf("unexpected status form: %s", statusBody)
+	}
+}
+
+func TestListOpenPullRequests(t *testing.T) {
+	sha := strings.Repeat("a", 40)
+	for _, provider := range []string{"github", "gitlab"} {
+		t.Run(provider, func(t *testing.T) {
+			client := Client{HTTP: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Query().Get("state") != map[string]string{"github": "open", "gitlab": "opened"}[provider] || r.URL.Query().Get("page") != "1" {
+					t.Errorf("unexpected list URL: %s", r.URL)
+				}
+				if provider == "github" {
+					return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`[{"number":7,"html_url":"https://github.com/org/repo/pull/7","updated_at":"2026-09-29T10:00:00Z","head":{"sha":"` + sha + `","repo":{"full_name":"org/repo"}},"base":{"repo":{"full_name":"org/repo"}}}]`)), Header: http.Header{}}, nil
+				}
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`[{"iid":7,"web_url":"https://gitlab.example/org/repo/-/merge_requests/7","sha":"` + sha + `","updated_at":"2026-09-29T10:00:00Z","source_project_id":2,"target_project_id":1}]`)), Header: http.Header{}}, nil
+			})}}
+			items, err := client.ListOpen(context.Background(), provider, "https://example.com/api", "org/repo", "token")
+			if err != nil || len(items) != 1 || items[0].Number != 7 || items[0].HeadSHA != sha || items[0].Fork != (provider == "gitlab") {
+				t.Fatalf("unexpected list result: %+v, %v", items, err)
+			}
+		})
 	}
 }
 

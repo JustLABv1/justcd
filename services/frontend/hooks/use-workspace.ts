@@ -7,26 +7,7 @@ import { useWorkspaceSelection } from "@/hooks/workspace-selection"
 
 export type WorkspaceApplication = Application & { workspaceName?: string }
 
-export function needsAttention(app: Application) {
-  return [
-    "out_of_sync",
-    "deletion_pending",
-    "degraded",
-    "failed",
-    "error",
-  ].includes(app.health) || [
-    "Progressing",
-    "Degraded",
-    "Suspended",
-    "Missing",
-    "Unknown",
-    "Partial",
-  ].includes(app.healthCondition?.status ?? "")
-}
-
-export function isApplicationHealthy(app: Application) {
-  return app.health === "synced" && app.healthCondition?.status === "Healthy"
-}
+export { needsAttention, isApplicationHealthy } from "@/lib/application-status"
 
 export function useWorkspace({ includeAllApplications = false }: { includeAllApplications?: boolean } = {}) {
   const { workspaceId } = useWorkspaceSelection()

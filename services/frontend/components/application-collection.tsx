@@ -81,7 +81,7 @@ export function ApplicationCard({ app, canManage, onDeleted }: { app: WorkspaceA
       </header>
 
       <div className="mt-4 space-y-2">
-        <div className="flex flex-wrap items-center gap-2"><span className="text-[10px] text-muted-foreground">Sync</span><StatusBadge status={app.health} /></div>
+        <div className="flex flex-wrap items-center gap-2"><span className="text-[10px] text-muted-foreground">Sync</span><StatusBadge status={app.health} />{app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}{app.repositoryConfigurationId && <span className="text-[10px] text-muted-foreground">Managed by Git</span>}{app.configurationMissing && <span className="text-[10px] text-destructive">Definition missing</span>}</div>
         <RuntimeHealth condition={app.healthCondition} />
         {app.statusIssues?.length > 0 && <p className="mt-2 text-xs leading-5 text-destructive" title={app.statusIssues.map((issue) => issue.summary).join("\n")}>{app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")} check failed · <Link href={`/applications/${app.id}`} className="underline underline-offset-2">Details</Link></p>}
       </div>
@@ -103,7 +103,7 @@ export function ApplicationCard({ app, canManage, onDeleted }: { app: WorkspaceA
 
       <footer className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t pt-3 text-xs text-muted-foreground">
         <span>{app.renderer === "helm" ? "Helm" : app.renderer === "kustomize" ? "Kustomize" : app.renderer}</span>
-        <span>{app.syncPolicy === "auto-safe" ? "Auto-safe sync" : "Manual sync"}</span>
+        <span>{app.autoSyncPaused ? "Reconciliation paused" : app.syncPolicy === "auto-safe" ? "Auto-safe sync" : "Manual sync"}</span>
       </footer>
     </article>
   )
@@ -137,6 +137,7 @@ export function ApplicationCollection({
   const filterFields: FilterField[] = [
     ...(workspaces ? [{ id: "workspace", label: "Workspace", type: "select" as const, options: workspaces.map((item) => ({ value: item.id, label: item.name })), operators: [{ value: "is", label: "is" }] }] : []),
     { id: "namespace", label: "Namespace", type: "select", options: [...new Set(available.flatMap((app) => app.namespaces.map((item) => item.namespace)))].sort().map((value) => ({ value, label: value })), operators: [{ value: "is", label: "is" }] },
+    { id: "reconciliation", label: "Reconciliation", type: "select", options: [{ value: "paused", label: "Paused" }, { value: "active", label: "Active" }], operators: [{ value: "is", label: "is" }] },
     { id: "renderer", label: "Renderer", type: "select", options: [{ value: "yaml", label: "Plain YAML / JSON" }, { value: "helm", label: "Helm" }, { value: "kustomize", label: "Kustomize" }], operators: [{ value: "is", label: "is" }] },
   ]
   const conditions = flattenFilterConditions(filterQuery)
@@ -144,6 +145,7 @@ export function ApplicationCollection({
     all: available.length,
     attention: available.filter(needsAttention).length,
     synced: available.filter(isApplicationHealthy).length,
+    paused: available.filter((app) => app.autoSyncPaused).length,
     other: available.filter(
       (app) => !needsAttention(app) && !isApplicationHealthy(app)
     ).length,
@@ -156,7 +158,9 @@ export function ApplicationCollection({
           ? needsAttention(app)
           : filter === "synced"
             ? isApplicationHealthy(app)
-            : !needsAttention(app) && !isApplicationHealthy(app))
+            : filter === "paused"
+              ? app.autoSyncPaused
+              : !needsAttention(app) && !isApplicationHealthy(app))
       return (
         matchesStatus &&
         conditions.every((condition) => {
@@ -166,11 +170,12 @@ export function ApplicationCollection({
           switch (condition.field) {
             case "workspace": return app.workspaceId === rawValue
             case "namespace": return app.namespaces.some((item) => item.namespace.toLowerCase() === value)
+            case "reconciliation": return value === "paused" ? app.autoSyncPaused : !app.autoSyncPaused
             case "renderer": return app.renderer === value
             default: return true
           }
         }) &&
-        `${app.name} ${app.workspaceName ?? ""} ${app.namespaces.map((item) => item.namespace).join(" ")} ${app.revision}`
+        `${app.name} ${app.workspaceName ?? ""} ${app.namespaces.map((item) => item.namespace).join(" ")} ${app.revision} ${app.autoSyncPaused ? "reconciliation paused disabled" : "reconciliation active"}`
           .toLowerCase()
           .includes(query.trim().toLowerCase())
       )
@@ -215,6 +220,7 @@ export function ApplicationCollection({
                 ["attention", "Needs attention"],
                 ["synced", "In sync"],
                 ["other", "Other"],
+                ["paused", "Reconciliation paused"],
               ] as const
             ).map(([value, label]) => (
               <Button
@@ -299,7 +305,7 @@ export function ApplicationCollection({
                 id: "health",
                 title: "Health",
                 size: 150,
-                cell: (app) => <div className="space-y-2"><div className="flex flex-wrap gap-1.5"><StatusBadge status={app.health} /><StatusBadge status={app.healthCondition?.status ?? "Unknown"} /></div><p className="text-[10px] text-muted-foreground" title={app.healthCondition?.message}>{app.healthCondition?.reason ?? "Health not observed"} · {app.healthCondition?.lastTransitionTime ? new Date(app.healthCondition.lastTransitionTime).toLocaleString() : "Not observed yet"}</p>{app.statusIssues?.length > 0 && <span className="block text-xs text-destructive">{app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")} check failed</span>}</div>,
+                cell: (app) => <div className="space-y-2"><div className="flex flex-wrap gap-1.5"><StatusBadge status={app.health} /><StatusBadge status={app.healthCondition?.status ?? "Unknown"} />{app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}{app.repositoryConfigurationId && <span className="text-[10px] text-muted-foreground">Managed by Git</span>}{app.configurationMissing && <span className="text-[10px] text-destructive">Definition missing</span>}</div><p className="text-[10px] text-muted-foreground" title={app.healthCondition?.message}>{app.healthCondition?.reason ?? "Health not observed"} · {app.healthCondition?.lastTransitionTime ? new Date(app.healthCondition.lastTransitionTime).toLocaleString() : "Not observed yet"}</p>{app.statusIssues?.length > 0 && <span className="block text-xs text-destructive">{app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")} check failed</span>}</div>,
               },
               {
                 id: "target",
@@ -327,7 +333,7 @@ export function ApplicationCollection({
                 title: "Sync policy",
                 size: 120,
                 cell: (app) => (
-                  <span className="text-xs">{app.syncPolicy}</span>
+                  <div className="space-y-1 text-xs"><span>{app.syncPolicy}</span>{app.autoSyncPaused && <span className="block text-amber-600 dark:text-amber-400">Reconciliation paused</span>}</div>
                 ),
               },
               {

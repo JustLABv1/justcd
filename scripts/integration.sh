@@ -63,6 +63,8 @@ export JUSTCD_E2E_DATABASE_URL="postgres://postgres:e2eonly@127.0.0.1:$port/just
 cd "$root/services/backend"
 go test -tags integration ./internal/store -run '^TestIntegrationMigrationUpgradeAndPoller$' -count=1 -v -timeout 2m 2>&1 | tee "$artifacts/database.log"
 
+go test -tags integration ./internal/syncer -run '^TestIntegrationRepositoryConfiguration$' -count=1 -v -timeout 2m 2>&1 | tee "$artifacts/repository.log"
+
 if [[ "$mode" == full ]]; then
   if ! command -v kind >/dev/null 2>&1; then
     echo "Install kind to run the full cluster suite." >&2

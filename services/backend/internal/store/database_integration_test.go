@@ -93,16 +93,28 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 			t.Fatal(err)
 		}
 	}
+	var workspacesRenamed bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='workspaces')`).Scan(&workspacesRenamed); err != nil {
+		t.Fatal(err)
+	}
+	seed := func(query string) error {
+		if workspacesRenamed {
+			query = strings.ReplaceAll(query, "project_", "workspace_")
+			query = strings.ReplaceAll(query, "projects", "workspaces")
+		}
+		_, err := db.ExecContext(ctx, query)
+		return err
+	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO users(id,email,display_name) VALUES('integration-owner','owner@example.invalid','Integration Owner')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO projects(id,name) VALUES('integration-workspace','Migration survivor')`); err != nil {
+	if err := seed(`INSERT INTO projects(id,name) VALUES('integration-workspace','Migration survivor')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO project_memberships(project_id,user_id,role) VALUES('integration-workspace','integration-owner','owner')`); err != nil {
+	if err := seed(`INSERT INTO project_memberships(project_id,user_id,role) VALUES('integration-workspace','integration-owner','owner')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO credentials(id,project_id,name,kind,secret_cipher) VALUES
+	if err := seed(`INSERT INTO credentials(id,project_id,name,kind,secret_cipher) VALUES
 		('integration-workspace-credential','integration-workspace','Workspace kube','kubernetes-token',decode('00','hex')),
 		('integration-git-credential','integration-workspace','Workspace Git','git-https',decode('01','hex'))`); err != nil {
 		t.Fatal(err)
@@ -110,16 +122,16 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 	if _, err := db.ExecContext(ctx, `INSERT INTO clusters(id,name,api_server) VALUES('integration-cluster','Test cluster','https://example.invalid')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO project_cluster_credentials(project_id,cluster_id,credential_id) VALUES('integration-workspace','integration-cluster','integration-workspace-credential')`); err != nil {
+	if err := seed(`INSERT INTO project_cluster_credentials(project_id,cluster_id,credential_id) VALUES('integration-workspace','integration-cluster','integration-workspace-credential')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO namespace_bindings(id,project_id,cluster_id,namespace,credential_id) VALUES('integration-binding','integration-workspace','integration-cluster','default','integration-workspace-credential')`); err != nil {
+	if err := seed(`INSERT INTO namespace_bindings(id,project_id,cluster_id,namespace,credential_id) VALUES('integration-binding','integration-workspace','integration-cluster','default','integration-workspace-credential')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO git_sources(id,project_id,name,repository_url,credential_id) VALUES('integration-git','integration-workspace','Test source','https://example.invalid/repo.git','integration-git-credential')`); err != nil {
+	if err := seed(`INSERT INTO git_sources(id,project_id,name,repository_url,credential_id) VALUES('integration-git','integration-workspace','Test source','https://example.invalid/repo.git','integration-git-credential')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO applications(id,project_id,name,source_id,revision,manifest_path,renderer,cluster_id) VALUES('integration-app','integration-workspace','Due application','integration-git','main','.','yaml','integration-cluster')`); err != nil {
+	if err := seed(`INSERT INTO applications(id,project_id,name,source_id,revision,manifest_path,renderer,cluster_id) VALUES('integration-app','integration-workspace','Due application','integration-git','main','.','yaml','integration-cluster')`); err != nil {
 		t.Fatal(err)
 	}
 	s := &Store{DB: db}
@@ -239,4 +251,61 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 	if err != nil || len(apps) != 1 {
 		t.Fatalf("Git push should make the application due: %+v, %v", apps, err)
 	}
+	connection := SourceControlConnection{ID: "integration-pr-connection", WorkspaceID: "integration-workspace", ApplicationID: "integration-app", Provider: "github", APIURL: "https://api.github.com", Repository: "example/app", StatusTokenCipher: []byte{2}}
+	if err := s.SaveSourceControlConnection(ctx, connection); err != nil {
+		t.Fatal(err)
+	}
+	storedConnection, err := s.SourceControlConnectionByApplication(ctx, "integration-app")
+	if err != nil || !storedConnection.Enabled {
+		t.Fatalf("migrated connection should default to enabled: %+v, %v", storedConnection, err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO pull_request_reviews(id,connection_id,number,head_sha,source_url,event_at) VALUES('integration-review','integration-pr-connection',1,$1,'https://example.invalid/review/1',NOW())`, strings.Repeat("a", 40)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE source_control_connections SET webhook_secret_cipher=decode('01','hex') WHERE id='integration-pr-connection'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveSourceControlWebhookSecret(ctx, "integration-app"); err != nil {
+		t.Fatal(err)
+	}
+	storedConnection, err = s.SourceControlConnectionByApplication(ctx, "integration-app")
+	if err != nil || len(storedConnection.WebhookSecretCipher) != 0 || !storedConnection.Enabled {
+		t.Fatalf("removing webhook should preserve enabled PR reporting: %+v, %v", storedConnection, err)
+	}
+	if reviews, err := s.ListReviews(ctx, storedConnection.ID); err != nil || len(reviews) != 1 {
+		t.Fatalf("removing webhook should preserve reviews: %+v, %v", reviews, err)
+	}
+	if err := s.SetSourceControlConnectionEnabled(ctx, "integration-app", false); err != nil {
+		t.Fatal(err)
+	}
+	if reviews, err := s.DueReviews(ctx, 10); err != nil || len(reviews) != 0 {
+		t.Fatalf("disabled connection should not schedule reviews: %+v, %v", reviews, err)
+	}
+	if err := s.SetSourceControlConnectionEnabled(ctx, "integration-app", true); err != nil {
+		t.Fatal(err)
+	}
+	if reviews, err := s.DueReviews(ctx, 10); err != nil || len(reviews) != 1 {
+		t.Fatalf("enabled connection should resume reviews: %+v, %v", reviews, err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO preview_slots(connection_id,number) VALUES('integration-pr-connection',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetSourceControlConnectionEnabled(ctx, "integration-app", false); err != ErrActivePreviews {
+		t.Fatalf("active preview should prevent disabling: %v", err)
+	}
+	if err := s.DeleteSourceControlConnection(ctx, "integration-app"); err != ErrActivePreviews {
+		t.Fatalf("active preview should prevent deletion: %v", err)
+	}
+	if err := s.ReleasePreviewSlot(ctx, "integration-pr-connection", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteSourceControlConnection(ctx, "integration-app"); err != nil {
+		t.Fatal(err)
+	}
+	var reviewCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pull_request_reviews WHERE id='integration-review'`).Scan(&reviewCount); err != nil || reviewCount != 0 {
+		t.Fatalf("deleted connection should remove review history: count=%d err=%v", reviewCount, err)
+	}
+	testSyncPauseSafety(t, ctx, s)
+	testRepositoryConfigurationSafety(t, ctx, s)
 }

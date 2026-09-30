@@ -8,6 +8,62 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /repository-configurations:
+    get:
+      summary: List application discovery connections (workspace viewer)
+      parameters:
+        - { name: workspaceId, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Discovery connections with enabled state, lastCheckedAt, lastCommit, and lastError }
+        '403': { description: Workspace access required }
+    post:
+      summary: Connect a repository revision and discover justcd.yaml applications (workspace owner)
+      description: Source access is checked against this workspace. The connection is persisted even if discovery fails; inspect lastError. Applications are never implicitly adopted from existing manual configuration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workspaceId, sourceId, revision]
+              properties:
+                workspaceId: { type: string }
+                sourceId: { type: string }
+                revision: { type: string, minLength: 1, maxLength: 256 }
+      responses:
+        '201': { description: Discovery connection, including errors from initial discovery }
+        '400': { description: Invalid configuration }
+        '403': { description: Workspace owner or source access required }
+        '409': { description: Repository revision already connected }
+  /repository-configurations/{repositoryID}:
+    put:
+      summary: Pause or resume application configuration discovery (workspace owner)
+      description: Pausing discovery leaves existing application deployment policies in effect.
+      parameters:
+        - { name: repositoryID, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        '200': { description: Updated discovery connection }
+        '403': { description: Workspace owner required }
+        '404': { description: Connection not found }
+  /repository-configurations/{repositoryID}/reconcile:
+    post:
+      summary: Discover and atomically update applications from Git (workspace owner)
+      parameters:
+        - { name: repositoryID, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Updated connection and last successfully processed commit }
+        '403': { description: Workspace owner required }
+        '404': { description: Connection not found }
+        '409': { description: Discovery paused, already running, or failed validation; previous application configuration is preserved }
   /health:
     get:
       summary: Check API health
@@ -250,14 +306,36 @@ paths:
     get:
       summary: Read the application Git source's inferred PR provider and optional PR connection without returning secrets
       responses:
-        '200': { description: Inferred source details, nullable connection, preview profile, and webhook URL }
+        '200': { description: Inferred source details, nullable connection, preview profile, webhook URL, and webhookConfigured flag }
     put:
       summary: Configure PR reporting for the application's existing Git source (workspace owner)
-      description: Provider and repository are derived from the Git source; unknown hosts require explicit self-hosted GitLab confirmation. A webhook secret and status API token are required on creation. Empty secret fields preserve existing encrypted values on update. A preview profile is optional and disabled by default.
+      description: Provider and repository are derived from the Git source; saving an unknown host as GitLab confirms the provider. An API token is required to poll PRs/MRs every two minutes and report commit statuses. A webhook secret is optional for faster updates. Empty secret fields preserve existing encrypted values on update. A preview profile is optional and disabled by default. Saving preserves the enabled state.
       responses:
         '200': { description: Connection saved }
         '400': { description: Provider, repository, credential, or preview profile is invalid }
         '409': { description: Active previews prevent configuration changes }
+    patch:
+      summary: Enable or disable PR reporting without removing its settings or review history (workspace owner)
+      description: Body contains enabled (boolean). Active previews must be closed before disabling.
+      responses:
+        '204': { description: PR reporting state changed }
+        '400': { description: enabled is required }
+        '404': { description: Connection not found }
+        '409': { description: Active previews prevent disabling }
+    delete:
+      summary: Delete PR reporting settings and review history (workspace owner)
+      description: Any optional repository webhook must be removed separately. Active previews must be closed before deletion.
+      responses:
+        '204': { description: Connection deleted }
+        '404': { description: Connection not found }
+        '409': { description: Active previews prevent deletion }
+  /applications/{applicationID}/source-control/webhook:
+    delete:
+      summary: Remove the optional webhook secret while preserving PR polling and review history (workspace owner)
+      description: The repository webhook must also be removed at the Git provider. The old JustCD webhook URL stops accepting deliveries.
+      responses:
+        '204': { description: Webhook secret removed }
+        '404': { description: Connection not found }
   /applications/{applicationID}/pull-requests:
     get:
       summary: List review-only PR plans and optional preview deployment states
@@ -271,6 +349,7 @@ paths:
         '202': { description: Event stored for reconciliation }
         '204': { description: Event type ignored }
         '401': { description: Webhook verification failed }
+        '410': { description: PR reporting or optional webhook is disabled }
   /git-sources/{sourceID}/push-webhook:
     get:
       summary: Read generic signed push webhook configuration without exposing the secret
@@ -366,6 +445,34 @@ paths:
       responses:
         '201': { description: Selected plan snapshot }
         '409': { description: Source plan is stale; includes refreshed plan }
+  /applications/{applicationID}/pause:
+    post:
+      summary: Pause automatic reconciliation (workspace owner; rejects active operations)
+      parameters:
+        - { name: applicationID, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Application paused; resume through rollback-state with action resume }
+        '409': { description: Application has an active operation }
+  /applications/{applicationID}/resource-actions:
+    post:
+      summary: Pause reconciliation and perform a namespaced managed resource action (workspace owner)
+      parameters:
+        - { name: applicationID, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identity, uid, action]
+              properties:
+                identity: { type: object, description: Managed Kubernetes resource identity including clusterId, apiVersion, kind, namespace and name }
+                uid: { type: string }
+                action: { type: string, enum: [rescale, redeploy, delete] }
+                replicas: { type: integer, minimum: 0, maximum: 10000 }
+      responses:
+        '200': { description: Action completed; reconciliation remains paused }
+        '409': { description: Action rejected or failed; reconciliation stays paused if the action started }
   /applications/{applicationID}/resources:
     get:
       summary: List resources managed by the application

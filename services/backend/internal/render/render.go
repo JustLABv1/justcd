@@ -36,6 +36,7 @@ const (
 )
 
 type Options struct {
+	HelmReleaseName            string
 	RepositoryRoot             string
 	ManifestPath               string
 	Renderer                   string
@@ -160,7 +161,11 @@ func renderHelm(ctx context.Context, opts Options, chartPath string) ([]core.Res
 }
 
 func renderHelmNamespace(ctx context.Context, opts Options, chartPath string, binding core.Binding) ([]byte, error) {
-	args := []string{"template", "justcd", chartPath, "--include-crds", "--namespace", binding.Namespace}
+	releaseName := opts.HelmReleaseName
+	if releaseName == "" {
+		releaseName = "justcd"
+	}
+	args := []string{"template", releaseName, chartPath, "--include-crds", "--namespace", binding.Namespace}
 	appendValuesFile := func(filename string) error {
 		filename = strings.TrimSpace(filename)
 		if filename == "" {
@@ -382,6 +387,12 @@ func readManifestFiles(root string) ([]byte, error) {
 				return nil
 			}
 			if d.IsDir() {
+				if d.Name() == ".git" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if d.Name() == "justcd.yaml" || d.Name() == "justcd.yml" {
 				return nil
 			}
 			ext := strings.ToLower(filepath.Ext(d.Name()))

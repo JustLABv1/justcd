@@ -12,28 +12,57 @@ spec:
       {{- include "justcd.selectorLabels" (dict "root" . "component" "frontend") | nindent 6 }}
   template:
     metadata:
+      {{- with .Values.frontend.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       labels:
         {{- include "justcd.selectorLabels" (dict "root" . "component" "frontend") | nindent 8 }}
     spec:
-      automountServiceAccountToken: false
+      automountServiceAccountToken: {{ .Values.frontend.automountServiceAccountToken }}
+      {{- with .Values.frontend.serviceAccountName }}
+      serviceAccountName: {{ . | quote }}
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.frontend.podSecurityContext }}
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 10001
-        runAsGroup: 10001
-        seccompProfile:
-          type: RuntimeDefault
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.frontend.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.frontend.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.frontend.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.frontend.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.frontend.extraVolumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: frontend
           image: "{{ .Values.frontend.image.repository }}:{{ default .Chart.AppVersion .Values.frontend.image.tag }}"
           imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
+          {{- with .Values.frontend.securityContext }}
           securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.frontend.extraVolumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.frontend.service.port }}
@@ -45,6 +74,9 @@ spec:
               value: 0.0.0.0
             - name: JUSTCD_API_URL
               value: "http://{{ include "justcd.fullname" . }}-backend:{{ .Values.backend.service.port }}"
+            {{- with .Values.frontend.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           startupProbe:
             httpGet:
               path: /healthz

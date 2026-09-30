@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http/httptest"
 	"strings"
@@ -57,3 +58,28 @@ func TestHTTPMetricsNormalizeUntrustedLabels(t *testing.T) {
 }
 
 const httpStatusServerError = 503
+
+func TestStartupErrorDiagnostics(t *testing.T) {
+	for _, bound := range []bool{false, true} {
+		var output bytes.Buffer
+		logger := slog.New(NewLogHandler(slog.NewJSONHandler(&output, nil)))
+		err := fmt.Errorf("initialize database: %w", errors.New("postgres://admin:url-canary@db:5432/app?password=query-canary connection refused; password='space canary'; Authorization=Bearer bearer-canary"))
+		attr := slog.Group("startup", slog.Any("error", StartupError{Err: err}))
+		if bound {
+			logger.With(attr).Error("JustCD stopped")
+		} else {
+			logger.Error("JustCD stopped", attr)
+		}
+		line := output.String()
+		for _, secret := range []string{"url-canary", "query-canary", "space canary", "bearer-canary"} {
+			if strings.Contains(line, secret) {
+				t.Fatalf("leaked %s: %s", secret, line)
+			}
+		}
+		for _, diagnostic := range []string{"initialize database:", "connection refused"} {
+			if !strings.Contains(line, diagnostic) {
+				t.Fatalf("missing diagnostic: %s", line)
+			}
+		}
+	}
+}

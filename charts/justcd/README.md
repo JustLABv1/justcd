@@ -127,3 +127,47 @@ example `Authorization=Bearer <token>`. Store exporter credentials in a Secret;
 do not put them in Helm values or commit them. See
 [`docs/observability.md`](../../docs/observability.md) for metric names,
 cardinality limits, the starter Grafana dashboard, and alert recommendations.
+
+## OpenShift and pod configuration
+
+The default pod security context uses UID/GID 10001. For OpenShift SCCs that
+assign IDs from the namespace range, remove the fixed IDs in your deployment
+values while retaining the other security defaults:
+
+```yaml
+frontend:
+  podSecurityContext:
+    runAsUser: null
+    runAsGroup: null
+backend:
+  podSecurityContext:
+    runAsUser: null
+    runAsGroup: null
+```
+
+Keep `backend.existingSecret` configured as above. The Secret must exist in the
+release namespace and contain both required keys. Empty or whitespace-only
+Secret names fail during Helm rendering.
+
+Both `frontend` and `backend` expose the following values:
+
+| Value | Purpose |
+| --- | --- |
+| `podSecurityContext` | Pod UID/GID, fsGroup, SELinux options and seccomp configuration |
+| `securityContext` | Container privileges, capabilities and root filesystem settings |
+| `serviceAccountName` | Existing service account, including one with appropriate SCC access |
+| `automountServiceAccountToken` | Token mounting, disabled by default |
+| `podAnnotations` | Pod annotations for platform integrations |
+| `nodeSelector`, `tolerations`, `affinity`, `topologySpreadConstraints` | Placement and scheduling |
+| `extraEnv` | Additional environment entries, including Secret/ConfigMap references |
+| `extraVolumes`, `extraVolumeMounts` | Writable temporary storage or mounted configuration |
+
+Helm merges security-context maps: set individual default fields to `null` to
+remove them, or set the entire context to `null` to omit it. An empty map does
+not clear defaults. If enabling `readOnlyRootFilesystem`, provide writable
+volumes for paths used by the application and its tools, including `/tmp`.
+The backend remains a single replica with a Recreate strategy to avoid
+concurrent reconciliation workers.
+
+The manifests can be rendered locally; SCC admission and image compatibility
+with the assigned UID must also be verified on your OpenShift cluster.

@@ -20,7 +20,7 @@ import (
 func main() {
 	logger := slog.New(observability.NewLogHandler(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	if err := run(logger); err != nil {
-		logger.Error("JustCD stopped", "error", err)
+		logger.Error("JustCD stopped", "error", observability.StartupError{Err: err})
 		os.Exit(1)
 	}
 }
@@ -28,13 +28,13 @@ func main() {
 func run(logger *slog.Logger) error {
 	cfg, err := config.Load()
 	if err != nil {
-		return err
+		return fmt.Errorf("load configuration: %w", err)
 	}
 	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancelStartup()
 	telemetry, err := observability.Init(startupCtx, cfg.Observability)
 	if err != nil {
-		return err
+		return fmt.Errorf("initialize telemetry: %w", err)
 	}
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -45,7 +45,7 @@ func run(logger *slog.Logger) error {
 	}()
 	db, err := store.Open(startupCtx, cfg.DatabaseURL)
 	if err != nil {
-		return err
+		return fmt.Errorf("initialize database: %w", err)
 	}
 	defer db.DB.Close()
 	if err := db.EnsureSystemActor(startupCtx); err != nil {
@@ -89,7 +89,7 @@ func run(logger *slog.Logger) error {
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("serve HTTP on %s: %w", cfg.ListenAddress, err)
 	}
 }
 

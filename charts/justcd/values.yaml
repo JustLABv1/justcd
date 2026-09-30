@@ -9,6 +9,27 @@ sessionLifetime: 12h
 imagePullSecrets: []
 
 frontend:
+  # Set runAsUser/runAsGroup to null to let OpenShift SCC assign IDs.
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  serviceAccountName: ""
+  automountServiceAccountToken: false
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
   replicaCount: 1
   image:
     repository: justcd-frontend
@@ -25,6 +46,27 @@ frontend:
       memory: 512Mi
 
 backend:
+  # Set runAsUser/runAsGroup to null to let OpenShift SCC assign IDs.
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  serviceAccountName: ""
+  automountServiceAccountToken: false
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
   image:
     repository: justcd-backend
     tag: ""

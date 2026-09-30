@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"reflect"
+	"regexp"
 	"strings"
 
 	"go.opentelemetry.io/otel/trace"
@@ -13,6 +14,23 @@ import (
 // which can contain user supplied values, credentials, or renderer output.
 func NewLogHandler(next slog.Handler) slog.Handler {
 	return redactingHandler{next: next}
+}
+
+// StartupError enables diagnostic text for trusted initialization errors only.
+// Do not use it for renderer output or errors containing arbitrary user content.
+type StartupError struct{ Err error }
+
+var startupCredentials = regexp.MustCompile(`(?i)((?:["']?(?:password|passphrase|token|secret|authorization|cookie|credential|api[_-]?key)["']?)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;&]+)`)
+var startupURLCredentials = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+@`)
+var startupBearer = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/-]+=*`)
+
+func (e StartupError) message() string {
+	if e.Err == nil {
+		return ""
+	}
+	message := startupURLCredentials.ReplaceAllString(e.Err.Error(), `${1}[redacted]@`)
+	message = startupBearer.ReplaceAllString(message, `${1}[redacted]`)
+	return startupCredentials.ReplaceAllString(message, `${1}[redacted]`)
 }
 
 type redactingHandler struct{ next slog.Handler }
@@ -54,6 +72,9 @@ func redactAttr(attr slog.Attr) slog.Attr {
 	key := strings.ToLower(attr.Key)
 	if key == "error" || strings.HasSuffix(key, "_error") {
 		if attr.Value.Kind() == slog.KindAny {
+			if diagnostic, ok := attr.Value.Any().(StartupError); ok {
+				return slog.String(attr.Key, diagnostic.message())
+			}
 			if err, ok := attr.Value.Any().(error); ok {
 				return slog.String(attr.Key, reflect.TypeOf(err).String())
 			}

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
@@ -80,6 +81,21 @@ func TestStartupErrorDiagnostics(t *testing.T) {
 			if !strings.Contains(line, diagnostic) {
 				t.Fatalf("missing diagnostic: %s", line)
 			}
+		}
+	}
+}
+
+func TestLogHandlerRetainsSQLStateWithoutDatabaseDetails(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(NewLogHandler(slog.NewJSONHandler(&output, nil)))
+	logger.Error("OIDC user mapping failed", "error", fmt.Errorf("audit: %w", &pgconn.PgError{Code: "42P18", Message: "password-canary", Detail: "token-canary", InternalQuery: "query-canary"}))
+	line := output.String()
+	if !strings.Contains(line, `"sqlstate":"42P18"`) {
+		t.Fatalf("missing SQLSTATE: %s", line)
+	}
+	for _, secret := range []string{"password-canary", "token-canary", "query-canary"} {
+		if strings.Contains(line, secret) {
+			t.Fatalf("leaked database details: %s", line)
 		}
 	}
 }

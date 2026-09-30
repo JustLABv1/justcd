@@ -322,21 +322,21 @@ func (s *Store) ResolveOIDCUser(ctx context.Context, providerID, subject, email,
 		return User{}, err
 	}
 	if created {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'user.oidc_provisioned','user',$1,jsonb_build_object('email',$2,'providerId',$3))`, user.ID, user.Email, providerID); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'user.oidc_provisioned','user',$1,jsonb_build_object('email',$2::text,'providerId',$3::text))`, user.ID, user.Email, providerID); err != nil {
 			return User{}, err
 		}
 	} else if linked {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'user.oidc_linked','user',$1,jsonb_build_object('providerId',$2))`, user.ID, providerID); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'user.oidc_linked','user',$1,jsonb_build_object('providerId',$2::text))`, user.ID, providerID); err != nil {
 			return User{}, err
 		}
 	}
 	if profileUpdated {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'user.oidc_profile_updated','user',$1,jsonb_build_object('displayName',$2,'providerId',$3))`, user.ID, displayName, providerID); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'user.oidc_profile_updated','user',$1,jsonb_build_object('displayName',$2::text,'providerId',$3::text))`, user.ID, displayName, providerID); err != nil {
 			return User{}, err
 		}
 	}
 	if string(previousGrants) != string(currentGrants) {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'user.oidc_access_updated','user',$1,jsonb_build_object('providerId',$2,'previousRoles',$3::jsonb,'roles',$4::jsonb))`, user.ID, providerID, string(previousGrants), string(currentGrants)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'user.oidc_access_updated','user',$1,jsonb_build_object('providerId',$2::text,'previousRoles',$3::jsonb,'roles',$4::jsonb))`, user.ID, providerID, string(previousGrants), string(currentGrants)); err != nil {
 			return User{}, err
 		}
 	}

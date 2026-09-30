@@ -2,11 +2,13 @@ package observability
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"reflect"
 	"regexp"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -76,6 +78,12 @@ func redactAttr(attr slog.Attr) slog.Attr {
 				return slog.String(attr.Key, diagnostic.message())
 			}
 			if err, ok := attr.Value.Any().(error); ok {
+				var databaseError *pgconn.PgError
+				if errors.As(err, &databaseError) {
+					// SQLSTATE identifies the failure without logging SQL,
+					// user values, or PostgreSQL message/detail fields.
+					return slog.Group(attr.Key, slog.String("type", reflect.TypeOf(err).String()), slog.String("sqlstate", databaseError.Code))
+				}
 				return slog.String(attr.Key, reflect.TypeOf(err).String())
 			}
 		}

@@ -9,6 +9,7 @@ import {
   WorkspaceIcon,
 } from "@/components/workspace-ui"
 import { useWorkspace, needsAttention, isApplicationHealthy } from "@/hooks/use-workspace"
+import { applicationAttentionReason } from "@/lib/application-status"
 import { useWorkspaceSelection } from "@/hooks/workspace-selection"
 
 export default function OverviewPage() {
@@ -106,7 +107,7 @@ export default function OverviewPage() {
               <span>
                 {workspace?.name ?? "No workspace selected"} ·{" "}
                 {applications.length
-                  ? `${Math.round((synced / applications.length) * 100)}% of applications in sync`
+                  ? `${Math.round((synced / applications.length) * 100)}% of applications healthy`
                   : "No applications connected yet"}
               </span>
               {!applications.length && (
@@ -155,6 +156,7 @@ export default function OverviewPage() {
                           <span className="mt-1 block truncate text-xs text-muted-foreground">
                             {app.workspaceName} · {app.revision}
                           </span>
+                          <span className="mt-1 block text-xs text-amber-700 dark:text-amber-300">{applicationAttentionReason(app)}</span>
                         </span>
                         <StatusBadge status={app.health} />{app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}
                         <WorkspaceIcon

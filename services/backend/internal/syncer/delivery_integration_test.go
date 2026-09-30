@@ -357,9 +357,26 @@ func verifyIntegrationWorkerCrash(t *testing.T, ctx context.Context, svc *Servic
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed, ok, err := db.ClaimQueuedOperation(ctx, 90*time.Second)
-	if err != nil || !ok || claimed.ID != queued.ID {
-		t.Fatalf("could not claim crash fixture: %+v, %t, %v", claimed, ok, err)
+	// The previous operation may still hold the cluster rate-limit gate.
+	// Wait for scheduler eligibility instead of assuming an immediate claim.
+	claimCtx, cancelClaim := context.WithTimeout(ctx, 15*time.Second)
+	defer cancelClaim()
+	for {
+		claimed, ok, err := db.ClaimQueuedOperation(claimCtx, 90*time.Second)
+		if err != nil {
+			t.Fatalf("claim crash fixture: %v", err)
+		}
+		if ok {
+			if claimed.ID != queued.ID {
+				t.Fatalf("claimed unexpected operation %s, want %s", claimed.ID, queued.ID)
+			}
+			break
+		}
+		select {
+		case <-claimCtx.Done():
+			t.Fatalf("crash fixture did not become eligible: %v", claimCtx.Err())
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
 	if _, err := db.DB.ExecContext(ctx, `UPDATE operation_leases SET expires_at=NOW()-INTERVAL '1 second' WHERE operation_id=$1`, queued.ID); err != nil {
 		t.Fatal(err)
@@ -387,21 +404,28 @@ func verifyIntegrationReviewAndDrift(t *testing.T, ctx context.Context, svc *Ser
 	if err != nil || len(drift.Plan.Changes) == 0 {
 		t.Fatalf("external drift was not planned: %+v, %v", drift.Plan.Changes, err)
 	}
-	op, err := svc.Apply(ctx, drift.ID, ownerID, "")
+	var takeover bool
+	for _, change := range drift.Plan.Changes {
+		takeover = takeover || change.Takeover
+	}
+	if !takeover || !drift.Plan.RequiresApproval {
+		t.Fatal("external field ownership did not require a reviewed takeover")
+	}
+	if _, err := svc.Apply(ctx, drift.ID, ownerID, ""); err == nil {
+		t.Fatal("unapproved drift takeover was queued")
+	}
+	driftApproval := createIntegrationApproval(t, ctx, db, drift, ownerID)
+	op, err := svc.ApplyWithApprovals(ctx, drift.ID, ownerID, []string{driftApproval})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("queue reviewed drift takeover: %v", err)
 	}
-	failed := waitIntegrationOperationStatus(t, ctx, db, op.ID, "failed")
-	if failed.ErrorCode == "" {
-		t.Fatal("conflicting external change did not record a failure code")
-	}
+	waitIntegrationOperation(t, ctx, db, op.ID)
 	cm, err = kubeClient.CoreV1().ConfigMaps(namespace).Get(ctx, "yaml-agent", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cm.Data["mode"] = "desired"
-	if _, err := kubeClient.CoreV1().ConfigMaps(namespace).Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
-		t.Fatal(err)
+	if cm.Data["mode"] != "desired" {
+		t.Fatalf("approved takeover did not restore desired data: %+v", cm.Data)
 	}
 	repo.write(t, "yaml/second.yaml", "")
 	repo.commit(t, "remove second ConfigMap")

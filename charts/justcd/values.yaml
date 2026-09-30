@@ -73,6 +73,11 @@ backend:
     pullPolicy: IfNotPresent
   # Existing Secret with JUSTCD_DATABASE_URL and JUSTCD_ENCRYPTION_KEY keys.
   existingSecret: ""
+  # Optional PEM CA bundle from an existing Secret in the release namespace.
+  # Use tls.crt instead of ca.crt for a genuinely self-signed server certificate.
+  customCA:
+    existingSecret: ""
+    secretKey: ca.crt
   service:
     port: 8080
   observability:

@@ -171,3 +171,31 @@ concurrent reconciliation workers.
 
 The manifests can be rendered locally; SCC admission and image compatibility
 with the assigned UID must also be verified on your OpenShift cluster.
+
+## Private CA certificates for OIDC
+
+To trust your Keycloak certificate, reference an existing Secret in the release
+namespace:
+
+```yaml
+backend:
+  customCA:
+    existingSecret: keycloak-ca
+    secretKey: ca.crt
+```
+
+The selected key must contain PEM certificates. For a certificate signed by a
+private CA, use the CA certificate/bundle. For a genuinely self-signed server
+certificate stored in a TLS Secret, set `secretKey: tls.crt`. Only that key is
+mounted; the private key is not mounted.
+
+The backend mounts the certificate read-only and adds its directory through
+`SSL_CERT_DIR`, retaining the image's public CA trust. This applies to Go TLS
+clients, including OIDC discovery, token exchange, and signing-key retrieval.
+Certificate hostname and expiry checks remain enabled. The certificate must
+cover the hostname in your configured issuer URL.
+
+Apply with the usual `helm upgrade --install` command. After rotating the
+certificate in the Secret, restart the backend deployment: Go caches its CA
+pool, so updating the mounted file alone does not reload trust. Do not override
+`SSL_CERT_DIR` in `backend.extraEnv` when using this option.

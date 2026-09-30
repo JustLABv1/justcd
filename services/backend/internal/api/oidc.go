@@ -36,10 +36,9 @@ func (s *Server) oidcStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "OIDC provider is unavailable")
 		return
 	}
-	providerClient, err := oidc.NewProvider(ctx, provider.Issuer)
+	providerClient, reason, status, err := discoverOIDC(ctx, provider.Issuer)
 	if err != nil {
-		s.Logger.Error("OIDC discovery failed", "providerId", provider.ID, "error", err)
-		writeError(w, http.StatusBadGateway, "OIDC provider discovery failed")
+		s.writeOIDCDiscoveryError(w, r, provider.ID, reason, status)
 		return
 	}
 	state, _, err := security.RandomToken(32)
@@ -98,9 +97,9 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "OIDC provider is unavailable")
 		return
 	}
-	oidcProvider, err := oidc.NewProvider(ctx, provider.Issuer)
+	oidcProvider, reason, status, err := discoverOIDC(ctx, provider.Issuer)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "OIDC provider discovery failed")
+		s.writeOIDCDiscoveryError(w, r, provider.ID, reason, status)
 		return
 	}
 	oauthConfig := oauth2.Config{ClientID: provider.ClientID, ClientSecret: string(clientSecret), Endpoint: oidcProvider.Endpoint(), RedirectURL: provider.RedirectURL, Scopes: []string{oidc.ScopeOpenID, "email", "profile"}}
@@ -192,7 +191,7 @@ func (s *Server) createOIDCProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.Name = strings.TrimSpace(input.Name)
-	input.Issuer = strings.TrimRight(strings.TrimSpace(input.Issuer), "/")
+	input.Issuer = strings.TrimSpace(input.Issuer)
 	issuer, err := url.Parse(input.Issuer)
 	if err != nil || issuer.Host == "" || issuer.User != nil || issuer.RawQuery != "" || issuer.Fragment != "" || (issuer.Scheme != "https" && issuer.Hostname() != "localhost" && issuer.Hostname() != "127.0.0.1") {
 		writeError(w, http.StatusBadRequest, "issuer must be an HTTPS URL (localhost may use HTTP)")

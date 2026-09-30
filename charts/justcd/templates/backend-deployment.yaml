@@ -53,9 +53,19 @@ spec:
       topologySpreadConstraints:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.backend.extraVolumes }}
+      {{- if or .Values.backend.customCA.existingSecret .Values.backend.extraVolumes }}
       volumes:
+        {{- if .Values.backend.customCA.existingSecret }}
+        - name: backend-custom-ca
+          secret:
+            secretName: {{ required "Set backend.customCA.existingSecret to a nonempty Secret name" (.Values.backend.customCA.existingSecret | trim) | quote }}
+            items:
+              - key: {{ required "Set backend.customCA.secretKey when customCA.existingSecret is set" (.Values.backend.customCA.secretKey | trim) | quote }}
+                path: ca.crt
+        {{- end }}
+        {{- with .Values.backend.extraVolumes }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- end }}
       containers:
         - name: backend
@@ -65,15 +75,27 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- with .Values.backend.extraVolumeMounts }}
+          {{- if or .Values.backend.customCA.existingSecret .Values.backend.extraVolumeMounts }}
           volumeMounts:
+            {{- if .Values.backend.customCA.existingSecret }}
+            - name: backend-custom-ca
+              mountPath: /etc/justcd/custom-ca
+              readOnly: true
+            {{- end }}
+            {{- with .Values.backend.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.backend.service.port }}
               protocol: TCP
           env:
+            {{- if .Values.backend.customCA.existingSecret }}
+            # Go loads these directories in addition to the system CA bundle.
+            - name: SSL_CERT_DIR
+              value: /etc/ssl/certs:/etc/justcd/custom-ca
+            {{- end }}
             - name: JUSTCD_LISTEN_ADDRESS
               value: ":{{ .Values.backend.service.port }}"
             - name: JUSTCD_PUBLIC_URL

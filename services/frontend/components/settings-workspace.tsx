@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { EmptyState, FormField, PageHeading } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
 import { api, apiPost, errorMessage } from "@/lib/api"
+import { RepositoryConfigurations } from "@/components/repository-configurations"
 import { WorkspaceConnectionShares } from "@/components/workspace-connection-shares"
 import type {
   Cluster,
@@ -1576,6 +1577,7 @@ function GitSourcePanel({
           <EmptyState title="No Git sources connected yet" description="Use the guided flow to reuse an accessible source or connect a repository with workspace-owned credentials." />
         )}
       </SettingsInventory>
+      {workspace && <RepositoryConfigurations key={workspace.id} workspace={workspace} sources={sources} />}
       {webhookSource && <ConnectionDialog open={!!webhookSource} onOpenChange={(open) => { if (!open) setWebhookSource(null) }} busy={busy} title={`Push webhook · ${webhookSource.name}`} description="Configure push events for this Git source. An existing PR webhook already accepts pushes too."><form className="space-y-4" onSubmit={(event) => void saveWebhook(event)}>
         {webhookInfo && <div className="mt-4 rounded-lg border bg-muted/30 p-3 text-xs"><p>{webhookInfo.configured ? "Configured" : "Not configured"}</p><code className="mt-1 block break-all">{webhookInfo.webhookUrl}</code><p className="mt-2 text-muted-foreground">For GitHub/GitLab, enable push events with this secret. For other senders, POST JSON with ref and after (commit SHA), sign the raw body with HMAC-SHA256 in X-JustCD-Signature-256, and send a unique X-JustCD-Delivery ID.</p></div>}
         <div className="mt-4"><FormField label={webhookInfo?.configured ? "Rotate webhook secret" : "Webhook secret"} htmlFor="generic-push-secret" hint="At least 16 characters. The value is never shown again."><Input id="generic-push-secret" type="password" minLength={16} required value={webhookSecret} onChange={(event) => setWebhookSecret(event.target.value)} autoComplete="new-password" /></FormField></div>

@@ -39,8 +39,8 @@ export default function ApplicationGroupPage() {
     Promise.all([
       api<ApplicationGroupResponse>("/api/v1/application-groups/" + encodeURIComponent(groupID)),
       api<ListResponse<Workspace>>("/api/v1/workspaces"),
-      api<ListResponse<Cluster>>("/api/v1/clusters"),
-    ]).then(([result, workspaces, clusterList]) => {
+    ]).then(async ([result, workspaces]) => {
+      const clusterList = await api<ListResponse<Cluster>>(`/api/v1/clusters?workspaceId=${encodeURIComponent(result.group.workspaceId)}`)
       if (!active) return
       setGroup(result.group)
       setApplications(result.applications)

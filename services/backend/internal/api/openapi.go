@@ -8,6 +8,62 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /repository-configurations:
+    get:
+      summary: List application discovery connections (workspace viewer)
+      parameters:
+        - { name: workspaceId, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Discovery connections with enabled state, lastCheckedAt, lastCommit, and lastError }
+        '403': { description: Workspace access required }
+    post:
+      summary: Connect a repository revision and discover justcd.yaml applications (workspace owner)
+      description: Source access is checked against this workspace. The connection is persisted even if discovery fails; inspect lastError. Applications are never implicitly adopted from existing manual configuration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workspaceId, sourceId, revision]
+              properties:
+                workspaceId: { type: string }
+                sourceId: { type: string }
+                revision: { type: string, minLength: 1, maxLength: 256 }
+      responses:
+        '201': { description: Discovery connection, including errors from initial discovery }
+        '400': { description: Invalid configuration }
+        '403': { description: Workspace owner or source access required }
+        '409': { description: Repository revision already connected }
+  /repository-configurations/{repositoryID}:
+    put:
+      summary: Pause or resume application configuration discovery (workspace owner)
+      description: Pausing discovery leaves existing application deployment policies in effect.
+      parameters:
+        - { name: repositoryID, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        '200': { description: Updated discovery connection }
+        '403': { description: Workspace owner required }
+        '404': { description: Connection not found }
+  /repository-configurations/{repositoryID}/reconcile:
+    post:
+      summary: Discover and atomically update applications from Git (workspace owner)
+      parameters:
+        - { name: repositoryID, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Updated connection and last successfully processed commit }
+        '403': { description: Workspace owner required }
+        '404': { description: Connection not found }
+        '409': { description: Discovery paused, already running, or failed validation; previous application configuration is preserved }
   /health:
     get:
       summary: Check API health

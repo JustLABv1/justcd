@@ -44,34 +44,44 @@ export default function NewApplicationPage() {
 
   useEffect(() => {
     const queryWorkspace = new URLSearchParams(window.location.search).get("workspaceId") ?? ""
-    Promise.all([
-      api<ListResponse<Workspace>>("/api/v1/workspaces"),
-      api<ListResponse<Cluster>>("/api/v1/clusters"),
-    ]).then(([workspaceResult, clusterResult]) => {
+    let active = true
+    api<ListResponse<Workspace>>("/api/v1/workspaces").then((workspaceResult) => {
+      if (!active) return
       const writable = workspaceResult.items.filter((workspace) => workspace.role !== "viewer")
       setWorkspaces(writable)
       setWorkspaceId(writable.find((workspace) => workspace.id === queryWorkspace)?.id ?? writable[0]?.id ?? "")
-      setClusters(clusterResult.items)
-      setClusterId(clusterResult.items[0]?.id ?? "")
-    }).catch((cause) => setError(cause)).finally(() => setLoading(false))
+    }).catch((cause) => active && setError(cause)).finally(() => active && setLoading(false))
+    return () => { active = false }
   }, [])
 
   useEffect(() => {
     if (!workspaceId) return
-    api<ListResponse<GitSource>>(`/api/v1/git-sources?workspaceId=${encodeURIComponent(workspaceId)}`).then((result) => {
-      setSources(result.items)
-      setSourceId(result.items[0]?.id ?? "")
-    }).catch((cause) => setError(cause))
+    let active = true
+    Promise.all([
+      api<ListResponse<GitSource>>(`/api/v1/git-sources?workspaceId=${encodeURIComponent(workspaceId)}`),
+      api<ListResponse<Cluster>>(`/api/v1/clusters?workspaceId=${encodeURIComponent(workspaceId)}`),
+    ]).then(([sourceList, clusterList]) => {
+      if (!active) return
+      setSources(sourceList.items)
+      setSourceId(sourceList.items[0]?.id ?? "")
+      setClusters(clusterList.items)
+      setClusterId(clusterList.items[0]?.id ?? "")
+      setError(null)
+    }).catch((cause) => active && setError(cause))
+    return () => { active = false }
   }, [workspaceId])
 
   useEffect(() => {
     if (!workspaceId || !clusterId) return
+    let active = true
     api<ListResponse<NamespaceBinding>>(`/api/v1/clusters/${encodeURIComponent(clusterId)}/bindings?workspaceId=${encodeURIComponent(workspaceId)}`).then((result) => {
+      if (!active) return
       setBindings(result.items)
       setNamespaces((current) => current.filter((namespace) => result.items.some((item) => item.namespace === namespace)))
       setNamespaceHelmValues((current) => Object.fromEntries(Object.entries(current).filter(([namespace]) => result.items.some((item) => item.namespace === namespace))))
       setNamespaceManifestPaths((current) => Object.fromEntries(Object.entries(current).filter(([namespace]) => result.items.some((item) => item.namespace === namespace))))
-    }).catch((cause) => setError(cause))
+    }).catch((cause) => active && setError(cause))
+    return () => { active = false }
   }, [workspaceId, clusterId])
 
   const selectedWorkspace = useMemo(() => workspaces.find((workspace) => workspace.id === workspaceId), [workspaces, workspaceId])
@@ -106,7 +116,7 @@ export default function NewApplicationPage() {
     <form className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]" onSubmit={submit}>
       <div className="space-y-5">
         <Panel title="Source" description="Select the workspace repository and the exact Git path to render."><div className="grid gap-4 p-5 sm:grid-cols-2">
-          <FormField label="Workspace" htmlFor="workspace"><FormSelect id="workspace" value={workspaceId} onValueChange={(value) => { setWorkspaceId(value); setNamespaces([]); setNamespaceHelmValues({}); setNamespaceManifestPaths({}); setTargetManifestPath("") }} placeholder="Select workspace" required items={workspaces.map((workspace) => ({ value: workspace.id, label: workspace.name }))} /></FormField>
+          <FormField label="Workspace" htmlFor="workspace"><FormSelect id="workspace" value={workspaceId} onValueChange={(value) => { setWorkspaceId(value); setSourceId(""); setSources([]); setClusterId(""); setClusters([]); setBindings([]); setNamespaces([]); setNamespaceHelmValues({}); setNamespaceManifestPaths({}); setTargetManifestPath("") }} placeholder="Select workspace" required items={workspaces.map((workspace) => ({ value: workspace.id, label: workspace.name }))} /></FormField>
           <FormField label="Git source" htmlFor="source"><FormSelect id="source" value={sourceId} onValueChange={setSourceId} placeholder="Select source" required items={sources.map((source) => ({ value: source.id, label: `${source.name} · ${source.repositoryUrl}` }))} /></FormField>
           <FormField label="Application name" htmlFor="name" hint="Lowercase letters, numbers, dots, and dashes."><Input id="name" placeholder="billing-api" value={name} onChange={(event) => setName(event.target.value)} required pattern="[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?" /></FormField>
           <FormField label="Git revision" htmlFor="revision" hint="Branch, tag, or commit; JustCD pins the reviewed commit SHA."><Input id="revision" placeholder="main" value={revision} onChange={(event) => setRevision(event.target.value)} required /></FormField>

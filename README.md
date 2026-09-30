@@ -113,6 +113,10 @@ one inline before registering and verifying another cluster.
 4. Add an HTTPS/SSH Git source and a credential when needed, then create an
    application with a tracked branch, manifest path, renderer, and namespace
    bindings.
+   Alternatively, enable **Manage applications from Git** on the workspace's Git
+   sources page and place `justcd.yaml` beside each overlay or chart. See
+   [Applications managed by Git](docs/repository-applications.md) for the file
+   format, discovery, and removal behavior.
 5. Build a plan and review its resource-level diff before syncing. Plans expire
    after 15 minutes. Deletes and cluster-scoped changes require a workspace
    owner’s one-time approval. The executor rechecks the plan, resource UID,
@@ -224,7 +228,9 @@ cd services/frontend && pnpm typecheck && pnpm lint && pnpm build
 
 The isolated integration smoke suite checks upgrades from each of the three
 most recent migration versions, preserves existing data, reruns migrations to
-check idempotence, and exercises the reconciliation poller's SQL query:
+check idempotence, and exercises the reconciliation poller's SQL query. It also verifies repository
+application discovery against a temporary Git server, including invalid
+definitions, namespace access, removal, and restoration:
 
 ```sh
 bash scripts/integration.sh smoke

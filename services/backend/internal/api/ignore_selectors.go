@@ -79,6 +79,10 @@ func (s *Server) deleteIgnoreSelector(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("selectorID")
 	if err := s.Store.ChangeIgnoreSelector(r.Context(), app.ID, currentUser(r).ID, core.IgnoreSelector{}, id); err != nil {
+		if errors.Is(err, store.ErrGitManagedIgnore) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "ignore selector not found")
 			return

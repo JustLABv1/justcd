@@ -132,8 +132,16 @@ func (s *Service) adoptValidatedConflict(ctx context.Context, input planInput, a
 	if err != nil || string(object.GetUID()) != expected.UID || object.GetResourceVersion() != expected.ResourceVersion {
 		return core.Resource{}, ErrAdoptionStale
 	}
-	if owner := object.GetLabels()["justcd.io/application-id"]; owner != "" && owner != app.ID {
-		return core.Resource{}, fmt.Errorf("%w: ownership label belongs to another application", ErrAdoptionUnsafe)
+	owner := object.GetLabels()["justcd.io/application-id"]
+	if owner != expected.Owner {
+		return core.Resource{}, ErrAdoptionStale
+	}
+	ownerMissing, err := s.adoptionOwnerMissing(ctx, owner, app.ID)
+	if err != nil {
+		return core.Resource{}, err
+	}
+	if owner != "" && owner != app.ID && !ownerMissing {
+		return core.Resource{}, fmt.Errorf("%w: ownership label belongs to an existing application", ErrAdoptionUnsafe)
 	}
 	if len(object.GetOwnerReferences()) != 0 {
 		return core.Resource{}, fmt.Errorf("%w: object has Kubernetes owner references", ErrAdoptionUnsafe)
@@ -174,11 +182,25 @@ func validateAdoptionConflict(fresh, expected *OwnershipConflict, applicationID 
 	if fresh == nil || expected == nil || fresh.Identity.Key() != expected.Identity.Key() || fresh.UID != expected.UID || fresh.ResourceVersion != expected.ResourceVersion || fresh.DesiredFingerprint != expected.DesiredFingerprint {
 		return ErrAdoptionStale
 	}
-	if fresh.Owner != "" && fresh.Owner != applicationID {
+	if fresh.Owner != "" && fresh.Owner != applicationID && !fresh.OwnerMissing {
 		return fmt.Errorf("%w: this object is labelled for another JustCD application", ErrAdoptionUnsafe)
+	}
+	if fresh.Owner != expected.Owner {
+		return ErrAdoptionStale
 	}
 	if fresh.HasOwnerReferences {
 		return fmt.Errorf("%w: this object is a dependent of another Kubernetes resource", ErrAdoptionUnsafe)
 	}
 	return nil
+}
+
+func (s *Service) adoptionOwnerMissing(ctx context.Context, owner, applicationID string) (bool, error) {
+	if owner == "" || owner == applicationID {
+		return false, nil
+	}
+	exists, err := s.Store.ApplicationExists(ctx, owner)
+	if err != nil {
+		return false, err
+	}
+	return !exists, nil
 }

@@ -22,3 +22,10 @@ test("paused reconciliation remains visible even with healthy runtime and synced
   assert.equal(isApplicationHealthy(app), false)
   assert.equal(isApplicationHealthy({ ...app, autoSyncPaused: false }), true)
 })
+
+
+test("missing Git definitions need attention while workloads remain healthy", () => {
+  const app = { configurationMissing: true, health: "synced", healthCondition: { status: "Healthy" } }
+  assert.equal(needsAttention(app), true)
+  assert.equal(isApplicationHealthy(app), false)
+})

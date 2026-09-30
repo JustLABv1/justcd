@@ -88,23 +88,25 @@ type PlanSelection struct {
 }
 
 type IgnoreRule struct {
-	ID       string   `json:"id"`
-	Identity Identity `json:"identity"`
-	Path     string   `json:"path,omitempty"`
-	Reason   string   `json:"reason"`
+	ManagedByGit bool     `json:"managedByGit,omitempty"`
+	ID           string   `json:"id"`
+	Identity     Identity `json:"identity"`
+	Path         string   `json:"path,omitempty"`
+	Reason       string   `json:"reason"`
 }
 
 // IgnoreSelector excludes a rendered resource by exact GVK or label before
 // discovery/live reads. It is scoped to one application and audited separately.
 type IgnoreSelector struct {
-	ID         string    `json:"id"`
-	APIVersion string    `json:"apiVersion,omitempty"`
-	Kind       string    `json:"kind,omitempty"`
-	LabelKey   string    `json:"labelKey,omitempty"`
-	LabelValue string    `json:"labelValue,omitempty"`
-	Reason     string    `json:"reason"`
-	CreatedBy  string    `json:"createdBy,omitempty"`
-	CreatedAt  time.Time `json:"createdAt,omitempty"`
+	ManagedByGit bool      `json:"managedByGit,omitempty"`
+	ID           string    `json:"id"`
+	APIVersion   string    `json:"apiVersion,omitempty"`
+	Kind         string    `json:"kind,omitempty"`
+	LabelKey     string    `json:"labelKey,omitempty"`
+	LabelValue   string    `json:"labelValue,omitempty"`
+	Reason       string    `json:"reason"`
+	CreatedBy    string    `json:"createdBy,omitempty"`
+	CreatedAt    time.Time `json:"createdAt,omitempty"`
 }
 
 func (selector IgnoreSelector) Matches(identity Identity, labels map[string]string) bool {
@@ -124,6 +126,7 @@ func (selector IgnoreSelector) Matches(identity Identity, labels map[string]stri
 // with a rollback target. Kubernetes credentials remain resolved from the
 // application's current workspace bindings when a plan is reviewed and applied.
 type RollbackSettings struct {
+	HelmReleaseName            string                        `json:"helmReleaseName,omitempty"`
 	SourceID                   string                        `json:"sourceId"`
 	Revision                   string                        `json:"revision"`
 	ManifestPath               string                        `json:"manifestPath"`

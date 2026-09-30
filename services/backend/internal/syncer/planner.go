@@ -61,6 +61,7 @@ type OwnershipConflict struct {
 	UID                string        `json:"uid"`
 	ResourceVersion    string        `json:"resourceVersion"`
 	Owner              string        `json:"owner,omitempty"`
+	OwnerMissing       bool          `json:"ownerMissing,omitempty"`
 	DesiredFingerprint string        `json:"desiredFingerprint"`
 	HasOwnerReferences bool          `json:"hasOwnerReferences"`
 	DesiredManifest    []byte        `json:"-"`
@@ -234,6 +235,9 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 	ctx, span := otel.Tracer("justcd/planner").Start(ctx, "plan.calculate")
 	defer span.End()
 	span.SetAttributes(attribute.String("application.id", app.ID), attribute.String("renderer", app.Renderer))
+	if app.ConfigurationMissing {
+		return core.Plan{}, nil, errors.New("application definition is missing from Git; restore it before syncing")
+	}
 	if app.Decommissioning {
 		return core.Plan{}, nil, errors.New("application is being decommissioned; cancel deletion before normal sync")
 	}
@@ -274,7 +278,7 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 			ignoredResources = append(ignoredResources, rule.Identity)
 		}
 	}
-	desired, err := render.Render(ctx, render.Options{RepositoryRoot: checkout.Root, ManifestPath: app.ManifestPath, TargetManifestPath: app.TargetManifestPath, NamespaceManifestPaths: app.NamespaceManifestPaths, Renderer: app.Renderer, KustomizeHelmEnabled: app.KustomizeHelmEnabled, KustomizeNamespaceOverride: app.KustomizeNamespaceOverride, HelmValuesFiles: app.HelmValuesFiles, HelmValuesYAML: app.HelmValuesYAML, TargetHelmValuesFiles: app.TargetHelmValuesFiles, TargetHelmValuesYAML: app.TargetHelmValuesYAML, NamespaceHelmValues: app.NamespaceHelmValues, ApplicationID: app.ID, ClusterID: app.ClusterID, Namespaces: namespaceBindings, Mapper: input.Mapper.Mapper, IgnoredResources: ignoredResources, IgnoredSelectors: selectors})
+	desired, err := render.Render(ctx, render.Options{RepositoryRoot: checkout.Root, ManifestPath: app.ManifestPath, TargetManifestPath: app.TargetManifestPath, NamespaceManifestPaths: app.NamespaceManifestPaths, Renderer: app.Renderer, KustomizeHelmEnabled: app.KustomizeHelmEnabled, KustomizeNamespaceOverride: app.KustomizeNamespaceOverride, HelmReleaseName: app.HelmReleaseName, HelmValuesFiles: app.HelmValuesFiles, HelmValuesYAML: app.HelmValuesYAML, TargetHelmValuesFiles: app.TargetHelmValuesFiles, TargetHelmValuesYAML: app.TargetHelmValuesYAML, NamespaceHelmValues: app.NamespaceHelmValues, ApplicationID: app.ID, ClusterID: app.ClusterID, Namespaces: namespaceBindings, Mapper: input.Mapper.Mapper, IgnoredResources: ignoredResources, IgnoredSelectors: selectors})
 	if err != nil {
 		observability.MarkError(span, err)
 		return core.Plan{}, nil, &planStageError{stage: "render", err: err}
@@ -901,7 +905,12 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 		}
 		tracked, owned := managedByKey[identity.Key()]
 		if !owned {
-			conflicts = append(conflicts, &OwnershipConflict{Identity: identity, UID: string(object.GetUID()), ResourceVersion: object.GetResourceVersion(), Owner: object.GetLabels()["justcd.io/application-id"], DesiredFingerprint: desired[desiredIndex[key]].Fingerprint, DesiredManifest: desired[desiredIndex[key]].Manifest, HasOwnerReferences: len(object.GetOwnerReferences()) > 0})
+			owner := object.GetLabels()["justcd.io/application-id"]
+			ownerMissing, err := s.adoptionOwnerMissing(ctx, owner, input.Application.ID)
+			if err != nil {
+				return nil, nil, err
+			}
+			conflicts = append(conflicts, &OwnershipConflict{Identity: identity, UID: string(object.GetUID()), ResourceVersion: object.GetResourceVersion(), Owner: owner, OwnerMissing: ownerMissing, DesiredFingerprint: desired[desiredIndex[key]].Fingerprint, DesiredManifest: desired[desiredIndex[key]].Manifest, HasOwnerReferences: len(object.GetOwnerReferences()) > 0})
 			continue
 		}
 		if object.GetLabels()["justcd.io/application-id"] != input.Application.ID || string(object.GetUID()) != tracked.UID {

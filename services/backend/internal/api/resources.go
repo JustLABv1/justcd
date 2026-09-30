@@ -813,6 +813,11 @@ func (s *Server) updateApplicationRenderSettings(w http.ResponseWriter, r *http.
 	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
+	if app.RepositoryConfigurationID != "" {
+		writeError(w, http.StatusConflict, "application configuration is managed by Git; edit "+app.ConfigurationPath+" in the repository")
+		return
+	}
+
 	if app.Renderer != "kustomize" {
 		writeError(w, http.StatusBadRequest, "render settings are only available for Kustomize applications")
 		return

@@ -81,7 +81,7 @@ export function ApplicationCard({ app, canManage, onDeleted }: { app: WorkspaceA
       </header>
 
       <div className="mt-4 space-y-2">
-        <div className="flex flex-wrap items-center gap-2"><span className="text-[10px] text-muted-foreground">Sync</span><StatusBadge status={app.health} />{app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}</div>
+        <div className="flex flex-wrap items-center gap-2"><span className="text-[10px] text-muted-foreground">Sync</span><StatusBadge status={app.health} />{app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}{app.repositoryConfigurationId && <span className="text-[10px] text-muted-foreground">Managed by Git</span>}{app.configurationMissing && <span className="text-[10px] text-destructive">Definition missing</span>}</div>
         <RuntimeHealth condition={app.healthCondition} />
         {app.statusIssues?.length > 0 && <p className="mt-2 text-xs leading-5 text-destructive" title={app.statusIssues.map((issue) => issue.summary).join("\n")}>{app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")} check failed · <Link href={`/applications/${app.id}`} className="underline underline-offset-2">Details</Link></p>}
       </div>
@@ -305,7 +305,7 @@ export function ApplicationCollection({
                 id: "health",
                 title: "Health",
                 size: 150,
-                cell: (app) => <div className="space-y-2"><div className="flex flex-wrap gap-1.5"><StatusBadge status={app.health} /><StatusBadge status={app.healthCondition?.status ?? "Unknown"} />{app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}</div><p className="text-[10px] text-muted-foreground" title={app.healthCondition?.message}>{app.healthCondition?.reason ?? "Health not observed"} · {app.healthCondition?.lastTransitionTime ? new Date(app.healthCondition.lastTransitionTime).toLocaleString() : "Not observed yet"}</p>{app.statusIssues?.length > 0 && <span className="block text-xs text-destructive">{app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")} check failed</span>}</div>,
+                cell: (app) => <div className="space-y-2"><div className="flex flex-wrap gap-1.5"><StatusBadge status={app.health} /><StatusBadge status={app.healthCondition?.status ?? "Unknown"} />{app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}{app.repositoryConfigurationId && <span className="text-[10px] text-muted-foreground">Managed by Git</span>}{app.configurationMissing && <span className="text-[10px] text-destructive">Definition missing</span>}</div><p className="text-[10px] text-muted-foreground" title={app.healthCondition?.message}>{app.healthCondition?.reason ?? "Health not observed"} · {app.healthCondition?.lastTransitionTime ? new Date(app.healthCondition.lastTransitionTime).toLocaleString() : "Not observed yet"}</p>{app.statusIssues?.length > 0 && <span className="block text-xs text-destructive">{app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")} check failed</span>}</div>,
               },
               {
                 id: "target",

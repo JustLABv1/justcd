@@ -606,6 +606,10 @@ func (s *Server) deleteIgnoreRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rule, err := s.Store.DeleteIgnoreRule(r.Context(), app.ID, r.PathValue("ruleID"))
+	if errors.Is(err, store.ErrGitManagedIgnore) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "ignore rule not found")
 		return

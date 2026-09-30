@@ -222,6 +222,11 @@ func (s *Server) updateApplication(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
+	if app.RepositoryConfigurationID != "" {
+		writeError(w, http.StatusConflict, "application configuration is managed by Git; edit "+app.ConfigurationPath+" in the repository")
+		return
+	}
+
 	if _, _, err := s.Store.ReviewByPreviewApplication(r.Context(), app.ID); err == nil {
 		writeError(w, http.StatusConflict, "preview applications are managed by their pull request profile")
 		return

@@ -104,8 +104,15 @@ func (s *Store) ApplyRepositoryApplications(ctx context.Context, repository Repo
 			return err
 		default:
 			app.ID = existing.ID
+			// Legacy adoption changed the policy instead of pausing. Repair that
+			// drift without allowing automatic sync before a fresh review.
+			if existing.ConfigurationHash == app.ConfigurationHash && existing.SyncPolicy != app.SyncPolicy && existing.RollbackResumeState == nil {
+				if _, err := tx.ExecContext(ctx, `UPDATE applications SET auto_sync_paused=TRUE WHERE id=$1`, app.ID); err != nil {
+					return err
+				}
+			}
 			// Operational rollback pins remain effective until explicitly resumed.
-			if existing.ConfigurationHash != app.ConfigurationHash && existing.RollbackResumeState == nil {
+			if (existing.ConfigurationHash != app.ConfigurationHash || existing.SyncPolicy != app.SyncPolicy) && existing.RollbackResumeState == nil {
 				if err := updateApplication(ctx, tx, app); err != nil {
 					return fmt.Errorf("application %q: %w", app.Name, err)
 				}

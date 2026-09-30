@@ -2927,8 +2927,8 @@ func (s *Store) UpsertManagedResource(ctx context.Context, applicationID string,
 }
 
 // AdoptManagedResource records a reviewed takeover without racing another
-// takeover. It deliberately switches auto-safe applications to manual sync so
-// the first post-adoption diff cannot be applied without a fresh user review.
+// takeover. It pauses reconciliation without changing the configured sync policy,
+// so the first post-adoption diff requires a fresh user review.
 func (s *Store) AdoptManagedResource(ctx context.Context, applicationID, actorID, reason string, resource core.Resource) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -2962,7 +2962,7 @@ func (s *Store) AdoptManagedResource(ctx context.Context, applicationID, actorID
 	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, applicationID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE applications SET sync_policy='manual',health='unknown',last_checked_at=NULL,updated_at=NOW() WHERE id=$1`, applicationID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET auto_sync_paused=TRUE,health='unknown',last_checked_at=NULL,updated_at=NOW() WHERE id=$1`, applicationID); err != nil {
 		return err
 	}
 	details, err := json.Marshal(map[string]any{"identity": resource.Identity, "uid": resource.UID, "reason": reason, "autoSyncPaused": true})

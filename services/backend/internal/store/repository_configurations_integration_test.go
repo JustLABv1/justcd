@@ -38,6 +38,39 @@ func testRepositoryConfigurationSafety(t *testing.T, ctx context.Context, s *Sto
 		t.Fatalf("missing Git provenance: %+v", stored)
 	}
 	originalID := stored.ID
+	app.SyncPolicy = "auto-safe"
+	app.ConfigurationHash = "auto-safe"
+	if err := s.ApplyRepositoryApplications(ctx, repository, "policy", []Application{app}); err != nil {
+		t.Fatal(err)
+	}
+	resource := core.Resource{Identity: core.Identity{ClusterID: app.ClusterID, APIVersion: "v1", Kind: "ConfigMap", Namespace: "default", Name: "adoption-policy-test"}, UID: "policy-uid", ResourceVersion: "1", Manifest: []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"adoption-policy-test"}}`)}
+	if err := s.AdoptManagedResource(ctx, originalID, "integration-owner", "Policy preservation", resource); err != nil {
+		t.Fatal(err)
+	}
+	adopted, err := s.ApplicationByID(ctx, originalID)
+	if err != nil || adopted.SyncPolicy != "auto-safe" || !adopted.AutoSyncPaused {
+		t.Fatalf("adoption changed policy or failed to pause: %+v %v", adopted, err)
+	}
+	// Repair policy drift even when the Git definition hash is unchanged.
+	if _, err := s.DB.ExecContext(ctx, `UPDATE applications SET sync_policy='manual',auto_sync_paused=FALSE WHERE id=$1`, originalID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ApplyRepositoryApplications(ctx, repository, "same-definition", []Application{app}); err != nil {
+		t.Fatal(err)
+	}
+	adopted, err = s.ApplicationByID(ctx, originalID)
+	if err != nil || adopted.SyncPolicy != "auto-safe" || !adopted.AutoSyncPaused {
+		t.Fatalf("Git policy drift not repaired safely: %+v %v", adopted, err)
+	}
+	if err := s.DeleteManagedResource(ctx, originalID, resource.Identity); err != nil {
+		t.Fatal(err)
+	}
+	app.SyncPolicy = "manual"
+	app.ConfigurationHash = "first"
+	if err := s.ApplyRepositoryApplications(ctx, repository, "commit-1", []Application{app}); err != nil {
+		t.Fatal(err)
+	}
+
 	for _, check := range []struct {
 		id   string
 		want bool

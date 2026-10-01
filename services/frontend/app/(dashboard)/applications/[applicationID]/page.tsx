@@ -86,6 +86,9 @@ export default function ApplicationDetailPage() {
   const [pendingData, setPendingData] = useState({ workspace: true, plans: true, resources: true, operations: true, topology: true, rollback: true, rules: true, selectors: true })
   const [busy, setBusy] = useState(false)
   const [pendingAction, setPendingAction] = useState("")
+  const [operationsError, setOperationsError] = useState<unknown | null>(null)
+  const [plansError, setPlansError] = useState<unknown | null>(null)
+  const [retryingPlans, setRetryingPlans] = useState(false)
   const [error, setError] = useState<unknown | null>(null)
   const [ownershipConflict, setOwnershipConflict] = useState<OwnershipConflict | null>(null)
   const [ownershipConflicts, setOwnershipConflicts] = useState<OwnershipConflict[]>([])
@@ -154,9 +157,9 @@ export default function ApplicationDetailPage() {
     const results = await Promise.allSettled([
       api<ListResponse<Workspace>>("/api/v1/workspaces").then((value) => { if (current()) setWorkspace(value.items.find((item) => item.id === app.workspaceId) ?? null) }).finally(() => done("workspace")),
       api<ListResponse<WorkspaceMember>>(`/api/v1/workspaces/${encodeURIComponent(app.workspaceId)}/members`).catch(() => ({ items: [] as WorkspaceMember[] })).then((value) => { if (current()) setWorkspaceMembers(value.items) }),
-      api<ListResponse<PlanRecord>>(`${appPath}/plans`).then((value) => { if (current()) { setPlans(value.items); setActivePlan((selected) => selected ? value.items.find((item) => item.id === selected.id) ?? value.items[0] ?? null : value.items[0] ?? null) } }).finally(() => done("plans")),
+      api<ListResponse<PlanRecord>>(`${appPath}/plans`).then((value) => { if (current()) { setPlansError(null); setPlans(value.items); setActivePlan((selected) => selected ? value.items.find((item) => item.id === selected.id) ?? value.items[0] ?? null : value.items[0] ?? null) } }).catch((cause) => { if (current()) setPlansError(cause) }).finally(() => done("plans")),
       api<ListResponse<ManagedResource>>(`${appPath}/resources`).then((value) => { if (current()) setResources(value.items) }).finally(() => done("resources")),
-      api<ListResponse<Operation>>(`${appPath}/operations`).then((value) => { if (current()) setOperations(value.items) }).finally(() => done("operations")),
+      api<ListResponse<Operation>>(`${appPath}/operations`).then((value) => { if (current()) { setOperations(value.items); setOperationsError(null) } }).catch((cause) => { if (current()) setOperationsError(cause) }).finally(() => done("operations")),
       api<ListResponse<ApplicationHealthTransition>>(`${appPath}/health-history`).then((value) => { if (current()) setHealthHistory(value.items) }).catch(() => { if (current()) setHealthHistory([]) }),
       api<ListResponse<IgnoreRule>>(`${appPath}/ignore-rules`).then((value) => { if (current()) setIgnoreRules(value.items) }).finally(() => done("rules")),
       api<ListResponse<IgnoreSelector>>(`${appPath}/ignore-selectors`).then((value) => { if (current()) setIgnoreSelectors(value.items) }).finally(() => done("selectors")),
@@ -178,9 +181,11 @@ export default function ApplicationDetailPage() {
       setError(null)
       setWorkspace(null)
       setWorkspaceMembers([])
+      setPlansError(null)
       setPlans([])
       setActivePlan(null)
       setResources([])
+      setOperationsError(null)
       setOperations([])
       setHealthHistory([])
       setRollbackTargets([])
@@ -289,6 +294,7 @@ export default function ApplicationDetailPage() {
     try {
       const plan = await apiPost<PlanRecord>(`/api/v1/applications/${encodeURIComponent(applicationID)}/plans`)
       setConflictReview([])
+      setPlansError(null)
       setActivePlan(plan)
       setPlans((current) => [plan, ...current.filter((item) => item.id !== plan.id)])
       toast.success(plan.plan.changes.length ? `Plan ready: ${plan.plan.changes.length} change${plan.plan.changes.length === 1 ? "" : "s"} to review.` : "The application already matches its Git revision.")
@@ -492,6 +498,19 @@ export default function ApplicationDetailPage() {
     finally { setBusy(false); setPendingAction("") }
   }
 
+  async function retryPlans() {
+    const epoch = loadEpoch.current
+    setRetryingPlans(true)
+    try {
+      const result = await api<ListResponse<PlanRecord>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/plans`)
+      if (epoch !== loadEpoch.current) return
+      setPlans(result.items)
+      setActivePlan((selected) => result.items.find((plan) => plan.id === selected?.id) ?? result.items[0] ?? null)
+      setPlansError(null)
+    } catch (cause) { if (epoch === loadEpoch.current) setPlansError(cause) }
+    finally { setRetryingPlans(false) }
+  }
+
   async function refreshSummary() {
     try {
       const [inventory, operationList, topologyResult, planList, ruleList, rollbackTargetList] = await Promise.all([
@@ -502,7 +521,7 @@ export default function ApplicationDetailPage() {
         api<ListResponse<IgnoreRule>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ignore-rules`),
         api<ListResponse<RollbackTarget>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/rollback-targets`).catch(() => ({ items: [] as RollbackTarget[] })),
       ])
-      setResources(inventory.items); setOperations(operationList.items); setTopology(topologyResult); setPlans(planList.items); setIgnoreRules(ruleList.items); setRollbackTargets(rollbackTargetList.items)
+      setPlansError(null); setOperationsError(null); setResources(inventory.items); setOperations(operationList.items); setTopology(topologyResult); setPlans(planList.items); setIgnoreRules(ruleList.items); setRollbackTargets(rollbackTargetList.items)
       setActivePlan((current) => current ? planList.items.find((plan) => plan.id === current.id) ?? current : planList.items[0] ?? null)
     } catch { /* the primary plan result remains useful when a secondary panel is unavailable */ }
   }
@@ -619,24 +638,20 @@ export default function ApplicationDetailPage() {
   const visibleOperationCheckpoint = visibleOperation?.rollbackCheckpointId ?? rollbackTargets.find((target) => target.kind === "pre_operation" && target.operationId === visibleOperation?.id)?.id
   const latestPlan = plans[0]
   const latestCounts = latestPlan?.plan.changes.reduce((counts, change) => ({ ...counts, [change.kind]: counts[change.kind] + 1 }), { create: 0, update: 0, delete: 0 })
-  const resourceKinds = Object.entries((topology?.nodes ?? []).reduce<Record<string, number>>((counts, node) => {
-    counts[node.identity.kind] = (counts[node.identity.kind] ?? 0) + 1
-    return counts
-  }, {})).sort((a, b) => b[1] - a[1])
 
   const namespaceMismatch = Boolean(application?.renderer === "kustomize" && kustomization?.namespace && application.namespaces.length === 1 && kustomization.namespace !== application.namespaces[0].namespace)
 
   if (loading && !application) return <ApplicationDetailSkeleton />
 
   return <>
-    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.renderer} · ${application.manifestPath} · ${application.revision}` : ""} badge={application && <StatusBadge status={application.health} />} actions={application && <>{pendingData.workspace && <span role="status" className="text-xs text-muted-foreground">Loading permissions…</span>}{canApprove && !application.decommissioning && !application.repositoryConfigurationId && <Link href={`/applications/${applicationID}/edit`}><Button variant="outline">Edit application</Button></Link>}<Button variant="outline" loading={pendingAction === "create-plan"} loadingText="Calculating plan…" onClick={() => void createPlan()} disabled={application.configurationMissing || application.decommissioning || !canDeploy || busy || (namespaceMismatch && !application.kustomizeNamespaceOverride)} title={namespaceMismatch && !application.kustomizeNamespaceOverride ? "Choose a namespace override before refreshing the plan" : undefined}><span aria-hidden="true">↻</span> Refresh plan</Button>{canApprove && !application.autoSyncPaused && <Button variant="outline" loading={pendingAction === "pause-sync"} loadingText="Pausing…" disabled={busy || hasPendingOperation} onClick={() => void pauseSync()}>Pause reconciliation</Button>}</>} />
+    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.clusterName || application.clusterId} / ${application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"}${application.autoSyncPaused ? " · Auto-sync paused" : ""}` : ""} badge={application && <StatusBadge status={application.health} />} actions={application && <>{pendingData.workspace && <span role="status" className="text-xs text-muted-foreground">Loading permissions…</span>}{canApprove && !application.decommissioning && !application.repositoryConfigurationId && <Link href={`/applications/${applicationID}/edit`}><Button variant="outline">Edit application</Button></Link>}<Button variant="outline" loading={pendingAction === "create-plan"} loadingText="Calculating plan…" onClick={() => void createPlan()} disabled={application.configurationMissing || application.decommissioning || !canDeploy || busy || (namespaceMismatch && !application.kustomizeNamespaceOverride)} title={namespaceMismatch && !application.kustomizeNamespaceOverride ? "Choose a namespace override before refreshing the plan" : undefined}><span aria-hidden="true">↻</span> Refresh plan</Button>{canApprove && !application.autoSyncPaused && <Button variant="outline" loading={pendingAction === "pause-sync"} loadingText="Pausing…" disabled={busy || hasPendingOperation} onClick={() => void pauseSync()}>Pause reconciliation</Button>}</>} />
       <Tabs.Root value={activeTab} onValueChange={(value) => selectTab(String(value))} className="min-w-0">
         {application && <Tabs.List aria-label="Application views" className="mb-6 flex gap-6 overflow-x-auto border-b" activateOnFocus>
           {[
             { id: "overview", label: "Overview" },
-            { id: "topology", label: "Topology", count: pendingData.topology ? undefined : topology?.nodes.length },
-            { id: "changes", label: "Plan & diff", count: pendingData.plans ? undefined : latestPlan?.status === "current" ? latestPlan.plan.changes.length + (latestPlan.plan.ignored?.length ?? 0) : 0 },
-            { id: "activity", label: "Activity & source", count: pendingData.operations ? undefined : operations.length },
+            { id: "topology", label: "Resources", count: pendingData.topology ? undefined : topology?.nodes.length },
+            { id: "changes", label: "Changes", count: pendingData.plans || plansError != null ? undefined : latestPlan?.status === "current" ? latestPlan.plan.changes.length + (latestPlan.plan.ignored?.length ?? 0) : 0 },
+            { id: "activity", label: "Activity" },
             { id: "pull-requests", label: "Pull requests" },
             { id: "settings", label: "Settings" },
           ].map((tab) => <Tabs.Tab key={tab.id} value={tab.id} className="flex shrink-0 items-center gap-2 border-b-2 border-transparent px-1 pb-3 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[active]:border-primary data-[active]:text-foreground">
@@ -645,7 +660,7 @@ export default function ApplicationDetailPage() {
         </Tabs.List>}
 
     {error != null && <ErrorNotice error={error} />}
-    {application && <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3">
+    {application && <div className={activeTab === "overview" ? "mb-5 flex flex-wrap items-center justify-between gap-3 text-sm" : "mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3"}>
       <div className="min-w-0 flex-1 text-xs">
         {application.statusIssues?.length > 0 ? <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <span className="font-medium text-destructive">{application.statusIssues.map(issue => issue.source === "git" ? "Git repository" : issue.source === "cluster" ? "Target cluster" : "Application").join(" & ")} check failed</span>
@@ -653,7 +668,7 @@ export default function ApplicationDetailPage() {
         </div> : <span className="text-muted-foreground">{application.lastCheckedAt ? `Last checked ${new Date(application.lastCheckedAt).toLocaleString()}` : "Application checks pending"}</span>}
       </div>
       <Dialog.Root>
-        <Dialog.Trigger render={<Button variant="ghost" size="sm" className="gap-2" />}><span className="text-xs text-muted-foreground">Runtime health</span><StatusBadge status={application.healthCondition?.status ?? "Unknown"} /><span aria-hidden="true">↗</span></Dialog.Trigger>
+        <Dialog.Trigger render={<Button variant="ghost" size="sm" className="gap-2" />}><span className="text-sm text-muted-foreground">Health details</span><span aria-hidden="true">↗</span></Dialog.Trigger>
         <Dialog.Portal>
           <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/50" />
           <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 max-h-[85dvh] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border bg-card p-5 shadow-xl sm:p-6">
@@ -671,7 +686,11 @@ export default function ApplicationDetailPage() {
       </Dialog.Root>
     </div>}
     {application?.decommissioning && <div role="status" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300/70 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><span>Deletion in progress. Auto-sync is paused. Review and apply the deletion plan, then finish removing the application.</span>{canApprove && <Button size="sm" variant="outline" disabled={busy || hasPendingOperation} onClick={() => void cancelDecommission()}>Cancel deletion</Button>}</div>}
-    {application?.autoSyncPaused && <div role="status" className="mb-5 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-300/70 bg-amber-50/70 p-4 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"><div className="min-w-0 flex-1"><p className="text-sm font-semibold">Automatic reconciliation is paused</p><p className="mt-1 text-xs leading-5">{application.rollbackResumeAvailable ? "JustCD is pinned to the approved target. An owner can keep this pin or explicitly resume the previous tracked source." : "JustCD will not automatically sync while paused. Manual changes are protected from automatic reconciliation. Resuming may overwrite them with the Git configuration."}</p>{application.rollbackResumeRequiresRevision && <div className="mt-3 max-w-md"><FormField label="Git revision to use before resuming" htmlFor="rollback-resume-revision"><Input id="rollback-resume-revision" value={resumeRevision} onChange={(event) => setResumeRevision(event.target.value)} placeholder="branch, tag, or commit" /></FormField></div>}</div>{canApprove && <div className="flex flex-wrap gap-2">{application.rollbackResumeAvailable && <Button size="sm" variant="outline" loading={pendingAction === "rollback-state-keep"} loadingText="Keeping pin…" disabled={busy || hasPendingOperation} onClick={() => void updateRollbackTracking("keep")}>Keep rollback pin</Button>}<Button size="sm" loading={pendingAction === "rollback-state-resume"} loadingText="Resuming…" disabled={busy || hasPendingOperation || (application.rollbackResumeRequiresRevision && !resumeRevision.trim())} onClick={() => void updateRollbackTracking("resume")}>{application.rollbackResumeAvailable ? "Resume previous source" : "Resume reconciliation"}</Button></div>}</div>}
+    {(plansError != null || application?.autoSyncPaused) && <section aria-label="Needs attention" className="mb-6 overflow-hidden rounded-xl border bg-card">
+      <h2 className="px-5 pt-4 text-sm font-semibold">Needs attention</h2>
+      {plansError != null && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 text-sm"><span>Plans could not be loaded.</span><div className="flex items-center gap-2"><Button size="sm" variant="default" loading={retryingPlans} onClick={() => void retryPlans()}>Retry</Button><ErrorDetailsButton error={plansError} /></div></div>}
+    {application?.autoSyncPaused && <div role="status" className="flex flex-col items-start justify-between gap-4 px-5 py-4 text-sm sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><p>Automatic sync is paused.</p><details className="mt-1 text-sm text-muted-foreground"><summary className="w-fit cursor-pointer">What happens when I resume?</summary><p className="mt-2 max-w-2xl leading-6">{application.rollbackResumeAvailable ? "JustCD is pinned to the approved target. An owner can keep this pin or explicitly resume the previous tracked source." : "JustCD will not automatically sync while paused. Manual changes are protected from automatic reconciliation. Resuming may overwrite them with the Git configuration."}</p></details>{application.rollbackResumeRequiresRevision && <div className="mt-3 max-w-md"><FormField label="Git revision to use before resuming" htmlFor="rollback-resume-revision"><Input id="rollback-resume-revision" value={resumeRevision} onChange={(event) => setResumeRevision(event.target.value)} placeholder="branch, tag, or commit" /></FormField></div>}</div>{canApprove && <div className="flex flex-wrap gap-2">{application.rollbackResumeAvailable && <Button size="sm" variant="outline" loading={pendingAction === "rollback-state-keep"} loadingText="Keeping pin…" disabled={busy || hasPendingOperation} onClick={() => void updateRollbackTracking("keep")}>Keep rollback pin</Button>}<Button size="sm" variant="outline" loading={pendingAction === "rollback-state-resume"} loadingText="Resuming…" disabled={busy || hasPendingOperation || (application.rollbackResumeRequiresRevision && !resumeRevision.trim())} onClick={() => void updateRollbackTracking("resume")}>{application.rollbackResumeAvailable ? "Resume previous source" : "Resume reconciliation"}</Button></div>}</div>}
+    </section>}
     {namespaceMismatch && !application?.kustomizeNamespaceOverride && <div role="alert" className="mb-5 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><strong>Kustomize namespace: {kustomization?.namespace}.</strong> JustCD target: {application?.namespaces[0]?.namespace}. The namespaces differ, so a plan cannot be refreshed until an owner enables the transform. {application?.applicationGroupId ? <Link className="font-semibold underline underline-offset-4" href={`/application-groups/${application.applicationGroupId}`}>Review group settings →</Link> : <button type="button" className="font-semibold underline underline-offset-4" onClick={() => selectTab("settings")}>Review namespace setting →</button>}</div>}
     {ownershipConflict && <section role="alert" aria-label="Existing resource ownership conflict" className="mb-5 rounded-xl border border-amber-400/70 bg-amber-50 p-5 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
       <h2 className="text-sm font-semibold">{ownershipConflicts.length} rendered resource{ownershipConflicts.length === 1 ? "" : "s"} already exist{ownershipConflicts.length === 1 ? "s" : ""}</h2>
@@ -707,32 +726,35 @@ export default function ApplicationDetailPage() {
       </div>}
 
 
-        <Tabs.Panel value="overview" className="space-y-5 outline-none">
-      {application.repositoryConfigurationId && <div className="rounded-xl border bg-card px-4 py-3 text-sm"><span className="font-medium">Managed by Git</span><p className="mt-1 text-sm text-muted-foreground"><code>{application.configurationPath}</code> · {application.configurationCommit?.slice(0, 12)} · Edit the definition in the repository to change this application.</p>{application.configurationMissing && <p role="alert" className="mt-2 text-xs text-destructive">This definition is missing from Git. Automatic processing is stopped; workloads remain in place. Restore the file to resume.</p>}<Link className="mt-2 inline-block text-xs underline underline-offset-4" href={`/workspaces/${application.workspaceId}/connections/git-sources`}>Repository discovery settings</Link></div>}
-      <div className="grid gap-3 rounded-xl border bg-card p-3 sm:grid-cols-3 sm:divide-x sm:p-4">
-        <SummaryFact label="Target" value={application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"} />
-        <SummaryFact label="Latest plan" value={latestPlan ? `${latestPlan.plan.changes.length} changes · ${latestPlan.status}` : "No plan yet"} loading={pendingData.plans} />
-        <SummaryFact label="Last sync" value={application.lastSyncedRevision ? `${application.lastSyncedRevision.slice(0, 12)} · ${latestOperation?.status ?? "completed"}` : "Not synced yet"} loading={pendingData.operations} />
-      </div>
-          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(280px,1fr)]">
-            <Panel title="Delivery state" description="The current Git-to-cluster picture, without opening the full diff.">
-              {pendingData.plans ? <SectionLoading label="Loading the latest plan" compact /> :
-              <div className="space-y-5 p-5">
-                <div className="grid grid-cols-3 gap-2"><ChangeCount label="Create" count={latestCounts?.create ?? 0} color="text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/40" /><ChangeCount label="Update" count={latestCounts?.update ?? 0} color="text-blue-700 bg-blue-50 dark:text-blue-300 dark:bg-blue-950/40" /><ChangeCount label="Delete" count={latestCounts?.delete ?? 0} color="text-rose-700 bg-rose-50 dark:text-rose-300 dark:bg-rose-950/40" /></div>
-                {latestPlan?.status === "current" && latestPlan.plan.requiresApproval && <p className="rounded-lg border border-amber-300/70 bg-amber-50/70 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">{latestPlan.plan.requiredApprovals ?? 1} eligible approval{(latestPlan.plan.requiredApprovals ?? 1) === 1 ? "" : "s"} required before this plan can be applied.</p>}
-                <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4"><span className="text-xs text-muted-foreground">{latestPlan ? `Plan ${latestPlan.status}${latestPlan.status === "current" ? ` · expires ${new Date(latestPlan.expiresAt).toLocaleTimeString()}` : ""}` : "Create a plan to compare Git with the cluster."}</span><Button size="sm" variant="outline" onClick={() => selectTab("changes")}>{latestPlan?.status === "applied" ? "View applied plan →" : latestPlan?.status === "current" ? "Review plan →" : latestPlan ? "View plan →" : "Create plan →"}</Button></div>
-              </div>}
-            </Panel>
-            <Panel title="Resource footprint" description="Connected objects observed for this application.">
-              {pendingData.topology ? <SectionLoading label="Loading saved topology" compact /> : topologyError ? <div role="alert" className="space-y-2 p-5 text-xs text-muted-foreground"><p>Saved topology could not be loaded.</p><ErrorDetailsButton error={topologyError} /></div> :
-              <div className="space-y-4 p-5"><p className="text-2xl font-semibold tabular-nums">{topology?.nodes.length ?? 0}<span className="ml-2 text-xs font-normal text-muted-foreground">resources · {topology?.edges.length ?? 0} relationships</span></p>
-                <div className="flex flex-wrap gap-1.5">{resourceKinds.length ? resourceKinds.slice(0, 8).map(([kind, count]) => <span key={kind} className="rounded-md border bg-muted/30 px-2 py-1 text-xs">{count} {kind}</span>) : <span className="text-xs text-muted-foreground">No resources observed yet.</span>}</div>
-                <div className="border-t pt-4"><Button size="sm" variant="outline" onClick={() => selectTab("topology")}>Explore topology →</Button></div>
-              </div>}
-            </Panel>
+        <Tabs.Panel value="overview" className="space-y-6 outline-none">
+          {application.configurationMissing && <div role="alert" className="rounded-xl border p-4 text-sm">The application definition is missing from Git. Automatic processing is stopped; workloads remain in place. Restore the file to resume.</div>}
+          <div className="grid divide-y rounded-xl border bg-card md:grid-cols-3 md:divide-x md:divide-y-0">
+            <section className="min-w-0 space-y-3 p-5">
+              <h2 className="text-sm font-medium text-muted-foreground">Runtime</h2>
+              <p className={`flex items-center gap-2 text-lg font-semibold ${application.healthCondition?.status === "Degraded" || application.healthCondition?.status === "Missing" ? "text-rose-700 dark:text-rose-300" : application.healthCondition?.status === "Healthy" ? "text-emerald-700 dark:text-emerald-300" : application.healthCondition?.status && application.healthCondition.status !== "Unknown" ? "text-amber-800 dark:text-amber-300" : "text-muted-foreground"}`}><span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-current" />{application.healthCondition?.status ?? "Unknown"}</p>
+              <p className="text-sm text-muted-foreground">{pendingData.topology ? "Loading resources…" : topologyError ? "Resource count unavailable" : topology ? `${topology.nodes.length} observed resources` : "Resources not observed yet"}</p>
+              <Button size="sm" variant="ghost" className="-ml-2" onClick={() => selectTab("topology")}>View resources →</Button>
+            </section>
+            <section className="min-w-0 space-y-3 p-5">
+              <h2 className="text-sm font-medium text-muted-foreground">Deployment</h2>
+              {pendingData.plans ? <Skeleton className="h-7 w-36" /> : <>
+                <p className="text-lg font-semibold">{plansError != null ? "Plan unavailable" : latestPlan?.status === "current" ? `${latestPlan.plan.changes.length} planned changes` : latestPlan ? `Plan ${latestPlan.status}` : "No plan yet"}</p>
+                <p className="text-sm text-muted-foreground">{plansError != null ? "Retry loading to check for changes." : latestPlan?.status === "current" ? `${latestCounts?.create} create · ${latestCounts?.update} update · ${latestCounts?.delete} delete${latestPlan.plan.requiresApproval ? " · Approval required" : ""}` : application.lastSyncedRevision ? `Last synced ${application.lastSyncedRevision.slice(0, 12)}` : "Not synced yet"}</p>
+                {plansError != null ? <Button size="sm" variant="outline" loading={retryingPlans} onClick={() => void retryPlans()}>Retry loading →</Button> : latestPlan ? <Button size="sm" variant="ghost" className="-ml-2" onClick={() => selectTab("changes")}>{latestPlan.status === "current" ? "Review changes →" : "View plan →"}</Button> : <Button size="sm" variant="ghost" className="-ml-2" loading={pendingAction === "create-plan"} disabled={busy || hasPendingOperation || !canDeploy || application.configurationMissing || application.decommissioning || (namespaceMismatch && !application.kustomizeNamespaceOverride)} onClick={() => void createPlan()}>Create plan →</Button>}
+              </>}
+            </section>
+            <section className="min-w-0 space-y-3 p-5">
+              <h2 className="text-sm font-medium text-muted-foreground">Source</h2>
+              <p className="break-all text-lg font-semibold">{application.revision}</p>
+              <p className="break-all text-sm text-muted-foreground">{application.repositoryConfigurationId ? `Git-managed${application.configurationCommit ? ` · ${application.configurationCommit.slice(0, 7)}` : ""}` : application.renderer} · {application.syncPolicy === "auto-safe" ? "Auto-safe" : "Manual sync"}</p>
+              <Button size="sm" variant="ghost" className="-ml-2" onClick={() => selectTab("activity")}>View source & activity →</Button>
+              {application.repositoryConfigurationId && <details className="text-sm text-muted-foreground"><summary className="w-fit cursor-pointer">Application definition</summary><p className="mt-2 break-all">{application.configurationPath}</p><Link className="mt-2 inline-block underline underline-offset-4" href={`/workspaces/${application.workspaceId}/connections/git-sources`}>Repository discovery settings</Link></details>}
+            </section>
           </div>
-          <div className="grid gap-5 sm:grid-cols-2"><InfoCard label="Git revision" value={application.revision} note={`${application.renderer} · ${application.manifestPath}`} mono /><InfoCard label="Sync policy" value={application.syncPolicy === "auto-safe" ? "Auto-safe" : "Manual"} note={application.syncPolicy === "auto-safe" ? `Checks every ${application.pollSeconds}s; stops before deletion` : "Every sync is user initiated"} /></div>
-          {pendingData.operations ? <Panel title="Latest operation"><SectionLoading label="Loading recent operations" compact /></Panel> : latestOperation && <Panel title="Latest operation" action={<Button size="sm" variant="ghost" onClick={() => selectTab("activity")}>View activity →</Button>}><div className="flex flex-wrap items-center gap-3 p-5"><StatusBadge status={latestOperation.status} /><span className="min-w-0 flex-1 truncate text-xs">{latestOperation.message || "Sync operation"}</span><span className="text-xs text-muted-foreground">{new Date(latestOperation.startedAt).toLocaleString()}</span></div></Panel>}
+          <section className="rounded-xl border bg-card">
+            <div className="flex items-center justify-between gap-3 px-5 py-4"><h2 className="text-sm font-semibold">Recent activity</h2><Button size="sm" variant="ghost" onClick={() => selectTab("activity")}>View all →</Button></div>
+            {pendingData.operations ? <SectionLoading label="Loading recent activity" compact /> : operationsError != null ? <div className="flex flex-wrap items-center justify-between gap-3 px-5 pb-5 text-sm"><span>Recent activity could not be loaded.</span><ErrorDetailsButton error={operationsError} /></div> : operations.length ? <ol className="divide-y border-t">{operations.slice(0, 3).map((operation) => <li key={operation.id} className="flex flex-wrap items-center gap-3 px-5 py-4 text-sm"><StatusBadge status={operation.status} /><span className="min-w-0 flex-1 break-words">{operation.message || `${operation.type} operation`}</span><time className="text-sm text-muted-foreground" dateTime={operation.startedAt}>{new Date(operation.startedAt).toLocaleString()}</time></li>)}</ol> : <p className="px-5 pb-5 text-sm text-muted-foreground">No operations recorded yet.</p>}
+          </section>
         </Tabs.Panel>
 
         <Tabs.Panel value="topology" className="outline-none">
@@ -756,7 +778,7 @@ export default function ApplicationDetailPage() {
 
         <Tabs.Panel value="changes" className="min-w-0 outline-none">
           <Panel title={activePlan?.plan.rollback ? "Rollback plan & diff" : activePlan?.plan.decommission ? "Deletion plan & diff" : "Plan & diff"} description={activePlan?.plan.rollback ? "A rollback is a new reviewed plan that restores a recorded deployment or Git revision." : activePlan?.plan.decommission ? "Every managed resource below will be checked again before it is deleted." : "A reviewed plan is a snapshot of the desired Git commit and live cluster state."} action={plans.length > 0 && <FormSelect ariaLabel="Select plan" value={activePlan?.id ?? ""} onValueChange={(id) => { setApprovalSummary(null); setActivePlan(plans.find((plan) => plan.id === id) ?? null) }} className="h-8 max-w-[220px] text-xs" items={plans.map((plan) => ({ value: plan.id, label: `${new Date(plan.createdAt).toLocaleString()} · ${plan.plan.rollback ? "rollback · " : plan.plan.decommission ? "deletion · " : ""}${plan.status}` }))} />}>
-            {pendingData.plans ? <SectionLoading label="Loading plans and differences" /> : !activePlan ? <EmptyState title="No review plan yet" description="Build a plan to render Git manifests and compare them with live, app-owned resources." /> : <div className="p-4 sm:p-5">
+            {pendingData.plans ? <SectionLoading label="Loading plans and differences" /> : plansError != null ? <div className="p-5 text-sm">Plans could not be loaded. <Button variant="default" size="sm" loading={retryingPlans} onClick={() => void retryPlans()}>Retry</Button></div> : !activePlan ? <EmptyState title="No review plan yet" description="Build a plan to render Git manifests and compare them with live, app-owned resources." /> : <div className="p-4 sm:p-5">
               {activePlan.status === "applied" && <div role="status" className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50/60 p-4 dark:border-emerald-900 dark:bg-emerald-950/20"><p className="text-sm font-semibold">Plan successfully applied</p><p className="mt-1 text-sm leading-5 text-muted-foreground">These changes have already been executed. This plan is a historical snapshot, not a list of pending changes. Refresh the plan to compare Git with the current cluster state.</p><div className="mt-3 flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => setExpandedAppliedPlan(expandedAppliedPlan === activePlan.id ? null : activePlan.id)}>{expandedAppliedPlan === activePlan.id ? "Hide applied diff" : "View applied diff"}</Button><Button size="sm" onClick={() => void createPlan()} disabled={busy || hasPendingOperation || !canDeploy || application?.decommissioning}>Refresh plan</Button></div></div>}
               {(activePlan.status !== "applied" || expandedAppliedPlan === activePlan.id) && <>
               <div className="mb-4 flex flex-wrap items-center gap-2"><StatusBadge status={activePlan.status} /><span className="font-mono text-xs text-muted-foreground">{activePlan.plan.revision.slice(0, 12)}</span><span className="text-xs text-muted-foreground">· expires {new Date(activePlan.expiresAt).toLocaleTimeString()}</span><span className="ml-auto font-mono text-xs text-muted-foreground">{activePlan.plan.digest.slice(0, 16)}</span></div>
@@ -830,14 +852,6 @@ export default function ApplicationDetailPage() {
     </>}
       </Tabs.Root>
   </>
-}
-
-function InfoCard({ label, value, note, mono = false }: { label: string; value: string; note: string; mono?: boolean }) {
-  return <div className="min-w-0 rounded-xl border bg-card p-4"><p className="text-sm font-medium uppercase tracking-wider text-muted-foreground">{label}</p><p className={`mt-2 truncate text-sm font-semibold ${mono ? "font-mono text-xs" : ""}`}>{value}</p><p className="mt-1 truncate text-sm text-muted-foreground">{note}</p></div>
-}
-
-function SummaryFact({ label, value, loading = false }: { label: string; value: string; loading?: boolean }) {
-  return <div className="min-w-0 sm:px-4 first:sm:pl-0 last:sm:pr-0"><p className="text-sm font-medium uppercase tracking-wider text-muted-foreground">{label}</p>{loading ? <Skeleton role="status" aria-label={`Loading ${label.toLowerCase()}`} className="mt-2 h-4 w-28 max-w-full motion-reduce:animate-none" /> : <p className="mt-1 truncate text-sm font-medium" title={value}>{value}</p>}</div>
 }
 
 function SectionLoading({ label, compact = false }: { label: string; compact?: boolean }) {

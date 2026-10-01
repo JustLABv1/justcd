@@ -80,7 +80,7 @@ func (s *Store) RevokeClusterAgent(ctx context.Context, id string, direct bool) 
 	}
 	return s.updateConnectionAndInvalidate(ctx, `UPDATE cluster_agents SET revoked=TRUE,token_hash=NULL,previous_token_hash=NULL,enrollment_hash=NULL,last_seen_at=NULL WHERE cluster_id=$1`, id)
 }
-func (s *Store) QueueAgentTask(ctx context.Context, id, clusterID string, cipher []byte, deadline time.Time) error {
+func (s *Store) QueueAgentTask(ctx context.Context, id, clusterID string, cipher []byte, deadline time.Time, requests ...agentprotocol.Request) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -104,16 +104,26 @@ func (s *Store) QueueAgentTask(ctx context.Context, id, clusterID string, cipher
 	if _, err = tx.ExecContext(ctx, `INSERT INTO cluster_agent_tasks(id,cluster_id,request_cipher,deadline) VALUES($1,$2,$3,$4)`, id, clusterID, cipher, deadline); err != nil {
 		return err
 	}
+	if len(requests) > 0 {
+		if err = recordAgentTask(ctx, tx, id, clusterID, deadline, requests[0]); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 func (s *Store) ClaimAgentTask(ctx context.Context, clusterID, lease string) (string, []byte, error) {
 	var id string
 	var cipher []byte
-	err := s.DB.QueryRowContext(ctx, `WITH next AS(SELECT id FROM cluster_agent_tasks WHERE cluster_id=$1 AND state='queued' AND deadline>NOW() ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) UPDATE cluster_agent_tasks SET state='claimed',lease=$2 WHERE id=(SELECT id FROM next) RETURNING id,request_cipher`, clusterID, lease).Scan(&id, &cipher)
+	err := s.DB.QueryRowContext(ctx, `WITH next AS(SELECT id FROM cluster_agent_tasks WHERE cluster_id=$1 AND state='queued' AND deadline>NOW() ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED), claimed AS (UPDATE cluster_agent_tasks SET state='claimed',lease=$2 WHERE id=(SELECT id FROM next) RETURNING id,request_cipher), activity AS (UPDATE cluster_agent_activity SET state='running',started_at=NOW() WHERE id IN (SELECT id FROM claimed)) SELECT id,request_cipher FROM claimed`, clusterID, lease).Scan(&id, &cipher)
 	return id, cipher, err
 }
-func (s *Store) CompleteAgentTask(ctx context.Context, clusterID, id, lease string, cipher []byte) error {
-	result, err := s.DB.ExecContext(ctx, `UPDATE cluster_agent_tasks SET state='completed',response_cipher=$4 WHERE cluster_id=$1 AND id=$2 AND lease=$3 AND state='claimed' AND deadline>NOW()`, clusterID, id, lease, cipher)
+func (s *Store) CompleteAgentTask(ctx context.Context, clusterID, id, lease string, cipher []byte, results ...agentprotocol.Result) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE cluster_agent_tasks SET state='completed',response_cipher=$4 WHERE cluster_id=$1 AND id=$2 AND lease=$3 AND state='claimed' AND deadline>NOW()`, clusterID, id, lease, cipher)
 	if err != nil {
 		return err
 	}
@@ -121,7 +131,13 @@ func (s *Store) CompleteAgentTask(ctx context.Context, clusterID, id, lease stri
 	if n != 1 {
 		return sql.ErrNoRows
 	}
-	return nil
+	if len(results) > 0 {
+		state, code := agentResultClassification(results[0])
+		if _, err = tx.ExecContext(ctx, `UPDATE cluster_agent_activity SET state=$2,http_status=$3,error_code=$4,finished_at=NOW() WHERE id=$1`, id, state, results[0].Status, code); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 func (s *Store) AgentTaskResult(ctx context.Context, id string) ([]byte, error) {
 	var cipher []byte
@@ -129,7 +145,7 @@ func (s *Store) AgentTaskResult(ctx context.Context, id string) ([]byte, error) 
 	return cipher, err
 }
 func (s *Store) DeleteAgentTask(ctx context.Context, id string) {
-	_, _ = s.DB.ExecContext(ctx, `DELETE FROM cluster_agent_tasks WHERE id=$1 OR deadline<NOW()-INTERVAL '5 minutes'`, id)
+	_, _ = s.DB.ExecContext(ctx, `WITH removed AS (DELETE FROM cluster_agent_tasks WHERE id=$1 OR deadline<NOW()-INTERVAL '5 minutes' RETURNING id) UPDATE cluster_agent_activity SET state=CASE WHEN state='running' THEN 'unknown' ELSE 'expired' END,error_code=CASE WHEN state='running' THEN 'cluster.agent_unknown_outcome' ELSE 'cluster.agent_task_expired' END,finished_at=LEAST(deadline,NOW()) WHERE id IN (SELECT id FROM removed) AND state IN ('queued','running')`, id)
 }
 
 func (s *Store) RenewClusterAgent(ctx context.Context, id string, oldHash, newHash []byte) error {
@@ -146,6 +162,10 @@ func (s *Store) RenewClusterAgent(ctx context.Context, id string, oldHash, newHa
 
 // Expired tasks are removed, never requeued, including after a server restart.
 func (s *Store) PruneAgentTasks(ctx context.Context) error {
-	_, err := s.DB.ExecContext(ctx, `DELETE FROM cluster_agent_tasks WHERE deadline<NOW()-INTERVAL '5 minutes'`)
+	_, err := s.DB.ExecContext(ctx, `WITH removed AS (DELETE FROM cluster_agent_tasks WHERE deadline<NOW()-INTERVAL '5 minutes' RETURNING id) UPDATE cluster_agent_activity SET state=CASE WHEN state='running' THEN 'unknown' ELSE 'expired' END,error_code=CASE WHEN state='running' THEN 'cluster.agent_unknown_outcome' ELSE 'cluster.agent_task_expired' END,finished_at=deadline WHERE id IN (SELECT id FROM removed) AND state IN ('queued','running')`)
+	if err != nil {
+		return err
+	}
+	_, err = s.DB.ExecContext(ctx, `DELETE FROM cluster_agent_activity WHERE created_at<NOW()-INTERVAL '7 days'`)
 	return err
 }

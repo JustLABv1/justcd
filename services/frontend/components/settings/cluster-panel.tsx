@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { RowActions, type ActionItem } from "@/components/action-menu"
+import { ClusterAgentActivity } from "@/components/cluster-agent-activity"
 import { ClusterAgentConnection } from "@/components/cluster-agent-connection"
 import { ConnectionRow, FormField, SwitchField } from "@/components/ui-kit"
 import { WorkspaceIcon } from "@/components/workspace-ui"
@@ -85,6 +86,8 @@ export function ClusterPanel({
   onDeleted: (id: string) => void
 }) {
   const toast = useToast()
+  const [clusterQuery, setClusterQuery] = useState("")
+  const visibleClusters = clusters.filter(cluster => `${cluster.name} ${cluster.connectionMode === "agent" ? "agent" : "direct"}`.toLowerCase().includes(clusterQuery.toLowerCase()))
   const isOwner = workspace.role === "owner"
   const [credentialCluster, setCredentialCluster] = useState<Cluster | null>(null)
   const [editing, setEditing] = useState<Cluster | null>(null)
@@ -152,10 +155,11 @@ export function ClusterPanel({
         title="Connected clusters"
         description={isOwner ? undefined : "Only workspace owners can change cluster connections."}
         count={clusters.length}
+        toolbar={<Input aria-label="Search clusters" placeholder="Search clusters or connection type…" value={clusterQuery} onChange={event => setClusterQuery(event.target.value)} className="max-w-sm" />}
       >
-        {clusters.length ? (
+        {visibleClusters.length ? (
           <ul className="divide-y">
-            {clusters.map((cluster) => {
+            {visibleClusters.map((cluster) => {
               const record = latestTests[cluster.id]
               const credentialId = credentialByCluster[cluster.id]
               const canEdit = isOwner && (cluster.workspaceId === workspace.id || (!cluster.workspaceId && !!user?.isAdmin))
@@ -241,21 +245,23 @@ export function ClusterPanel({
                       items={items}
                     />
                   }
-                />
+                >
+                  {cluster.connectionMode === "agent" && <ClusterAgentActivity key={`${workspace.id}:${cluster.id}`} cluster={cluster} workspaceId={workspace.id} />}
+                </ConnectionRow>
               )
             })}
           </ul>
         ) : (
           <SectionEmpty
-            title="No clusters connected yet"
-            description="Connect a cluster, or ask another workspace owner to share one. Credentials stay private to each workspace."
-            action={isOwner ? (
+            title={clusters.length ? "No matching clusters" : "No clusters connected yet"}
+            description={clusters.length ? "Try another cluster name or connection type." : "Connect a cluster, or ask another workspace owner to share one. Credentials stay private to each workspace."}
+            action={!clusters.length && isOwner ? (
               <Button nativeButton={false} render={<Link href={`/workspaces/${workspace.id}/clusters/new`} />}>
                 <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} aria-hidden="true" />
                 Connect cluster
               </Button>
             ) : undefined}
-            hint="Ask a workspace owner to connect a cluster."
+            hint={clusters.length ? undefined : "Ask a workspace owner to connect a cluster."}
           />
         )}
       </InventoryPanel>

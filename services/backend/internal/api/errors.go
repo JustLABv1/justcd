@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/justlab/justcd/services/backend/internal/observability"
 	"github.com/justlab/justcd/services/backend/internal/syncer"
 )
 
@@ -140,6 +141,7 @@ func writePlanFailure(w http.ResponseWriter, status int, message, applicationID 
 }
 
 func writeAPIError(w http.ResponseWriter, status int, message string, metadata apiErrorMetadata, details map[string]any) {
+	observability.RecordAPIError(w, metadata.code, metadata.category)
 	payload := map[string]any{
 		"schemaVersion": apiErrorSchemaVersion,
 		"error":         redactAPIErrorMessage(message),

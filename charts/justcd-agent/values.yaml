@@ -42,3 +42,17 @@ extraEnv: []
 # Optional mounts for operator-provided profile tokenFile paths.
 extraVolumes: []
 extraVolumeMounts: []
+
+# Override individual fields, or set a field to null to omit it.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]

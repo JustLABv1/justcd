@@ -31,6 +31,7 @@ export default function OnboardingPage() {
     setError(null)
     try {
       setStatus(await api<OnboardingStatus>("/api/v1/onboarding"))
+      window.dispatchEvent(new Event("justcd:onboarding-updated"))
     } catch (cause) {
       setError(cause)
     }

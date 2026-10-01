@@ -254,6 +254,23 @@ paths:
       summary: Register a Kubernetes cluster
       responses:
         '201': { description: Created cluster }
+  /clusters/{clusterID}/agent:
+    get:
+      summary: Get the cluster connection's agent status and workspace activity
+      description: Returns heartbeat connectivity, workspace-filtered local profiles, queued/running counts, last success/failure times, and the latest 100 task metadata records from seven days. Task bodies, credentials, resource names, and arbitrary error text are excluded. Unknown outcomes require re-reading live state before retrying.
+      parameters:
+        - in: path
+          name: clusterID
+          required: true
+          schema: { type: string }
+        - in: query
+          name: workspaceId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Agent status, activity and summary; direct connections return mode direct
+        '403': { description: Workspace membership and cluster access required }
   /clusters/{clusterID}/bindings:
     get:
       summary: List workspace namespace bindings

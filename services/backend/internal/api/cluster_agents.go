@@ -43,7 +43,26 @@ func (s *Server) getClusterAgent(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, "could not load agent")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"mode": "agent", "online": !a.Revoked && a.LastSeenAt != nil && time.Since(*a.LastSeenAt) < time.Minute, "agent": a})
+	items, summary, err := s.Store.ListAgentActivity(r.Context(), a.ClusterID, workspace)
+	if err != nil {
+		writeStoreError(w, "could not load agent activity")
+		return
+	}
+	// Profiles are reported by the cluster operator; do not disclose other tenants.
+	profiles := make([]agentprotocol.Profile, 0)
+	for _, profile := range a.Profiles {
+		for _, id := range profile.WorkspaceIDs {
+			if id == workspace {
+				profile.WorkspaceIDs = []string{workspace}
+				profile.TokenFile = ""
+				profiles = append(profiles, profile)
+				break
+			}
+		}
+	}
+	a.Profiles = profiles
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, map[string]any{"activity": items, "summary": summary, "mode": "agent", "online": !a.Revoked && a.LastSeenAt != nil && time.Since(*a.LastSeenAt) < time.Minute, "agent": a})
 }
 func (s *Server) enrollClusterAgent(w http.ResponseWriter, r *http.Request) {
 	if !s.agentOwner(w, r) {
@@ -214,7 +233,7 @@ func (s *Server) agentResult(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, "could not store result")
 		return
 	}
-	if err = s.Store.CompleteAgentTask(r.Context(), id, r.PathValue("taskID"), result.Lease, cipher); err != nil {
+	if err = s.Store.CompleteAgentTask(r.Context(), id, r.PathValue("taskID"), result.Lease, cipher, result); err != nil {
 		writeError(w, 410, "task lease expired or already completed")
 		return
 	}

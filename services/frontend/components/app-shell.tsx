@@ -8,7 +8,7 @@ import { AccountMenu } from "@/components/account-menu"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { api, apiPost } from "@/lib/api"
 import { WorkspaceSelectionProvider } from "@/hooks/workspace-selection"
-import type { Application, ListResponse, Workspace, User } from "@/lib/types"
+import type { Application, ListResponse, OnboardingStatus, Workspace, User } from "@/lib/types"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Home01Icon, Folder01Icon, Layers01Icon, Task01Icon, Settings02Icon, Audit01Icon, ArrowDown01Icon, GitBranchIcon, ServerStack01Icon, Key01Icon, Share01Icon, Route01Icon, Add01Icon, Rocket01Icon } from "@hugeicons/core-free-icons"
 
@@ -43,6 +43,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [workspacesLoading, setWorkspacesLoading] = useState(true)
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("")
   const [routeApplication, setRouteApplication] = useState<Application | null>(null)
+  const [onboardingIncomplete, setOnboardingIncomplete] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -58,6 +59,27 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       active = false
     }
   }, [router])
+
+  useEffect(() => {
+    if (!user?.isAdmin) return
+    let active = true
+    const refresh = () => {
+      void api<OnboardingStatus>("/api/v1/onboarding")
+        .then((status) => {
+          if (active) setOnboardingIncomplete(status.total > 0 && status.completed < status.total)
+        })
+        .catch(() => {
+          // Keep the checklist reachable if its readiness check is unavailable.
+          if (active) setOnboardingIncomplete(true)
+        })
+    }
+    refresh()
+    window.addEventListener("justcd:onboarding-updated", refresh)
+    return () => {
+      active = false
+      window.removeEventListener("justcd:onboarding-updated", refresh)
+    }
+  }, [user?.isAdmin, pathname])
 
   // The workspace list is fetched once per route change and shared through state.
   useEffect(() => {
@@ -125,10 +147,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   const connections: NavItem[] = connectionNavigation.map((item) => ({ href: `/workspaces/${selectedWorkspaceId}/connections/${item.section}`, label: item.label, icon: item.icon }))
+  const administration = adminNavigation.filter((item) => item.href !== "/onboarding" || onboardingIncomplete)
   const mobileGroups = [
     { label: "Delivery", items: deliveryNavigation },
     ...(selectedWorkspaceId ? [{ label: "Connections", items: connections }] : []),
-    ...(showAdmin ? [{ label: "Administration", items: adminNavigation }] : []),
+    ...(showAdmin ? [{ label: "Administration", items: administration }] : []),
   ]
 
   if (loading || !user) {
@@ -156,7 +179,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-5">
           <NavGroup label="Delivery" items={deliveryNavigation} pathname={pathname} first />
           {selectedWorkspaceId && <NavGroup label="Connections" items={connections} pathname={pathname} />}
-          {user.isAdmin && <NavGroup label="Administration" items={adminNavigation} pathname={pathname} />}
+          {user.isAdmin && <NavGroup label="Administration" items={administration} pathname={pathname} />}
         </div>
         <AccountMenu user={user} onSignOut={signOut} />
       </aside>
@@ -239,7 +262,7 @@ function WorkspaceSelector({
 
 function NavGroup({ label, items, pathname, first = false }: { label: string; items: NavItem[]; pathname: string; first?: boolean }) {
   return <>
-    <p className={`px-4 pb-2 text-sm font-medium uppercase tracking-[0.12em] text-muted-foreground ${first ? "" : "pt-7"}`}>{label}</p>
+    <p className={`px-4 pb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground ${first ? "" : "pt-7"}`}>{label}</p>
     <nav aria-label={label} className="space-y-1">
       {items.map((item) => <Link key={item.href} href={item.href} aria-current={isNavSelected(item.href, pathname) ? "page" : undefined} className={styles.navItem}><HugeiconsIcon icon={item.icon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />{item.label}</Link>)}
     </nav>

@@ -1223,9 +1223,11 @@ func (s *Store) ListKubernetesPermissionTests(ctx context.Context, workspaceID, 
 	items := make([]KubernetesPermissionTest, 0)
 	for rows.Next() {
 		var item KubernetesPermissionTest
-		if err := rows.Scan(&item.WorkspaceID, &item.ClusterID, &item.Namespace, &item.Report, &item.CheckedAt); err != nil {
+		var report []byte
+		if err := rows.Scan(&item.WorkspaceID, &item.ClusterID, &item.Namespace, &report, &item.CheckedAt); err != nil {
 			return nil, err
 		}
+		item.Report = json.RawMessage(report)
 		items = append(items, item)
 	}
 	return items, rows.Err()

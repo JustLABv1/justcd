@@ -180,6 +180,7 @@ export type RepositoryConfiguration = {
 }
 
 export type Application = {
+  branchTest?: { mode: "existing" | "isolated"; revision: string; baseRevision: string; parentApplicationId?: string; previouslyPaused: boolean; startedAt: string }
   createNamespaces: boolean
   helmReleaseName?: string
   repositoryConfigurationId?: string
@@ -217,7 +218,7 @@ export type Application = {
   lastSyncedRevision?: string
   health: string
   healthCondition?: ApplicationHealthCondition
-  statusIssues: { source: string; summary: string; observedAt: string }[]
+  statusIssues: { source: string; summary: string; observedAt: string; code?: string; action?: string; resource?: Identity; remediation?: string }[]
   decommissioning: boolean
   autoSyncPaused?: boolean
   rollbackResumeAvailable?: boolean

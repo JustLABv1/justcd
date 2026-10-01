@@ -813,6 +813,10 @@ func (s *Server) updateApplicationRenderSettings(w http.ResponseWriter, r *http.
 	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
+	if app.BranchTest != nil {
+		writeError(w, http.StatusConflict, "finish the branch test before editing render settings")
+		return
+	}
 	if app.RepositoryConfigurationID != "" {
 		writeError(w, http.StatusConflict, "application configuration is managed by Git; edit "+app.ConfigurationPath+" in the repository")
 		return

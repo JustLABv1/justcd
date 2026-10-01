@@ -67,6 +67,10 @@ func (s *Server) updateRollbackState(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
+	if app.BranchTest != nil {
+		writeError(w, http.StatusConflict, "use Resume tracked source to end this branch test")
+		return
+	}
 	var input struct {
 		Action   string `json:"action"`
 		Revision string `json:"revision"`

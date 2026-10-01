@@ -1328,6 +1328,7 @@ func (policy RetryPolicy) Validate() error {
 }
 
 type Application struct {
+	BranchTest                     *BranchTest                        `json:"branchTest,omitempty"`
 	ClusterName                    string                             `json:"clusterName,omitempty"`
 	CreateNamespaces               bool                               `json:"createNamespaces"`
 	RepositoryIgnoreRules          []core.IgnoreRule                  `json:"-"`
@@ -1379,9 +1380,13 @@ type Application struct {
 }
 
 type ApplicationStatusIssue struct {
-	Source     string    `json:"source"`
-	Summary    string    `json:"summary"`
-	ObservedAt time.Time `json:"observedAt"`
+	Code        string         `json:"code,omitempty"`
+	Action      string         `json:"action,omitempty"`
+	Resource    *core.Identity `json:"resource,omitempty"`
+	Remediation string         `json:"remediation,omitempty"`
+	Source      string         `json:"source"`
+	Summary     string         `json:"summary"`
+	ObservedAt  time.Time      `json:"observedAt"`
 }
 
 type ApplicationGroup struct {
@@ -1470,8 +1475,8 @@ func createApplication(ctx context.Context, executor applicationExecutor, a Appl
 
 func scanApplication(row interface{ Scan(...any) error }) (Application, error) {
 	var a Application
-	var namespaces, helmValuesFiles, namespaceManifestPaths, targetValuesFiles, namespaceValues, rawApprovalOverride, rawRollbackState, rawStatusIssues, rawHealthResources, rawHealthWarnings []byte
-	err := row.Scan(&a.ID, &a.WorkspaceID, &a.Name, &a.SourceID, &a.Revision, &a.ManifestPath, &a.Renderer, &a.KustomizeHelmEnabled, &a.KustomizeNamespaceOverride, &helmValuesFiles, &a.HelmValuesYAML, &a.ApplicationGroupID, &a.TargetManifestPath, &namespaceManifestPaths, &targetValuesFiles, &a.TargetHelmValuesYAML, &namespaceValues, &a.ClusterID, &namespaces, &a.SyncPolicy, &a.PollSeconds, &a.LastCheckedAt, &a.LastSyncedRevision, &a.Health, &rawStatusIssues, &a.Decommissioning, &rawApprovalOverride, &a.AutoSyncPaused, &rawRollbackState, &a.RollbackResumeRequiresRevision, &a.CreatedAt, &a.RetryPolicy.Enabled, &a.RetryPolicy.MaxAttempts, &a.RetryPolicy.InitialDelaySeconds, &a.RetryPolicy.MaxDelaySeconds, &a.RetryPolicy.JitterPercent, &a.RetryAttemptCount, &a.RetryNextAt, &a.RetryTerminalReason, &a.RetryLastErrorCode, &a.HealthCondition.Status, &a.HealthCondition.Reason, &a.HealthCondition.Message, &a.HealthCondition.LastTransitionTime, &a.HealthCondition.ObservedAt, &rawHealthResources, &rawHealthWarnings, &a.RepositoryConfigurationID, &a.ConfigurationPath, &a.ConfigurationCommit, &a.ConfigurationHash, &a.ConfigurationMissing, &a.HelmReleaseName, &a.CreateNamespaces, &a.ClusterName)
+	var namespaces, helmValuesFiles, namespaceManifestPaths, targetValuesFiles, namespaceValues, rawApprovalOverride, rawRollbackState, rawStatusIssues, rawHealthResources, rawHealthWarnings, rawBranchTest []byte
+	err := row.Scan(&a.ID, &a.WorkspaceID, &a.Name, &a.SourceID, &a.Revision, &a.ManifestPath, &a.Renderer, &a.KustomizeHelmEnabled, &a.KustomizeNamespaceOverride, &helmValuesFiles, &a.HelmValuesYAML, &a.ApplicationGroupID, &a.TargetManifestPath, &namespaceManifestPaths, &targetValuesFiles, &a.TargetHelmValuesYAML, &namespaceValues, &a.ClusterID, &namespaces, &a.SyncPolicy, &a.PollSeconds, &a.LastCheckedAt, &a.LastSyncedRevision, &a.Health, &rawStatusIssues, &a.Decommissioning, &rawApprovalOverride, &a.AutoSyncPaused, &rawRollbackState, &a.RollbackResumeRequiresRevision, &a.CreatedAt, &a.RetryPolicy.Enabled, &a.RetryPolicy.MaxAttempts, &a.RetryPolicy.InitialDelaySeconds, &a.RetryPolicy.MaxDelaySeconds, &a.RetryPolicy.JitterPercent, &a.RetryAttemptCount, &a.RetryNextAt, &a.RetryTerminalReason, &a.RetryLastErrorCode, &a.HealthCondition.Status, &a.HealthCondition.Reason, &a.HealthCondition.Message, &a.HealthCondition.LastTransitionTime, &a.HealthCondition.ObservedAt, &rawHealthResources, &rawHealthWarnings, &a.RepositoryConfigurationID, &a.ConfigurationPath, &a.ConfigurationCommit, &a.ConfigurationHash, &a.ConfigurationMissing, &a.HelmReleaseName, &a.CreateNamespaces, &a.ClusterName, &rawBranchTest)
 	if err == nil {
 		err = json.Unmarshal(rawStatusIssues, &a.StatusIssues)
 	}
@@ -1532,11 +1537,14 @@ func scanApplication(row interface{ Scan(...any) error }) (Application, error) {
 			a.RollbackResumeAvailable = true
 		}
 	}
+	if err == nil && len(rawBranchTest) > 0 && string(rawBranchTest) != "null" {
+		err = json.Unmarshal(rawBranchTest, &a.BranchTest)
+	}
 	a.RetryPolicy = NormalizeRetryPolicy(a.RetryPolicy)
 	return a, err
 }
 
-const applicationColumns = `id,workspace_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,COALESCE(application_group_id,''),target_manifest_path,namespace_manifest_paths,target_helm_values_files,target_helm_values_yaml,namespace_helm_values,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,COALESCE(last_synced_revision,''),health,status_issues,decommissioning,approval_policy_override,auto_sync_paused,rollback_resume_state,rollback_resume_requires_revision,created_at,retry_enabled,retry_max_attempts,retry_initial_delay_seconds,retry_max_delay_seconds,retry_jitter_percent,retry_attempt_count,retry_next_at,retry_terminal_reason,retry_last_error_code,health_condition_status,health_condition_reason,health_condition_message,health_condition_last_transition_at,health_condition_observed_at,health_condition_resources,health_condition_warnings,COALESCE(repository_configuration_id,''),configuration_path,configuration_commit,configuration_hash,configuration_missing,helm_release_name,create_namespaces,COALESCE((SELECT c.name FROM clusters c WHERE c.id=cluster_id),'')`
+const applicationColumns = `id,workspace_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,COALESCE(application_group_id,''),target_manifest_path,namespace_manifest_paths,target_helm_values_files,target_helm_values_yaml,namespace_helm_values,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,COALESCE(last_synced_revision,''),health,status_issues,decommissioning,approval_policy_override,auto_sync_paused,rollback_resume_state,rollback_resume_requires_revision,created_at,retry_enabled,retry_max_attempts,retry_initial_delay_seconds,retry_max_delay_seconds,retry_jitter_percent,retry_attempt_count,retry_next_at,retry_terminal_reason,retry_last_error_code,health_condition_status,health_condition_reason,health_condition_message,health_condition_last_transition_at,health_condition_observed_at,health_condition_resources,health_condition_warnings,COALESCE(repository_configuration_id,''),configuration_path,configuration_commit,configuration_hash,configuration_missing,helm_release_name,create_namespaces,COALESCE((SELECT c.name FROM clusters c WHERE c.id=cluster_id),''),branch_test`
 
 func (s *Store) ApplicationByID(ctx context.Context, id string) (Application, error) {
 	return scanApplication(s.DB.QueryRowContext(ctx, `SELECT `+applicationColumns+` FROM applications WHERE id=$1`, id))
@@ -2180,6 +2188,9 @@ func (s *Store) ResumeRollbackTracking(ctx context.Context, id, selectedRevision
 	app, err := scanApplication(tx.QueryRowContext(ctx, `SELECT `+applicationColumns+` FROM applications WHERE id=$1 FOR UPDATE`, id))
 	if err != nil {
 		return err
+	}
+	if app.BranchTest != nil {
+		return errors.New("use ResumeBranchTest to end the active branch test")
 	}
 	var active bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM operations WHERE application_id=$1 AND status IN ('queued','running'))`, id).Scan(&active); err != nil {

@@ -140,9 +140,11 @@ request. For GitLab.com JustCD uses
 `https://gitlab.com/api/v4`; for a self hosted instance use its HTTPS API URL,
 such as `https://gitlab.example.com/api/v4`. JustCD polls open PRs/MRs when
 reporting is enabled and checks previously tracked reviews for closure every
-two minutes. The API token lists and reads PRs/MRs and writes commit statuses.
+two minutes. Choose an existing Git HTTPS credential or a separate API token.
+Git fetches keep using the Git source credential. The API token reads PRs/MRs
+and comments and writes plan comments and commit statuses.
 For GitHub, use a fine-grained token for the repository with **Pull requests:
-read** and **Commit statuses: read and write**. For GitLab, use a project or
+read and write** and **Commit statuses: read and write**. For GitLab, use a project or
 personal access token with the `api` scope and access to the project. A webhook
 is optional for faster PR updates: set a secret in JustCD, then copy the
 displayed URL and the same secret into the repository webhook settings and
@@ -191,7 +193,28 @@ SHA reported by the provider. Without a preview profile, the resulting plan is
 stored for review only and cannot be applied to production. A commit status on
 the PR or MR links to the plan in JustCD.
 
-To enable deployments, configure the application's preview profile. Provide a
+PR deployment can be review-only, isolated per PR, or use the existing application
+environment. Draft PRs follow the same workflow. Each new commit gets a fresh plan;
+JustCD deploys automatically when policy permits and otherwise waits for approval.
+The PR receives a plan summary, full-plan link, plan ID, and digest. Under **PR
+comment approvals**, map numeric GitHub/GitLab account IDs to JustCD user IDs
+using an account ID field and a workspace member selector. An eligible user can post
+`/justcd approve <plan-id> <digest>`. JustCD checks their current workspace role,
+approval threshold, plan expiry, and current PR head before deployment. Old plans
+and approvals cannot approve another commit.
+
+Existing-environment deployments require explicit confirmation and permit one PR
+at a time, without forks. Reconciliation stays paused while the PR controls the
+application. Closing or merging restores the tracked source and creates a return
+plan for review; it does not undo migrations or data changes or resume automatically.
+
+For isolated deployments, JustCD offers to reuse a matching isolated Test branch
+preview before creating another environment. An owner can accept or choose a new
+preview. Adoption validates the current PR head and preview profile and invalidates
+old manual plans. Future commits use the PR lifecycle; cleanup retains the adopted
+namespace, its binding, and untracked resources.
+
+For isolated deployments, configure the application's preview profile. Provide a
 preview manifest path or Helm values, a database strategy, a namespace prefix,
 an ingress host suffix, CPU and memory quotas, maximum active previews, and a
 maximum lifetime. The profile may reference secrets already provisioned inside
@@ -218,6 +241,35 @@ deletes the owned namespace and releases its preview slot. Everything placed
 in that namespace, including separately provisioned preview secrets, is
 removed with it. Cleanup that cannot verify ownership remains pending for
 review.
+
+## Test a branch before opening a pull request
+
+Application owners can use **Test branch** to select a branch, tag, or commit
+and then create, review, and apply a normal deployment plan. Application group
+targets and applications with an active rollback pin must be resolved first.
+
+**Deploy branch to existing dev** temporarily replaces the application's Git
+revision and pauses automatic reconciliation. It uses the existing environment,
+credentials, and data, so confirmation is required. Repository discovery leaves
+the complete application definition unchanged during the test, even if its base
+definition changes or disappears. **Resume tracked source** restores the tracked
+revision and refreshes a Git-managed definition. Reconciliation stays paused:
+review and deploy the return plan before resuming it. Database migrations and
+data changes are not reversed.
+
+**Create isolated preview** creates a separate manual application in a new,
+unused namespace with a repository-relative preview overlay or chart path.
+It inherits the workspace cluster credential; configure preview-safe values,
+secrets, ingress hosts, and databases in Git. External services are not copied
+or isolated automatically. The preview can only manage namespaced resources
+inside its own destination. Cluster-scoped manifests are rejected.
+
+Remove this manual preview through its application settings. Resource deletion
+uses the normal reviewed deletion plan and verifies resource ownership. The
+parent application remains unchanged. The namespace and its workspace binding
+remain available; remove them separately once any untracked resources have
+been reviewed. These manual branch tests do not use the automatic PR preview
+lifecycle described above.
 
 ## Verification
 

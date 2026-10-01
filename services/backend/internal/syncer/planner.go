@@ -40,7 +40,7 @@ func (e *planStageError) Error() string      { return e.err.Error() }
 func (e *planStageError) Unwrap() error      { return e.err }
 func (e *planStageError) ErrorStage() string { return e.stage }
 
-func statusIssue(stage string, at time.Time) store.ApplicationStatusIssue {
+func statusIssue(stage string, err error, at time.Time) store.ApplicationStatusIssue {
 	summary := "Application check failed. Review the plan error for details."
 	switch stage {
 	case "git":
@@ -50,7 +50,29 @@ func statusIssue(stage string, at time.Time) store.ApplicationStatusIssue {
 	case "render":
 		summary = "Manifests could not be rendered. Check the source configuration."
 	}
-	return store.ApplicationStatusIssue{Source: stage, Summary: summary, ObservedAt: at}
+	issue := store.ApplicationStatusIssue{Source: stage, Summary: summary, ObservedAt: at}
+	if apierrors.IsForbidden(err) {
+		issue.Source = "cluster"
+		issue.Code = "kubernetes.permission_denied"
+		issue.Summary = "The Kubernetes credential lacks permission for this resource."
+		issue.Remediation = "Grant the required Kubernetes RBAC permission, or exclude the resource in application Settings if JustCD should not manage it, then refresh the plan."
+		var access *resourceAccessError
+		if errors.As(err, &access) {
+			issue.Resource = &access.identity
+			issue.Action = access.action
+			target := access.identity.Kind + " " + access.identity.Name + " (" + access.identity.APIVersion + ")"
+			if access.identity.Namespace != "" {
+				target += " in namespace " + access.identity.Namespace
+			}
+			issue.Summary = "Kubernetes denied " + access.action + " access to " + target + "."
+		}
+	} else if apierrors.IsUnauthorized(err) {
+		issue.Source = "cluster"
+		issue.Code = "kubernetes.authentication_failed"
+		issue.Summary = "Kubernetes rejected the configured credential."
+		issue.Remediation = "Update the cluster or namespace credential, then refresh the plan."
+	}
+	return issue
 }
 
 // OwnershipConflict is returned when a rendered object already exists but has
@@ -117,14 +139,14 @@ func (s *Service) BuildPlanWithSelection(ctx context.Context, app store.Applicat
 		observability.MarkError(span, err)
 		if ctx.Err() == nil {
 			var stageErr *planStageError
-			issues := []store.ApplicationStatusIssue{statusIssue("check", time.Now().UTC())}
+			issues := []store.ApplicationStatusIssue{statusIssue("check", err, time.Now().UTC())}
 			if errors.As(err, &stageErr) {
-				issues[0] = statusIssue(stageErr.stage, time.Now().UTC())
+				issues[0] = statusIssue(stageErr.stage, err, time.Now().UTC())
 				if stageErr.stage == "git" {
 					// Git failure prevents the normal plan from probing Kubernetes.
 					// Check it independently so simultaneous outages remain visible.
 					if _, clusterErr := s.loadPlanInput(ctx, app); clusterErr != nil && ctx.Err() == nil {
-						issues = append(issues, statusIssue("cluster", time.Now().UTC()))
+						issues = append(issues, statusIssue("cluster", clusterErr, time.Now().UTC()))
 					}
 				}
 			}
@@ -284,6 +306,9 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 		return core.Plan{}, nil, &planStageError{stage: "render", err: err}
 	}
 	for _, resource := range desired {
+		if app.BranchTest != nil && app.BranchTest.Mode == "isolated" && resource.Identity.ClusterScoped {
+			return core.Plan{}, nil, errors.New("isolated branch previews cannot manage cluster-scoped resources; remove them from the preview overlay")
+		}
 		if resource.Identity.ClusterScoped && input.ClusterScopeClient == nil {
 			return core.Plan{}, nil, fmt.Errorf("cluster-scoped resource %s/%s requires a privileged cluster-scope credential", resource.Identity.Kind, resource.Identity.Name)
 		}
@@ -435,7 +460,7 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 		}
 	}
 	if err := s.detectFieldTakeovers(ctx, input, &plan, desired); err != nil {
-		return core.Plan{}, nil, err
+		return core.Plan{}, nil, &planStageError{stage: "cluster", err: err}
 	}
 	if err := addNamespaceCreations(ctx, input, &plan, desired); err != nil {
 		return core.Plan{}, nil, &planStageError{stage: "cluster", err: err}
@@ -904,7 +929,7 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 			continue
 		}
 		if err != nil {
-			return nil, nil, fmt.Errorf("cannot read %s %s/%s: %w", identity.Kind, identity.Namespace, identity.Name, err)
+			return nil, nil, &resourceAccessError{identity: identity, action: "get", err: err}
 		}
 		tracked, owned := managedByKey[identity.Key()]
 		if !owned {
@@ -1071,6 +1096,12 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 const maxSnapshotResources = 10000
 
 func clientFor(input planInput, identity core.Identity) (*kube.Clients, error) {
+	if input.Application.BranchTest != nil && input.Application.BranchTest.Mode == "isolated" {
+		app := input.Application
+		if identity.ClusterID != app.ClusterID || identity.ClusterScoped || identity.Namespace == "" || len(app.Namespaces) != 1 || identity.Namespace != app.Namespaces[0].Namespace {
+			return nil, errors.New("isolated branch previews can only manage resources in their dedicated namespace")
+		}
+	}
 	if identity.ClusterScoped {
 		if input.ClusterScopeClient == nil {
 			return nil, errors.New("cluster-scoped access is not configured")

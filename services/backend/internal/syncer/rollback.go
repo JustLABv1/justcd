@@ -118,6 +118,9 @@ func (s *Service) RollbackTargets(ctx context.Context, applicationID string) ([]
 }
 
 func (s *Service) BuildRollbackPlan(ctx context.Context, app store.Application, actorID, targetKind, targetID, revision string) (store.PlanRecord, error) {
+	if app.BranchTest != nil {
+		return store.PlanRecord{}, errors.New("finish the branch test before creating a rollback plan")
+	}
 	targetKind = strings.TrimSpace(targetKind)
 	if targetKind == "git_revision" {
 		if strings.TrimSpace(revision) == "" {

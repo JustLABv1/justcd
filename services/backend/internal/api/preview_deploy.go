@@ -48,6 +48,26 @@ func pullRequestRef(provider string, number int) string {
 
 func (s *Server) previewApplication(ctx context.Context, production store.Application, connection store.SourceControlConnection, review store.PullRequestReview) (store.Application, string, error) {
 	p := connection.PreviewProfile
+	if review.PreviewApplicationID != nil {
+		existing, err := s.Store.ApplicationByID(ctx, *review.PreviewApplicationID)
+		if err != nil {
+			return store.Application{}, "", err
+		}
+		if existing.WorkspaceID != production.WorkspaceID || existing.SourceID != production.SourceID || existing.ClusterID != production.ClusterID {
+			return store.Application{}, "", errors.New("PR deployment target changed")
+		}
+		if !review.SharedEnvironment && len(existing.Namespaces) != 1 {
+			return store.Application{}, "", errors.New("preview needs a dedicated namespace")
+		}
+		return existing, existing.Namespaces[0].Namespace, nil
+	}
+	if p.DeploymentMode == "existing" {
+		if err := s.Store.AttachSharedPR(ctx, review, production, pullRequestRef(connection.Provider, review.Number)); err != nil {
+			return store.Application{}, "", err
+		}
+		app, err := s.Store.ApplicationByID(ctx, production.ID)
+		return app, "", err
+	}
 	id, namespace := previewIdentity(connection.ID, review.Number, p.NamespacePrefix)
 	newSlot, err := s.Store.ReservePreviewSlot(ctx, connection.ID, review.Number, p.MaxActive)
 	if err != nil {

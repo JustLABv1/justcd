@@ -13,7 +13,6 @@ import (
 	"github.com/justlab/justcd/services/backend/internal/apphealth"
 	"github.com/justlab/justcd/services/backend/internal/core"
 	"github.com/justlab/justcd/services/backend/internal/scm"
-	"github.com/justlab/justcd/services/backend/internal/security"
 	"github.com/justlab/justcd/services/backend/internal/store"
 )
 
@@ -74,7 +73,7 @@ func (s *Server) pollPullRequests(ctx context.Context, logger *slog.Logger) {
 }
 
 func (s *Server) pollConnection(ctx context.Context, client scm.Client, connection store.SourceControlConnection) error {
-	token, err := security.Decrypt(s.EncryptionKey, connection.StatusTokenCipher, "source-control-status:"+connection.ID)
+	token, err := s.sourceControlToken(ctx, connection)
 	if err != nil {
 		return err
 	}
@@ -93,7 +92,7 @@ func (s *Server) pollConnection(ctx context.Context, client scm.Client, connecti
 	seen := make(map[int]bool, len(open))
 	for _, item := range open {
 		seen[item.Number] = true
-		if old, ok := previous[item.Number]; ok && old.HeadSHA == item.HeadSHA && old.Fork == item.Fork {
+		if old, ok := previous[item.Number]; ok && old.HeadSHA == item.HeadSHA && old.Fork == item.Fork && old.HeadBranch == item.HeadBranch {
 			continue
 		}
 		if err := s.recordPolledReview(ctx, connection.ID, item); err != nil {
@@ -123,7 +122,7 @@ func (s *Server) recordPolledReview(ctx context.Context, connectionID string, it
 	// The stable ID deduplicates concurrent workers; changed provider timestamps
 	// allow a reopened PR at the same SHA to be recorded again.
 	id := "poll:" + strconv.Itoa(item.Number) + ":" + item.HeadSHA + ":" + strconv.FormatBool(item.Closed) + ":" + strconv.FormatInt(item.EventAt.UnixNano(), 10)
-	review := store.PullRequestReview{ID: store.NewID(), ConnectionID: connectionID, Number: item.Number, HeadSHA: item.HeadSHA, SourceURL: item.URL, Fork: item.Fork, Closed: item.Closed, EventAt: item.EventAt}
+	review := store.PullRequestReview{ID: store.NewID(), ConnectionID: connectionID, Number: item.Number, HeadSHA: item.HeadSHA, SourceURL: item.URL, Fork: item.Fork, Closed: item.Closed, HeadBranch: item.HeadBranch, EventAt: item.EventAt}
 	_, err := s.Store.RecordReviewEvent(ctx, connectionID, id, review)
 	return err
 }
@@ -136,7 +135,7 @@ func (s *Server) processReview(ctx context.Context, review store.PullRequestRevi
 	if !connection.Enabled {
 		return nil
 	}
-	token, err := security.Decrypt(s.EncryptionKey, connection.StatusTokenCipher, "source-control-status:"+connection.ID)
+	token, err := s.sourceControlToken(ctx, connection)
 	if err != nil {
 		return err
 	}
@@ -148,9 +147,9 @@ func (s *Server) processReview(ctx context.Context, review store.PullRequestRevi
 			_ = s.Store.SetReviewWorkerError(ctx, review.ID, "could not read current pull request state: "+err.Error())
 			return err
 		}
-		if current.HeadSHA != review.HeadSHA || current.Closed != review.Closed || current.Fork != review.Fork {
+		if current.HeadSHA != review.HeadSHA || current.Closed != review.Closed || current.Fork != review.Fork || current.HeadBranch != review.HeadBranch {
 			// The provider is authoritative; webhook deliveries may be delayed or reordered.
-			fresh := store.PullRequestReview{ID: store.NewID(), ConnectionID: review.ConnectionID, Number: review.Number, HeadSHA: current.HeadSHA, SourceURL: current.URL, Fork: current.Fork, Closed: current.Closed, EventAt: time.Now().UTC()}
+			fresh := store.PullRequestReview{ID: store.NewID(), ConnectionID: review.ConnectionID, Number: review.Number, HeadSHA: current.HeadSHA, SourceURL: current.URL, Fork: current.Fork, Closed: current.Closed, HeadBranch: current.HeadBranch, EventAt: time.Now().UTC()}
 			_, err = s.Store.RecordReviewEvent(ctx, review.ConnectionID, "provider-refresh:"+review.ID+":"+current.HeadSHA+":"+strconv.FormatBool(current.Closed), fresh)
 			return err
 		}
@@ -195,7 +194,6 @@ func (s *Server) processReview(ctx context.Context, review store.PullRequestRevi
 	}
 	result := review
 	result.Error = ""
-	result.Plan = nil
 	result.ProcessedSHA = review.HeadSHA
 	if review.Closed || (review.ExpiresAt != nil && !review.ExpiresAt.After(time.Now())) {
 		s.handleClosedReview(ctx, connection, &result)
@@ -203,7 +201,22 @@ func (s *Server) processReview(ctx context.Context, review store.PullRequestRevi
 		result.Phase = "blocked"
 		result.Error = "fork pull requests require an explicit owner opt-in"
 	} else if connection.PreviewProfile.Enabled {
-		if review.ProcessedSHA == review.HeadSHA && (review.Phase == "syncing" || review.Phase == "approval_required" || review.Phase == "ready" || review.Phase == "degraded") {
+		if !result.BranchPreviewDeclined && result.PreviewApplicationID == nil && connection.PreviewProfile.DeploymentMode != "existing" {
+			candidates, candidateErr := s.Store.MatchingBranchPreviews(ctx, app, result)
+			if candidateErr != nil {
+				return candidateErr
+			}
+			if len(candidates) > 0 {
+				result.Phase = "adoption_available"
+				changed, updateErr := s.Store.UpdateReviewResult(ctx, result, review.HeadSHA, review.Closed)
+				if updateErr != nil || !changed {
+					return updateErr
+				}
+				return s.reportReview(ctx, connection, result, string(token))
+			}
+		}
+
+		if review.ProcessedSHA == review.HeadSHA && !s.reviewPlanNeedsRefresh(ctx, review) && (review.Phase == "syncing" || review.Phase == "approval_required" || review.Phase == "ready" || review.Phase == "degraded") {
 			s.refreshPreviewReview(ctx, &result)
 		} else {
 			s.buildPreviewReview(ctx, app, connection, &result)
@@ -226,6 +239,9 @@ func (s *Server) processReview(ctx context.Context, review store.PullRequestRevi
 			result.Phase = "planned"
 		}
 	}
+	if err := s.applyPRCommentApprovals(ctx, connection, &result, string(token)); err != nil {
+		result.Error = "PR comment approval check failed: " + err.Error()
+	}
 	changed, err := s.Store.UpdateReviewResult(ctx, result, review.HeadSHA, review.Closed)
 	if err != nil {
 		return err
@@ -245,7 +261,8 @@ func (s *Server) buildPreviewReview(ctx context.Context, production store.Applic
 		return
 	}
 	result.PreviewApplicationID = &preview.ID
-	if result.ExpiresAt == nil {
+	result.SharedEnvironment = connection.PreviewProfile.DeploymentMode == "existing"
+	if result.ExpiresAt == nil && !result.SharedEnvironment {
 		expiry := time.Now().Add(time.Duration(connection.PreviewProfile.MaxLifetimeHours) * time.Hour)
 		result.ExpiresAt = &expiry
 	}
@@ -260,15 +277,19 @@ func (s *Server) buildPreviewReview(ctx context.Context, production store.Applic
 		result.Error = "preview plan failed: " + err.Error()
 		return
 	}
-	if err = validatePreviewResources(desired, connection.PreviewProfile, namespace, result.Fork); err != nil {
-		result.Phase = "failed"
-		result.Error = err.Error()
-		return
+	if !result.SharedEnvironment {
+		if err = validatePreviewResources(desired, connection.PreviewProfile, namespace, result.Fork); err != nil {
+			result.Phase = "failed"
+			result.Error = err.Error()
+			return
+		}
 	}
-	if err = s.ensurePreviewNamespace(ctx, connection, *result, namespace); err != nil {
-		result.Phase = "failed"
-		result.Error = "preview namespace setup failed: " + err.Error()
-		return
+	if !result.SharedEnvironment && !result.AdoptedBranchPreview {
+		if err = s.ensurePreviewNamespace(ctx, connection, *result, namespace); err != nil {
+			result.Phase = "failed"
+			result.Error = "preview namespace setup failed: " + err.Error()
+			return
+		}
 	}
 	plan, err := s.Syncer.BuildPlan(ctx, preview.ID, reviewActorID)
 	if err != nil {
@@ -292,6 +313,11 @@ func (s *Server) buildPreviewReview(ctx context.Context, production store.Applic
 		result.Phase = "syncing"
 		return
 	}
+	if err = s.validatePRDeployment(ctx, connection, *result, preview, plan); err != nil {
+		result.Phase = "failed"
+		result.Error = err.Error()
+		return
+	}
 	if _, err = s.Syncer.Apply(ctx, plan.ID, reviewActorID, ""); err != nil {
 		result.Phase = "failed"
 		result.Error = "could not queue preview sync: " + err.Error()
@@ -310,6 +336,14 @@ func planContainsDeletion(plan core.Plan) bool {
 }
 
 func (s *Server) refreshPreviewReview(ctx context.Context, result *store.PullRequestReview) {
+	if result.Phase == "approval_required" {
+		var view planView
+		if json.Unmarshal(result.Plan, &view) == nil {
+			if record, err := s.Store.PlanByID(ctx, view.ID); err == nil && record.Status == "current" {
+				return
+			}
+		}
+	}
 	if result.PreviewApplicationID == nil {
 		result.Phase = "failed"
 		result.Error = "preview application is missing"
@@ -365,6 +399,35 @@ func (s *Server) handleClosedReview(ctx context.Context, connection store.Source
 		result.Error = "could not load preview for cleanup"
 		return
 	}
+	if result.SharedEnvironment {
+		active, err := s.Store.ApplicationHasActiveOperation(ctx, preview.ID)
+		if err != nil || active {
+			result.Phase = "cleanup_pending"
+			result.Error = "waiting for the shared-environment operation to finish"
+			return
+		}
+		if err = s.Store.ResumeBranchTest(ctx, preview.ID); err != nil {
+			result.Phase = "cleanup_pending"
+			result.Error = err.Error()
+			return
+		}
+		if preview.RepositoryConfigurationID != "" {
+			if err = s.Syncer.ReconcileRepository(ctx, preview.RepositoryConfigurationID); err != nil {
+				result.Phase = "failed"
+				result.Error = "tracked source restored; discovery failed and reconciliation remains paused"
+				result.PreviewApplicationID = nil
+				return
+			}
+		}
+		plan, err := s.Syncer.BuildPlan(ctx, preview.ID, reviewActorID)
+		result.PreviewApplicationID = nil
+		result.Phase = "closed"
+		result.Error = "Tracked source restored. Review and deploy the return plan before resuming reconciliation; data changes are not undone."
+		if err == nil {
+			result.Plan, _ = json.Marshal(toPlanView(plan))
+		}
+		return
+	}
 	managed, managedErr := s.Store.ManagedResources(ctx, preview.ID)
 	active, activeErr := s.Store.ApplicationHasActiveOperation(ctx, preview.ID)
 	if managedErr != nil || activeErr != nil {
@@ -384,17 +447,21 @@ func (s *Server) handleClosedReview(ctx context.Context, connection store.Source
 			return
 		}
 		namespace := preview.Namespaces[0].Namespace
-		if err := s.removePreviewNamespace(ctx, connection, *result, namespace); err != nil {
-			result.Phase = "cleanup_pending"
-			result.Error = "namespace deletion is waiting or needs review"
-			return
+		if !result.AdoptedBranchPreview {
+			if err := s.removePreviewNamespace(ctx, connection, *result, namespace); err != nil {
+				result.Phase = "cleanup_pending"
+				result.Error = "namespace deletion is waiting or needs review"
+				return
+			}
 		}
 		if _, err := s.Store.DeleteApplicationKeepingResources(ctx, preview.ID, true); err != nil {
 			result.Phase = "cleanup_pending"
 			result.Error = "application cleanup is waiting"
 			return
 		}
-		_ = s.Store.DeletePreviewNamespaceBinding(ctx, preview.WorkspaceID, preview.ClusterID, namespace)
+		if !result.AdoptedBranchPreview {
+			_ = s.Store.DeletePreviewNamespaceBinding(ctx, preview.WorkspaceID, preview.ClusterID, namespace)
+		}
 		_ = s.Store.ReleasePreviewSlot(ctx, connection.ID, result.Number)
 		result.PreviewApplicationID = nil
 		result.Phase = "removed"
@@ -413,6 +480,8 @@ func (s *Server) handleClosedReview(ctx context.Context, connection store.Source
 func (s *Server) reportReview(ctx context.Context, connection store.SourceControlConnection, review store.PullRequestReview, token string) error {
 	state, description := "pending", "JustCD is preparing a PR plan"
 	switch review.Phase {
+	case "adoption_available":
+		state, description = "pending", "JustCD found a branch preview; choose whether to reuse it"
 	case "planned":
 		state, description = "success", "JustCD PR plan is ready for review"
 	case "ready":
@@ -436,6 +505,22 @@ func (s *Server) reportReview(ctx context.Context, connection store.SourceContro
 	if err := (scm.Client{}).Report(ctx, connection.Provider, connection.APIURL, connection.Repository, token, review.HeadSHA, state, description, target, connection.ApplicationID); err != nil {
 		_ = s.Store.SetReviewReportError(ctx, review.ID, "could not update provider commit status: "+err.Error())
 		return err
+	}
+	if len(review.Plan) > 0 {
+		var view planView
+		if err := json.Unmarshal(review.Plan, &view); err != nil {
+			return err
+		}
+		reportKey := view.ID + ":" + view.Plan.Digest
+		if reportKey != review.ReportedPlanID {
+			if err := (scm.Client{}).PostComment(ctx, connection.Provider, connection.APIURL, connection.Repository, token, review.Number, prPlanComment(review, view, target)); err != nil {
+				_ = s.Store.SetReviewReportError(ctx, review.ID, "could not post PR plan comment: "+err.Error())
+				return err
+			}
+			if _, err := s.Store.DB.ExecContext(ctx, `UPDATE pull_request_reviews SET reported_plan_id=$2 WHERE id=$1`, review.ID, reportKey); err != nil {
+				return err
+			}
+		}
 	}
 	return s.Store.MarkReviewReported(ctx, review.ID, review.Phase)
 }

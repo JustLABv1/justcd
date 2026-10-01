@@ -7,7 +7,26 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
+
+func TestPlanFailureReportsKubernetesPermissionDenial(t *testing.T) {
+	response := httptest.NewRecorder()
+	err := fmt.Errorf("wrapped: %w", apierrors.NewForbidden(schema.GroupResource{Group: "secrets.hashicorp.com", Resource: "vaultstaticsecrets"}, "database", fmt.Errorf("bearer private-token")))
+	writePlanFailure(response, http.StatusUnprocessableEntity, "could not calculate a safe plan", "app-1", err)
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["code"] != "kubernetes.permission_denied" || body["category"] != "kubernetes" || body["remediationUrl"] != "/applications/app-1?tab=settings" {
+		t.Fatalf("RBAC diagnosis lost: %#v", body)
+	}
+	if !strings.Contains(body["remediation"].(string), "exclude") || strings.Contains(response.Body.String(), "private-token") {
+		t.Fatalf("unsafe or unhelpful RBAC response: %s", response.Body.String())
+	}
+}
 
 func TestWriteErrorUsesStableVersionedEnvelope(t *testing.T) {
 	tests := []struct {

@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+
+	"github.com/justlab/justcd/services/backend/internal/syncer"
 )
 
 const apiErrorSchemaVersion = 1
@@ -125,6 +127,15 @@ func writePlanFailure(w http.ResponseWriter, status int, message, applicationID 
 		metadata.remediationURL = "/settings/connections"
 	}
 
+	diagnostic := syncer.PlanFailureDiagnostic(err)
+	if diagnostic.Code != "" {
+		message = diagnostic.Summary
+		metadata.code = diagnostic.Code
+		metadata.category = "kubernetes"
+		metadata.remediation = diagnostic.Remediation
+		metadata.remediationURL = "/applications/" + url.PathEscape(applicationID) + "?tab=settings"
+		details["issue"] = diagnostic
+	}
 	writeClassifiedError(w, status, message, metadata, details)
 }
 

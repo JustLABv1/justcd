@@ -171,12 +171,21 @@ func (s *Server) processReview(ctx context.Context, review store.PullRequestRevi
 		return errors.New("application Git source no longer matches source control connection")
 	}
 	if review.PreviewApplicationID == nil {
+		review.ScopeNote = ""
 		watched := reviewPaths(app, connection.PreviewProfile)
 		if app.Renderer == "kustomize" {
-			watched = s.kustomizeReviewPaths(ctx, source, app, connection, review)
+			var reason string
+			watched, reason = s.kustomizeReviewPaths(ctx, source, app, connection, review)
+			review.ScopeNote = ""
+			if reason != "" {
+				review.ScopeNote = "Checking all PR changes because dependency filtering is incomplete: " + reason
+			}
 		}
 		if watched != nil {
 			changedPaths, filesErr := (scm.Client{}).ChangedPaths(ctx, connection.Provider, connection.APIURL, connection.Repository, string(token), review.Number)
+			if filesErr != nil {
+				review.ScopeNote = "Checking all PR changes because the provider could not return a complete changed-file list."
+			}
 			// Incomplete provider data must not hide a potentially relevant PR.
 			if filesErr == nil && !pathsAffectApplication(changedPaths, watched) {
 				ignored := review
@@ -188,6 +197,9 @@ func (s *Server) processReview(ctx context.Context, review store.PullRequestRevi
 				return err
 			}
 		}
+	}
+	if err := s.Store.SetReviewScopeNote(ctx, review, review.ScopeNote); err != nil {
+		return err
 	}
 	if review.Phase == "planned" && review.ProcessedSHA == review.HeadSHA && (review.ExpiresAt == nil || review.ExpiresAt.After(time.Now())) {
 		if review.ReportedPhase != review.Phase {

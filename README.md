@@ -173,8 +173,9 @@ against that application's manifest paths, Helm values files, and optional
 preview path. Renames check both old and new paths. PRs without a matching path
 are hidden from that application's review list and do not receive its status.
 Kustomize follows local bases, components, patches, replacements, and generator
-files outside the overlay path. Unrelated applications are skipped. Remote inputs,
-custom plugins, Helm generators, missing inputs, or unsupported dependency features
+files outside the overlay path, including Helm chart directories and values files.
+Pinned remote Helm charts are supported. Unrelated applications are skipped. Remote inputs,
+custom plugins, unpinned Helm charts, missing inputs, or unsupported dependency features
 keep repository-wide checking to avoid hiding relevant changes. If a provider cannot return a complete file list,
 JustCD conservatively reviews the PR. Status contexts include the application
 ID so multiple applications do not overwrite each other's status.

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,20 +15,23 @@ import (
 )
 
 // A nil scope means dependency discovery was incomplete: never skip that PR.
-func (s *Server) kustomizeReviewPaths(ctx context.Context, source store.GitSource, app store.Application, connection store.SourceControlConnection, review store.PullRequestReview) []string {
+func (s *Server) kustomizeReviewPaths(ctx context.Context, source store.GitSource, app store.Application, connection store.SourceControlConnection, review store.PullRequestReview) ([]string, string) {
 	checkout, err := gitops.Fetch(ctx, s.Store, s.EncryptionKey, source, pullRequestRef(connection.Provider, review.Number))
 	if err != nil {
-		return nil
+		return nil, "The PR checkout could not be inspected."
 	}
 	defer checkout.Close()
 	if checkout.Commit != review.HeadSHA {
-		return nil
+		return nil, "The PR head changed during dependency discovery."
 	}
 	paths, err := kustomizeDependencies(checkout.Root, configuredReviewPaths(app, connection.PreviewProfile))
 	if err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil, "A referenced local input is missing from this PR."
+		}
+		return nil, err.Error()
 	}
-	return paths
+	return paths, ""
 }
 
 // Watch each referenced directory, but recurse only through its selected
@@ -100,14 +104,14 @@ func kustomizeDependencies(root string, inputs []string) ([]string, error) {
 		}
 		// Unknown features may read additional files. Fail open for PR inclusion.
 		inline := strings.Fields("apiVersion kind metadata namePrefix nameSuffix namespace commonLabels commonAnnotations labels annotations images replicas vars generatorOptions buildMetadata sortOptions")
-		supported := strings.Fields("resources bases components crds configurations patchesStrategicMerge patches patchesJson6902 replacements configMapGenerator secretGenerator openapi")
+		supported := strings.Fields("resources bases components crds configurations patchesStrategicMerge patches patchesJson6902 replacements configMapGenerator secretGenerator openapi helmCharts helmGlobals")
 		allowed := map[string]bool{}
 		for _, key := range append(inline, supported...) {
 			allowed[key] = true
 		}
 		for key := range data {
 			if !allowed[key] {
-				return errors.New("unsupported dependency feature")
+				return fmt.Errorf("Unsupported Kustomize dependency feature: %.60s.", key)
 			}
 		}
 		for _, key := range strings.Fields("resources bases components crds configurations patchesStrategicMerge") {
@@ -171,6 +175,76 @@ func kustomizeDependencies(root string, inputs []string) ([]string, error) {
 							}
 						}
 						if err := visit(candidate, value, false); err != nil {
+							return err
+						}
+					}
+				}
+			}
+		}
+		chartHome := "charts"
+		if globals, ok := data["helmGlobals"].(map[string]any); ok {
+			if home, ok := globals["chartHome"].(string); ok && home != "" {
+				chartHome = home
+			}
+			if home, ok := globals["configHome"].(string); ok && home != "" {
+				if err := visit(candidate, home, false); err != nil {
+					return err
+				}
+			}
+		}
+		if rawCharts := data["helmCharts"]; rawCharts != nil {
+			charts, ok := rawCharts.([]any)
+			if !ok {
+				return errors.New("Invalid Helm chart list.")
+			}
+			for _, rawChart := range charts {
+				chart, ok := rawChart.(map[string]any)
+				if !ok {
+					return errors.New("Invalid Helm chart entry.")
+				}
+				name, _ := chart["name"].(string)
+				if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\") {
+					return errors.New("Invalid Helm chart name.")
+				}
+				home := chartHome
+				if legacyHome, ok := chart["chartHome"].(string); ok && legacyHome != "" {
+					home = legacyHome
+				}
+				chartPath := filepath.Join(home, name)
+				// Track the selected chart even when it is downloaded by Kustomize.
+				// A sibling chart under the same chartHome is not an application input.
+				chartRel, err := filepath.Rel(root, filepath.Join(candidate, chartPath))
+				if err != nil || chartRel == ".." || strings.HasPrefix(chartRel, "../") || filepath.IsAbs(home) {
+					return errors.New("Helm chart path escapes repository.")
+				}
+				watched[filepath.ToSlash(chartRel)] = true
+				if _, err := os.Lstat(filepath.Join(candidate, chartPath)); os.IsNotExist(err) {
+					repo, _ := chart["repo"].(string)
+					version, _ := chart["version"].(string)
+					if repo == "" || strings.TrimSpace(version) == "" {
+						return errors.New("Helm chart is unavailable or its remote version is unpinned.")
+					}
+				} else if err != nil {
+					return err
+				} else if err := visit(candidate, chartPath, false); err != nil {
+					return err
+				}
+				if filename, ok := chart["valuesFile"].(string); ok && filename != "" {
+					if err := visit(candidate, filename, false); err != nil {
+						return err
+					}
+				}
+				if rawValues := chart["additionalValuesFiles"]; rawValues != nil {
+					values, ok := rawValues.([]any)
+					if !ok {
+						return errors.New("Invalid Helm values files.")
+					}
+					for _, rawValue := range values {
+						filename, ok := rawValue.(string)
+						if !ok {
+							return errors.New("Invalid Helm values file.")
+						}
+						if err := visit(candidate, filename, false); err != nil {
 							return err
 						}
 					}

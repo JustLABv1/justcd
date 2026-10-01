@@ -83,3 +83,42 @@ func TestKustomizeScopeIncludesAllOverlaysAndRejectsSymlinks(t *testing.T) {
 		t.Fatal("symlink must fall back")
 	}
 }
+
+func TestKustomizeHelmReviewScope(t *testing.T) {
+	for _, vendored := range []bool{false, true} {
+		t.Run(map[bool]string{true: "vendored", false: "pinned-remote"}[vendored], func(t *testing.T) {
+			root := t.TempDir()
+			scopeFile(t, root, "apps/api/kustomization.yaml", `helmGlobals:
+  chartHome: ../../charts
+helmCharts:
+- name: api
+  repo: https://charts.example.com
+  version: 1.2.3
+  valuesFile: ../../config/api.yaml
+  additionalValuesFiles:
+  - ../../config/common.yaml
+`)
+			scopeFile(t, root, "config/api.yaml", "replicas: 1")
+			scopeFile(t, root, "config/common.yaml", "{}")
+			scopeFile(t, root, "charts/web/Chart.yaml", "name: web")
+			if vendored {
+				scopeFile(t, root, "charts/api/Chart.yaml", "name: api")
+				scopeFile(t, root, "charts/api/templates/deployment.yaml", "kind: Deployment")
+			}
+			paths, err := kustomizeDependencies(root, []string{"apps/api"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, file := range []string{"apps/api/kustomization.yaml", "config/api.yaml", "config/common.yaml", "charts/api/Chart.yaml", "charts/api/templates/deployment.yaml"} {
+				if !pathsAffectApplication([]string{file}, paths) {
+					t.Fatalf("missing input %s: %v", file, paths)
+				}
+			}
+			for _, file := range []string{"apps/web/kustomization.yaml", "charts/web/Chart.yaml", "config/web.yaml", "README.md"} {
+				if pathsAffectApplication([]string{file}, paths) {
+					t.Fatalf("unrelated PR included: %s", file)
+				}
+			}
+		})
+	}
+}

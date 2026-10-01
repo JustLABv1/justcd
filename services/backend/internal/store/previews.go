@@ -194,6 +194,7 @@ func (s *Store) DeleteSourceControlConnection(ctx context.Context, applicationID
 }
 
 type PullRequestReview struct {
+	ScopeNote             string          `json:"scopeNote,omitempty"`
 	ReportedPlanID        string          `json:"-"`
 	BranchPreviewDeclined bool            `json:"-"`
 	HeadBranch            string          `json:"headBranch,omitempty"`
@@ -219,12 +220,12 @@ type PullRequestReview struct {
 	UpdatedAt             time.Time       `json:"updatedAt"`
 }
 
-const reviewColumns = `id,connection_id,number,head_sha,source_url,fork,closed,phase,plan,error,report_error,preview_application_id,expires_at,processed_sha,reported_phase,event_at,updated_at,head_branch,adopted_branch_preview,shared_environment,branch_preview_declined,reported_plan_id`
+const reviewColumns = `id,connection_id,number,head_sha,source_url,fork,closed,phase,plan,error,report_error,preview_application_id,expires_at,processed_sha,reported_phase,event_at,updated_at,head_branch,adopted_branch_preview,shared_environment,branch_preview_declined,reported_plan_id,scope_note`
 
 func scanReview(row interface{ Scan(...any) error }) (PullRequestReview, error) {
 	var v PullRequestReview
 	var plan []byte
-	err := row.Scan(&v.ID, &v.ConnectionID, &v.Number, &v.HeadSHA, &v.SourceURL, &v.Fork, &v.Closed, &v.Phase, &plan, &v.Error, &v.ReportError, &v.PreviewApplicationID, &v.ExpiresAt, &v.ProcessedSHA, &v.ReportedPhase, &v.EventAt, &v.UpdatedAt, &v.HeadBranch, &v.AdoptedBranchPreview, &v.SharedEnvironment, &v.BranchPreviewDeclined, &v.ReportedPlanID)
+	err := row.Scan(&v.ID, &v.ConnectionID, &v.Number, &v.HeadSHA, &v.SourceURL, &v.Fork, &v.Closed, &v.Phase, &plan, &v.Error, &v.ReportError, &v.PreviewApplicationID, &v.ExpiresAt, &v.ProcessedSHA, &v.ReportedPhase, &v.EventAt, &v.UpdatedAt, &v.HeadBranch, &v.AdoptedBranchPreview, &v.SharedEnvironment, &v.BranchPreviewDeclined, &v.ReportedPlanID, &v.ScopeNote)
 	if err == nil {
 		v.Plan = plan
 	}
@@ -433,3 +434,8 @@ func (s *Store) DeletePreviewNamespaceBinding(ctx context.Context, workspaceID, 
 }
 
 var _ = sql.ErrNoRows
+
+func (s *Store) SetReviewScopeNote(ctx context.Context, review PullRequestReview, note string) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE pull_request_reviews SET scope_note=$2 WHERE id=$1 AND head_sha=$3 AND closed=$4`, review.ID, note, review.HeadSHA, review.Closed)
+	return err
+}

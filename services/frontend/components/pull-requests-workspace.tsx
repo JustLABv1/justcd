@@ -35,7 +35,7 @@ type PreviewProfile = {
 type Connection = { managedByGit?: boolean; id: string; enabled: boolean; provider: "github" | "gitlab"; apiUrl: string; repository: string; previewProfile: PreviewProfile; statusCredentialId?: string }
 type SourceDetails = { repositoryUrl: string; provider: "github" | "gitlab"; apiUrl: string; repository: string; selfHosted: boolean }
 type ConnectionResponse = { source: SourceDetails; connection: Connection | null; webhookUrl: string; webhookConfigured?: boolean }
-type Review = { id: string; number: number; headSha: string; sourceUrl: string; phase: string; error?: string; reportError?: string; plan?: PlanRecord; previewApplicationId?: string; expiresAt?: string; updatedAt: string; headBranch?: string; adoptedBranchPreview?: boolean; sharedEnvironment?: boolean; branchPreviews?: Application[] }
+type Review = { scopeNote?: string; id: string; number: number; headSha: string; sourceUrl: string; phase: string; error?: string; reportError?: string; plan?: PlanRecord; previewApplicationId?: string; expiresAt?: string; updatedAt: string; headBranch?: string; adoptedBranchPreview?: boolean; sharedEnvironment?: boolean; branchPreviews?: Application[] }
 
 const defaultProfile: PreviewProfile = {
   deploymentMode: "isolated", confirmShared: false, approvalActors: {}, enabled: false, manifestPath: "", namespacePrefix: "preview", hostSuffix: "preview.example.com", helmValuesYaml: "", helmValuesFiles: [],
@@ -262,6 +262,7 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
           {review.adoptedBranchPreview && <p className="text-sm text-muted-foreground">Reused branch preview · cleanup retains its namespace and untracked resources.</p>}
           {review.sharedEnvironment && <p className="text-sm text-muted-foreground">Deploys to the existing application environment · reconciliation remains paused.</p>}
           {review.phase === "approval_required" && review.plan && <p className="text-sm text-muted-foreground">Approve in JustCD or post <code className="break-all">/justcd approve {review.plan.id} {review.plan.plan.digest}</code> in the PR using a mapped account.</p>}
+          {review.scopeNote && <p className="text-sm text-muted-foreground">{review.scopeNote}</p>}
           {review.error && <p className="text-xs text-destructive">{review.error}</p>}
           {review.reportError && <p className="text-xs text-destructive">{review.reportError}</p>}
           {review.expiresAt && <p className="text-sm text-muted-foreground">Expires {new Date(review.expiresAt).toLocaleString()}</p>}

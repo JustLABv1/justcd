@@ -205,7 +205,7 @@ func validCommit(value string) bool {
 }
 
 func cleanGitEnvironment(in []string, home string) []string {
-	allowed := map[string]bool{"PATH": true, "LANG": true, "LC_ALL": true, "LC_CTYPE": true, "SYSTEMROOT": true, "WINDIR": true, "HTTPS_PROXY": true, "HTTP_PROXY": true, "NO_PROXY": true, "SSL_CERT_FILE": true, "SSL_CERT_DIR": true, "GIT_SSL_CAINFO": true}
+	allowed := map[string]bool{"PATH": true, "LANG": true, "LC_ALL": true, "LC_CTYPE": true, "SYSTEMROOT": true, "WINDIR": true, "HTTPS_PROXY": true, "HTTP_PROXY": true, "NO_PROXY": true, "SSL_CERT_FILE": true, "SSL_CERT_DIR": true, "GIT_SSL_CAINFO": true, "GIT_SSL_CAPATH": true}
 	out := make([]string, 0, len(allowed)+10)
 	for _, pair := range in {
 		key, _, ok := strings.Cut(pair, "=")

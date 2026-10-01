@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { EmptyState, FormField, PageHeading } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
-import { api, apiPost, errorMessage } from "@/lib/api"
+import { api, apiDelete, apiPost, errorMessage } from "@/lib/api"
 import { RepositoryConfigurations } from "@/components/repository-configurations"
 import { WorkspaceConnectionShares } from "@/components/workspace-connection-shares"
 import type {
@@ -634,8 +634,9 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                           workspaces={workspaces}
                           busy={busy}
                           action={action}
+                          onDeleted={(id) => setProviders((items) => items.filter((item) => item.id !== id))}
                           onCreated={(provider) =>
-                            setProviders((items) => [...items, provider])
+                            setProviders((items) => items.some((item) => item.id === provider.id) ? items.map((item) => item.id === provider.id ? provider : item) : [...items, provider])
                           }
                         />
                       )}
@@ -2126,6 +2127,7 @@ function OIDCPanel({
   busy,
   action,
   onCreated,
+  onDeleted,
 }: {
   providers: OIDCProvider[]
   workspaces: Workspace[]
@@ -2136,7 +2138,22 @@ function OIDCPanel({
     after?: (value: T) => void
   ) => Promise<void>
   onCreated: (value: OIDCProvider) => void
+  onDeleted: (id: string) => void
 }) {
+  const toast = useToast()
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [editing, setEditing] = useState<OIDCProvider | null>(null)
+  const [enabled, setEnabled] = useState(true)
+  function openProvider(provider: OIDCProvider | null) {
+    setEditing(provider)
+    setName(provider?.name ?? "")
+    setIssuer(provider?.issuer ?? "")
+    setClientId(provider?.clientId ?? "")
+    setClientSecret("")
+    setGroupsClaim(provider?.groupsClaim ?? "groups")
+    setEnabled(provider?.enabled ?? true)
+    setDialogOpen(true)
+  }
   const [name, setName] = useState("")
   const [issuer, setIssuer] = useState("")
   const [clientId, setClientId] = useState("")
@@ -2155,16 +2172,32 @@ function OIDCPanel({
     try {
       await action(
         async () => {
-          const provider = await apiPost<OIDCProvider>(
-            "/api/v1/admin/oidc-providers",
-            { name, issuer, clientId, clientSecret, groupsClaim }
-          )
+          const values = {
+            name,
+            issuer,
+            clientId,
+            clientSecret,
+            groupsClaim,
+            enabled,
+          }
+          const provider = editing
+            ? await api<OIDCProvider>(
+                `/api/v1/admin/oidc-providers/${encodeURIComponent(editing.id)}`,
+                { method: "PUT", body: JSON.stringify(values) }
+              )
+            : await apiPost<OIDCProvider>(
+                "/api/v1/admin/oidc-providers",
+                values
+              )
+          setDialogOpen(false)
           setName("")
           setClientId("")
           setClientSecret("")
           return provider
         },
-        "OIDC provider added. Verify the callback URL in your identity provider.",
+        editing
+          ? "OIDC provider updated."
+          : "OIDC provider added. Verify the callback URL in your identity provider.",
         onCreated
       )
     } finally {
@@ -2182,7 +2215,11 @@ function OIDCPanel({
         () =>
           apiPost(
             `/api/v1/admin/oidc-providers/${encodeURIComponent(selectedProvider)}/groups`,
-            { group: groupName, workspaceId: selectedWorkspace, role: groupRole }
+            {
+              group: groupName,
+              workspaceId: selectedWorkspace,
+              role: groupRole,
+            }
           ),
         "OIDC group mapping saved.",
         () => setGroupName("")
@@ -2193,7 +2230,17 @@ function OIDCPanel({
   }
   return (
     <div className="space-y-6">
-      <SettingsInventory title="Identity providers" count={providers.length}>
+      <SettingsInventory
+        title="Identity providers"
+        count={providers.length}
+        control={
+          <div className="flex justify-end">
+            <Button size="sm" disabled={busy} onClick={() => openProvider(null)}>
+              Add OIDC provider
+            </Button>
+          </div>
+        }
+      >
         {providers.length ? (
           <div className="divide-y border-b">
             {providers.map((provider) => (
@@ -2209,95 +2256,142 @@ function OIDCPanel({
                     Callback: {provider.redirectUrl}
                   </span>
                 </div>
-                <span
-                  className={`rounded-full border px-2 py-0.5 text-[9px] ${provider.enabled ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "text-muted-foreground"}`}
-                >
-                  {provider.enabled ? "enabled" : "disabled"}
-                </span>
+                <div className="flex shrink-0 items-center gap-3">
+                  <span
+                    className={`rounded-full border px-2 py-0.5 text-[9px] ${provider.enabled ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "text-muted-foreground"}`}
+                  >
+                    {provider.enabled ? "enabled" : "disabled"}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => openProvider(provider)}
+                  >
+                    Edit
+                  </Button>
+                  <ConfirmDisclosure
+                    trigger="Delete"
+                    title={`Delete ${provider.name}?`}
+                    description="Sign-in through this provider will stop. Its identity links, pending logins, group mappings, and granted workspace access will be removed. User accounts and existing sessions remain."
+                    confirmLabel="Delete provider"
+                    disabled={busy}
+                    onConfirm={async () => {
+                      await apiDelete(`/api/v1/admin/oidc-providers/${encodeURIComponent(provider.id)}`)
+                      if (providerId === provider.id) setProviderId("")
+                      onDeleted(provider.id)
+                      toast.success("OIDC provider deleted.")
+                    }}
+                  />
+                </div>
               </div>
             ))}
           </div>
         ) : null}
         {!providers.length && (
-          <EmptyState title="No identity providers yet" description="Use the form below to get started." />
+          <EmptyState
+            title="No identity providers yet"
+            description="Add a provider to enable organization sign-in."
+          />
         )}
       </SettingsInventory>
-      <form
-        className="settings-editor space-y-5 rounded-2xl border bg-card p-6"
-        onSubmit={submit}
+      <ConnectionDialog
+        open={dialogOpen}
+        onOpenChange={(open) => {
+          setDialogOpen(open)
+          if (!open) setClientSecret("")
+        }}
+        busy={busy || oidcPending === "provider"}
+        title={editing ? "Edit OIDC provider" : "Add OIDC provider"}
+        description="Configure organization sign-in and workspace group claims."
       >
-        <div className="border-b pb-4">
-          <h2 className="text-base font-semibold">
-            Connect an identity provider
-          </h2>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            Set up organization sign-in before assigning groups to workspace
-            roles.
+        <form className="space-y-5" onSubmit={submit}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FormField label="Display name" htmlFor="oidc-name">
+              <Input
+                id="oidc-name"
+                placeholder="Company SSO"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                required
+              />
+            </FormField>
+            <FormField label="Issuer URL" htmlFor="oidc-issuer">
+              <Input
+                id="oidc-issuer"
+                type="url"
+                placeholder="https://id.example.com"
+                value={issuer}
+                onChange={(event) => setIssuer(event.target.value)}
+                required
+              />
+            </FormField>
+            <FormField label="Client ID" htmlFor="oidc-client">
+              <Input
+                id="oidc-client"
+                value={clientId}
+                onChange={(event) => setClientId(event.target.value)}
+                required
+              />
+            </FormField>
+            <FormField label="Groups claim" htmlFor="oidc-groups">
+              <Input
+                id="oidc-groups"
+                value={groupsClaim}
+                onChange={(event) => setGroupsClaim(event.target.value)}
+              />
+            </FormField>
+          </div>
+          <FormField label="Client secret" htmlFor="oidc-secret">
+            <Input
+              id="oidc-secret"
+              type="password"
+              autoComplete="new-password"
+              value={clientSecret}
+              onChange={(event) => setClientSecret(event.target.value)}
+              placeholder={
+                editing ? "Leave empty to keep the existing secret" : undefined
+              }
+              required={!editing}
+            />
+          </FormField>
+          <p className="text-[10px] leading-4 text-muted-foreground">
+            {editing ? (
+              <>
+                Callback URL: <code>{editing.redirectUrl}</code>
+              </>
+            ) : (
+              <>
+                Callback URL: use the JustCD public URL plus{" "}
+                <code className="font-mono">
+                  /api/v1/auth/oidc/&lt;provider-id&gt;/callback
+                </code>
+                . It is available after the provider is created.
+              </>
+            )}
           </p>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <FormField label="Display name" htmlFor="oidc-name">
-            <Input
-              id="oidc-name"
-              placeholder="Company SSO"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              required
+          <FormField label="Status" htmlFor="oidc-enabled">
+            <FormSelect
+              id="oidc-enabled"
+              value={enabled ? "enabled" : "disabled"}
+              onValueChange={(value) => setEnabled(value === "enabled")}
+              items={[
+                { value: "enabled", label: "Enabled" },
+                { value: "disabled", label: "Disabled" },
+              ]}
             />
           </FormField>
-          <FormField label="Issuer URL" htmlFor="oidc-issuer">
-            <Input
-              id="oidc-issuer"
-              type="url"
-              placeholder="https://id.example.com"
-              value={issuer}
-              onChange={(event) => setIssuer(event.target.value)}
-              required
-            />
-          </FormField>
-          <FormField label="Client ID" htmlFor="oidc-client">
-            <Input
-              id="oidc-client"
-              value={clientId}
-              onChange={(event) => setClientId(event.target.value)}
-              required
-            />
-          </FormField>
-          <FormField label="Groups claim" htmlFor="oidc-groups">
-            <Input
-              id="oidc-groups"
-              value={groupsClaim}
-              onChange={(event) => setGroupsClaim(event.target.value)}
-            />
-          </FormField>
-        </div>
-        <FormField label="Client secret" htmlFor="oidc-secret">
-          <Input
-            id="oidc-secret"
-            type="password"
-            autoComplete="new-password"
-            value={clientSecret}
-            onChange={(event) => setClientSecret(event.target.value)}
-            required
-          />
-        </FormField>
-        <p className="text-[10px] leading-4 text-muted-foreground">
-          Callback URL: use the JustCD public URL plus{" "}
-          <code className="font-mono">
-            /api/v1/auth/oidc/&lt;provider-id&gt;/callback
-          </code>
-          . It is available after the provider is created.
-        </p>
-        <Button
-          size="sm"
-          type="submit"
-          loading={oidcPending === "provider"}
-          loadingText="Adding provider…"
-          disabled={busy}
-        >
-          Add OIDC provider
-        </Button>
-      </form>
+          <Button
+            size="sm"
+            type="submit"
+            loading={oidcPending === "provider"}
+            loadingText={editing ? "Saving provider…" : "Adding provider…"}
+            disabled={busy}
+          >
+            {editing ? "Save changes" : "Add OIDC provider"}
+          </Button>
+        </form>
+      </ConnectionDialog>
       {providers.length > 0 && workspaces.length > 0 && (
         <form
           className="settings-editor space-y-5 rounded-2xl border bg-card p-6"

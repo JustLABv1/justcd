@@ -165,6 +165,8 @@ func (s *Server) routes() {
 	s.Mux.Handle("DELETE /api/v1/admin/users/{userID}", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.deleteUser)))))
 	s.Mux.Handle("GET /api/v1/admin/oidc-providers", s.requireAuth(s.requireAdmin(http.HandlerFunc(s.listOIDCProviders))))
 	s.Mux.Handle("POST /api/v1/admin/oidc-providers", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.createOIDCProvider)))))
+	s.Mux.Handle("DELETE /api/v1/admin/oidc-providers/{providerID}", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.deleteOIDCProvider)))))
+	s.Mux.Handle("PUT /api/v1/admin/oidc-providers/{providerID}", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.updateOIDCProvider)))))
 	s.Mux.Handle("POST /api/v1/admin/oidc-providers/{providerID}/groups", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.addOIDCGroupRole)))))
 
 	s.Mux.HandleFunc("GET /api/v1/openapi.yaml", s.serveOpenAPI)

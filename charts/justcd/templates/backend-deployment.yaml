@@ -95,6 +95,10 @@ spec:
             # Go loads these directories in addition to the system CA bundle.
             - name: SSL_CERT_DIR
               value: /etc/ssl/certs:/etc/justcd/custom-ca
+            - name: GIT_SSL_CAINFO
+              value: /etc/justcd/custom-ca/ca.crt
+            - name: GIT_SSL_CAPATH
+              value: /etc/ssl/certs
             {{- end }}
             - name: JUSTCD_LISTEN_ADDRESS
               value: ":{{ .Values.backend.service.port }}"

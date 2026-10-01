@@ -208,6 +208,38 @@ func (s *Store) CreateOIDCProvider(ctx context.Context, p OIDCProvider) error {
 	return err
 }
 
+var ErrOIDCIssuerInUse = errors.New("OIDC issuer already has linked identities")
+
+func (s *Store) UpdateOIDCProvider(ctx context.Context, p OIDCProvider) error {
+	result, err := s.DB.ExecContext(ctx, `UPDATE oidc_providers SET name=$2,issuer=$3,client_id=$4,client_secret_cipher=$5,redirect_url=$6,groups_claim=$7,enabled=$8 WHERE id=$1 AND (issuer=$3 OR NOT EXISTS(SELECT 1 FROM oidc_identities WHERE provider_id=$1))`, p.ID, p.Name, p.Issuer, p.ClientID, p.ClientSecret, p.RedirectURL, p.GroupsClaim, p.Enabled)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrOIDCIssuerInUse
+	}
+	return nil
+}
+
+func (s *Store) DeleteOIDCProvider(ctx context.Context, id string) error {
+	result, err := s.DB.ExecContext(ctx, `DELETE FROM oidc_providers WHERE id=$1`, id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (s *Store) OIDCProviderByID(ctx context.Context, id string) (OIDCProvider, error) {
 	var p OIDCProvider
 	err := s.DB.QueryRowContext(ctx, `SELECT id,name,issuer,client_id,client_secret_cipher,redirect_url,groups_claim,enabled,created_at FROM oidc_providers WHERE id=$1`, id).

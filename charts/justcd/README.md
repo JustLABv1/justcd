@@ -172,9 +172,9 @@ concurrent reconciliation workers.
 The manifests can be rendered locally; SCC admission and image compatibility
 with the assigned UID must also be verified on your OpenShift cluster.
 
-## Private CA certificates for OIDC
+## Private CA certificates for OIDC and GitLab
 
-To trust your Keycloak certificate, reference an existing Secret in the release
+To trust your Keycloak or GitLab certificate, reference an existing Secret in the release
 namespace:
 
 ```yaml
@@ -192,10 +192,16 @@ mounted; the private key is not mounted.
 The backend mounts the certificate read-only and adds its directory through
 `SSL_CERT_DIR`, retaining the image's public CA trust. This applies to Go TLS
 clients, including OIDC discovery, token exchange, and signing-key retrieval.
+For HTTPS Git clone/fetch, the chart also sets `GIT_SSL_CAINFO` to the mounted
+bundle and `GIT_SSL_CAPATH` to the image's public CA directory. GitLab API calls
+use the Go trust settings above. If Keycloak and GitLab use different private
+CAs or self-signed certificates, include both certificates in the selected PEM
+bundle. SSH Git connections continue to use the credential's pinned known_hosts.
+
 Certificate hostname and expiry checks remain enabled. The certificate must
 cover the hostname in your configured issuer URL.
 
 Apply with the usual `helm upgrade --install` command. After rotating the
 certificate in the Secret, restart the backend deployment: Go caches its CA
 pool, so updating the mounted file alone does not reload trust. Do not override
-`SSL_CERT_DIR` in `backend.extraEnv` when using this option.
+`SSL_CERT_DIR`, `GIT_SSL_CAINFO`, or `GIT_SSL_CAPATH` in `backend.extraEnv` when using this option.

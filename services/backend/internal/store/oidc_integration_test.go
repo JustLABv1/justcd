@@ -70,6 +70,25 @@ func TestIntegrationOIDCUserMapping(t *testing.T) {
 	if err != nil || linked.ID != "oidc-existing" {
 		t.Fatalf("link and update profile: %+v %v", linked, err)
 	}
+	provider, err := s.OIDCProviderByID(ctx, "oidc-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.Name = "Renamed"
+	provider.ClientID = "updated-client"
+	provider.Enabled = false
+	if err := s.UpdateOIDCProvider(ctx, provider); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := s.OIDCProviderByID(ctx, provider.ID)
+	if err != nil || updated.Name != "Renamed" || updated.Enabled || string(updated.ClientSecret) != "cipher" {
+		t.Fatalf("update: %+v %v", updated, err)
+	}
+	provider.Issuer = "https://other.invalid"
+	if err := s.UpdateOIDCProvider(ctx, provider); err != ErrOIDCIssuerInUse {
+		t.Fatalf("linked issuer change should fail: %v", err)
+	}
+
 	var count int
 	if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE action LIKE 'user.oidc_%'`).Scan(&count); err != nil {
 		t.Fatal(err)
@@ -77,4 +96,21 @@ func TestIntegrationOIDCUserMapping(t *testing.T) {
 	if count != 6 {
 		t.Fatalf("expected 6 audit events, got %d", count)
 	}
+	if err := s.DeleteOIDCProvider(ctx, "oidc-test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteOIDCProvider(ctx, "oidc-test"); err != sql.ErrNoRows {
+		t.Fatalf("missing provider: %v", err)
+	}
+	for _, table := range []string{"oidc_identities", "oidc_group_roles", "oidc_membership_grants", "oidc_login_states"} {
+		var rows int
+		if err := s.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table+" WHERE provider_id=$1", "oidc-test").Scan(&rows); err != nil || rows != 0 {
+			t.Fatalf("cascade %s: rows=%d err=%v", table, rows, err)
+		}
+	}
+	var users int
+	if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE id IN ($1,$2)`, user.ID, linked.ID).Scan(&users); err != nil || users != 2 {
+		t.Fatalf("accounts must remain: %d %v", users, err)
+	}
+
 }

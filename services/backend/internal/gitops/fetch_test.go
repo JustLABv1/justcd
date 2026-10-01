@@ -26,3 +26,17 @@ func TestValidURL(t *testing.T) {
 		})
 	}
 }
+
+func TestGitEnvironmentPreservesCATrustAndRejectsTLSBypass(t *testing.T) {
+	env := cleanGitEnvironment([]string{"GIT_SSL_CAINFO=/custom/ca.crt", "GIT_SSL_CAPATH=/etc/ssl/certs", "GIT_SSL_NO_VERIFY=true"}, "/isolated")
+	seen := map[string]bool{}
+	for _, entry := range env {
+		seen[entry] = true
+	}
+	if !seen["GIT_SSL_CAINFO=/custom/ca.crt"] || !seen["GIT_SSL_CAPATH=/etc/ssl/certs"] {
+		t.Fatalf("CA configuration lost: %v", env)
+	}
+	if seen["GIT_SSL_NO_VERIFY=true"] {
+		t.Fatal("TLS bypass leaked into Git environment")
+	}
+}

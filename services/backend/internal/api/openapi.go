@@ -597,6 +597,21 @@ paths:
       summary: Configure an OIDC provider
       responses:
         '201': { description: Created provider; secret is not echoed }
+  /admin/oidc-providers/{providerID}:
+    delete:
+      summary: Delete an OIDC provider and its identity links and group grants
+      parameters:
+        - { name: providerID, in: path, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Deleted; user accounts and sessions are retained }
+        '404': { description: Provider not found }
+    put:
+      summary: Edit an OIDC provider; an empty client secret retains the existing secret
+      parameters:
+        - { name: providerID, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Updated provider; secret is not echoed }
+        '409': { description: Issuer change rejected for a provider with linked users }
 components:
   schemas:
     ErrorResponse:

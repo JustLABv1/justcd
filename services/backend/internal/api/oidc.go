@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -177,6 +178,13 @@ func (s *Server) listOIDCProviders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createOIDCProvider(w http.ResponseWriter, r *http.Request) {
+	s.saveOIDCProvider(w, r, false)
+}
+func (s *Server) updateOIDCProvider(w http.ResponseWriter, r *http.Request) {
+	s.saveOIDCProvider(w, r, true)
+}
+
+func (s *Server) saveOIDCProvider(w http.ResponseWriter, r *http.Request, updating bool) {
 	var input struct {
 		Name         string `json:"name"`
 		Issuer       string `json:"issuer"`
@@ -197,11 +205,25 @@ func (s *Server) createOIDCProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "issuer must be an HTTPS URL (localhost may use HTTP)")
 		return
 	}
-	if input.Name == "" || len(input.Name) > 100 || input.ClientID == "" || len(input.ClientID) > 256 || input.ClientSecret == "" || len(input.ClientSecret) > 4096 {
+	if input.Name == "" || len(input.Name) > 100 || input.ClientID == "" || len(input.ClientID) > 256 || (!updating && input.ClientSecret == "") || len(input.ClientSecret) > 4096 {
 		writeError(w, http.StatusBadRequest, "name, clientId, and clientSecret are required")
 		return
 	}
 	id := store.NewID()
+	var existing store.OIDCProvider
+	if updating {
+		id = r.PathValue("providerID")
+		var err error
+		existing, err = s.Store.OIDCProviderByID(r.Context(), id)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusNotFound, "OIDC provider not found")
+			} else {
+				writeStoreError(w, "could not load OIDC provider")
+			}
+			return
+		}
+	}
 	redirect := s.Config.PublicURL + "/api/v1/auth/oidc/" + id + "/callback"
 	if strings.TrimSpace(input.RedirectURL) != "" && strings.TrimSpace(input.RedirectURL) != redirect {
 		writeError(w, http.StatusBadRequest, "redirectUrl must match the configured JustCD public URL callback")
@@ -221,15 +243,36 @@ func (s *Server) createOIDCProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	enabled := true
+	if updating {
+		enabled = existing.Enabled
+	}
 	if input.Enabled != nil {
 		enabled = *input.Enabled
 	}
-	cipher, err := security.Encrypt(s.EncryptionKey, []byte(input.ClientSecret), "oidc-provider:"+id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not encrypt OIDC client secret")
-		return
+	cipher := existing.ClientSecret
+	if input.ClientSecret != "" {
+		cipher, err = security.Encrypt(s.EncryptionKey, []byte(input.ClientSecret), "oidc-provider:"+id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not encrypt OIDC client secret")
+			return
+		}
 	}
 	provider := store.OIDCProvider{ID: id, Name: input.Name, Issuer: input.Issuer, ClientID: input.ClientID, ClientSecret: cipher, RedirectURL: redirect, GroupsClaim: claim, Enabled: enabled}
+	if updating {
+		provider.CreatedAt = existing.CreatedAt
+		if err := s.Store.UpdateOIDCProvider(r.Context(), provider); err != nil {
+			if errors.Is(err, store.ErrOIDCIssuerInUse) {
+				writeError(w, http.StatusConflict, "issuer cannot be changed after users have signed in; create a new provider instead")
+				return
+			}
+			writeStoreError(w, "could not update OIDC provider")
+			return
+		}
+		_ = s.Store.Audit(r.Context(), currentUser(r).ID, "oidc_provider.updated", "oidc_provider", id, map[string]string{"name": provider.Name, "issuer": provider.Issuer})
+		provider.ClientSecret = nil
+		writeJSON(w, http.StatusOK, provider)
+		return
+	}
 	if err := s.Store.CreateOIDCProvider(r.Context(), provider); err != nil {
 		writeStoreError(w, "could not create OIDC provider")
 		return
@@ -237,6 +280,20 @@ func (s *Server) createOIDCProvider(w http.ResponseWriter, r *http.Request) {
 	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "oidc_provider.created", "oidc_provider", id, map[string]string{"name": provider.Name, "issuer": provider.Issuer})
 	provider.ClientSecret = nil
 	writeJSON(w, http.StatusCreated, provider)
+}
+
+func (s *Server) deleteOIDCProvider(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("providerID")
+	if err := s.Store.DeleteOIDCProvider(r.Context(), id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "OIDC provider not found")
+		} else {
+			writeStoreError(w, "could not delete OIDC provider")
+		}
+		return
+	}
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "oidc_provider.deleted", "oidc_provider", id, nil)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) addOIDCGroupRole(w http.ResponseWriter, r *http.Request) {

@@ -2,6 +2,7 @@ package syncer
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"errors"
 	"fmt"
@@ -118,7 +119,15 @@ func (s *Service) ReconcileRepository(parent context.Context, id string) (result
 		}
 		binding, err := s.Store.NamespaceBinding(ctx, repository.WorkspaceID, clusterID, definition.Spec.Destination.Namespace)
 		if err != nil {
-			return fmt.Errorf("%s: namespace %q requires an existing workspace binding", definition.File, definition.Spec.Destination.Namespace)
+			if !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("%s: load namespace binding: %w", definition.File, err)
+			}
+			if !definition.Spec.Destination.CreateNamespaces {
+				return fmt.Errorf("%s: namespace %q requires an existing workspace binding or spec.destination.createNamespaces: true", definition.File, definition.Spec.Destination.Namespace)
+			}
+			// Persist this binding with the complete application snapshot, after
+			// verifying the cluster's default credential in the transaction.
+			binding = store.NamespaceBinding{Namespace: definition.Spec.Destination.Namespace}
 		}
 		apps = append(apps, store.Application{
 			WorkspaceID: repository.WorkspaceID, Name: definition.Metadata.Name, SourceID: repository.SourceID, Revision: repository.Revision,

@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"github.com/justlab/justcd/services/backend/internal/core"
 	"strings"
@@ -177,8 +178,15 @@ func testRepositoryConfigurationSafety(t *testing.T, ctx context.Context, s *Sto
 	app.ConfigurationHash = "second"
 	conflict := app
 	conflict.Name = "Due application"
-	if err := s.ApplyRepositoryApplications(ctx, repository, "bad-commit", []Application{app, conflict}); err == nil {
+	auto := app
+	auto.Name = "auto-namespace"
+	auto.CreateNamespaces = true
+	auto.Namespaces = []NamespaceBinding{{Namespace: "auto-rollback"}}
+	if err := s.ApplyRepositoryApplications(ctx, repository, "bad-commit", []Application{auto, app, conflict}); err == nil {
 		t.Fatal("manual application adopted")
+	}
+	if _, err := s.NamespaceBinding(ctx, repository.WorkspaceID, app.ClusterID, "auto-rollback"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("failed snapshot left automatic namespace binding: %v", err)
 	}
 	stored, err = s.ApplicationByID(ctx, originalID)
 	if err != nil || stored.ManifestPath != "manifests" || stored.ConfigurationCommit != "commit-2" {

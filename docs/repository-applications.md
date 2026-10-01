@@ -228,8 +228,15 @@ and plain YAML; a separate Namespace manifest is not required. The option is
 also available when creating or editing a manual application in JustCD and is
 `false` by default.
 
-The namespace must still have a workspace binding in JustCD. A binding authorizes
-the target but does not require the Kubernetes namespace to exist. JustCD uses
+With this option, repository discovery also registers a missing workspace
+namespace binding automatically, using the workspace's default Kubernetes
+credential for that cluster (or the cluster default). Configure that default
+once in cluster settings; no manual binding is required for each application.
+Existing bindings and their credential overrides are preserved. Bindings inherit
+the default, so later credential changes apply to them too. Without the option,
+an existing binding is required. Discovery registers bindings atomically with
+the complete validated repository snapshot and does not create Kubernetes objects.
+JustCD uses
 the configured cluster-scope credential, or otherwise the resolved credential
 for that namespace (including a cluster-wide ServiceAccount token). The token
 needs `get` and `create` on `namespaces` plus the workload permissions. Planning

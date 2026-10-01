@@ -121,6 +121,13 @@ func (s *Store) ApplyRepositoryApplications(ctx context.Context, repository Repo
 				app.HelmReleaseName = existing.HelmReleaseName
 			}
 		}
+		for i, binding := range app.Namespaces {
+			resolved, err := ensureRepositoryNamespaceBinding(ctx, tx, repository.WorkspaceID, app.ClusterID, binding.Namespace, app.CreateNamespaces)
+			if err != nil {
+				return fmt.Errorf("%s: %w", app.ConfigurationPath, err)
+			}
+			app.Namespaces[i] = resolved
+		}
 		if changed {
 			if err := replaceRepositoryIgnores(ctx, tx, app); err != nil {
 				return fmt.Errorf("application %q: %w", app.Name, err)
@@ -170,4 +177,39 @@ func (s *Store) ApplyRepositoryApplications(ctx context.Context, repository Repo
 		return err
 	}
 	return tx.Commit()
+}
+
+// Bindings inherit credentials rather than copying their IDs, so changing the
+// workspace default later also updates access for discovered namespaces.
+func ensureRepositoryNamespaceBinding(ctx context.Context, tx *sql.Tx, workspaceID, clusterID, namespace string, create bool) (NamespaceBinding, error) {
+	var binding NamespaceBinding
+	err := tx.QueryRowContext(ctx, `SELECT namespace,credential_id FROM namespace_bindings WHERE workspace_id=$1 AND cluster_id=$2 AND namespace=$3 FOR SHARE`, workspaceID, clusterID, namespace).Scan(&binding.Namespace, &binding.CredentialID)
+	if err == nil || !errors.Is(err, sql.ErrNoRows) {
+		return binding, err
+	}
+	if !create {
+		return binding, fmt.Errorf("namespace %q requires an existing workspace binding or spec.destination.createNamespaces: true", namespace)
+	}
+	var kind sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT credential.kind FROM clusters c
+		LEFT JOIN workspace_cluster_credentials defaults ON defaults.cluster_id=c.id AND defaults.workspace_id=$1
+		LEFT JOIN credentials credential ON credential.id=COALESCE(defaults.credential_id,c.default_credential_id)
+		WHERE c.id=$2 AND (c.workspace_id IS NULL OR c.workspace_id=$1 OR EXISTS (
+			SELECT 1 FROM workspace_cluster_shares share WHERE share.cluster_id=c.id AND share.target_workspace_id=$1 AND share.status='accepted'
+		))`, workspaceID, clusterID).Scan(&kind)
+	if errors.Is(err, sql.ErrNoRows) {
+		return binding, errors.New("target cluster is unavailable to this workspace")
+	}
+	if err != nil {
+		return binding, err
+	}
+	if !kind.Valid || (kind.String != "kubernetes-token" && kind.String != "kubeconfig") {
+		return binding, fmt.Errorf("namespace %q cannot be registered automatically: configure a default Kubernetes credential for this workspace and cluster", namespace)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO namespace_bindings(id,workspace_id,cluster_id,namespace,credential_id) VALUES($1,$2,$3,$4,NULL) ON CONFLICT(workspace_id,cluster_id,namespace) DO NOTHING`, NewID(), workspaceID, clusterID, namespace); err != nil {
+		return binding, err
+	}
+	// Read back to preserve an override if another discovery registered it first.
+	err = tx.QueryRowContext(ctx, `SELECT namespace,credential_id FROM namespace_bindings WHERE workspace_id=$1 AND cluster_id=$2 AND namespace=$3`, workspaceID, clusterID, namespace).Scan(&binding.Namespace, &binding.CredentialID)
+	return binding, err
 }

@@ -55,9 +55,6 @@ func TestIntegrationRepositoryConfiguration(t *testing.T) {
 	if err := db.CreateCluster(ctx, store.Cluster{ID: clusterID, Name: "production", CAData: []byte{}, APIServer: "https://example.invalid"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateNamespaceBinding(ctx, workspaceID, clusterID, "shop", nil); err != nil {
-		t.Fatal(err)
-	}
 	repo := newIntegrationGitRepo(t, "shop")
 	definition := `apiVersion: justcd.io/v1alpha1
 kind: Application
@@ -70,6 +67,7 @@ spec:
   destination:
     cluster: production
     namespace: shop
+    createNamespaces: true
   syncPolicy: manual
   ignoreResources:
     - apiVersion: secrets.hashicorp.com/v1beta1
@@ -90,8 +88,36 @@ spec:
 		t.Fatal(err)
 	}
 	svc := &Service{Store: db}
+	if err := svc.ReconcileRepository(ctx, repository.ID); err == nil {
+		t.Fatal("automatic namespace binding accepted without default credentials")
+	}
+	if _, err := db.NamespaceBinding(ctx, workspaceID, clusterID, "shop"); err == nil {
+		t.Fatal("failed discovery left a namespace binding behind")
+	}
+	credentialID := store.NewID()
+	if err := db.CreateCredential(ctx, store.Credential{ID: credentialID, WorkspaceID: &workspaceID, Name: "Workspace Kubernetes", Kind: "kubernetes-token", Cipher: []byte{0}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetWorkspaceClusterCredential(ctx, workspaceID, clusterID, &credentialID); err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.ReconcileRepository(ctx, repository.ID); err != nil {
 		t.Fatal(err)
+	}
+	binding, err := db.NamespaceBinding(ctx, workspaceID, clusterID, "shop")
+	if err != nil || binding.CredentialID != nil {
+		t.Fatalf("automatic binding should inherit the workspace default: %+v %v", binding, err)
+	}
+	// Existing namespace overrides must survive subsequent discovery.
+	if err := db.UpdateNamespaceBinding(ctx, workspaceID, clusterID, "shop", &credentialID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ReconcileRepository(ctx, repository.ID); err != nil {
+		t.Fatal(err)
+	}
+	binding, err = db.NamespaceBinding(ctx, workspaceID, clusterID, "shop")
+	if err != nil || binding.CredentialID == nil || *binding.CredentialID != credentialID {
+		t.Fatalf("existing namespace credential override changed: %+v %v", binding, err)
 	}
 	var auditCount int
 	if err := db.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE action='repository.configuration.reconciled' AND resource_id=$1`, repository.ID).Scan(&auditCount); err != nil || auditCount != 1 {

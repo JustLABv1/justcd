@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/justlab/justcd/services/backend/internal/scm"
@@ -26,6 +27,11 @@ func (s *Server) validatePRDeployment(ctx context.Context, connection store.Sour
 	if !connection.Enabled || review.Closed || record.Plan.Revision != review.HeadSHA {
 		return errors.New("PR is closed or no longer matches this plan")
 	}
+	if connection.RepositoryPRID != nil {
+		if err := s.validateRepositoryPRDeployment(ctx, connection, review, app); err != nil {
+			return err
+		}
+	}
 	if !review.SharedEnvironment {
 		_, namespace := previewIdentity(connection.ID, review.Number, connection.PreviewProfile.NamespacePrefix)
 		if review.AdoptedBranchPreview && len(app.Namespaces) == 1 {
@@ -41,7 +47,7 @@ func (s *Server) validatePRDeployment(ctx context.Context, connection store.Sour
 		if err = validatePreviewResources(desired, connection.PreviewProfile, namespace, review.Fork); err != nil {
 			return err
 		}
-	} else if review.Fork || app.ID != connection.ApplicationID || app.BranchTest == nil || app.BranchTest.Mode != "existing" {
+	} else if connection.RepositoryPRID == nil && (review.Fork || app.ID != connection.ApplicationID || app.BranchTest == nil || app.BranchTest.Mode != "existing") {
 		return errors.New("shared PR deployment target changed")
 	}
 	token, err := s.sourceControlToken(ctx, connection)
@@ -51,6 +57,19 @@ func (s *Server) validatePRDeployment(ctx context.Context, connection store.Sour
 	current, err := (scm.Client{}).Current(ctx, connection.Provider, connection.APIURL, connection.Repository, string(token), review.Number)
 	if err != nil {
 		return err
+	}
+	if connection.RepositoryPRID != nil {
+		v, err := s.Store.RepositoryPRByID(ctx, *connection.RepositoryPRID)
+		if err != nil {
+			return err
+		}
+		repo, err := s.Store.RepositoryConfigurationByID(ctx, v.RepositoryID)
+		if err != nil {
+			return err
+		}
+		if current.TargetBranch != strings.TrimPrefix(repo.Revision, "refs/heads/") {
+			return errors.New("PR target branch changed before deployment")
+		}
 	}
 	if current.Closed || current.HeadSHA != record.Plan.Revision || current.Fork != review.Fork {
 		return errors.New("PR changed before deployment; review a fresh plan")

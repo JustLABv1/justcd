@@ -53,6 +53,7 @@ func (s *Server) RunReviewWorker(ctx context.Context, logger *slog.Logger) {
 }
 
 func (s *Server) pollPullRequests(ctx context.Context, logger *slog.Logger) {
+	s.pollRepositoryPRs(ctx, logger)
 	connections, err := s.Store.EnabledSourceControlConnections(ctx)
 	if err != nil {
 		logger.Error("could not list PR reporting connections", "error", err)
@@ -131,6 +132,9 @@ func (s *Server) processReview(ctx context.Context, review store.PullRequestRevi
 	connection, err := s.Store.SourceControlConnectionByID(ctx, review.ConnectionID)
 	if err != nil {
 		return err
+	}
+	if connection.RepositoryPRID != nil {
+		return s.processRepositoryPRReview(ctx, connection, review)
 	}
 	if !connection.Enabled {
 		return nil
@@ -295,6 +299,13 @@ func (s *Server) buildPreviewReview(ctx context.Context, production store.Applic
 		result.Phase = "failed"
 		result.Error = "preview plan failed: " + err.Error()
 		return
+	}
+	if connection.RepositoryPRID != nil {
+		if err = validateRepositoryPRResourceScope(desired, namespace); err != nil {
+			result.Phase = "failed"
+			result.Error = err.Error()
+			return
+		}
 	}
 	if !result.SharedEnvironment {
 		if err = validatePreviewResources(desired, connection.PreviewProfile, namespace, result.Fork); err != nil {

@@ -64,6 +64,46 @@ paths:
         '403': { description: Workspace owner required }
         '404': { description: Connection not found }
         '409': { description: Discovery paused, already running, or failed validation; previous application configuration is preserved }
+  /repository-configurations/{repositoryID}/pull-requests:
+    get:
+      summary: List new applications discovered in PRs (workspace viewer)
+      parameters:
+        - { name: repositoryID, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: PR applications with applicationId, definitionName, phase, error and plan }
+        '403': { description: Workspace access required }
+  /repository-configurations/{repositoryID}/pull-requests/settings:
+    put:
+      summary: Configure trusted repository PR discovery policy (workspace owner)
+      description: New justcd.yaml definitions cannot authorize destinations or credentials. Existing workspace bindings must be explicitly allowed. Forks are excluded. Close and clean up active PR applications before changing policy.
+      parameters:
+        - { name: repositoryID, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+                provider: { type: string, enum: [github, gitlab] }
+                apiUrl: { type: string, format: uri }
+                credentialId: { type: string }
+                mode: { type: string, enum: [review-only, isolated, existing] }
+                destinations:
+                  type: array
+                  items:
+                    type: object
+                    required: [clusterId, namespace]
+                    properties:
+                      clusterId: { type: string }
+                      namespace: { type: string }
+                profile: { type: object, description: Trusted limits and numeric provider account ID to JustCD user ID approvalActors mapping }
+      responses:
+        '200': { description: Updated repository configuration }
+        '403': { description: Workspace owner required }
+        '409': { description: Invalid policy, inaccessible destination or credential, or active PR applications }
   /health:
     get:
       summary: Check API health

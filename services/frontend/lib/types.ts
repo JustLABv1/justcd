@@ -167,7 +167,19 @@ export type WorkspaceConnectionShare = {
   acceptedAt?: string
 }
 
+export type RepositoryPRSettings = {
+  enabled: boolean
+  provider?: string
+  apiUrl?: string
+  credentialId: string
+  mode: "review-only" | "isolated" | "existing"
+  destinations: { clusterId: string; namespace: string }[]
+  profile: { enabled: boolean; confirmShared: boolean; namespacePrefix?: string; hostSuffix?: string; maxActive: number; maxLifetimeHours: number; quotaCpu?: string; quotaMemory?: string; databaseStrategy?: string; approvalActors: Record<string, string> }
+}
+
 export type RepositoryConfiguration = {
+  prSettings: RepositoryPRSettings
+  prError: string
   id: string
   workspaceId: string
   sourceId: string

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react"
 import type { FormEvent } from "react"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
+import { RepositoryPRSettingsControl } from "@/components/repository-pr-settings"
 import { ConnectionDialog } from "@/components/connection-dialog"
 import { Button } from "@/components/ui/button"
 import { FormSelect } from "@/components/ui/form-select"
@@ -209,6 +210,7 @@ export function RepositoryConfigurations({
               </div>
               {workspace.role === "owner" && (
                 <div className="flex shrink-0 flex-wrap gap-2">
+                  <RepositoryPRSettingsControl repository={item} onSaved={load} />
                   <Button
                     size="sm"
                     variant="outline"

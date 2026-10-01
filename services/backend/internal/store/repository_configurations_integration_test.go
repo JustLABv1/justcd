@@ -262,6 +262,7 @@ func testRepositoryConfigurationSafety(t *testing.T, ctx context.Context, s *Sto
 	}
 	testBranchTestSafety(t, ctx, s, repository, app)
 	testRepositoryPRHandling(t, ctx, s)
+	testRepositoryPRDiscovery(t, ctx, s)
 	if err := s.SetRepositoryConfigurationEnabled(ctx, repository.ID, false); err != nil {
 		t.Fatal(err)
 	}

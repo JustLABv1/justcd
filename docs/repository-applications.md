@@ -331,3 +331,59 @@ repository snapshot remains unchanged until the conflict is resolved. An active
 Test branch freezes the tracked definition until the tracked source is resumed.
 Omitting the block from an application that has manually configured PR reporting
 leaves those settings unchanged.
+
+## New applications on feature branches
+
+A workspace owner can enable **Git sources → Applications managed by Git →
+PR discovery** on a repository connection. This discovers `justcd.yaml` and
+`justcd.yml` definitions introduced by open PRs/MRs targeting the tracked branch,
+including drafts. The application does not need to exist on that branch yet.
+Repository discovery must be enabled. Scans run every two minutes; **Discover
+now** also scans PRs. A complete changed-file list without a JustCD definition
+skips new-application discovery. Incomplete file lists fall back to inspecting
+the pinned Git snapshot.
+
+Select an existing HTTPS Git credential for provider API access and explicitly
+allow the destination cluster/namespace bindings that feature-branch definitions
+may reference. Git fetching keeps using the repository's Git source credential.
+For a custom GitLab host, configure the provider and its HTTPS `/api/v4` URL.
+These settings belong to the trusted repository connection; a branch's
+`spec.pullRequests`, credentials, sync policy, or `createNamespaces` flag cannot
+grant itself deployment access. Fork PRs are excluded.
+
+Choose one of three modes:
+
+- **Review plans only:** creates a temporary, paused application so manifests,
+  resources, and the PR plan can be inspected. Applying its plans is rejected.
+- **Deploy in isolated namespaces:** creates a dedicated namespace per PR
+  application. Kustomize applies a namespace transform. Existing preview
+  restrictions, host validation, quotas, and lifetime limits apply. The new
+  application's own source path supplies the manifests; configure them for safe
+  preview hosts, workloads, and dependencies. Helm templates must honor the
+  release namespace. Cluster-scoped resources are rejected.
+- **Deploy to approved dev namespaces:** uses the definition's approved binding,
+  after explicit shared-environment confirmation. Resources must stay inside
+  that namespace. A second PR cannot claim an application with the same name.
+  Existing manual applications are never adopted implicitly.
+
+Every new commit updates the same temporary application at an immutable SHA and
+invalidates previous plans. Normal reconciliation stays paused. Deployment uses
+normal workspace approval policies; plans that require no approval can deploy
+through the PR worker. Configure approval identity mappings to authorize
+`/justcd approve <plan-id> <digest>` comments. The mapped user's current workspace
+role and the plan's current digest, expiry, head commit, and target branch are
+checked before execution.
+
+When a dev-environment PR merges, tracked-branch discovery takes over the same
+application ID and managed resource ownership. Its merged definition must retain
+its destination. Normal reconciliation remains paused until you review a fresh
+tracked-source plan and explicitly resume it. For isolated previews, tracked
+branch discovery creates the normal application separately; the preview follows
+reviewed cleanup. Closing an unmerged PR or removing its definition also prepares
+a cleanup plan for managed resources. Cleanup does not delete existing dev
+namespaces or untracked objects in those namespaces. Isolated preview namespace
+cleanup uses the existing namespace ownership checks. An undeployed temporary application can be
+removed immediately. Repository records retain the outcome after cleanup.
+
+Close and clean up active PR applications before changing this policy. Errors
+appear in repository PR settings and the application's Pull requests view.

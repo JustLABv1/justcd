@@ -16,6 +16,13 @@ async function proxy(
     if (value) headers.set(name, value)
   }
 
+  // Agent enrollment/polling uses a cluster-bound bearer identity, not a browser
+  // session. Forward it only to the agent protocol endpoints.
+  if (path[0] === "v1" && path[1] === "agents") {
+    const authorization = request.headers.get("authorization")
+    if (authorization) headers.set("authorization", authorization)
+  }
+
   const response = await fetch(target, {
     method: request.method,
     headers,

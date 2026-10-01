@@ -51,6 +51,11 @@ func statusIssue(stage string, err error, at time.Time) store.ApplicationStatusI
 		summary = "Manifests could not be rendered. Check the source configuration."
 	}
 	issue := store.ApplicationStatusIssue{Source: stage, Summary: summary, ObservedAt: at}
+	if stage == "cluster" && strings.Contains(err.Error(), "agent") {
+		issue.Code = "cluster.agent_unavailable"
+		issue.Summary = err.Error()
+		issue.Remediation = "Check the target cluster agent, its local access profiles, and its outbound HTTPS connection to JustCD, then refresh the plan."
+	}
 	if apierrors.IsForbidden(err) {
 		issue.Source = "cluster"
 		issue.Code = "kubernetes.permission_denied"
@@ -828,20 +833,36 @@ func (s *Service) loadPlanInput(ctx context.Context, app store.Application) (pla
 		if credentialID == nil {
 			credentialID = cluster.DefaultCredentialID
 		}
+		if kube.AgentEnabled(ctx, s.Store, cluster.ID) {
+			a, err := s.Store.ClusterAgent(ctx, cluster.ID)
+			if err != nil {
+				return planInput{}, err
+			}
+			ref := "agent:" + a.DefaultProfile
+			credentialID = &ref
+		}
 		if credentialID == nil {
 			return planInput{}, fmt.Errorf("namespace %q has no Kubernetes credential", binding.Namespace)
 		}
 		input.Bindings = append(input.Bindings, core.Binding{ClusterID: cluster.ID, Namespace: stored.Namespace, CredentialRef: *credentialID})
-		client, err := kube.ForBinding(ctx, s.Store, s.EncryptionKey, cluster, credentialID, false)
+		client, err := kube.ForWorkspaceBinding(ctx, s.Store, s.EncryptionKey, cluster, credentialID, false, app.WorkspaceID, stored.Namespace)
 		if err != nil {
 			return planInput{}, err
 		}
 		input.NamespaceBindings[stored.Namespace] = stored
 		input.NamespaceClients[stored.Namespace] = client
 	}
+	if kube.AgentClusterScope(ctx, s.Store, cluster.ID) {
+		a, err := s.Store.ClusterAgent(ctx, cluster.ID)
+		if err != nil {
+			return planInput{}, err
+		}
+		ref := "agent:" + a.ClusterProfile
+		cluster.ClusterScopeCredential = &ref
+	}
 	if cluster.ClusterScopeCredential != nil {
 		input.Bindings = append(input.Bindings, core.Binding{ClusterID: cluster.ID, CredentialRef: *cluster.ClusterScopeCredential, ClusterScope: true})
-		input.ClusterScopeClient, err = kube.ForBinding(ctx, s.Store, s.EncryptionKey, cluster, cluster.ClusterScopeCredential, true)
+		input.ClusterScopeClient, err = kube.ForWorkspaceBinding(ctx, s.Store, s.EncryptionKey, cluster, cluster.ClusterScopeCredential, true, app.WorkspaceID, "")
 		if err != nil {
 			return planInput{}, err
 		}

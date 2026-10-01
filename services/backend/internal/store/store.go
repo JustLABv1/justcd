@@ -1032,6 +1032,7 @@ func (s *Store) ListCredentials(ctx context.Context, workspaceID string) ([]Cred
 }
 
 type Cluster struct {
+	ConnectionMode          string    `json:"connectionMode"`
 	ID                      string    `json:"id"`
 	WorkspaceID             *string   `json:"workspaceId,omitempty"`
 	Shared                  bool      `json:"shared,omitempty"`
@@ -1072,8 +1073,21 @@ func (s *Store) CreateClusterWithWorkspaceCredential(ctx context.Context, c Clus
 
 func (s *Store) CreateWorkspaceCluster(ctx context.Context, c Cluster) error {
 	c = normalizeClusterLimits(c)
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO clusters(id,workspace_id,name,api_server,ca_data,insecure_skip_verify,default_credential_id,cluster_scope_credential_id,max_concurrent_operations,operations_per_minute) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, c.ID, c.WorkspaceID, c.Name, c.APIServer, c.CAData, c.InsecureSkipVerify, c.DefaultCredentialID, c.ClusterScopeCredential, c.MaxConcurrentOperations, c.OperationsPerMinute)
-	return err
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `INSERT INTO clusters(id,workspace_id,name,api_server,ca_data,insecure_skip_verify,default_credential_id,cluster_scope_credential_id,max_concurrent_operations,operations_per_minute) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, c.ID, c.WorkspaceID, c.Name, c.APIServer, c.CAData, c.InsecureSkipVerify, c.DefaultCredentialID, c.ClusterScopeCredential, c.MaxConcurrentOperations, c.OperationsPerMinute)
+	if err != nil {
+		return err
+	}
+	if c.ConnectionMode == "agent" {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO cluster_agents(cluster_id) VALUES($1)`, c.ID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) WorkspaceClusterCredential(ctx context.Context, workspaceID, clusterID string) (*string, error) {
@@ -1098,11 +1112,11 @@ func (s *Store) SetWorkspaceClusterCredential(ctx context.Context, workspaceID, 
 }
 func (s *Store) ClusterByID(ctx context.Context, id string) (Cluster, error) {
 	var c Cluster
-	err := s.DB.QueryRowContext(ctx, `SELECT id,workspace_id,name,api_server,ca_data,insecure_skip_verify,default_credential_id,cluster_scope_credential_id,max_concurrent_operations,operations_per_minute,created_at FROM clusters WHERE id=$1`, id).Scan(&c.ID, &c.WorkspaceID, &c.Name, &c.APIServer, &c.CAData, &c.InsecureSkipVerify, &c.DefaultCredentialID, &c.ClusterScopeCredential, &c.MaxConcurrentOperations, &c.OperationsPerMinute, &c.CreatedAt)
+	err := s.DB.QueryRowContext(ctx, `SELECT id,workspace_id,name,api_server,ca_data,insecure_skip_verify,default_credential_id,cluster_scope_credential_id,max_concurrent_operations,operations_per_minute,created_at,CASE WHEN EXISTS(SELECT 1 FROM cluster_agents a WHERE a.cluster_id=clusters.id) THEN 'agent' ELSE 'direct' END FROM clusters WHERE id=$1`, id).Scan(&c.ID, &c.WorkspaceID, &c.Name, &c.APIServer, &c.CAData, &c.InsecureSkipVerify, &c.DefaultCredentialID, &c.ClusterScopeCredential, &c.MaxConcurrentOperations, &c.OperationsPerMinute, &c.CreatedAt, &c.ConnectionMode)
 	return c, err
 }
 func (s *Store) ListClusters(ctx context.Context, workspaceID string) ([]Cluster, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT c.id,c.workspace_id,c.name,c.api_server,c.insecure_skip_verify,c.default_credential_id,c.cluster_scope_credential_id,c.max_concurrent_operations,c.operations_per_minute,(c.workspace_id IS NOT NULL AND c.workspace_id<>$1),COALESCE(owner.name,''),c.created_at
+	rows, err := s.DB.QueryContext(ctx, `SELECT c.id,c.workspace_id,c.name,c.api_server,c.insecure_skip_verify,c.default_credential_id,c.cluster_scope_credential_id,c.max_concurrent_operations,c.operations_per_minute,(c.workspace_id IS NOT NULL AND c.workspace_id<>$1),COALESCE(owner.name,''),c.created_at,CASE WHEN EXISTS(SELECT 1 FROM cluster_agents a WHERE a.cluster_id=c.id) THEN 'agent' ELSE 'direct' END
 		FROM clusters c LEFT JOIN workspaces owner ON owner.id=c.workspace_id WHERE c.workspace_id IS NULL OR c.workspace_id=$1 OR EXISTS (
 			SELECT 1 FROM workspace_cluster_shares sh WHERE sh.cluster_id=c.id AND sh.target_workspace_id=$1 AND sh.status='accepted'
 		) ORDER BY c.name`, workspaceID)
@@ -1113,7 +1127,7 @@ func (s *Store) ListClusters(ctx context.Context, workspaceID string) ([]Cluster
 	out := make([]Cluster, 0)
 	for rows.Next() {
 		var c Cluster
-		if err := rows.Scan(&c.ID, &c.WorkspaceID, &c.Name, &c.APIServer, &c.InsecureSkipVerify, &c.DefaultCredentialID, &c.ClusterScopeCredential, &c.MaxConcurrentOperations, &c.OperationsPerMinute, &c.Shared, &c.OwnerWorkspaceName, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.WorkspaceID, &c.Name, &c.APIServer, &c.InsecureSkipVerify, &c.DefaultCredentialID, &c.ClusterScopeCredential, &c.MaxConcurrentOperations, &c.OperationsPerMinute, &c.Shared, &c.OwnerWorkspaceName, &c.CreatedAt, &c.ConnectionMode); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -3383,7 +3397,7 @@ func (s *Store) FinishOperationWithRetry(ctx context.Context, id, applicationID,
 	if _, err := tx.ExecContext(ctx, `UPDATE operations SET status='failed',message=$2,finished_at=NOW(),attempt_count=$3,error_code=$4,next_retry_at=$5,terminal_reason=$6 WHERE id=$1`, id, message, attempt, errorCode, nextRetryAt, terminalReason); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE applications SET retry_attempt_count=$2,retry_last_error_code=$3,retry_next_at=$4,retry_terminal_reason=$5,health='degraded',last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, applicationID, attempt, errorCode, nextRetryAt, terminalReason); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET retry_attempt_count=$2,retry_last_error_code=$3,retry_next_at=$4,retry_terminal_reason=$5,health='degraded',auto_sync_paused=auto_sync_paused OR ($3='cluster.agent_unknown_outcome'),last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, applicationID, attempt, errorCode, nextRetryAt, terminalReason); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM operation_leases WHERE operation_id=$1`, id); err != nil {

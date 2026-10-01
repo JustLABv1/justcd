@@ -54,6 +54,14 @@ func New(s *store.Store, cfg config.Config, logger *slog.Logger) (*Server, error
 }
 
 func (s *Server) routes() {
+	s.Mux.HandleFunc("POST /api/v1/agents/enroll", s.agentEnroll)
+	s.Mux.HandleFunc("POST /api/v1/agents/renew", s.agentRenew)
+	s.Mux.HandleFunc("POST /api/v1/agents/heartbeat", s.agentHeartbeat)
+	s.Mux.HandleFunc("GET /api/v1/agents/tasks", s.agentTasks)
+	s.Mux.HandleFunc("POST /api/v1/agents/tasks/{taskID}/result", s.agentResult)
+	s.Mux.Handle("GET /api/v1/clusters/{clusterID}/agent", s.requireAuth(http.HandlerFunc(s.getClusterAgent)))
+	s.Mux.Handle("POST /api/v1/clusters/{clusterID}/agent/enrollment", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.enrollClusterAgent))))
+	s.Mux.Handle("DELETE /api/v1/clusters/{clusterID}/agent", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.revokeClusterAgent))))
 	s.Mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
@@ -188,7 +196,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'")
 	if r.Method != "GET" && r.Method != "HEAD" && r.Method != "OPTIONS" {
-		r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
+		limit := int64(2 << 20)
+		if strings.HasPrefix(r.URL.Path, "/api/v1/agents/tasks/") && strings.HasSuffix(r.URL.Path, "/result") {
+			limit = 12 << 20
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
 	}
 	s.Mux.ServeHTTP(w, r)
 }

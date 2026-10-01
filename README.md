@@ -366,3 +366,11 @@ live resources. Every action pauses the whole application before changing
 Kubernetes, checks ownership and resource identity, and records its outcome in
 activity and the audit trail. Sync stays paused after success or failure.
 Resuming can replace manual changes with Git's desired configuration.
+
+## Private cluster agents
+
+For target clusters with private Kubernetes APIs, use an outbound cluster agent.
+Choose **Outbound cluster agent** in the cluster connection wizard, then enroll
+and install the [agent Helm chart](charts/justcd-agent/README.md). Plans and
+approvals remain central; Kubernetes credentials and scope enforcement stay in
+the target cluster. See [installation and recovery](docs/cluster-agents.md).

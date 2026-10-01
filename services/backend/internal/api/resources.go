@@ -15,6 +15,7 @@ import (
 
 	"github.com/justlab/justcd/services/backend/internal/core"
 	"github.com/justlab/justcd/services/backend/internal/gitops"
+	"github.com/justlab/justcd/services/backend/internal/kube"
 	"github.com/justlab/justcd/services/backend/internal/render"
 	"github.com/justlab/justcd/services/backend/internal/security"
 	"github.com/justlab/justcd/services/backend/internal/store"
@@ -398,6 +399,7 @@ func (s *Server) listClusters(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createCluster(w http.ResponseWriter, r *http.Request) {
 	var input struct {
+		ConnectionMode           string  `json:"connectionMode"`
 		Name                     string  `json:"name"`
 		APIServer                string  `json:"apiServer"`
 		CADataBase64             string  `json:"caDataBase64"`
@@ -415,6 +417,20 @@ func (s *Server) createCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.requireWorkspaceRole(w, r, input.WorkspaceID, "owner") {
 		return
+	}
+	if input.ConnectionMode == "" {
+		input.ConnectionMode = "direct"
+	}
+	if input.ConnectionMode != "direct" && input.ConnectionMode != "agent" {
+		writeError(w, 400, "connectionMode must be direct or agent")
+		return
+	}
+	if input.ConnectionMode == "agent" {
+		input.APIServer = "https://kubernetes.default.svc"
+		if input.WorkspaceCredentialID != nil {
+			writeError(w, 400, "agent connections use credentials local to the target cluster")
+			return
+		}
 	}
 	input.Name = strings.TrimSpace(input.Name)
 	endpoint, err := url.Parse(strings.TrimSpace(input.APIServer))
@@ -462,7 +478,7 @@ func (s *Server) createCluster(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	cluster := store.Cluster{ID: store.NewID(), WorkspaceID: &input.WorkspaceID, Name: input.Name, APIServer: endpoint.String(), CAData: caData, InsecureSkipVerify: input.InsecureSkipVerify, DefaultCredentialID: input.DefaultCredentialID, ClusterScopeCredential: input.ClusterScopeCredentialID, MaxConcurrentOperations: maxConcurrentOperations, OperationsPerMinute: operationsPerMinute}
+	cluster := store.Cluster{ConnectionMode: input.ConnectionMode, ID: store.NewID(), WorkspaceID: &input.WorkspaceID, Name: input.Name, APIServer: endpoint.String(), CAData: caData, InsecureSkipVerify: input.InsecureSkipVerify, DefaultCredentialID: input.DefaultCredentialID, ClusterScopeCredential: input.ClusterScopeCredentialID, MaxConcurrentOperations: maxConcurrentOperations, OperationsPerMinute: operationsPerMinute}
 	var createErr error
 	if input.WorkspaceCredentialID != nil {
 		createErr = s.Store.CreateClusterWithWorkspaceCredential(r.Context(), cluster, input.WorkspaceID, *input.WorkspaceCredentialID)
@@ -516,7 +532,7 @@ func (s *Server) createNamespaceBinding(w http.ResponseWriter, r *http.Request) 
 		writeStoreError(w, "could not load workspace cluster credential")
 		return
 	}
-	if input.CredentialID == nil && workspaceCredentialID == nil && cluster.DefaultCredentialID == nil {
+	if input.CredentialID == nil && workspaceCredentialID == nil && cluster.DefaultCredentialID == nil && !kube.AgentEnabled(r.Context(), s.Store, cluster.ID) {
 		writeError(w, http.StatusBadRequest, "a namespace credential or cluster default credential is required")
 		return
 	}

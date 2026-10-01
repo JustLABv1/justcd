@@ -1,0 +1,116 @@
+{{- $name := printf "%s-justcd-agent" .Release.Name | trunc 45 | trimSuffix "-" -}}
+{{- $sa := default $name .Values.serviceAccount.name -}}
+{{- if not (hasPrefix "https://" .Values.serverUrl) }}{{ fail "serverUrl must use HTTPS" }}{{ end -}}
+{{- if not .Values.enrollmentSecret }}{{ fail "enrollmentSecret is required" }}{{ end -}}
+{{- range .Values.profiles }}{{ if not .name }}{{ fail "each profile needs a name" }}{{ end }}{{ if not .workspaceIds }}{{ fail "each profile needs explicit workspaceIds" }}{{ end }}{{ end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+data:
+  config.json: |
+    {{ dict "serverUrl" .Values.serverUrl "enrollmentTokenFile" "/etc/justcd-agent/enrollment/enrollmentToken" "identityFile" "/var/lib/justcd-agent/identity.json" "serverCAFile" (ternary "/etc/justcd-agent/ca/ca.crt" "" (ne .Values.serverCASecret "")) "profiles" .Values.profiles | toJson }}
+---
+{{- if .Values.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $sa }}
+---
+{{- end }}
+{{- if not .Values.persistence.existingClaim }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- if .Values.persistence.storageClass }}
+  storageClassName: {{ .Values.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $name }}
+      annotations:
+        checksum/config: {{ dict "profiles" .Values.profiles "serverUrl" .Values.serverUrl "serverCASecret" .Values.serverCASecret "enrollmentSecret" .Values.enrollmentSecret | toJson | sha256sum | quote }}
+    spec:
+      serviceAccountName: {{ $sa }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: agent
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          {{- with .Values.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/justcd-agent
+              readOnly: true
+            - name: enrollment
+              mountPath: /etc/justcd-agent/enrollment
+              readOnly: true
+            - name: identity
+              mountPath: /var/lib/justcd-agent
+            {{- if .Values.serverCASecret }}
+            - name: ca
+              mountPath: /etc/justcd-agent/ca
+              readOnly: true
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}
+        - name: enrollment
+          secret:
+            secretName: {{ .Values.enrollmentSecret }}
+        - name: identity
+          persistentVolumeClaim:
+            claimName: {{ default $name .Values.persistence.existingClaim }}
+        {{- if .Values.serverCASecret }}
+        - name: ca
+          secret:
+            secretName: {{ .Values.serverCASecret }}
+        {{- end }}
+
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}

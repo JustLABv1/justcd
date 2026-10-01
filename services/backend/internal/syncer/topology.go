@@ -53,7 +53,7 @@ func (s *Service) ObserveTopology(ctx context.Context, app store.Application, ma
 		if credentialID == nil {
 			credentialID = workspaceCredentialID
 		}
-		client, err := kube.ForBinding(ctx, s.Store, s.EncryptionKey, cluster, credentialID, false)
+		client, err := kube.ForWorkspaceBinding(ctx, s.Store, s.EncryptionKey, cluster, credentialID, false, app.WorkspaceID, stored.Namespace)
 		if err != nil {
 			return err
 		}

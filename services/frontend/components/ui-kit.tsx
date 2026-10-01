@@ -3,6 +3,8 @@ import type { ReactNode } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Layers01Icon } from "@hugeicons/core-free-icons"
 import { IconStack } from "@/components/reui/icon-stack"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Switch } from "@/components/ui/switch"
 
 export function PageHeading({
   title,
@@ -142,4 +144,78 @@ export function FormField({
 
 export function InlineLink({ href, children }: { href: string; children: ReactNode }) {
   return <Link href={href} className="text-sm font-medium text-primary hover:underline">{children}</Link>
+}
+
+/** A single list entry for connection-style inventories (credentials, clusters, Git sources, …). */
+export function ConnectionRow({ icon, title, subtitle, badges, meta, actions, children }: {
+  icon?: ReactNode
+  title: ReactNode
+  subtitle?: ReactNode
+  badges?: ReactNode
+  meta?: ReactNode
+  actions?: ReactNode
+  children?: ReactNode
+}) {
+  return (
+    <li className="px-5 py-4">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+        {icon && <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">{icon}</span>}
+        <div className="min-w-0 flex-1 basis-56">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <h3 className="truncate text-sm font-medium">{title}</h3>
+            {badges}
+          </div>
+          {subtitle && <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">{subtitle}</p>}
+          {meta && <div className="mt-1 text-xs text-muted-foreground">{meta}</div>}
+        </div>
+        {actions}
+      </div>
+      {children && <div className="mt-3">{children}</div>}
+    </li>
+  )
+}
+
+/** Separated destructive area for deleting a resource. */
+export function DangerZone({ title = "Danger zone", description, children }: { title?: string; description?: string; children: ReactNode }) {
+  return (
+    <section className="rounded-xl border border-destructive/30 bg-destructive/5">
+      <div className="border-b border-destructive/20 px-5 py-3"><h2 className="text-sm font-semibold text-destructive">{title}</h2>{description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}</div>
+      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">{children}</div>
+    </section>
+  )
+}
+
+/** Bordered checkbox with a title and optional help text; the whole card toggles. */
+export function CheckboxCard({ checked, onCheckedChange, title, description, disabled, id }: {
+  checked: boolean
+  onCheckedChange: (checked: boolean) => void
+  title: ReactNode
+  description?: ReactNode
+  disabled?: boolean
+  id?: string
+}) {
+  return (
+    <label className={`flex items-start gap-3 rounded-lg border p-3 text-sm ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-muted/40"}`}>
+      <Checkbox id={id} checked={checked} disabled={disabled} onCheckedChange={(next) => onCheckedChange(Boolean(next))} className="mt-0.5" />
+      <span className="min-w-0"><span className="block font-medium">{title}</span>{description && <span className="mt-0.5 block text-muted-foreground">{description}</span>}</span>
+    </label>
+  )
+}
+
+/** Boolean setting with a Switch, label and help text on one row. */
+export function SwitchField({ checked, onCheckedChange, label, description, disabled, id, tone = "default" }: {
+  checked: boolean
+  onCheckedChange: (checked: boolean) => void
+  label: string
+  description?: string
+  disabled?: boolean
+  id: string
+  tone?: "default" | "warning"
+}) {
+  return (
+    <div className={`flex items-start justify-between gap-4 rounded-lg border p-3 ${tone === "warning" ? "border-amber-300/60 bg-amber-50/50 dark:border-amber-900 dark:bg-amber-950/20" : ""}`}>
+      <div className="min-w-0"><label htmlFor={id} className="block text-sm font-medium">{label}</label>{description && <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>}</div>
+      <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} aria-label={label} />
+    </div>
+  )
 }

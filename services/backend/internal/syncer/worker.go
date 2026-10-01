@@ -55,6 +55,9 @@ func (s *Service) RunOperationWorker(ctx context.Context, logger *slog.Logger) {
 		case <-ctx.Done():
 			return
 		case <-recoveryTicker.C:
+			if err := s.Store.PruneAgentTasks(ctx); err != nil && ctx.Err() == nil {
+				logger.Error("could not prune expired cluster agent tasks", "error", err)
+			}
 			if err := s.Store.RecoverInterruptedOperations(ctx); err != nil && ctx.Err() == nil {
 				logger.Error("could not mark interrupted JustCD operations", "error", err)
 			}

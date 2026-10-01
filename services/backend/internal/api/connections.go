@@ -199,7 +199,7 @@ func (s *Server) updateNamespaceBinding(w http.ResponseWriter, r *http.Request) 
 			writeStoreError(w, "could not load workspace cluster credential")
 			return
 		}
-		if workspaceID == nil && cluster.DefaultCredentialID == nil {
+		if workspaceID == nil && cluster.DefaultCredentialID == nil && !kube.AgentEnabled(r.Context(), s.Store, cluster.ID) {
 			writeError(w, http.StatusBadRequest, "a namespace or cluster default credential is required")
 			return
 		}
@@ -391,12 +391,12 @@ func (s *Server) testCluster(w http.ResponseWriter, r *http.Request) {
 	if namespace == "" {
 		namespace = "default"
 	}
-	client, clientErr := kube.ForBinding(r.Context(), s.Store, s.EncryptionKey, cluster, credentialID, false)
+	client, clientErr := kube.ForWorkspaceBinding(r.Context(), s.Store, s.EncryptionKey, cluster, credentialID, false, input.WorkspaceID, namespace)
 	var clusterClient *kube.Clients
 	var clusterScopeFailure *kube.PermissionFailure
 	clusterScopeStatus := ""
 	if input.IncludeClusterScope {
-		if cluster.ClusterScopeCredential == nil {
+		if cluster.ClusterScopeCredential == nil && !kube.AgentClusterScope(r.Context(), s.Store, cluster.ID) {
 			// Access reviews are read-only. Testing the effective namespace
 			// credential does not authorize cluster-scoped deployments.
 			clusterClient = client
@@ -405,7 +405,7 @@ func (s *Server) testCluster(w http.ResponseWriter, r *http.Request) {
 				clusterScopeFailure = &failure
 			}
 		} else {
-			clusterClient, err = kube.ForBinding(r.Context(), s.Store, s.EncryptionKey, cluster, cluster.ClusterScopeCredential, true)
+			clusterClient, err = kube.ForWorkspaceBinding(r.Context(), s.Store, s.EncryptionKey, cluster, cluster.ClusterScopeCredential, true, input.WorkspaceID, "")
 			if err != nil {
 				failure := kube.ClassifyPermissionTestError(err)
 				clusterScopeFailure = &failure

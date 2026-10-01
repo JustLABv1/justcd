@@ -241,7 +241,7 @@ func ensureRepositoryNamespaceBinding(ctx context.Context, tx *sql.Tx, workspace
 		return binding, fmt.Errorf("namespace %q requires an existing workspace binding or spec.destination.createNamespaces: true", namespace)
 	}
 	var kind sql.NullString
-	err = tx.QueryRowContext(ctx, `SELECT credential.kind FROM clusters c
+	err = tx.QueryRowContext(ctx, `SELECT CASE WHEN EXISTS(SELECT 1 FROM cluster_agents a WHERE a.cluster_id=c.id) THEN 'agent' ELSE credential.kind END FROM clusters c
 		LEFT JOIN workspace_cluster_credentials defaults ON defaults.cluster_id=c.id AND defaults.workspace_id=$1
 		LEFT JOIN credentials credential ON credential.id=COALESCE(defaults.credential_id,c.default_credential_id)
 		WHERE c.id=$2 AND (c.workspace_id IS NULL OR c.workspace_id=$1 OR EXISTS (
@@ -253,7 +253,7 @@ func ensureRepositoryNamespaceBinding(ctx context.Context, tx *sql.Tx, workspace
 	if err != nil {
 		return binding, err
 	}
-	if !kind.Valid || (kind.String != "kubernetes-token" && kind.String != "kubeconfig") {
+	if !kind.Valid || (kind.String != "kubernetes-token" && kind.String != "kubeconfig" && kind.String != "agent") {
 		return binding, fmt.Errorf("namespace %q cannot be registered automatically: configure a default Kubernetes credential for this workspace and cluster", namespace)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO namespace_bindings(id,workspace_id,cluster_id,namespace,credential_id) VALUES($1,$2,$3,$4,NULL) ON CONFLICT(workspace_id,cluster_id,namespace) DO NOTHING`, NewID(), workspaceID, clusterID, namespace); err != nil {

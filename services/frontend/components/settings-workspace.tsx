@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { usePathname } from "next/navigation"
 import Link from "next/link"
+import { ClusterAgentConnection } from "@/components/cluster-agent-connection"
 import { WorkspaceIcon } from "@/components/workspace-ui"
 import { ErrorDetailsButton } from "@/components/error-details"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
@@ -51,7 +52,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
     {
       id: "clusters",
       title: "Kubernetes clusters",
-      description: "Direct API endpoints and cluster credentials",
+      description: "Direct API connections and outbound cluster agents",
     },
     {
       id: "namespaces",
@@ -1204,14 +1205,14 @@ function ClusterPanel({
                       {cluster.name}
                     </span>
                     <span className="block truncate font-mono text-xs text-muted-foreground">
-                      {cluster.apiServer}
+                      {cluster.connectionMode === "agent" ? "Outbound cluster agent" : cluster.apiServer}
                     </span>
                     <span className="mt-2 flex flex-wrap gap-1.5">
                       <span className="inline-flex rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
                         {cluster.shared ? `Shared by ${cluster.ownerWorkspaceName ?? "another workspace"}` : cluster.workspaceId ? "Private to this workspace" : "Legacy instance-owned"}
                       </span>
                       <span className="inline-flex rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-                        {workspaceCredentialByCluster[cluster.id] ? `Default: ${workspaceCredentials.find((item) => item.id === workspaceCredentialByCluster[cluster.id])?.name ?? "configured"}` : cluster.shared ? "Workspace credential needed" : cluster.defaultCredentialId ? "Legacy instance default" : "No workspace default"}
+                        {workspaceCredentialByCluster[cluster.id] ? `Default: ${workspaceCredentials.find((item) => item.id === workspaceCredentialByCluster[cluster.id])?.name ?? "configured"}` : cluster.connectionMode === "agent" ? "Agent local credentials" : cluster.shared ? "Workspace credential needed" : cluster.defaultCredentialId ? "Legacy instance default" : "No workspace default"}
                       </span>
                       <span className="inline-flex rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
                         {latestTests[cluster.id] ? `Last test: ${latestTests[cluster.id].report.status} · ${new Date(latestTests[cluster.id].checkedAt).toLocaleString()}` : "Not tested yet"}
@@ -1231,7 +1232,8 @@ function ClusterPanel({
                   >
                     Test
                   </Button>
-                  <Button size="sm" variant="outline" type="button" disabled={busy || workspace?.role !== "owner"} onClick={() => { if (activeClusterId !== cluster.id) { setSelectedClusterId(cluster.id); setCredentialLoadedFor(""); setCredentialLoadError(null) }; setAuthDialogOpen(true) }}>Credentials</Button>
+                  {workspace && <ClusterAgentConnection cluster={cluster} workspace={workspace} canManage={workspace.role === "owner" && (cluster.workspaceId === workspace.id || (!cluster.workspaceId && !!user?.isAdmin))} onModeChange={(mode) => onUpdated({ ...cluster, connectionMode: mode })} />}
+                  {cluster.connectionMode !== "agent" && <Button size="sm" variant="outline" type="button" disabled={busy || workspace?.role !== "owner"} onClick={() => { if (activeClusterId !== cluster.id) { setSelectedClusterId(cluster.id); setCredentialLoadedFor(""); setCredentialLoadError(null) }; setAuthDialogOpen(true) }}>Credentials</Button>}
                   {workspace?.role === "owner" && (cluster.workspaceId === workspace.id || (!cluster.workspaceId && user?.isAdmin)) && (
                     <Button
                       size="sm"
@@ -1253,11 +1255,11 @@ function ClusterPanel({
           <EmptyState title="No connected clusters yet" description="Connect a new cluster or ask another workspace owner to offer one. Credentials stay private to each workspace." />
         )}
       </SettingsInventory>
-      {workspace && clusters.length > 0 && (
+      {workspace && clusters.some((item) => item.connectionMode !== "agent") && (
         <section className="overflow-hidden rounded-xl border bg-card">
           <div className="border-b px-5 py-4"><h2 className="text-sm font-semibold">Default credential for namespace access</h2><p className="mt-1 text-sm text-muted-foreground">This credential applies to all namespace bindings on the cluster unless a binding has its own credential. The token’s Kubernetes RBAC determines which namespaces it can access.</p></div>
           <div className="grid gap-4 px-5 py-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-            <div className="max-w-sm"><FormField label="Cluster" htmlFor="workspace-cluster"><FormSelect id="workspace-cluster" value={activeClusterId} onValueChange={(value) => { setSelectedClusterId(value); setCredentialLoadedFor(""); setCredentialLoadError(null) }} emptyOption="Select cluster" items={clusters.map((cluster) => ({ value: cluster.id, label: cluster.name }))} /></FormField></div>
+            <div className="max-w-sm"><FormField label="Cluster" htmlFor="workspace-cluster"><FormSelect id="workspace-cluster" value={activeClusterId} onValueChange={(value) => { setSelectedClusterId(value); setCredentialLoadedFor(""); setCredentialLoadError(null) }} emptyOption="Select cluster" items={clusters.filter((cluster) => cluster.connectionMode !== "agent").map((cluster) => ({ value: cluster.id, label: cluster.name }))} /></FormField></div>
             <div className="flex flex-wrap items-center gap-3 sm:justify-end"><span className="text-sm text-muted-foreground">{workspaceCredentialByCluster[activeClusterId] ? "Credential configured" : "No workspace credential"}</span><Button size="sm" variant="outline" type="button" disabled={workspace.role !== "owner" || !activeClusterId || credentialLoadedFor !== activeClusterId} onClick={() => setAuthDialogOpen(true)}>Configure</Button></div>
           </div>
           {credentialLoadError != null && (
@@ -1886,7 +1888,7 @@ function NamespacePanel({
                   <div className="min-w-0">
                     <p className="font-mono text-sm">{binding.namespace}</p>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      {binding.credentialId
+                      {cluster?.connectionMode === "agent" ? "Agent local namespace profile" : binding.credentialId
                         ? credentials.find(
                             (item) => item.id === binding.credentialId
                           )?.name || "Namespace credential"
@@ -2011,7 +2013,7 @@ function NamespacePanel({
               readOnly={!!editing}
             />
           </FormField>
-          <FormField
+          {cluster?.connectionMode === "agent" ? <p className="self-center text-sm text-muted-foreground">Access uses the agent’s local namespace profile.</p> : <FormField
             label="Credential for this namespace"
             htmlFor="namespace-credential"
           >
@@ -2029,9 +2031,9 @@ function NamespacePanel({
                 label: credential.name,
               }))}
             />
-          </FormField>
+          </FormField>}
         </div>
-        {!cluster?.defaultCredentialId && !workspaceDefault && !credentialId && (
+        {cluster?.connectionMode !== "agent" && !cluster?.defaultCredentialId && !workspaceDefault && !credentialId && (
           <p className="text-xs text-amber-700">
             Choose a namespace credential or configure a cluster default
             credential.

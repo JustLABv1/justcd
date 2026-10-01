@@ -464,6 +464,7 @@ func (s *Server) listClusterPermissionTests(w http.ResponseWriter, r *http.Reque
 	}
 	items, err := s.Store.ListKubernetesPermissionTests(r.Context(), workspaceID, clusterID)
 	if err != nil {
+		s.Logger.ErrorContext(r.Context(), "Could not load Kubernetes permission reports", "error", err)
 		writeStoreError(w, "could not load Kubernetes permission reports")
 		return
 	}

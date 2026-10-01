@@ -89,7 +89,7 @@ func (t *agentTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 	ctx, cancel := context.WithDeadline(r.Context(), deadline)
 	defer cancel()
-	if err = t.db.QueueAgentTask(ctx, task.ID, t.cluster, cipher, deadline); err != nil {
+	if err = t.db.QueueAgentTask(ctx, task.ID, t.cluster, cipher, deadline, task); err != nil {
 		return nil, &AgentError{Code: "cluster.agent_unavailable", Message: err.Error(), Transient: true}
 	}
 	defer func() {

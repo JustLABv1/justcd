@@ -1,8 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/justlab/justcd/services/backend/internal/observability"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -197,5 +200,47 @@ func TestRedactAPIErrorMessageRemovesCredentialMaterial(t *testing.T) {
 	}
 	if !strings.Contains(redacted, "[redacted]") || !strings.Contains(redacted, "[redacted private key]") {
 		t.Fatalf("redaction marker missing: %s", redacted)
+	}
+}
+
+func TestRequestLoggingIncludesSafeErrorClassification(t *testing.T) {
+	for _, status := range []int{200, 400, 500, 503} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			var output bytes.Buffer
+			logger := slog.New(observability.NewLogHandler(slog.NewJSONHandler(&output, nil)))
+			mux := http.NewServeMux()
+			mux.HandleFunc("GET /api/v1/clusters/{clusterID}/tests", func(w http.ResponseWriter, r *http.Request) {
+				if status == 200 {
+					writeJSON(w, status, map[string]string{"status": "ok"})
+					return
+				}
+				if status == 500 {
+					writeStoreError(w, "could not load Kubernetes permission reports")
+					return
+				}
+				writeError(w, status, "failed")
+			})
+			response := httptest.NewRecorder()
+			observability.HTTPMiddleware(mux, logger, nil).ServeHTTP(response, httptest.NewRequest("GET", "/api/v1/clusters/private-id/tests?workspaceId=private-workspace&token=private-token", nil))
+			var entry map[string]any
+			if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
+				t.Fatal(err)
+			}
+			level := "INFO"
+			if status >= 500 {
+				level = "ERROR"
+			}
+			if entry["level"] != level || entry["route"] != "GET /api/v1/clusters/{clusterID}/tests" || entry["status"] != float64(status) || entry["request_id"] != response.Header().Get("X-Request-ID") {
+				t.Fatalf("incorrect request log: %s", output.String())
+			}
+			if status == 500 && (entry["error_code"] != "database.operation_failed" || entry["error_category"] != "database") {
+				t.Fatalf("missing classification: %s", output.String())
+			}
+			for _, secret := range []string{"private-id", "private-workspace", "private-token", "could not load"} {
+				if strings.Contains(output.String(), secret) {
+					t.Fatalf("log included response or request data: %s", output.String())
+				}
+			}
+		})
 	}
 }

@@ -102,7 +102,8 @@ func HTTPMiddleware(next http.Handler, logger *slog.Logger, metrics *Metrics) ht
 		w.Header().Set("X-Request-ID", requestID)
 		span.SetAttributes(attribute.String("http.request.method", boundedMethod(r.Method)), attribute.String("http.route", route))
 		status := &statusWriter{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(status, r.WithContext(ctx))
+		request := r.WithContext(ctx)
+		next.ServeHTTP(status, request)
 		elapsed := time.Since(started)
 		span.SetAttributes(attribute.Int("http.response.status_code", status.status))
 		if status.status >= http.StatusInternalServerError {
@@ -112,7 +113,19 @@ func HTTPMiddleware(next http.Handler, logger *slog.Logger, metrics *Metrics) ht
 			metrics.RecordHTTP(r.Method, route, status.status, elapsed)
 		}
 		if logger != nil {
-			logger.InfoContext(ctx, "HTTP request completed", "method", boundedMethod(r.Method), "route", route, "status", status.status, "duration_ms", elapsed.Milliseconds())
+			logRoute := route
+			if request.Pattern != "" {
+				logRoute = request.Pattern
+			}
+			level := slog.LevelInfo
+			if status.status >= http.StatusInternalServerError {
+				level = slog.LevelError
+			}
+			attrs := []any{"method", boundedMethod(r.Method), "route", logRoute, "status", status.status, "duration_ms", elapsed.Milliseconds()}
+			if status.errorCode != "" {
+				attrs = append(attrs, "error_code", status.errorCode, "error_category", status.errorCategory)
+			}
+			logger.Log(ctx, level, "HTTP request completed", attrs...)
 		}
 	})
 }
@@ -140,8 +153,32 @@ func RouteLabel(path string) string {
 
 type statusWriter struct {
 	http.ResponseWriter
-	status int
-	wrote  bool
+	status        int
+	wrote         bool
+	errorCode     string
+	errorCategory string
+}
+
+// SetAPIError records safe classification metadata without capturing response bodies.
+func (w *statusWriter) SetAPIError(code, category string) {
+	w.errorCode, w.errorCategory = code, category
+}
+
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// RecordAPIError reaches the request logger through response-writer wrappers.
+func RecordAPIError(w http.ResponseWriter, code, category string) {
+	for {
+		if recorder, ok := w.(interface{ SetAPIError(string, string) }); ok {
+			recorder.SetAPIError(code, category)
+			return
+		}
+		wrapper, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return
+		}
+		w = wrapper.Unwrap()
+	}
 }
 
 func (w *statusWriter) WriteHeader(status int) {

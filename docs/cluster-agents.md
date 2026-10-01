@@ -135,3 +135,73 @@ stream per cluster agent. It does not support streaming Kubernetes APIs, agent H
 or local Git rendering. Central JustCD and its deployment authorization are the
 trusted task issuer; the agent enforces local cluster, workspace, namespace, API,
 and RBAC bounds rather than independently issuing deployment approvals.
+
+## Existing Kubernetes token Secret
+
+The enrollment Secret authenticates the installation to JustCD. A Kubernetes
+service-account token is separate and stays inside the target cluster. Mount an
+existing Secret with a `token` key and select its file in a local profile:
+
+```yaml
+profiles:
+  - name: default
+    workspaceIds: [YOUR_JUSTCD_WORKSPACE_ID]
+    namespaces: [dev]
+    clusterScope: false
+  - name: cluster-admin
+    workspaceIds: [YOUR_JUSTCD_WORKSPACE_ID]
+    namespaces: []
+    clusterScope: true
+    tokenFile: /etc/justcd-agent-kubernetes/token
+extraVolumes:
+  - name: kubernetes-token
+    secret:
+      secretName: justcd-agent-kubernetes-token
+extraVolumeMounts:
+  - name: kubernetes-token
+    mountPath: /etc/justcd-agent-kubernetes
+    readOnly: true
+```
+
+Create the Secret in the Helm release namespace from a local token file:
+
+```sh
+kubectl -n justcd-agent create secret generic justcd-agent-kubernetes-token \
+  --from-file=token=./kubernetes-token
+```
+
+Set **Cluster-scope profile** to `cluster-admin` in JustCD. The token's service
+account must have the intended Kubernetes RBAC permissions. The chart's
+`rbac.clusterWide` configures its own service account; it does not change the
+permissions of a token supplied by Secret. The default service account is still
+used for enrollment cluster identification and profiles without `tokenFile`.
+Secret volumes update in place; do not mount the token using `subPath` if it needs
+to rotate. A projected service-account token is also supported via `extraVolumes`
+when the profile uses the Pod's service account.
+
+## Security contexts
+
+`podSecurityContext` and `securityContext` are configurable Helm values. Their
+defaults preserve non-root UID/GID 10001, RuntimeDefault seccomp, a read-only root
+filesystem, disabled privilege escalation, and dropped capabilities. Override
+UID/GID or `fsGroup` to match your cluster and persistent-volume requirements.
+Set individual fields to `null` to omit fields imposed by cluster policy.
+
+## Agent overview and activity
+
+**Connections → Clusters** shows clusters and their agent connections
+together in one searchable list. Each agent-connected cluster shows last heartbeat,
+version, local profiles, workspace-scoped queued/running tasks, and its last request
+failure. **Agent activity** shows
+the latest 100 tasks from the last seven days, including Kubernetes resource type,
+namespace, profile, HTTP status, safe error code, and links to deployment activity.
+All counts and activity are scoped to the current workspace, including shared
+clusters. Profile metadata is filtered to that workspace.
+
+Only metadata is retained: Kubernetes request/response bodies, resource names,
+query parameters, tokens, and arbitrary error text are excluded. Consumed encrypted
+payloads are still deleted. Expired unclaimed tasks are shown as expired; claimed
+tasks with no confirmed result are shown as unknown outcome. Heartbeat online
+status indicates connectivity to JustCD, not successful Kubernetes access.
+The overview lists one identity per connection; multiple replicas and HA remain
+unsupported.

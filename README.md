@@ -176,8 +176,11 @@ Kustomize follows local bases, components, patches, replacements, and generator
 files outside the overlay path, including Helm chart directories and values files.
 Pinned remote Helm charts are supported. Unrelated applications are skipped. Remote inputs,
 custom plugins, unpinned Helm charts, missing inputs, or unsupported dependency features
-keep repository-wide checking to avoid hiding relevant changes. If a provider cannot return a complete file list,
-JustCD conservatively reviews the PR. Status contexts include the application
+keep repository-wide checking to avoid hiding relevant changes. If a provider cannot return a complete file list, JustCD fetches the PR with
+the Git source credential and compares its exact head to the PR merge base in
+Git. Renamed and removed files are included; an empty diff is skipped. If the
+base, Git history, or current PR state cannot be verified, JustCD keeps the PR
+in scope and shows the failure reason. Status contexts include the application
 ID so multiple applications do not overwrite each other's status.
 
 For a Git source without a PR reporting connection, a workspace owner can configure

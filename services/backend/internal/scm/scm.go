@@ -20,17 +20,19 @@ import (
 )
 
 type Event struct {
-	HeadBranch string
-	Kind       string
-	DeliveryID string
-	Repository string
-	Ref        string
-	Number     int
-	HeadSHA    string
-	URL        string
-	Fork       bool
-	Closed     bool
-	EventAt    time.Time
+	BaseSHA         string
+	BaseIsMergeBase bool
+	HeadBranch      string
+	Kind            string
+	DeliveryID      string
+	Repository      string
+	Ref             string
+	Number          int
+	HeadSHA         string
+	URL             string
+	Fork            bool
+	Closed          bool
+	EventAt         time.Time
 }
 
 func VerifyAndParse(provider, secret string, header http.Header, body []byte, now time.Time) (Event, error) {
@@ -386,10 +388,15 @@ func (c Client) Current(ctx context.Context, provider, apiURL, repository, token
 			} `json:"repo"`
 		} `json:"head"`
 		Base struct {
+			SHA  string `json:"sha"`
 			Repo struct {
 				FullName string `json:"full_name"`
 			} `json:"repo"`
 		} `json:"base"`
+		DiffRefs struct {
+			BaseSHA string `json:"base_sha"`
+			HeadSHA string `json:"head_sha"`
+		} `json:"diff_refs"`
 		SourceBranch    string `json:"source_branch"`
 		SourceProjectID int    `json:"source_project_id"`
 		TargetProjectID int    `json:"target_project_id"`
@@ -401,6 +408,7 @@ func (c Client) Current(ctx context.Context, provider, apiURL, repository, token
 	if provider == "github" {
 		e.HeadBranch = raw.Head.Ref
 		e.HeadSHA = raw.Head.SHA
+		e.BaseSHA = raw.Base.SHA
 		e.URL = raw.HTMLURL
 		e.Fork = raw.Head.Repo.FullName != raw.Base.Repo.FullName
 		e.Closed = raw.State == "closed"
@@ -408,6 +416,10 @@ func (c Client) Current(ctx context.Context, provider, apiURL, repository, token
 	if provider == "gitlab" {
 		e.HeadBranch = raw.SourceBranch
 		e.HeadSHA = raw.SHA
+		if raw.DiffRefs.HeadSHA == raw.SHA {
+			e.BaseSHA = raw.DiffRefs.BaseSHA
+			e.BaseIsMergeBase = true
+		}
 		e.URL = raw.WebURL
 		e.Fork = raw.SourceProjectID == 0 || raw.TargetProjectID == 0 || raw.SourceProjectID != raw.TargetProjectID
 		e.Closed = raw.State == "closed" || raw.State == "merged"

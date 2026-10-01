@@ -184,7 +184,11 @@ func (s *Server) processReview(ctx context.Context, review store.PullRequestRevi
 		if watched != nil {
 			changedPaths, filesErr := (scm.Client{}).ChangedPaths(ctx, connection.Provider, connection.APIURL, connection.Repository, string(token), review.Number)
 			if filesErr != nil {
-				review.ScopeNote = "Checking all PR changes because the provider could not return a complete changed-file list."
+				apiErr := filesErr
+				changedPaths, filesErr = s.gitPRChangedPaths(ctx, source, connection, review, string(token))
+				if filesErr != nil {
+					review.ScopeNote = "PR path filtering unavailable: " + scm.ChangedFilesDiagnostic(apiErr) + " Git fallback: " + filesErr.Error() + ". This PR remains in scope."
+				}
 			}
 			// Incomplete provider data must not hide a potentially relevant PR.
 			if filesErr == nil && !pathsAffectApplication(changedPaths, watched) {

@@ -26,6 +26,7 @@ type Credentials struct {
 type Checkout struct {
 	Root    string
 	Commit  string
+	env     []string
 	cleanup func()
 }
 
@@ -155,7 +156,7 @@ func Fetch(ctx context.Context, db *store.Store, key []byte, source store.GitSou
 		cleanup()
 		return nil, errors.New("could not check out requested Git revision")
 	}
-	return &Checkout{Root: checkoutPath, Commit: commit, cleanup: cleanup}, nil
+	return &Checkout{Root: checkoutPath, Commit: commit, env: env, cleanup: cleanup}, nil
 }
 
 func validURL(value string) bool {

@@ -315,7 +315,7 @@ func (s *Store) DueReviews(ctx context.Context, limit int) ([]PullRequestReview,
 		WHERE id IN (SELECT r.id FROM pull_request_reviews r
 		WHERE EXISTS (SELECT 1 FROM source_control_connections c WHERE c.id=r.connection_id AND c.enabled)
 		AND (lease_until IS NULL OR lease_until<NOW()) AND (
-		phase='pending' OR (expires_at<=NOW() AND NOT closed AND phase NOT IN ('cleanup_pending','removed'))
+		phase='pending' OR (phase='planned' AND scope_note<>'' AND updated_at<NOW()-INTERVAL '5 minutes') OR (expires_at<=NOW() AND NOT closed AND phase NOT IN ('cleanup_pending','removed'))
 		OR (phase IN ('approval_required','syncing','ready','degraded','cleanup_pending') AND updated_at < NOW()-INTERVAL '30 seconds')
 		OR (phase='failed' AND updated_at < NOW()-INTERVAL '60 seconds')
 		OR (phase<>'ignored' AND reported_phase<>phase AND updated_at < NOW()-INTERVAL '30 seconds'))
@@ -436,6 +436,6 @@ func (s *Store) DeletePreviewNamespaceBinding(ctx context.Context, workspaceID, 
 var _ = sql.ErrNoRows
 
 func (s *Store) SetReviewScopeNote(ctx context.Context, review PullRequestReview, note string) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE pull_request_reviews SET scope_note=$2 WHERE id=$1 AND head_sha=$3 AND closed=$4`, review.ID, note, review.HeadSHA, review.Closed)
+	_, err := s.DB.ExecContext(ctx, `UPDATE pull_request_reviews SET scope_note=$2,updated_at=CASE WHEN phase='planned' THEN NOW() ELSE updated_at END WHERE id=$1 AND head_sha=$3 AND closed=$4`, review.ID, note, review.HeadSHA, review.Closed)
 	return err
 }

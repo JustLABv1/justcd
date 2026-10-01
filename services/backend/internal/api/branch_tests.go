@@ -82,7 +82,7 @@ func (s *Server) startBranchTest(w http.ResponseWriter, r *http.Request) {
 			writeStoreError(w, "could not load workspace cluster credential")
 			return
 		}
-		clients, err := kube.ForBinding(r.Context(), s.Store, s.EncryptionKey, cluster, credential, false)
+		clients, err := kube.ForWorkspaceBinding(r.Context(), s.Store, s.EncryptionKey, cluster, credential, false, app.WorkspaceID, input.Namespace)
 		if err != nil {
 			writePlanFailure(w, http.StatusUnprocessableEntity, "could not verify preview namespace", app.ID, err)
 			return

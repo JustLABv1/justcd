@@ -3,6 +3,8 @@ package syncer
 import (
 	"context"
 	"errors"
+	"github.com/justlab/justcd/services/backend/internal/kube"
+	"net/url"
 	"testing"
 	"time"
 
@@ -109,4 +111,12 @@ func cancelledContext(t *testing.T) context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	return ctx
+}
+
+func TestAgentUnknownWriteIsNotRetriedThroughHTTPWrapper(t *testing.T) {
+	err := &url.Error{Op: "Patch", URL: "https://justcd-agent.invalid", Err: &kube.AgentError{Code: "cluster.agent_unknown_outcome", Message: "execution outcome unknown"}}
+	got := ClassifyRetryError(err)
+	if got.Retryable || got.ErrorCode != "cluster.agent_unknown_outcome" {
+		t.Fatalf("unsafe retry classification: %+v", got)
+	}
 }

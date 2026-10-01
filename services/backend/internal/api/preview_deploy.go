@@ -312,10 +312,10 @@ func (s *Server) ensurePreviewNamespace(ctx context.Context, connection store.So
 	if err != nil {
 		return err
 	}
-	if cluster.ClusterScopeCredential == nil {
+	if cluster.ClusterScopeCredential == nil && !kube.AgentClusterScope(ctx, s.Store, cluster.ID) {
 		return errors.New("preview namespace creation requires a cluster-scope credential")
 	}
-	client, err := kube.ForBinding(ctx, s.Store, s.EncryptionKey, cluster, cluster.ClusterScopeCredential, true)
+	client, err := kube.ForWorkspaceBinding(ctx, s.Store, s.EncryptionKey, cluster, cluster.ClusterScopeCredential, true, app.WorkspaceID, namespace)
 	if err != nil {
 		return err
 	}
@@ -361,7 +361,7 @@ func (s *Server) removePreviewNamespace(ctx context.Context, connection store.So
 	if err != nil {
 		return err
 	}
-	client, err := kube.ForBinding(ctx, s.Store, s.EncryptionKey, cluster, cluster.ClusterScopeCredential, true)
+	client, err := kube.ForWorkspaceBinding(ctx, s.Store, s.EncryptionKey, cluster, cluster.ClusterScopeCredential, true, app.WorkspaceID, namespace)
 	if err != nil {
 		return err
 	}

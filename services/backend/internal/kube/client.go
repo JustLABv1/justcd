@@ -30,6 +30,9 @@ type credentialPayload struct {
 }
 
 func ForBinding(ctx context.Context, db *store.Store, key []byte, cluster store.Cluster, credentialID *string, clusterScope bool) (*Clients, error) {
+	if AgentEnabled(ctx, db, cluster.ID) {
+		return nil, errors.New("agent connections require a workspace binding")
+	}
 	if credentialID == nil {
 		if clusterScope {
 			credentialID = cluster.ClusterScopeCredential
@@ -72,6 +75,10 @@ func ForBinding(ctx context.Context, db *store.Store, key []byte, cluster store.
 	}
 	config.UserAgent = "JustCD/1.0"
 	config.Timeout = 30 * time.Second
+	return clientsForConfig(config)
+}
+
+func clientsForConfig(config *rest.Config) (*Clients, error) {
 	dynamicClient, err := dynamic.NewForConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("create Kubernetes dynamic client: %w", err)

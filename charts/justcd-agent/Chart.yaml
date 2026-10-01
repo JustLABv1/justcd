@@ -1,0 +1,6 @@
+apiVersion: v2
+name: justcd-agent
+description: Outbound Kubernetes connection agent for JustCD
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

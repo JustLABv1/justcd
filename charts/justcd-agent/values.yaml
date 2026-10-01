@@ -1,0 +1,44 @@
+image:
+  repository: ghcr.io/justlabv1/justcd
+  tag: "agent"
+  pullPolicy: IfNotPresent
+serverUrl: ""
+# Optional existing Secret containing ca.crt for a private JustCD HTTPS CA.
+serverCASecret: ""
+# Existing Secret containing the one-use enrollmentToken. Never put it in values.
+enrollmentSecret: ""
+profiles:
+  - name: default
+    workspaceIds: []
+    namespaces: []
+    clusterScope: false
+persistence:
+  existingClaim: ""
+  size: 1Gi
+  storageClass: ""
+rbac:
+  create: true
+  # Explicit opt-in, needed for dynamically created preview namespaces and
+  # cluster-scoped workloads. The API's local profile checks still apply.
+  clusterWide: false
+  rules:
+    - apiGroups: ["*"]
+      resources: ["*"]
+      verbs: ["get", "list", "create", "update", "patch", "delete"]
+serviceAccount:
+  create: true
+  name: ""
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+imagePullSecrets: []
+# For HTTP_PROXY/HTTPS_PROXY/NO_PROXY, use standard Kubernetes env entries.
+extraEnv: []
+# Optional mounts for operator-provided profile tokenFile paths.
+extraVolumes: []
+extraVolumeMounts: []

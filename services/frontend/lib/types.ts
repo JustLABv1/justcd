@@ -54,6 +54,7 @@ export type Credential = {
 }
 
 export type Cluster = {
+  connectionMode: "direct" | "agent"
   id: string
   workspaceId?: string
   name: string

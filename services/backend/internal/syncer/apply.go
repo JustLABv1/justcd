@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/justlab/justcd/services/backend/internal/core"
+	"github.com/justlab/justcd/services/backend/internal/kube"
 	"github.com/justlab/justcd/services/backend/internal/observability"
 	"github.com/justlab/justcd/services/backend/internal/render"
 	"github.com/justlab/justcd/services/backend/internal/store"
@@ -124,6 +125,7 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 	if err != nil {
 		return operation, err
 	}
+	ctx = kube.WithExecution(ctx, operationID, planID, record.Plan.Digest)
 	app, err := s.Store.ApplicationByID(ctx, record.Plan.ApplicationID)
 	if err != nil {
 		return operation, err

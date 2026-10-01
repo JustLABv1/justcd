@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { AlertDialog } from "@base-ui/react/alert-dialog"
+import { AppDialog } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { APIError } from "@/lib/api"
 
@@ -130,24 +130,9 @@ export function ErrorGuidance({ error }: { error: unknown }) {
   )
 }
 
-export function ErrorDetailsButton({
-  error,
-  label = "View details",
-}: {
-  error: unknown
-  label?: string
-}) {
-  const [open, setOpen] = useState(false)
-  const [details, setDetails] = useState("")
+function ErrorDetailsBody({ error }: { error: unknown }) {
+  const [details] = useState(() => diagnosticSnapshot(error))
   const [copied, setCopied] = useState(false)
-
-  function changeOpen(next: boolean) {
-    if (next) {
-      setDetails(diagnosticSnapshot(error))
-      setCopied(false)
-    }
-    setOpen(next)
-  }
 
   async function copyDetails() {
     try {
@@ -159,42 +144,58 @@ export function ErrorDetailsButton({
   }
 
   return (
-    <AlertDialog.Root open={open} onOpenChange={changeOpen}>
-      <AlertDialog.Trigger
-        render={<Button type="button" size="xs" variant="outline" />}
-      >
+    <div className="space-y-3">
+      <ErrorGuidance error={error} />
+      <div className="flex justify-end">
+        <Button type="button" size="sm" variant="outline" onClick={() => void copyDetails()} aria-live="polite">
+          {copied ? "Copied" : "Copy details"}
+        </Button>
+      </div>
+      <pre className="max-h-[55dvh] overflow-auto rounded-lg border bg-muted/40 p-3 text-xs leading-5 break-words whitespace-pre-wrap text-foreground">
+        {details}
+      </pre>
+    </div>
+  )
+}
+
+/** Read-only diagnostics dialog. Shared by the "View details" button and the toast "Details" action. */
+export function ErrorDetailsDialog({
+  error,
+  open,
+  onOpenChange,
+}: {
+  error: unknown
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  return (
+    <AppDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      variant="info"
+      size="xl"
+      title="Error details"
+      description="Diagnostic information for troubleshooting. Request headers and body are not included."
+    >
+      <ErrorDetailsBody error={error} />
+    </AppDialog>
+  )
+}
+
+export function ErrorDetailsButton({
+  error,
+  label = "View details",
+}: {
+  error: unknown
+  label?: string
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <Button type="button" size="xs" variant="outline" onClick={() => setOpen(true)}>
         {label}
-      </AlertDialog.Trigger>
-      <AlertDialog.Portal>
-        <AlertDialog.Backdrop className="fixed inset-0 z-[110] bg-black/55 backdrop-blur-[2px] data-open:animate-in data-open:fade-in-0" />
-        <AlertDialog.Viewport className="fixed inset-0 z-[110] grid place-items-center overflow-y-auto p-4">
-          <AlertDialog.Popup className="flex max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col rounded-xl border bg-card p-5 text-card-foreground shadow-2xl outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95">
-            <AlertDialog.Title className="text-base font-semibold">
-              Error details
-            </AlertDialog.Title>
-            <AlertDialog.Description className="mt-1 text-sm leading-6 text-muted-foreground">
-              Diagnostic information for troubleshooting. Request headers and
-              body are not included.
-            </AlertDialog.Description>
-            <pre className="mt-4 min-h-0 flex-1 overflow-auto rounded-lg border bg-muted/40 p-3 text-xs leading-5 break-words whitespace-pre-wrap text-foreground">
-              {details}
-            </pre>
-            <div className="mt-4 flex justify-end gap-2 border-t pt-4">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => void copyDetails()}
-              >
-                {copied ? "Copied" : "Copy details"}
-              </Button>
-              <AlertDialog.Close render={<Button type="button" size="sm" />}>
-                Close
-              </AlertDialog.Close>
-            </div>
-          </AlertDialog.Popup>
-        </AlertDialog.Viewport>
-      </AlertDialog.Portal>
-    </AlertDialog.Root>
+      </Button>
+      <ErrorDetailsDialog error={error} open={open} onOpenChange={setOpen} />
+    </>
   )
 }

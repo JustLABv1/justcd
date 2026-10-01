@@ -10,8 +10,11 @@ import { Filters } from "@/components/reui/filters/filters"
 import { createFilterQuery, flattenFilterConditions } from "@/components/reui/filters/filters-query"
 import type { FilterField, FilterQuery } from "@/components/reui/filters/filters-types"
 import { DataGridList } from "@/components/data-grid-table"
-import { ConfirmDisclosure } from "@/components/confirm-disclosure"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { RowActions, type ActionItem } from "@/components/action-menu"
+import { Badge } from "@/components/reui/badge"
+import { Disclosure } from "@/components/ui/collapsible"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { Delete02Icon, Edit02Icon, ViewIcon } from "@hugeicons/core-free-icons"
 import { EmptyState, StatusBadge } from "@/components/ui-kit"
 import { WorkspaceIcon } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
@@ -26,7 +29,6 @@ import { api } from "@/lib/api"
 function ApplicationActions({ app, canManage, onDeleted }: { app: WorkspaceApplication; canManage: boolean; onDeleted?: (id: string) => void }) {
   const router = useRouter()
   const toast = useToast()
-  const [deleteOpen, setDeleteOpen] = useState(false)
   const [policy, setPolicy] = useState("keep")
   async function remove() {
     const result = await api<{ deleted: boolean }>(`/api/v1/applications/${encodeURIComponent(app.id)}?resources=${policy}`, { method: "DELETE" })
@@ -38,25 +40,29 @@ function ApplicationActions({ app, canManage, onDeleted }: { app: WorkspaceAppli
       router.push(`/applications/${app.id}?tab=changes`)
     }
   }
-  return <>
-    <DropdownMenu>
-      <DropdownMenuTrigger render={<Button type="button" variant="ghost" size="icon" aria-label={`Actions for ${app.name}`} title={`Actions for ${app.name}`} />}><span className="text-lg leading-none" aria-hidden="true">⋯</span></DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-36">
-        <DropdownMenuItem onClick={() => router.push(`/applications/${app.id}`)}>View application</DropdownMenuItem>
-        {canManage && <><DropdownMenuItem onClick={() => router.push(`/applications/${app.id}/edit`)}>Edit application</DropdownMenuItem><DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>Delete application</DropdownMenuItem></>}
-      </DropdownMenuContent>
-    </DropdownMenu>
-    <ConfirmDisclosure open={deleteOpen} onOpenChange={setDeleteOpen} title={`Delete ${app.name}?`} description="Choose whether JustCD keeps the managed Kubernetes resources or prepares a deletion plan for review." confirmLabel="Continue" onConfirm={remove}>
-      <FormSelect ariaLabel="Managed cluster resources" value={policy} onValueChange={setPolicy} items={[{ value: "keep", label: "Keep resources in Kubernetes" }, { value: "delete", label: "Delete through a reviewed plan" }]} />
-      {policy === "delete" && <p className="mt-2 text-sm text-muted-foreground">Resources are not deleted immediately. Review and approve the deletion plan on the application page.</p>}
-    </ConfirmDisclosure>
-  </>
+  const items: ActionItem[] = [{ label: "View application", icon: ViewIcon, href: `/applications/${app.id}` }]
+  if (canManage) {
+    items.push({ label: "Edit application", icon: Edit02Icon, href: `/applications/${app.id}/edit` })
+    items.push({
+      label: "Delete application",
+      icon: Delete02Icon,
+      destructive: true,
+      confirm: {
+        title: `Delete ${app.name}?`,
+        description: "Choose whether JustCD keeps the managed Kubernetes resources or prepares a deletion plan for review.",
+        confirmLabel: "Delete application",
+        onConfirm: remove,
+        children: <>
+          <FormSelect ariaLabel={`Managed cluster resources for ${app.name}`} value={policy} onValueChange={setPolicy} items={[{ value: "keep", label: "Keep resources in Kubernetes" }, { value: "delete", label: "Delete through a reviewed plan" }]} />
+          {policy === "delete" && <p className="mt-2 text-sm text-muted-foreground">Resources are not deleted immediately. Review and approve the deletion plan on the application page.</p>}
+        </>,
+      },
+    })
+  }
+  return <RowActions label={app.name} items={items} />
 }
 
-function RuntimeHealth({ condition }: { condition: WorkspaceApplication["healthCondition"] }) {
-  const status = condition?.status ?? "Unknown"
-  return <div className="flex flex-wrap items-center gap-2"><span className="text-xs text-muted-foreground">Runtime</span><StatusBadge status={status} /></div>
-}
+const checkSources = (app: WorkspaceApplication) => app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")
 
 export function ApplicationCard({ app, canManage, onDeleted }: { app: WorkspaceApplication; canManage?: boolean; onDeleted?: (id: string) => void }) {
   const namespaces = app.namespaces.map((item) => item.namespace).join(", ")
@@ -67,7 +73,7 @@ export function ApplicationCard({ app, canManage, onDeleted }: { app: WorkspaceA
   return (
     <article className="flex min-w-0 flex-col rounded-xl border bg-card p-5">
       <header className="flex items-start justify-between gap-3">
-        <div className="min-w-0 pt-1">
+        <div className="min-w-0">
           <h3 className="truncate text-base font-semibold tracking-tight" title={app.name}>
             <Link href={`/applications/${app.id}`} className="rounded-sm hover:underline underline-offset-4">
               {app.name}
@@ -80,35 +86,38 @@ export function ApplicationCard({ app, canManage, onDeleted }: { app: WorkspaceA
         <ApplicationActions app={app} canManage={Boolean(canManage)} onDeleted={onDeleted} />
       </header>
 
-      <div className="mt-4 space-y-2">
-        <div className="flex flex-wrap items-center gap-2"><span className="text-xs text-muted-foreground">Sync</span><StatusBadge status={app.health} />{app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}{app.configurationMissing && <span className="text-xs text-destructive">Definition missing</span>}</div>
-        <RuntimeHealth condition={app.healthCondition} />
-        {app.statusIssues?.length > 0 && <p className="mt-2 text-xs leading-5 text-destructive" title={app.statusIssues.map((issue) => issue.summary).join("\n")}>{app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")} check failed · <Link href={`/applications/${app.id}`} className="underline underline-offset-2">Details</Link></p>}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <StatusBadge status={app.health} />
+        {app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}
+        {app.configurationMissing && <Badge variant="destructive-light" radius="full">Definition missing</Badge>}
       </div>
+      {app.statusIssues?.length > 0 && <p className="mt-2 text-sm text-destructive" title={app.statusIssues.map((issue) => issue.summary).join("\n")}>{checkSources(app)} check failed · <Link href={`/applications/${app.id}`} className="underline underline-offset-2">Details</Link></p>}
 
-      <dl className="my-5 grid grid-cols-[70px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-2.5 text-xs">
-        <dt className="text-muted-foreground">Cluster</dt>
-        <dd className="truncate font-medium" title={`${app.clusterName || app.clusterId} (${app.clusterId})`}>{app.clusterName || app.clusterId}</dd>
-        <dt className="text-muted-foreground">Config</dt>
-        <dd className="truncate" title={app.configurationPath || "Configured in JustCD"}>{app.repositoryConfigurationId ? "Managed by Git" : "Managed in JustCD"}</dd>
-        <dt className="text-muted-foreground">Path</dt>
-        <dd className="truncate font-mono" title={app.manifestPath || "."}>
-          {app.manifestPath || "."}
-        </dd>
+      <dl className="mt-4 grid grid-cols-[88px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-2 text-sm">
         <dt className="text-muted-foreground">Revision</dt>
-        <dd className="truncate font-mono" title={app.revision}>
-          {revision}
-        </dd>
+        <dd className="truncate font-mono" title={app.revision}>{revision}</dd>
         <dt className="text-muted-foreground">Namespace</dt>
-        <dd className="truncate" title={namespaces || "No namespace"}>
-          {namespaces || "No namespace"}
-        </dd>
+        <dd className="truncate" title={namespaces || "No namespace"}>{namespaces || "No namespace"}</dd>
+        <dt className="text-muted-foreground">Last checked</dt>
+        <dd className="truncate">{app.lastCheckedAt ? new Date(app.lastCheckedAt).toLocaleString() : "Not checked yet"}</dd>
       </dl>
 
-      <footer className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t pt-3 text-xs text-muted-foreground">
-        <span>{app.renderer === "helm" ? "Helm" : app.renderer === "kustomize" ? "Kustomize" : app.renderer}</span>
-        <span>{app.autoSyncPaused ? "Reconciliation paused" : app.syncPolicy === "auto-safe" ? "Auto-safe sync" : "Manual sync"}</span>
-      </footer>
+      <Disclosure className="mt-auto pt-4" summary={<>Details<span className="sr-only"> for {app.name}</span></>}>
+        <dl className="grid grid-cols-[88px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-2 border-t pt-3 text-sm">
+          <dt className="text-muted-foreground">Runtime</dt>
+          <dd><StatusBadge status={app.healthCondition?.status ?? "Unknown"} /></dd>
+          <dt className="text-muted-foreground">Cluster</dt>
+          <dd className="truncate font-medium" title={`${app.clusterName || app.clusterId} (${app.clusterId})`}>{app.clusterName || app.clusterId}</dd>
+          <dt className="text-muted-foreground">Config</dt>
+          <dd className="truncate" title={app.configurationPath || "Configured in JustCD"}>{app.repositoryConfigurationId ? "Managed by Git" : "Managed in JustCD"}</dd>
+          <dt className="text-muted-foreground">Path</dt>
+          <dd className="truncate font-mono" title={app.manifestPath || "."}>{app.manifestPath || "."}</dd>
+          <dt className="text-muted-foreground">Renderer</dt>
+          <dd>{app.renderer === "helm" ? "Helm" : app.renderer === "kustomize" ? "Kustomize" : "Plain YAML / JSON"}</dd>
+          <dt className="text-muted-foreground">Sync policy</dt>
+          <dd>{app.autoSyncPaused ? "Reconciliation paused" : app.syncPolicy === "auto-safe" ? "Auto-safe sync" : "Manual sync"}</dd>
+        </dl>
+      </Disclosure>
     </article>
   )
 }
@@ -133,7 +142,7 @@ export function ApplicationCollection({
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState(initialFilter)
   const [filterQuery, setFilterQuery] = useState<FilterQuery>(() => createFilterQuery())
-  const [view, setView] = useState<"cards" | "table">("cards")
+  const [view, setView] = useState<"cards" | "list">("cards")
   const [sort, setSort] = useState("attention")
   const [removedIds, setRemovedIds] = useState<string[]>([])
   const handleDeleted = (id: string) => { setRemovedIds((current) => [...current, id]); onDeleted?.(id) }
@@ -200,7 +209,7 @@ export function ApplicationCollection({
       <div className="rounded-xl border border-dashed bg-card">
         <EmptyState
           title="Your next deployment starts here"
-          description="Connect a Git repository and a Kubernetes target to bring your first application online."
+          description={`Connect a Git repository and a Kubernetes target to bring your first application online.${canCreate ? "" : " Ask a workspace owner to create one."}`}
           href={canCreate ? createHref : undefined}
           action="Create application"
         />
@@ -215,10 +224,11 @@ export function ApplicationCollection({
         <div
           className="overflow-x-auto border-b px-4 py-3 sm:px-5"
         >
-          <div
-            className="flex w-max gap-1"
-            role="group"
+          <ToggleGroup
+            className="w-max gap-1 border-0 bg-transparent p-0"
             aria-label="Filter by health"
+            value={[filter]}
+            onValueChange={(value) => { if (value[0]) setFilter(value[0]) }}
           >
             {(
               [
@@ -229,22 +239,14 @@ export function ApplicationCollection({
                 ["paused", "Reconciliation paused"],
               ] as const
             ).map(([value, label]) => (
-              <Button
-                key={value}
-                type="button"
-                aria-pressed={filter === value}
-                onClick={() => setFilter(value)}
-                size="sm"
-                variant={filter === value ? "secondary" : "ghost"}
-                className="h-8 shrink-0 gap-2"
-              >
+              <ToggleGroupItem key={value} value={value} className="h-8 shrink-0 gap-2">
                 {label}
                 <span className="rounded bg-background/60 px-1.5 py-0.5 text-xs leading-none tabular-nums">
                   {counts[value]}
                 </span>
-              </Button>
+              </ToggleGroupItem>
             ))}
-          </div>
+          </ToggleGroup>
         </div>
         <div className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5">
           <div className="relative w-full min-w-0 sm:w-auto sm:min-w-56 sm:flex-1 lg:max-w-sm">
@@ -276,9 +278,10 @@ export function ApplicationCollection({
       </section>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-1">
         <p role="status" className="text-sm text-muted-foreground">Showing {visible.length} of {available.length} applications</p>
-        <div className="flex w-fit gap-1 rounded-lg border bg-card p-1" role="group" aria-label="Application view">
-          {(["cards", "table"] as const).map((value) => <Button type="button" key={value} aria-pressed={view === value} onClick={() => setView(value)} size="sm" variant={view === value ? "secondary" : "ghost"} className="capitalize">{value}</Button>)}
-        </div>
+        <ToggleGroup aria-label="Application view" value={[view]} onValueChange={(value) => { if (value[0]) setView(value[0] as "cards" | "list") }}>
+          <ToggleGroupItem value="cards">Cards</ToggleGroupItem>
+          <ToggleGroupItem value="list">List</ToggleGroupItem>
+        </ToggleGroup>
       </div>
       {visible.length ? (
         view === "cards" ? (
@@ -311,7 +314,7 @@ export function ApplicationCollection({
                 id: "health",
                 title: "Health",
                 size: 150,
-                cell: (app) => <div className="space-y-2"><div className="flex flex-wrap gap-1.5"><StatusBadge status={app.health} /><StatusBadge status={app.healthCondition?.status ?? "Unknown"} />{app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}{app.configurationMissing && <span className="text-xs text-destructive">Definition missing</span>}</div><p className="text-sm text-muted-foreground" title={app.healthCondition?.message}>{app.healthCondition?.reason ?? "Health not observed"} · {app.healthCondition?.lastTransitionTime ? new Date(app.healthCondition.lastTransitionTime).toLocaleString() : "Not observed yet"}</p>{app.statusIssues?.length > 0 && <span className="block text-xs text-destructive">{app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")} check failed</span>}</div>,
+                cell: (app) => <div className="space-y-2"><div className="flex flex-wrap gap-1.5"><StatusBadge status={app.health} /><StatusBadge status={app.healthCondition?.status ?? "Unknown"} />{app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}{app.configurationMissing && <Badge variant="destructive-light" radius="full">Definition missing</Badge>}</div><p className="text-sm text-muted-foreground" title={app.healthCondition?.message}>{app.healthCondition?.reason ?? "Health not observed"} · {app.healthCondition?.lastTransitionTime ? new Date(app.healthCondition.lastTransitionTime).toLocaleString() : "Not observed yet"}</p>{app.statusIssues?.length > 0 && <span className="block text-xs text-destructive">{checkSources(app)} check failed</span>}</div>,
               },
               {
                 id: "cluster",
@@ -351,7 +354,7 @@ export function ApplicationCollection({
                 title: "Sync policy",
                 size: 120,
                 cell: (app) => (
-                  <div className="space-y-1 text-xs"><span>{app.syncPolicy}</span>{app.autoSyncPaused && <span className="block text-amber-600 dark:text-amber-400">Reconciliation paused</span>}</div>
+                  <div className="space-y-1 text-xs"><span>{app.syncPolicy}</span>{app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}</div>
                 ),
               },
               {

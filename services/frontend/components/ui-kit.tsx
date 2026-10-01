@@ -3,6 +3,8 @@ import type { ReactNode } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Layers01Icon } from "@hugeicons/core-free-icons"
 import { IconStack } from "@/components/reui/icon-stack"
+import { Badge } from "@/components/reui/badge"
+import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Switch } from "@/components/ui/switch"
 
@@ -67,13 +69,13 @@ export function StatCard({
   value,
   note,
   accent = "bg-primary/10 text-primary",
-  icon = "·",
+  icon,
 }: {
   label: string
   value: string | number
   note: string
   accent?: string
-  icon?: string
+  icon?: ReactNode
 }) {
   return (
     <div className="rounded-xl border bg-card p-4 sm:p-5">
@@ -82,23 +84,29 @@ export function StatCard({
           <p className="text-sm font-medium text-muted-foreground">{label}</p>
           <p className="mt-3 text-2xl font-semibold tracking-tight">{value}</p>
         </div>
-        <span aria-hidden="true" className={`grid size-9 shrink-0 place-items-center rounded-lg text-base leading-none ${accent}`}>{icon}</span>
+        {icon && <span aria-hidden="true" className={`grid size-9 shrink-0 place-items-center rounded-lg text-base leading-none ${accent}`}>{icon}</span>}
       </div>
       <p className="mt-3 text-sm text-muted-foreground">{note}</p>
     </div>
   )
 }
 
+export type StatusTone = "success" | "destructive" | "warning" | "neutral"
+
+/** Maps a free-form status string (sync, health, check result, …) to a semantic tone. Matching is substring based on purpose. */
+export function statusTone(status: string): StatusTone {
+  const normalized = status.toLowerCase().replaceAll("_", " ")
+  if (normalized.includes("synced") || normalized.includes("succeeded") || normalized === "healthy" || normalized === "true") return "success"
+  if (normalized.includes("delet") || normalized.includes("failed") || normalized.includes("degrad") || normalized.includes("error") || normalized === "missing" || normalized === "false") return "destructive"
+  if (normalized.includes("sync") || normalized.includes("pending") || normalized.includes("running") || normalized.includes("out of") || normalized.includes("progress") || normalized === "partial" || normalized === "suspended" || normalized.includes("paused")) return "warning"
+  return "neutral"
+}
+
+const statusBadgeVariant = { success: "success-light", destructive: "destructive-light", warning: "warning-light", neutral: "secondary" } as const
+
 export function StatusBadge({ status }: { status: string }) {
   const normalized = status.toLowerCase().replaceAll("_", " ")
-  const styles = normalized.includes("synced") || normalized.includes("succeeded") || normalized === "healthy" || normalized === "true"
-    ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300"
-    : normalized.includes("delet") || normalized.includes("failed") || normalized.includes("degrad") || normalized.includes("error") || normalized === "missing" || normalized === "false"
-      ? "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-300"
-      : normalized.includes("sync") || normalized.includes("pending") || normalized.includes("running") || normalized.includes("out of") || normalized.includes("progress") || normalized === "partial" || normalized === "suspended" || normalized.includes("paused")
-        ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-300"
-        : "border-border bg-muted/50 text-muted-foreground"
-  return <span className={`inline-flex w-fit shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-px text-xs leading-4 font-medium capitalize ${styles}`}><span className="size-1.5 shrink-0 rounded-full bg-current opacity-70" />{normalized}</span>
+  return <Badge variant={statusBadgeVariant[statusTone(status)]} radius="full" className="capitalize"><span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-current opacity-70" />{normalized}</Badge>
 }
 
 export function EmptyState({
@@ -106,18 +114,23 @@ export function EmptyState({
   description,
   href,
   action = "Get started",
+  onAction,
+  actionVariant = "default",
 }: {
   title: string
   description: string
   href?: string
   action?: string
+  onAction?: () => void
+  actionVariant?: "default" | "outline"
 }) {
   return (
     <div className="flex flex-col items-center justify-center px-5 py-12 text-center">
-      <IconStack className="empty-state-icon-stack text-primary"><HugeiconsIcon icon={Layers01Icon} className="size-6" /></IconStack>
+      <IconStack className="empty-state-icon-stack text-primary"><HugeiconsIcon icon={Layers01Icon} className="size-6" aria-hidden="true" /></IconStack>
       <h3 className="mt-4 text-sm font-semibold">{title}</h3>
       <p className="mt-1 max-w-sm text-sm leading-5 text-muted-foreground">{description}</p>
-      {href && <Link href={href} className="mt-4 text-sm font-medium text-primary hover:underline">{action} <span aria-hidden="true">→</span></Link>}
+      {href ? <Button render={<Link href={href} />} nativeButton={false} variant={actionVariant} className="mt-4">{action}</Button>
+        : onAction ? <Button type="button" variant={actionVariant} className="mt-4" onClick={onAction}>{action}</Button> : null}
     </div>
   )
 }
@@ -126,18 +139,20 @@ export function FormField({
   label,
   htmlFor,
   hint,
+  error,
   children,
 }: {
   label: string
   htmlFor: string
   hint?: string
+  error?: string
   children: ReactNode
 }) {
   return (
     <div className="space-y-1.5">
       <label htmlFor={htmlFor} className="block text-sm font-medium">{label}</label>
       {children}
-      {hint && <p className="text-sm leading-4 text-muted-foreground">{hint}</p>}
+      {error ? <p role="alert" className="text-sm leading-4 text-destructive">{error}</p> : hint && <p className="text-sm leading-4 text-muted-foreground">{hint}</p>}
     </div>
   )
 }
@@ -213,7 +228,7 @@ export function SwitchField({ checked, onCheckedChange, label, description, disa
   tone?: "default" | "warning"
 }) {
   return (
-    <div className={`flex items-start justify-between gap-4 rounded-lg border p-3 ${tone === "warning" ? "border-amber-300/60 bg-amber-50/50 dark:border-amber-900 dark:bg-amber-950/20" : ""}`}>
+    <div className={`flex items-start justify-between gap-4 rounded-lg border p-3 ${tone === "warning" ? "border-warning/30 bg-warning/10" : ""}`}>
       <div className="min-w-0"><label htmlFor={id} className="block text-sm font-medium">{label}</label>{description && <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>}</div>
       <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} aria-label={label} />
     </div>

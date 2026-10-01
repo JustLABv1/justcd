@@ -1,10 +1,8 @@
 "use client"
 
 import { useEffect, useState, type ReactNode } from "react"
-import { Dialog } from "@base-ui/react/dialog"
 import { toast, Toaster, useToastManager } from "@/components/ui/toast"
-import { Button } from "@/components/ui/button"
-import { ErrorGuidance, ErrorDetailsButton } from "@/components/error-details"
+import { ErrorDetailsDialog } from "@/components/error-details"
 
 type ToastKind = "success" | "error" | "info" | "warning"
 
@@ -55,20 +53,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return <Toaster limit={3}>
     {children}
     <ToastClearance />
-    <Dialog.Root open={open} onOpenChange={setOpen}>
-      <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-[110] bg-black/50" />
-        <Dialog.Viewport className="fixed inset-0 z-[110] grid place-items-center overflow-auto p-4">
-          <Dialog.Popup className="w-full max-w-lg space-y-4 rounded-xl border bg-card p-5 shadow-xl">
-            <Dialog.Title className="font-semibold">Error details</Dialog.Title>
-            <Dialog.Description className="text-sm text-muted-foreground">Review the cause and available troubleshooting details.</Dialog.Description>
-            <ErrorGuidance error={error} />
-            <ErrorDetailsButton error={error} />
-            <Dialog.Close render={<Button variant="outline" />}>Close</Dialog.Close>
-          </Dialog.Popup>
-        </Dialog.Viewport>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <ErrorDetailsDialog error={error} open={open} onOpenChange={setOpen} />
   </Toaster>
 }
 

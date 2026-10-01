@@ -1,8 +1,12 @@
 "use client"
 
-import { useMemo, useRef, useState } from "react"
+import { useId, useMemo, useRef, useState } from "react"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { ArrowDown01Icon, ArrowUp01Icon, Settings02Icon } from "@hugeicons/core-free-icons"
 import { Button } from "@/components/ui/button"
-import { FormSelect } from "@/components/ui/form-select"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { SwitchField } from "@/components/ui-kit"
 import { contextRows, reviewRows } from "@/lib/line-diff"
 
 export function ManifestDiff({ before, after, excluded = false }: { before: unknown; after: unknown; excluded?: boolean }) {
@@ -12,6 +16,7 @@ export function ManifestDiff({ before, after, excluded = false }: { before: unkn
   const [expanded, setExpanded] = useState(false)
   const [position, setPosition] = useState(-1)
   const scroll = useRef<HTMLDivElement>(null)
+  const optionsId = useId()
   const singleSide = before == null || after == null
   const split = mode === "split"
   const rows = useMemo(() => reviewRows(before, after), [before, after])
@@ -24,7 +29,7 @@ export function ManifestDiff({ before, after, excluded = false }: { before: unkn
     if (target && scroll.current) scroll.current.scrollTop += target.getBoundingClientRect().top - scroll.current.getBoundingClientRect().top - 48
   }
   function line(text: string | undefined, number: number | undefined, tone?: "removed" | "added") {
-    return <div className={`flex min-w-0 ${tone === "removed" ? "bg-rose-100 text-rose-950 dark:bg-rose-950/50 dark:text-rose-100" : tone === "added" ? "bg-emerald-100 text-emerald-950 dark:bg-emerald-950/50 dark:text-emerald-100" : ""}`}>
+    return <div className={`flex min-w-0 ${tone === "removed" ? "bg-destructive/10" : tone === "added" ? "bg-success/10" : ""}`}>
       <span aria-hidden="true" className="w-12 shrink-0 select-none px-2 text-right text-muted-foreground">{number}</span>
       <span aria-hidden="true" className="w-5 shrink-0 select-none">{tone === "removed" ? "−" : tone === "added" ? "+" : ""}</span>
       <span className={`min-w-0 flex-1 pr-4 ${wrap || split ? "whitespace-pre-wrap break-all" : "whitespace-pre"}`}>{text ?? " "}</span>
@@ -33,14 +38,27 @@ export function ManifestDiff({ before, after, excluded = false }: { before: unkn
   if (before == null && after == null) return <section aria-label="Manifest comparison" className="px-4 py-5 text-sm text-muted-foreground">Manifest content is unavailable for this difference.{excluded ? " This entry is excluded and will not be applied." : ""}</section>
   return <section aria-label="Manifest comparison">
     <div className="flex flex-wrap items-center gap-2 border-b p-3">
-      <FormSelect ariaLabel="Diff layout" value={mode} onValueChange={setMode} className="w-32" items={[{ value: "split", label: "Side by side" }, { value: "unified", label: "Unified" }]} />
-      <FormSelect ariaLabel="Code font size" value={fontSize} onValueChange={setFontSize} className="w-24" items={[14, 16, 18].map((n) => ({ value: String(n), label: `${n} px` }))} />
-      <Button type="button" variant="outline" aria-pressed={wrap || split} disabled={split} title={split ? "Side-by-side view wraps long lines to keep both manifests visible" : undefined} onClick={() => setWrap(!wrap)}>Wrap lines</Button>
-      <Button type="button" variant="outline" aria-pressed={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "Collapse context" : "Show all lines"}</Button>
+      <ToggleGroup aria-label="Diff layout" value={[mode]} onValueChange={(next) => { if (next[0]) setMode(next[0]) }}>
+        <ToggleGroupItem value="split">Side by side</ToggleGroupItem>
+        <ToggleGroupItem value="unified">Unified</ToggleGroupItem>
+      </ToggleGroup>
+      <Popover>
+        <PopoverTrigger render={<Button type="button" variant="outline" size="sm" />}><HugeiconsIcon icon={Settings02Icon} strokeWidth={1.8} aria-hidden="true" />View options</PopoverTrigger>
+        <PopoverContent align="start" className="w-80 gap-3 p-3">
+          <div className="space-y-1.5">
+            <p id={`${optionsId}-font`} className="text-sm font-medium">Code font size</p>
+            <ToggleGroup aria-labelledby={`${optionsId}-font`} value={[fontSize]} onValueChange={(next) => { if (next[0]) setFontSize(next[0]) }}>
+              {[14, 16, 18].map((n) => <ToggleGroupItem key={n} value={String(n)}>{n} px</ToggleGroupItem>)}
+            </ToggleGroup>
+          </div>
+          <SwitchField id={`${optionsId}-wrap`} label="Wrap lines" description={split ? "Side-by-side view always wraps long lines to keep both manifests visible." : "Wrap long lines instead of scrolling horizontally."} checked={wrap || split} disabled={split} onCheckedChange={setWrap} />
+          <SwitchField id={`${optionsId}-expand`} label="Show all lines" description="Include unchanged context lines." checked={expanded} onCheckedChange={setExpanded} />
+        </PopoverContent>
+      </Popover>
       <div className="ml-auto flex items-center gap-2">
-        <span className="text-xs text-muted-foreground" aria-live="polite">{hunks.length ? `${position < 0 ? "–" : position + 1} / ${hunks.length} changes` : "No text changes"}</span>
-        <Button type="button" variant="outline" aria-label="Previous change" disabled={!hunks.length} onClick={() => jump(-1)}>↑</Button>
-        <Button type="button" variant="outline" aria-label="Next change" disabled={!hunks.length} onClick={() => jump(1)}>↓</Button>
+        <span className="text-sm text-muted-foreground" aria-live="polite">{hunks.length ? `${position < 0 ? "–" : position + 1} / ${hunks.length} changes` : "No text changes"}</span>
+        <Button type="button" variant="outline" size="icon" aria-label="Previous change" disabled={!hunks.length} onClick={() => jump(-1)}><HugeiconsIcon icon={ArrowUp01Icon} strokeWidth={2} aria-hidden="true" /></Button>
+        <Button type="button" variant="outline" size="icon" aria-label="Next change" disabled={!hunks.length} onClick={() => jump(1)}><HugeiconsIcon icon={ArrowDown01Icon} strokeWidth={2} aria-hidden="true" /></Button>
       </div>
     </div>
     <div ref={scroll} tabIndex={0} aria-label="Scrollable manifest diff" className="relative h-[min(65svh,800px)] min-h-64 overflow-auto bg-card font-mono leading-6 focus-visible:outline-2 focus-visible:outline-ring" style={{ fontSize: Number(fontSize) }}>

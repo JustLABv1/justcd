@@ -1,7 +1,8 @@
 "use client"
 
 import { useState } from "react"
-import { ConfirmDisclosure } from "@/components/confirm-disclosure"
+import { ArrowExpand01Icon, Delete02Icon, RefreshIcon } from "@hugeicons/core-free-icons"
+import { ActionMenu, type ActionItem } from "@/components/action-menu"
 import { FormField } from "@/components/ui-kit"
 import { Input } from "@/components/ui/input"
 import { apiPost } from "@/lib/api"
@@ -19,15 +20,16 @@ export function ResourceActions({ applicationID, resource, disabled, onComplete 
     setBusy(true)
     try {
       await apiPost(`/api/v1/applications/${encodeURIComponent(applicationID)}/resource-actions`, { identity, uid: resource.uid, action, ...(action === "rescale" ? { replicas: Number(replicas) } : {}) })
-      toast.success("Resource action completed. Reconciliation is paused.")
+      toast.success("Resource action completed. Auto-sync is paused.")
     } finally {
       try { await onComplete() } finally { setBusy(false) }
     }
   }
-  const description = `JustCD will pause reconciliation before changing ${identity.namespace}/${identity.name}. It stays paused until an owner resumes it. Resuming may overwrite this change with the Git configuration.`
-  return <section aria-label="Resource actions" className="space-y-3 border-t pt-4"><h4 className="text-xs font-semibold">Resource actions</h4><p className="text-sm leading-5 text-muted-foreground">Actions pause reconciliation for this application until you resume it.</p><div className="flex flex-wrap gap-2">
-    {scalable && <ConfirmDisclosure trigger="Rescale" title={`Rescale ${identity.name}`} description={description} confirmLabel="Pause sync and rescale" triggerVariant="outline" confirmVariant="default" disabled={disabled || busy} confirmDisabled={!/^\d+$/.test(replicas) || Number(replicas) > 10000} onConfirm={() => run("rescale")}><FormField label="Replicas" htmlFor={`replicas-${resource.uid}`}><Input id={`replicas-${resource.uid}`} type="number" min={0} max={10000} value={replicas} onChange={(event) => setReplicas(event.target.value)} /></FormField></ConfirmDisclosure>}
-    {restartable && <ConfirmDisclosure trigger="Redeploy" title={`Redeploy ${identity.name}`} description={`This restarts the workload's pods using its current configuration. ${description}`} confirmLabel="Pause sync and redeploy" triggerVariant="outline" confirmVariant="default" disabled={disabled || busy} onConfirm={() => run("redeploy")} />}
-    <ConfirmDisclosure trigger="Delete" title={`Delete ${identity.name}?`} description={`This deletes the live Kubernetes resource and may interrupt service or remove data. ${description}`} confirmLabel="Pause sync and delete" disabled={disabled || busy} onConfirm={() => run("delete")} />
-  </div></section>
+  const description = `JustCD will pause auto-sync before changing ${identity.namespace}/${identity.name}. It stays paused until an owner resumes it. Resuming may overwrite this change with the Git configuration.`
+  const items: ActionItem[] = [
+    ...(scalable ? [{ label: "Rescale…", icon: ArrowExpand01Icon, disabled: disabled || busy, confirm: { title: `Rescale ${identity.name}`, description, confirmLabel: "Pause auto-sync and rescale", confirmDisabled: !/^\d+$/.test(replicas) || Number(replicas) > 10000, onConfirm: () => run("rescale"), children: <FormField label="Replicas" htmlFor={`replicas-${resource.uid}`}><Input id={`replicas-${resource.uid}`} type="number" min={0} max={10000} value={replicas} onChange={(event) => setReplicas(event.target.value)} /></FormField> } }] : []),
+    ...(restartable ? [{ label: "Redeploy…", icon: RefreshIcon, disabled: disabled || busy, confirm: { title: `Redeploy ${identity.name}`, description: `This restarts the workload's pods using its current configuration. ${description}`, confirmLabel: "Pause auto-sync and redeploy", onConfirm: () => run("redeploy") } }] : []),
+    { label: "Delete…", icon: Delete02Icon, destructive: true, disabled: disabled || busy, confirm: { title: `Delete ${identity.name}?`, description: `This deletes the live Kubernetes resource and may interrupt service or remove data. ${description}`, confirmLabel: `Delete ${identity.kind} ${identity.name}`, onConfirm: () => run("delete") } },
+  ]
+  return <section aria-label="Resource actions" className="space-y-3 border-t pt-4"><h4 className="text-sm font-semibold">Resource actions</h4><p className="text-sm leading-5 text-muted-foreground">Actions pause auto-sync for this application until you resume it.</p><ActionMenu label="Actions" size="sm" items={items} /></section>
 }

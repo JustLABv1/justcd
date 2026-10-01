@@ -28,3 +28,20 @@
 @media (prefers-reduced-motion: reduce) {
   .navItem { transition: none; }
 }
+
+.mobileNav {
+  /* display is set via Tailwind (`flex lg:hidden`) so the breakpoint utility can override it. */
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 16px;
+  background: var(--card);
+  padding: 6px 28px 6px 6px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+  /* Fade the trailing edge so it is obvious that the strip scrolls. */
+  -webkit-mask-image: linear-gradient(to right, transparent 0, black 10px, black calc(100% - 36px), transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, black 10px, black calc(100% - 36px), transparent 100%);
+}
+.mobileNav::-webkit-scrollbar { display: none; }

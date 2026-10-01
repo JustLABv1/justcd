@@ -25,10 +25,15 @@ export function DataGridList<T extends object>({
   rows,
   columns,
   empty = "Nothing here yet.",
+  emptyTitle = "Nothing to show yet",
+  emptyDescription,
 }: {
   rows: T[]
   columns: GridColumn<T>[]
+  /** Backwards-compatible alias for `emptyDescription`. */
   empty?: string
+  emptyTitle?: string
+  emptyDescription?: string
 }) {
   const definitions = useMemo(
     () => {
@@ -56,7 +61,7 @@ export function DataGridList<T extends object>({
   return (
     <div className="min-w-0 overflow-hidden rounded-xl border bg-card">
       {rows.length === 0 ? (
-        <EmptyState title="No items yet" description={empty} />
+        <EmptyState title={emptyTitle} description={emptyDescription ?? empty} />
       ) : (
         <DataGrid
           table={table}

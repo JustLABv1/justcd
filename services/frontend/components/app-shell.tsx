@@ -3,22 +3,27 @@
 import Link from "next/link"
 import styles from "./app-shell.module.css"
 import { usePathname, useRouter } from "next/navigation"
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { AccountMenu } from "@/components/account-menu"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { api, apiPost } from "@/lib/api"
 import { WorkspaceSelectionProvider } from "@/hooks/workspace-selection"
 import type { Application, ListResponse, Workspace, User } from "@/lib/types"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Home01Icon, Folder01Icon, Layers01Icon, Task01Icon, Settings02Icon, Audit01Icon, ArrowDown01Icon, GitBranchIcon, ServerStack01Icon, Key01Icon, Share01Icon, Route01Icon } from "@hugeicons/core-free-icons"
+import { Home01Icon, Folder01Icon, Layers01Icon, Task01Icon, Settings02Icon, Audit01Icon, ArrowDown01Icon, GitBranchIcon, ServerStack01Icon, Key01Icon, Share01Icon, Route01Icon, Add01Icon, Rocket01Icon } from "@hugeicons/core-free-icons"
 
-const navigation = [
+type NavItem = { href: string; label: string; icon: typeof Home01Icon }
+
+const deliveryNavigation: NavItem[] = [
   { href: "/", label: "Overview", icon: Home01Icon },
-  { href: "/onboarding", label: "Get started", icon: Task01Icon, adminOnly: true },
   { href: "/applications", label: "Applications", icon: Layers01Icon },
   { href: "/approvals", label: "Approvals", icon: Task01Icon },
-  { href: "/settings", label: "Instance settings", icon: Settings02Icon, adminOnly: true },
-  { href: "/audit", label: "Audit trail", icon: Audit01Icon, adminOnly: true },
+]
+
+const adminNavigation: NavItem[] = [
+  { href: "/onboarding", label: "Get started", icon: Rocket01Icon },
+  { href: "/settings", label: "Instance settings", icon: Settings02Icon },
+  { href: "/audit", label: "Audit trail", icon: Audit01Icon },
 ]
 
 const connectionNavigation = [
@@ -37,7 +42,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [workspacesLoading, setWorkspacesLoading] = useState(true)
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("")
-  const [routeWorkspace, setRouteWorkspace] = useState<Workspace | null>(null)
   const [routeApplication, setRouteApplication] = useState<Application | null>(null)
 
   useEffect(() => {
@@ -55,33 +59,31 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
   }, [router])
 
+  // The workspace list is fetched once per route change and shared through state.
   useEffect(() => {
     if (!user) return
     let active = true
-    api<ListResponse<Workspace>>("/api/v1/workspaces")
-      .then((response) => active && setWorkspaces(response.items))
-      .catch(() => active && setWorkspaces([]))
-      .finally(() => active && setWorkspacesLoading(false))
-    return () => { active = false }
-  }, [user])
-
-  useEffect(() => {
-    let active = true
     const segments = pathname.split("/").filter(Boolean)
-    Promise.resolve().then(async () => {
-      if (segments[0] === "workspaces" && segments[1] && segments[1] !== "new") {
-        const workspaces = await api<ListResponse<Workspace>>("/api/v1/workspaces")
-        if (active) { setRouteWorkspace(workspaces.items.find((item) => item.id === segments[1]) ?? null); setRouteApplication(null) }
-      } else if (segments[0] === "applications" && segments[1] && segments[1] !== "new") {
-        const [application, workspaces] = await Promise.all([
-          api<Application>(`/api/v1/applications/${encodeURIComponent(segments[1])}`),
-          api<ListResponse<Workspace>>("/api/v1/workspaces"),
-        ])
-        if (active) { setRouteApplication(application); setRouteWorkspace(workspaces.items.find((item) => item.id === application.workspaceId) ?? null) }
-      } else if (active) { setRouteWorkspace(null); setRouteApplication(null) }
-    }).catch(() => { if (active) { setRouteWorkspace(null); setRouteApplication(null) } })
+    const applicationId = segments[0] === "applications" && segments[1] && segments[1] !== "new" ? segments[1] : null
+    void Promise.resolve().then(async () => {
+      const [list, application] = await Promise.all([
+        api<ListResponse<Workspace>>("/api/v1/workspaces").then((response) => response.items, () => null),
+        applicationId ? api<Application>(`/api/v1/applications/${encodeURIComponent(applicationId)}`).catch(() => null) : Promise.resolve(null),
+      ])
+      if (!active) return
+      if (list) setWorkspaces(list)
+      setRouteApplication(application)
+      setWorkspacesLoading(false)
+    })
     return () => { active = false }
-  }, [pathname])
+  }, [user, pathname])
+
+  const routeWorkspace = useMemo(() => {
+    const segments = pathname.split("/").filter(Boolean)
+    if (segments[0] === "workspaces" && segments[1] && segments[1] !== "new") return workspaces.find((item) => item.id === segments[1]) ?? null
+    if (segments[0] === "applications" && routeApplication && routeApplication.id === segments[1]) return workspaces.find((item) => item.id === routeApplication.workspaceId) ?? null
+    return null
+  }, [pathname, workspaces, routeApplication])
 
   useEffect(() => {
     let active = true
@@ -112,6 +114,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   const crumbs = pageCrumbs(pathname, routeWorkspace, routeApplication)
+  const showAdmin = user?.isAdmin ?? false
 
   async function signOut() {
     try {
@@ -120,6 +123,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       router.replace("/login")
     }
   }
+
+  const connections: NavItem[] = connectionNavigation.map((item) => ({ href: `/workspaces/${selectedWorkspaceId}/connections/${item.section}`, label: item.label, icon: item.icon }))
+  const mobileGroups = [
+    { label: "Delivery", items: deliveryNavigation },
+    ...(selectedWorkspaceId ? [{ label: "Connections", items: connections }] : []),
+    ...(showAdmin ? [{ label: "Administration", items: adminNavigation }] : []),
+  ]
 
   if (loading || !user) {
     return (
@@ -133,7 +143,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="min-h-svh bg-[#f7f8f8] text-foreground dark:bg-background">
+    <div className="min-h-svh bg-muted text-foreground dark:bg-background">
       <aside className="fixed bottom-3 left-3 top-3 z-20 hidden w-[224px] flex-col overflow-hidden rounded-[24px] border border-border/70 bg-card shadow-[0_8px_32px_-16px_rgb(0_0_0_/_0.2)] lg:flex">
         <Link href="/" className="flex shrink-0 items-center gap-3 px-5 pb-7 pt-6">
           <span className="grid size-9 place-items-center rounded-xl bg-primary text-sm font-bold text-primary-foreground">J</span>
@@ -144,42 +154,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </Link>
         <WorkspaceSelector workspaces={workspaces} selectedId={selectedWorkspaceId} onChange={selectWorkspace} loading={workspacesLoading} />
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-5">
-          <p className="px-4 pb-2 text-sm font-medium uppercase tracking-[0.12em] text-muted-foreground">Workspace</p>
-          <nav aria-label="Workspace" className="space-y-1">
-            {navigation.filter((item) => !item.adminOnly).map((item) => {
-              const selected = isSelected(item.href, pathname)
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  aria-current={selected ? "page" : undefined}
-                  className={styles.navItem}
-                >
-                  <HugeiconsIcon icon={item.icon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />
-                  {item.label}
-                </Link>
-              )
-            })}
-          </nav>
-          {selectedWorkspaceId && <>
-            <p className="px-4 pb-2 pt-7 text-sm font-medium uppercase tracking-[0.12em] text-muted-foreground">Connections</p>
-            <nav aria-label="Workspace connections" className="space-y-1">
-              {connectionNavigation.map((item) => {
-                const href = `/workspaces/${selectedWorkspaceId}/connections/${item.section}`
-                const selected = isSelected(href, pathname) || (item.section === "clusters" && pathname === `/workspaces/${selectedWorkspaceId}/clusters/new`) || (item.section === "git-sources" && pathname === `/workspaces/${selectedWorkspaceId}/git-sources/new`)
-                return <Link key={item.section} href={href} aria-current={selected ? "page" : undefined} className={styles.navItem}><HugeiconsIcon icon={item.icon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />{item.label}</Link>
-              })}
-            </nav>
-          </>}
-          {user.isAdmin && <>
-            <p className="px-4 pb-2 pt-7 text-sm font-medium uppercase tracking-[0.12em] text-muted-foreground">Administration</p>
-            <nav aria-label="Administration" className="space-y-1">
-              {navigation.filter((item) => item.adminOnly).map((item) => {
-                const selected = isSelected(item.href, pathname)
-                return <Link key={item.href} href={item.href} aria-current={selected ? "page" : undefined} className={styles.navItem}><HugeiconsIcon icon={item.icon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />{item.label}</Link>
-              })}
-            </nav>
-          </>}
+          <NavGroup label="Delivery" items={deliveryNavigation} pathname={pathname} first />
+          {selectedWorkspaceId && <NavGroup label="Connections" items={connections} pathname={pathname} />}
+          {user.isAdmin && <NavGroup label="Administration" items={adminNavigation} pathname={pathname} />}
         </div>
         <AccountMenu user={user} onSignOut={signOut} />
       </aside>
@@ -195,19 +172,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="mx-4 mb-2 lg:hidden">
           <WorkspaceSelector workspaces={workspaces} selectedId={selectedWorkspaceId} onChange={selectWorkspace} compact loading={workspacesLoading} />
         </div>
-        <nav aria-label="Main navigation" className="mx-4 mt-3 flex gap-1 overflow-x-auto rounded-2xl border border-border/70 bg-card p-1.5 shadow-sm lg:hidden">
-          {navigation.filter((item) => !item.adminOnly || user.isAdmin).map((item) => {
-            const selected = isSelected(item.href, pathname)
-            return <Link key={item.href} href={item.href} aria-current={selected ? "page" : undefined} className={`${styles.navItem} shrink-0 !px-3 !py-2 !text-xs`}>{item.label}</Link>
-          })}
-          {selectedWorkspaceId && connectionNavigation.map((item) => {
-            const href = `/workspaces/${selectedWorkspaceId}/connections/${item.section}`
-            const selected = isSelected(href, pathname)
-            return <Link key={item.section} href={href} aria-current={selected ? "page" : undefined} className={`${styles.navItem} shrink-0 !px-3 !py-2 !text-xs`}>{item.label}</Link>
-          })}
+        <nav aria-label="Main navigation" className={`mx-4 mt-3 flex lg:hidden ${styles.mobileNav}`}>
+          {mobileGroups.map((group, groupIndex) => <div key={group.label} role="group" aria-label={group.label} className="flex shrink-0 items-center gap-1">
+            {groupIndex > 0 && <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 bg-border" />}
+            <span className="shrink-0 px-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">{group.label}</span>
+            {group.items.map((item) => <Link key={item.href} href={item.href} aria-current={isNavSelected(item.href, pathname) ? "page" : undefined} className={`${styles.navItem} shrink-0 !px-3 !py-2 !text-xs`}><HugeiconsIcon icon={item.icon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />{item.label}</Link>)}
+          </div>)}
         </nav>
         <main style={{ paddingBottom: "calc(2rem + var(--toast-clearance, 0px))" }} className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") ? "max-w-none" : "max-w-[1440px]"} px-5 pb-7 pt-5 sm:px-8 sm:pb-8 sm:pt-6 lg:pt-9 ${pathname === "/audit" ? "lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden" : ""}`}>
-          {crumbs.length > 1 && <nav aria-label="Breadcrumb" className="mb-4 shrink-0 text-xs">
+          {crumbs.length > 1 && <nav aria-label="Breadcrumb" className="mb-4 shrink-0 text-sm">
             <ol className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               {crumbs.map((crumb, index) => <li key={`${crumb.label}-${index}`} className="flex min-w-0 max-w-full items-center gap-2">
                 {index > 0 && <span aria-hidden="true" className="text-muted-foreground/50">/</span>}
@@ -242,7 +215,7 @@ function WorkspaceSelector({
     return <div role="status" className={`mx-3 mb-4 h-10 animate-pulse rounded-lg border bg-muted/40 motion-reduce:animate-none ${compact ? "mx-0" : ""}`} />
   }
   if (!workspaces.length) {
-    return <Link href="/workspaces/new" className={`mx-3 mb-4 flex h-10 items-center justify-between rounded-lg border border-dashed px-3 text-xs font-medium text-primary hover:bg-muted/40 ${compact ? "mx-0" : ""}`}>Create a workspace <span aria-hidden="true">＋</span></Link>
+    return <Link href="/workspaces/new" className={`mx-3 mb-4 flex h-10 items-center justify-between rounded-lg border border-dashed px-3 text-xs font-medium text-primary hover:bg-muted/40 ${compact ? "mx-0" : ""}`}>Create a workspace <HugeiconsIcon icon={Add01Icon} strokeWidth={1.8} className="size-4" aria-hidden="true" /></Link>
   }
   return (
     <DropdownMenu>
@@ -258,10 +231,25 @@ function WorkspaceSelector({
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => router.push(`/workspaces/${selectedId}${workspaces.find((workspace) => workspace.id === selectedId)?.role === "owner" ? "?tab=settings" : "?tab=members"}`)} className="gap-2 py-2"><HugeiconsIcon icon={Settings02Icon} className="size-4" aria-hidden="true" />Manage current workspace</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => router.push("/workspaces/new")} className="gap-2 py-2"><span aria-hidden="true" className="grid size-4 place-items-center text-base leading-none">+</span>Create workspace</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => router.push("/workspaces/new")} className="gap-2 py-2"><HugeiconsIcon icon={Add01Icon} className="size-4" aria-hidden="true" />New workspace</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )
+}
+
+function NavGroup({ label, items, pathname, first = false }: { label: string; items: NavItem[]; pathname: string; first?: boolean }) {
+  return <>
+    <p className={`px-4 pb-2 text-sm font-medium uppercase tracking-[0.12em] text-muted-foreground ${first ? "" : "pt-7"}`}>{label}</p>
+    <nav aria-label={label} className="space-y-1">
+      {items.map((item) => <Link key={item.href} href={item.href} aria-current={isNavSelected(item.href, pathname) ? "page" : undefined} className={styles.navItem}><HugeiconsIcon icon={item.icon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />{item.label}</Link>)}
+    </nav>
+  </>
+}
+
+function isNavSelected(href: string, pathname: string) {
+  if (isSelected(href, pathname)) return true
+  const creation = /^\/workspaces\/([^/]+)\/connections\/(clusters|git-sources)$/.exec(href)
+  return !!creation && pathname === `/workspaces/${creation[1]}/${creation[2]}/new`
 }
 
 function isSelected(href: string, pathname: string) {
@@ -269,17 +257,16 @@ function isSelected(href: string, pathname: string) {
   return pathname === href || pathname.startsWith(`${href}/`)
 }
 
-function pageCrumbs(pathname: string, workspace: Workspace | null, application: Application | null) {
+function pageCrumbs(pathname: string, workspace: Workspace | null, application: Application | null): { label: string; href?: string }[] {
   const parts = pathname.split("/").filter(Boolean)
   if (!parts.length) return [{ label: "Overview" }]
   if (parts[0] === "workspaces") {
     if (!parts[1]) return [{ label: "Overview" }]
-    if (parts[2] === "connections") {
-      const connection = { "git-sources": "Git sources", clusters: "Kubernetes clusters", namespaces: "Namespace bindings", credentials: "Credentials", shares: "Shared connections" }[parts[3]]
-      return [{ label: connection ?? "Connections" }]
-    }
-    if (parts[2] === "clusters" && parts[3] === "new") return [{ label: "Connect cluster" }]
-    if (parts[2] === "git-sources" && parts[3] === "new") return [{ label: "Connect Git source" }]
+    const parent = { label: workspace?.name ?? "Workspace", href: `/workspaces/${parts[1]}` }
+    const connectionsLabels: Record<string, string> = { "git-sources": "Git sources", clusters: "Clusters", namespaces: "Namespace access", credentials: "Credentials", shares: "Shared connections" }
+    if (parts[2] === "connections") return [parent, { label: connectionsLabels[parts[3]] ?? "Connections" }]
+    if (parts[2] === "clusters" && parts[3] === "new") return [parent, { label: "Clusters", href: `/workspaces/${parts[1]}/connections/clusters` }, { label: "Connect cluster" }]
+    if (parts[2] === "git-sources" && parts[3] === "new") return [parent, { label: "Git sources", href: `/workspaces/${parts[1]}/connections/git-sources` }, { label: "Connect Git source" }]
     return [{ label: parts[1] === "new" ? "New workspace" : workspace?.name ?? "Workspace" }]
   }
   if (parts[0] === "applications") {
@@ -288,7 +275,7 @@ function pageCrumbs(pathname: string, workspace: Workspace | null, application: 
     return [{ label: "Applications", href: "/applications" }, { label: application?.name ?? "Application" }]
   }
   if (parts[0] === "settings") {
-    const section = { "git-sources": "Git sources", clusters: "Kubernetes clusters", namespaces: "Namespace bindings", credentials: "Credentials", oidc: "OIDC providers", users: "Local users" }[parts[1] as "git-sources"]
+    const section = { "git-sources": "Git sources", clusters: "Clusters", namespaces: "Namespace access", credentials: "Credentials", oidc: "OIDC providers", users: "Local users" }[parts[1] as "git-sources"]
     return parts[1] ? [{ label: "Instance settings", href: "/settings" }, { label: section ?? "Section" }] : [{ label: "Instance settings" }]
   }
   if (parts[0] === "onboarding") return [{ label: "Get started" }]

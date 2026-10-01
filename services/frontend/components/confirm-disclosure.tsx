@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/toast-provider"
 import { errorMessage } from "@/lib/api"
 
-export function ConfirmDisclosure({ trigger, title, description, confirmLabel, onConfirm, children, disabled = false, confirmDisabled = false, triggerVariant = "destructive", confirmVariant = "destructive", open: controlledOpen, onOpenChange }: {
+export function ConfirmDisclosure({ trigger, title, description, confirmLabel, onConfirm, children, disabled = false, confirmDisabled = false, triggerVariant = "destructive", confirmVariant = "destructive", open: controlledOpen, onOpenChange, busyLabel = "Working…" }: {
   trigger?: ReactNode
   title: string
   description: string
@@ -19,6 +19,8 @@ export function ConfirmDisclosure({ trigger, title, description, confirmLabel, o
   confirmVariant?: ComponentProps<typeof Button>["variant"]
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  /** Text shown on the confirm button while `onConfirm` is running. */
+  busyLabel?: string
 }) {
   const toast = useToast()
   const [localOpen, setLocalOpen] = useState(false)
@@ -42,7 +44,7 @@ export function ConfirmDisclosure({ trigger, title, description, confirmLabel, o
           {children && <div className="mt-4">{children}</div>}
           <div className="mt-6 flex justify-end gap-2 border-t pt-4">
             <AlertDialog.Close render={<Button type="button" variant="outline" disabled={busy} />}>Cancel</AlertDialog.Close>
-            <Button type="button" variant={confirmVariant} disabled={confirmDisabled} loading={busy} loadingText="Working…" onClick={() => void confirm()}>{confirmLabel}</Button>
+            <Button type="button" variant={confirmVariant} disabled={confirmDisabled} loading={busy} loadingText={busyLabel} onClick={() => void confirm()}>{confirmLabel}</Button>
           </div>
         </AlertDialog.Popup>
       </AlertDialog.Viewport>

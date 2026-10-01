@@ -15,28 +15,26 @@ export function ApplicationDetailSkeleton() {
         </div>
       </div>
       <div className="flex gap-6 overflow-hidden border-b pb-3">
-        {[64, 72, 84, 136, 112].map((width, item) => <Skeleton key={item} className="h-4 shrink-0 motion-reduce:animate-none" style={{ width }} />)}
+        {[64, 72, 84, 72, 112, 64].map((width, item) => <Skeleton key={item} className="h-4 shrink-0 motion-reduce:animate-none" style={{ width }} />)}
       </div>
-      <Skeleton className="h-14 w-full rounded-xl motion-reduce:animate-none" />
-      <div className="grid gap-3 rounded-xl border bg-card p-4 sm:grid-cols-3 sm:divide-x sm:p-5">
-        {[0, 1, 2].map((item) => <div key={item} className="space-y-3 sm:px-3 first:sm:pl-0 last:sm:pr-0">
-          <Skeleton className="h-3 w-20 motion-reduce:animate-none" />
-          <Skeleton className="h-4 w-32 max-w-full motion-reduce:animate-none" />
-        </div>)}
-      </div>
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(280px,1fr)]">
+      <Skeleton className="h-12 w-full rounded-xl motion-reduce:animate-none" />
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)]">
         <div className="rounded-xl border bg-card">
-          <div className="space-y-2 border-b p-5"><Skeleton className="h-4 w-32 motion-reduce:animate-none" /><Skeleton className="h-3 w-64 max-w-full motion-reduce:animate-none" /></div>
-          <div className="space-y-5 p-5">
-            <div className="grid grid-cols-3 gap-2">{[0, 1, 2].map((item) => <Skeleton key={item} className="h-14 motion-reduce:animate-none" />)}</div>
-            <Skeleton className="h-3 w-52 max-w-full motion-reduce:animate-none" />
-            <Skeleton className="h-9 w-28 motion-reduce:animate-none" />
+          <div className="flex items-center justify-between gap-3 border-b px-5 py-4"><Skeleton className="h-4 w-32 motion-reduce:animate-none" /><Skeleton className="h-6 w-20 rounded-full motion-reduce:animate-none" /></div>
+          <div className="space-y-4 p-5">
+            <Skeleton className="h-8 w-44 motion-reduce:animate-none" />
+            <div className="flex gap-2">{[0, 1, 2].map((item) => <Skeleton key={item} className="h-5 w-20 rounded-full motion-reduce:animate-none" />)}</div>
+            <Skeleton className="h-9 w-36 motion-reduce:animate-none" />
           </div>
         </div>
         <div className="rounded-xl border bg-card">
-          <div className="space-y-2 border-b p-5"><Skeleton className="h-4 w-36 motion-reduce:animate-none" /><Skeleton className="h-3 w-52 max-w-full motion-reduce:animate-none" /></div>
-          <div className="grid grid-cols-3 gap-3 p-5">{[0, 1, 2, 3, 4, 5].map((item) => <Skeleton key={item} className="h-8 motion-reduce:animate-none" />)}</div>
+          <div className="border-b px-5 py-4"><Skeleton className="h-4 w-24 motion-reduce:animate-none" /></div>
+          <div className="space-y-3 p-5">{[0, 1, 2, 3].map((item) => <div key={item} className="flex justify-between gap-4"><Skeleton className="h-4 w-20 motion-reduce:animate-none" /><Skeleton className="h-4 w-32 motion-reduce:animate-none" /></div>)}</div>
         </div>
+      </div>
+      <div className="rounded-xl border bg-card">
+        <div className="flex items-center justify-between gap-3 px-5 py-4"><Skeleton className="h-4 w-32 motion-reduce:animate-none" /><Skeleton className="h-8 w-20 motion-reduce:animate-none" /></div>
+        <div className="space-y-3 border-t p-5">{[0, 1, 2].map((item) => <Skeleton key={item} className="h-5 w-full motion-reduce:animate-none" />)}</div>
       </div>
     </div>
   </div>

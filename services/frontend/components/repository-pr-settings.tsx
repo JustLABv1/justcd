@@ -2,12 +2,15 @@
 
 import Link from "next/link"
 import { useEffect, useState } from "react"
-import { ConnectionDialog } from "@/components/connection-dialog"
-import { Checkbox } from "@/components/ui/checkbox"
+import { Tabs } from "@base-ui/react/tabs"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { Add01Icon, Delete02Icon } from "@hugeicons/core-free-icons"
+import { Badge } from "@/components/reui/badge"
 import { Button } from "@/components/ui/button"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
 import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
-import { FormField } from "@/components/ui-kit"
+import { CheckboxCard, FormField, SwitchField } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
 import { api, errorMessage } from "@/lib/api"
 import type {
@@ -52,28 +55,78 @@ type Destination = {
   clusterId: string
   namespace: string
 }
+type Actor = { providerId: string; userId: string }
 
-export function RepositoryPRSettingsControl({
+const tabClass =
+  "flex shrink-0 items-center gap-2 border-b-2 border-transparent px-1 pb-3 text-sm font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[active]:border-primary data-[active]:text-foreground"
+
+function initialSettings(repository: RepositoryConfiguration): RepositoryPRSettings {
+  const saved = repository.prSettings
+  return {
+    ...defaults,
+    ...saved,
+    mode: saved?.mode || "review-only",
+    destinations: saved?.destinations ?? [],
+    profile: { ...defaults.profile, ...saved?.profile },
+  }
+}
+
+/**
+ * Pull request discovery policy for one repository branch. Controlled by the
+ * parent (opened from the repository row menu); content is mounted only while
+ * open so every opening starts from the saved settings with no stale errors.
+ */
+export function RepositoryPRSettingsDialog({
   repository,
+  open,
+  onOpenChange,
   onSaved,
 }: {
   repository: RepositoryConfiguration
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSaved: () => Promise<void>
+}) {
+  if (!open) return null
+  return (
+    <SettingsDialogContent
+      repository={repository}
+      onOpenChange={onOpenChange}
+      onSaved={onSaved}
+    />
+  )
+}
+
+function SettingsDialogContent({
+  repository,
+  onOpenChange,
+  onSaved,
+}: {
+  repository: RepositoryConfiguration
+  onOpenChange: (open: boolean) => void
   onSaved: () => Promise<void>
 }) {
   const toast = useToast()
-  const [open, setOpen] = useState(false)
+  const [tab, setTab] = useState("policy")
   const [busy, setBusy] = useState(false)
-  const [settings, setSettings] = useState<RepositoryPRSettings>(defaults)
+  const [settings, setSettings] = useState<RepositoryPRSettings>(() =>
+    initialSettings(repository)
+  )
   const [credentials, setCredentials] = useState<Credential[]>([])
   const [destinations, setDestinations] = useState<Destination[]>([])
   const [members, setMembers] = useState<WorkspaceMember[]>([])
-  const [actors, setActors] = useState<
-    { providerId: string; userId: string }[]
-  >([])
+  const [actors, setActors] = useState<Actor[]>(() =>
+    Object.entries(repository.prSettings?.profile.approvalActors ?? {}).map(
+      ([providerId, userId]) => ({ providerId, userId })
+    )
+  )
   const [entries, setEntries] = useState<Entry[]>([])
+  const [loaded, setLoaded] = useState(false)
+  const [loadAttempt, setLoadAttempt] = useState(0)
+  const [loadError, setLoadError] = useState("")
   const [error, setError] = useState("")
+
   useEffect(() => {
-    if (!open) return
     let active = true
     async function load() {
       try {
@@ -115,43 +168,47 @@ export function RepositoryPRSettingsControl({
           setDestinations(bindings.flat())
           setMembers(users.items)
           setEntries(reviews.items)
-          setError("")
+          setLoadError("")
+          setLoaded(true)
         }
       } catch (cause) {
-        if (active) setError(errorMessage(cause))
+        if (active) {
+          setLoadError(errorMessage(cause))
+          setLoaded(true)
+        }
       }
     }
     void load()
     return () => {
       active = false
     }
-  }, [open, repository.id, repository.workspaceId])
-  function show() {
-    const saved = repository.prSettings
-    setSettings({
-      ...defaults,
-      ...saved,
-      mode: saved?.mode || "review-only",
-      destinations: saved?.destinations ?? [],
-      profile: { ...defaults.profile, ...saved?.profile },
-    })
-    setActors(
-      Object.entries(saved?.profile.approvalActors ?? {}).map(
-        ([providerId, userId]) => ({ providerId, userId })
-      )
-    )
-    setOpen(true)
-  }
+  }, [repository.id, repository.workspaceId, loadAttempt])
+
   async function save() {
     setBusy(true)
+    setError("")
     try {
+      if (settings.enabled && settings.mode === "isolated") {
+        const { namespacePrefix, hostSuffix, quotaCpu, quotaMemory } =
+          settings.profile
+        if (
+          ![namespacePrefix, hostSuffix, quotaCpu, quotaMemory].every((v) =>
+            String(v ?? "").trim()
+          )
+        ) {
+          setTab("limits")
+          throw new Error("Fill in every isolated namespace limit.")
+        }
+      }
       if (
         actors.some((a) => !/^[1-9][0-9]*$/.test(a.providerId) || !a.userId) ||
         new Set(actors.map((a) => a.providerId)).size !== actors.length
-      )
+      ) {
+        setTab("approvals")
         throw new Error(
-          "Approval mappings need unique numeric provider IDs and a workspace member."
+          "Approval identities need unique numeric provider account IDs and a workspace member."
         )
+      }
       await api(
         `/api/v1/repository-configurations/${repository.id}/pull-requests/settings`,
         {
@@ -168,9 +225,9 @@ export function RepositoryPRSettingsControl({
         }
       )
       await onSaved()
-      setOpen(false)
+      onOpenChange(false)
       toast.success(
-        "Repository PR policy saved. Discovery runs every two minutes."
+        "Pull request policy saved. Discovery runs every two minutes."
       )
     } catch (cause) {
       setError(errorMessage(cause))
@@ -193,98 +250,202 @@ export function RepositoryPRSettingsControl({
         ),
       }))
   }
+  function addDestination() {
+    const next = destinations.find(
+      (d) =>
+        !settings.destinations.some(
+          (s) => s.clusterId === d.clusterId && s.namespace === d.namespace
+        )
+    )
+    if (next)
+      setSettings((s) => ({
+        ...s,
+        destinations: [
+          ...s.destinations,
+          { clusterId: next.clusterId, namespace: next.namespace },
+        ],
+      }))
+  }
+  function updateActor(index: number, patch: Partial<Actor>) {
+    setActors((rows) =>
+      rows.map((row, i) => (i === index ? { ...row, ...patch } : row))
+    )
+  }
+  const destinationLabel = (clusterId: string, namespace: string) =>
+    destinations.find(
+      (d) => d.clusterId === clusterId && d.namespace === namespace
+    )?.label ?? namespace
+  const disabledNote = (
+    <p className="text-sm text-muted-foreground">
+      Turn on pull request discovery in the Policy tab to configure this.
+    </p>
+  )
+
   return (
-    <>
-      <Button size="sm" variant="outline" onClick={show}>
-        PR discovery{repository.prSettings?.enabled ? " · enabled" : ""}
-      </Button>
-      <ConnectionDialog
-        open={open}
-        onOpenChange={setOpen}
-        busy={busy}
-        title="New applications from pull requests"
-        description={`Discover justcd.yaml applications added in PRs targeting ${repository.revision}, including drafts.`}
+    <AppDialog
+      open
+      onOpenChange={onOpenChange}
+      busy={busy}
+      size="xl"
+      title="Pull request discovery"
+      description={`Discover justcd.yaml applications added in pull requests targeting ${repository.revision}, including drafts.`}
+    >
+      <form
+        className="space-y-5"
+        onSubmit={(event) => {
+          event.preventDefault()
+          void save()
+        }}
       >
-        <form
-          className="space-y-5"
-          onSubmit={(event) => {
-            event.preventDefault()
-            void save()
-          }}
-        >
-          {error && (
-            <p role="alert" className="text-sm text-destructive">
-              {error}
-            </p>
-          )}
-          {repository.prError && (
-            <p className="text-sm text-destructive">{repository.prError}</p>
-          )}
-          <fieldset disabled={busy} className="space-y-4">
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                aria-label="Discover new applications in PRs"
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        )}
+        {loadError && (
+          <div
+            role="alert"
+            className="flex flex-wrap items-center justify-between gap-3 text-sm text-destructive"
+          >
+            <span>{loadError}</span>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setLoaded(false)
+                setLoadAttempt((n) => n + 1)
+              }}
+            >
+              Retry
+            </Button>
+          </div>
+        )}
+        {repository.prError && (
+          <p role="alert" className="text-sm text-destructive">
+            {repository.prError}
+          </p>
+        )}
+        <fieldset disabled={busy} className="min-w-0">
+          <Tabs.Root value={tab} onValueChange={(value) => setTab(String(value))}>
+            <Tabs.List
+              aria-label="Pull request discovery sections"
+              className="mb-5 flex gap-5 overflow-x-auto border-b"
+              activateOnFocus
+            >
+              <Tabs.Tab value="policy" className={tabClass}>
+                Policy
+              </Tabs.Tab>
+              <Tabs.Tab value="destinations" className={tabClass}>
+                Destinations
+                <Badge size="xs" variant="secondary">
+                  {settings.destinations.length}
+                </Badge>
+              </Tabs.Tab>
+              <Tabs.Tab value="limits" className={tabClass}>
+                Limits
+              </Tabs.Tab>
+              <Tabs.Tab value="approvals" className={tabClass}>
+                Approvals
+              </Tabs.Tab>
+              <Tabs.Tab value="discovered" className={tabClass}>
+                Discovered PRs
+                <Badge size="xs" variant="secondary">
+                  {entries.length}
+                </Badge>
+              </Tabs.Tab>
+            </Tabs.List>
+
+            <Tabs.Panel value="policy" className="space-y-4 outline-none">
+              <SwitchField
+                id="repo-pr-enabled"
+                label="Discover new applications in pull requests"
+                description="Find justcd.yaml definitions added in open pull requests, including drafts."
                 checked={settings.enabled}
-                disabled={busy}
                 onCheckedChange={(enabled) =>
                   setSettings((s) => ({ ...s, enabled }))
                 }
               />
-              Discover new applications in PRs
-            </label>
-            {settings.enabled && (
-              <>
-                <FormField
-                  label="Provider API credential"
-                  htmlFor="repo-pr-credential"
-                  hint="HTTPS token with PR read, comment read/write and commit status write access."
-                >
-                  <FormSelect
-                    id="repo-pr-credential"
-                    value={settings.credentialId}
-                    onValueChange={(credentialId) =>
-                      setSettings((s) => ({ ...s, credentialId }))
-                    }
-                    placeholder="Select Git credential"
-                    items={credentials.map((c) => ({
-                      value: c.id,
-                      label: c.name,
-                    }))}
-                  />
-                </FormField>
-                <FormField label="Deployment" htmlFor="repo-pr-mode">
-                  <FormSelect
-                    id="repo-pr-mode"
-                    value={settings.mode}
-                    onValueChange={(mode) =>
-                      setSettings((s) => ({
-                        ...s,
-                        mode: mode as RepositoryPRSettings["mode"],
-                      }))
-                    }
-                    items={[
-                      { value: "review-only", label: "Review plans only" },
-                      {
-                        value: "isolated",
-                        label: "Deploy in isolated namespaces",
-                      },
-                      {
-                        value: "existing",
-                        label: "Deploy to approved dev namespaces",
-                      },
-                    ]}
-                  />
-                </FormField>
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">
-                    Allowed destinations in justcd.yaml
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Branch definitions must match a destination selected here.
-                    Forks are excluded.
-                  </p>
+              {settings.enabled ? (
+                <>
+                  <FormField
+                    label="Provider API credential"
+                    htmlFor="repo-pr-credential"
+                    hint="HTTPS token with pull request read, comment read/write and commit status write access."
+                  >
+                    <FormSelect
+                      id="repo-pr-credential"
+                      value={settings.credentialId}
+                      onValueChange={(credentialId) =>
+                        setSettings((s) => ({ ...s, credentialId }))
+                      }
+                      placeholder="Select Git credential"
+                      items={credentials.map((c) => ({
+                        value: c.id,
+                        label: c.name,
+                      }))}
+                    />
+                  </FormField>
+                  <FormField label="Deployment" htmlFor="repo-pr-mode">
+                    <FormSelect
+                      id="repo-pr-mode"
+                      value={settings.mode}
+                      onValueChange={(mode) =>
+                        setSettings((s) => ({
+                          ...s,
+                          mode: mode as RepositoryPRSettings["mode"],
+                        }))
+                      }
+                      items={[
+                        { value: "review-only", label: "Review plans only" },
+                        {
+                          value: "isolated",
+                          label: "Deploy in isolated namespaces",
+                        },
+                        {
+                          value: "existing",
+                          label: "Deploy to approved dev namespaces",
+                        },
+                      ]}
+                    />
+                  </FormField>
+                  {settings.mode === "existing" && (
+                    <CheckboxCard
+                      id="repo-pr-confirm-shared"
+                      checked={settings.profile.confirmShared}
+                      onCheckedChange={(checked) =>
+                        profile("confirmShared", checked)
+                      }
+                      title="Authorize changes to approved dev environments and their data"
+                      description="On merge, the app keeps its ID and resource ownership. Unmerged pull requests require reviewed cleanup."
+                    />
+                  )}
+                </>
+              ) : null}
+            </Tabs.Panel>
+
+            <Tabs.Panel value="destinations" className="space-y-3 outline-none">
+              {settings.enabled ? (
+                <>
+                  <div>
+                    <h3 className="text-sm font-semibold">
+                      Allowed destinations in justcd.yaml
+                    </h3>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Branch definitions must match a destination selected here.
+                      Forks are excluded.
+                    </p>
+                  </div>
+                  {settings.destinations.length === 0 && (
+                    <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+                      No destinations yet.
+                      {loaded && !destinations.length
+                        ? " Grant this workspace namespace access on a cluster first."
+                        : ""}
+                    </p>
+                  )}
                   {settings.destinations.map((d, index) => (
-                    <div key={index} className="flex gap-2">
+                    <div key={index} className="flex items-center gap-2">
                       <FormSelect
                         ariaLabel={`Allowed destination ${index + 1}`}
                         value={`${d.clusterId}/${d.namespace}`}
@@ -295,8 +456,9 @@ export function RepositoryPRSettingsControl({
                       />
                       <Button
                         type="button"
-                        size="sm"
-                        variant="destructive"
+                        size="icon"
+                        variant="ghost"
+                        aria-label={`Remove destination ${destinationLabel(d.clusterId, d.namespace)}`}
                         onClick={() =>
                           setSettings((s) => ({
                             ...s,
@@ -306,7 +468,11 @@ export function RepositoryPRSettingsControl({
                           }))
                         }
                       >
-                        Remove
+                        <HugeiconsIcon
+                          icon={Delete02Icon}
+                          strokeWidth={1.8}
+                          aria-hidden="true"
+                        />
                       </Button>
                     </div>
                   ))}
@@ -314,252 +480,265 @@ export function RepositoryPRSettingsControl({
                     type="button"
                     size="sm"
                     variant="outline"
-                    disabled={!destinations.length}
-                    onClick={() => {
-                      const next = destinations.find(
-                        (d) =>
-                          !settings.destinations.some(
-                            (s) =>
-                              s.clusterId === d.clusterId &&
-                              s.namespace === d.namespace
-                          )
-                      )
-                      if (next)
-                        setSettings((s) => ({
-                          ...s,
-                          destinations: [
-                            ...s.destinations,
-                            {
-                              clusterId: next.clusterId,
-                              namespace: next.namespace,
-                            },
-                          ],
-                        }))
-                    }}
+                    disabled={
+                      !destinations.length ||
+                      settings.destinations.length >= destinations.length
+                    }
+                    onClick={addDestination}
                   >
+                    <HugeiconsIcon
+                      icon={Add01Icon}
+                      strokeWidth={1.8}
+                      aria-hidden="true"
+                    />
                     Add destination
                   </Button>
-                </div>
-                {settings.mode === "existing" && (
-                  <label className="flex items-start gap-2 rounded-lg border p-3 text-sm">
-                    <Checkbox
-                      aria-label="Authorize changes to approved dev environments and their data"
-                      className="mt-0.5"
-                      checked={settings.profile.confirmShared}
-                      disabled={busy}
-                      onCheckedChange={(checked) =>
-                        profile("confirmShared", checked)
-                      }
-                    />
-                    I authorize changes to these dev environments and their
-                    data. On merge, the app keeps its ID and resource ownership.
-                    Unmerged PRs require reviewed cleanup.
-                  </label>
-                )}
-                {settings.mode === "isolated" && (
-                  <details className="rounded-lg border p-3" open>
-                    <summary className="cursor-pointer text-sm font-medium">
-                      Isolated namespace limits
-                    </summary>
-                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                      {(
-                        [
-                          ["namespacePrefix", "Namespace prefix"],
-                          ["hostSuffix", "Preview host suffix"],
-                          ["quotaCpu", "CPU quota"],
-                          ["quotaMemory", "Memory quota"],
-                        ] as const
-                      ).map(([key, label]) => (
-                        <FormField
-                          key={key}
-                          label={label}
-                          htmlFor={`repo-pr-${key}`}
-                        >
-                          <Input
-                            id={`repo-pr-${key}`}
-                            value={settings.profile[key] ?? ""}
-                            onChange={(event) =>
-                              profile(key, event.target.value)
-                            }
-                            required
-                          />
-                        </FormField>
-                      ))}
+                </>
+              ) : (
+                disabledNote
+              )}
+            </Tabs.Panel>
+
+            <Tabs.Panel value="limits" className="space-y-4 outline-none">
+              {!settings.enabled ? (
+                disabledNote
+              ) : settings.mode !== "isolated" ? (
+                <p className="text-sm text-muted-foreground">
+                  Limits apply when Deployment is set to “Deploy in isolated
+                  namespaces”.
+                </p>
+              ) : (
+                <>
+                  <h3 className="text-sm font-semibold">
+                    Isolated namespace limits
+                  </h3>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {(
+                      [
+                        ["namespacePrefix", "Namespace prefix"],
+                        ["hostSuffix", "Preview host suffix"],
+                        ["quotaCpu", "CPU quota"],
+                        ["quotaMemory", "Memory quota"],
+                      ] as const
+                    ).map(([key, label]) => (
                       <FormField
-                        label="Lifetime (hours)"
-                        htmlFor="repo-pr-lifetime"
+                        key={key}
+                        label={label}
+                        htmlFor={`repo-pr-${key}`}
                       >
                         <Input
-                          id="repo-pr-lifetime"
-                          type="number"
-                          min={1}
-                          max={168}
-                          value={settings.profile.maxLifetimeHours}
+                          id={`repo-pr-${key}`}
+                          value={settings.profile[key] ?? ""}
+                          onChange={(event) => profile(key, event.target.value)}
+                        />
+                      </FormField>
+                    ))}
+                    <FormField
+                      label="Lifetime (hours)"
+                      htmlFor="repo-pr-lifetime"
+                      hint="Between 1 and 168 hours."
+                    >
+                      <Input
+                        id="repo-pr-lifetime"
+                        type="number"
+                        min={1}
+                        max={168}
+                        value={settings.profile.maxLifetimeHours}
+                        onChange={(event) =>
+                          profile(
+                            "maxLifetimeHours",
+                            Number(event.target.value)
+                          )
+                        }
+                      />
+                    </FormField>
+                  </div>
+                </>
+              )}
+            </Tabs.Panel>
+
+            <Tabs.Panel value="approvals" className="space-y-4 outline-none">
+              {settings.enabled ? (
+                <>
+                  <FormField label="Provider" htmlFor="repo-pr-provider">
+                    <FormSelect
+                      id="repo-pr-provider"
+                      value={settings.provider ?? ""}
+                      emptyOption="Detect from Git source"
+                      items={[
+                        { value: "github", label: "GitHub" },
+                        { value: "gitlab", label: "GitLab" },
+                      ]}
+                      onValueChange={(provider) =>
+                        setSettings((s) => ({ ...s, provider }))
+                      }
+                    />
+                  </FormField>
+                  <FormField
+                    label="Provider API URL"
+                    htmlFor="repo-pr-api"
+                    hint="For a custom host, for example https://git.example.com/api/v4."
+                  >
+                    <Input
+                      id="repo-pr-api"
+                      value={settings.apiUrl ?? ""}
+                      onChange={(event) =>
+                        setSettings((s) => ({
+                          ...s,
+                          apiUrl: event.target.value,
+                        }))
+                      }
+                    />
+                  </FormField>
+                  <div className="border-t pt-4">
+                    <h3 className="text-sm font-semibold">
+                      Pull request comment approval identities
+                    </h3>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Map provider accounts to workspace members so their
+                      approval comments count.
+                    </p>
+                  </div>
+                  {actors.map((actor, index) => (
+                    <div
+                      key={index}
+                      className="grid items-start gap-3 sm:grid-cols-[1fr_1fr_auto]"
+                    >
+                      <FormField
+                        label="Provider account ID"
+                        htmlFor={`repo-pr-actor-id-${index}`}
+                        hint="Numeric ID, not the username."
+                      >
+                        <Input
+                          id={`repo-pr-actor-id-${index}`}
+                          value={actor.providerId}
+                          inputMode="numeric"
                           onChange={(event) =>
-                            profile(
-                              "maxLifetimeHours",
-                              Number(event.target.value)
-                            )
+                            updateActor(index, { providerId: event.target.value })
                           }
                         />
                       </FormField>
-                    </div>
-                  </details>
-                )}
-                <details className="rounded-lg border p-3">
-                  <summary className="cursor-pointer text-sm font-medium">
-                    Provider and approval settings
-                  </summary>
-                  <div className="mt-4 space-y-4">
-                    <FormField label="Provider" htmlFor="repo-pr-provider">
-                      <FormSelect
-                        id="repo-pr-provider"
-                        value={settings.provider ?? ""}
-                        emptyOption="Detect from Git source"
-                        items={[
-                          { value: "github", label: "GitHub" },
-                          { value: "gitlab", label: "GitLab" },
-                        ]}
-                        onValueChange={(provider) =>
-                          setSettings((s) => ({ ...s, provider }))
-                        }
-                      />
-                    </FormField>
-                    <FormField
-                      label="Provider API URL"
-                      htmlFor="repo-pr-api"
-                      hint="For a custom host, for example https://git.example.com/api/v4."
-                    >
-                      <Input
-                        id="repo-pr-api"
-                        value={settings.apiUrl ?? ""}
-                        onChange={(event) =>
-                          setSettings((s) => ({
-                            ...s,
-                            apiUrl: event.target.value,
-                          }))
-                        }
-                      />
-                    </FormField>
-                    <p className="text-sm font-medium">
-                      PR comment approval identities
-                    </p>
-                    {actors.map((actor, index) => (
-                      <div
-                        key={index}
-                        className="grid items-end gap-3 sm:grid-cols-[1fr_1fr_auto]"
+                      <FormField
+                        label="JustCD user"
+                        htmlFor={`repo-pr-actor-user-${index}`}
                       >
-                        <label className="flex flex-col gap-2 text-sm">
-                          Provider account ID
-                          <Input
-                            value={actor.providerId}
-                            inputMode="numeric"
-                            onChange={(event) =>
-                              setActors((rows) =>
-                                rows.map((row, i) =>
-                                  i === index
-                                    ? { ...row, providerId: event.target.value }
-                                    : row
-                                )
-                              )
-                            }
-                          />
-                        </label>
-                        <label className="flex flex-col gap-2 text-sm">
-                          JustCD user
-                          <FormSelect
-                            ariaLabel={`Approval user ${index + 1}`}
-                            value={actor.userId}
-                            placeholder="Select workspace member"
-                            items={members
-                              .filter(
-                                (m) => !m.disabled || m.id === actor.userId
-                              )
-                              .map((m) => ({
-                                value: m.id,
-                                label: `${m.displayName || m.email} · ${m.role}`,
-                              }))}
-                            onValueChange={(userId) =>
-                              setActors((rows) =>
-                                rows.map((row, i) =>
-                                  i === index ? { ...row, userId } : row
-                                )
-                              )
-                            }
-                          />
-                        </label>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="destructive"
-                          onClick={() =>
-                            setActors((rows) =>
-                              rows.filter((_, i) => i !== index)
-                            )
+                        <FormSelect
+                          id={`repo-pr-actor-user-${index}`}
+                          value={actor.userId}
+                          placeholder="Select workspace member"
+                          items={members
+                            .filter((m) => !m.disabled || m.id === actor.userId)
+                            .map((m) => ({
+                              value: m.id,
+                              label: `${m.displayName || m.email} · ${m.role}`,
+                            }))}
+                          onValueChange={(userId) =>
+                            updateActor(index, { userId })
                           }
-                        >
-                          Remove
-                        </Button>
-                      </div>
-                    ))}
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() =>
-                        setActors((rows) => [
-                          ...rows,
-                          { providerId: "", userId: "" },
-                        ])
-                      }
-                    >
-                      Add approval identity
-                    </Button>
-                  </div>
-                </details>
-              </>
-            )}
-            <Button type="submit" size="sm" loading={busy}>
-              Save PR policy
-            </Button>
-          </fieldset>
-        </form>
-        {entries.length > 0 && (
-          <div className="mt-6 border-t pt-4">
-            <h4 className="mb-3 text-sm font-medium">
-              Discovered PR applications
-            </h4>
-            <div className="divide-y">
-              {entries.map((entry) => (
-                <div key={entry.id} className="py-3 text-sm">
-                  <div className="flex justify-between gap-3">
-                    {entry.applicationId ? (
-                      <Link
-                        className="text-primary hover:underline"
-                        href={`/applications/${entry.applicationId}?tab=pull-requests`}
+                        />
+                      </FormField>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className="sm:mt-6"
+                        aria-label={`Remove approval identity ${actor.providerId || index + 1}`}
+                        onClick={() =>
+                          setActors((rows) => rows.filter((_, i) => i !== index))
+                        }
                       >
-                        {entry.definitionName} · PR #{entry.number}
-                      </Link>
-                    ) : (
-                      <span>
-                        {entry.definitionName} · PR #{entry.number}
-                      </span>
-                    )}
-                    <span className="text-muted-foreground">
-                      {entry.phase.replaceAll("_", " ")}
-                    </span>
-                  </div>
-                  {entry.error && (
-                    <p className="mt-1 text-xs text-destructive">
-                      {entry.error}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </ConnectionDialog>
-    </>
+                        <HugeiconsIcon
+                          icon={Delete02Icon}
+                          strokeWidth={1.8}
+                          aria-hidden="true"
+                        />
+                      </Button>
+                    </div>
+                  ))}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setActors((rows) => [
+                        ...rows,
+                        { providerId: "", userId: "" },
+                      ])
+                    }
+                  >
+                    <HugeiconsIcon
+                      icon={Add01Icon}
+                      strokeWidth={1.8}
+                      aria-hidden="true"
+                    />
+                    Add approval identity
+                  </Button>
+                </>
+              ) : (
+                disabledNote
+              )}
+            </Tabs.Panel>
+
+            <Tabs.Panel value="discovered" className="outline-none">
+              <h3 className="text-sm font-semibold">
+                Discovered pull request applications
+              </h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Read-only status. Updated by discovery, not by this form.
+              </p>
+              {!loaded ? (
+                <p role="status" className="mt-3 text-sm text-muted-foreground">
+                  Loading…
+                </p>
+              ) : entries.length === 0 ? (
+                <p className="mt-3 rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+                  No pull request applications discovered yet.
+                </p>
+              ) : (
+                <ul className="mt-3 divide-y rounded-lg border">
+                  {entries.map((entry) => (
+                    <li key={entry.id} className="px-4 py-3 text-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        {entry.applicationId ? (
+                          <Link
+                            className="font-medium text-primary hover:underline"
+                            href={`/applications/${entry.applicationId}?tab=pull-requests`}
+                          >
+                            {entry.definitionName} · PR #{entry.number}
+                          </Link>
+                        ) : (
+                          <span className="font-medium">
+                            {entry.definitionName} · PR #{entry.number}
+                          </span>
+                        )}
+                        <Badge
+                          size="sm"
+                          radius="full"
+                          variant={entry.error ? "destructive-light" : "outline"}
+                          className="capitalize"
+                        >
+                          {entry.phase.replaceAll("_", " ")}
+                        </Badge>
+                      </div>
+                      {entry.error && (
+                        <p className="mt-1 text-sm text-destructive">
+                          {entry.error}
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Tabs.Panel>
+          </Tabs.Root>
+        </fieldset>
+        <DialogFooter>
+          <DialogCancel disabled={busy} />
+          <Button type="submit" loading={busy} loadingText="Saving…">
+            Save changes
+          </Button>
+        </DialogFooter>
+      </form>
+    </AppDialog>
   )
 }

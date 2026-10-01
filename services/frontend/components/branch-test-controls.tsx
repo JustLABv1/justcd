@@ -1,14 +1,14 @@
 "use client"
 
-import Link from "next/link"
 import { useEffect, useState } from "react"
+import { GitPullRequestIcon, ArrowTurnBackwardIcon, Delete02Icon, Layers01Icon } from "@hugeicons/core-free-icons"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { FormSelect } from "@/components/ui/form-select"
 import { FormField } from "@/components/ui-kit"
-import { ConnectionDialog } from "@/components/connection-dialog"
-import { ConfirmDisclosure } from "@/components/confirm-disclosure"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
+import { RowActions, type ActionItem } from "@/components/action-menu"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { api, apiPost } from "@/lib/api"
 import type { Application } from "@/lib/types"
@@ -52,6 +52,9 @@ export function BranchTestControls({ application, canManage, disabled, onChanged
     return () => { active = false }
   }, [application.id, state])
 
+  const [wasOpen, setWasOpen] = useState(open)
+  if (open !== wasOpen) { setWasOpen(open); if (open) setError(null) }
+
   async function start(event: React.FormEvent) {
     event.preventDefault()
     setBusy(true); setError(null)
@@ -63,22 +66,31 @@ export function BranchTestControls({ application, canManage, disabled, onChanged
     finally { setBusy(false) }
   }
 
+  const actions: ActionItem[] = []
+  if (state) {
+    if (mergeRequestUrl) actions.push({ label: "Open pull request", icon: GitPullRequestIcon, onSelect: () => { window.open(mergeRequestUrl, "_blank", "noopener,noreferrer") } })
+    if (state.mode === "existing" && canManage) actions.push({
+      label: `Resume ${state.baseRevision}`, icon: ArrowTurnBackwardIcon, disabled,
+      confirm: {
+        title: "Return to the tracked source?", confirmLabel: "Restore tracked source",
+        description: "This ends the branch override. Review and deploy a fresh plan to restore the tracked source, then resume automatic reconciliation. Database migrations and data changes are not undone.",
+        onConfirm: async () => {
+          try { const updated = await apiPost<Application>(`/api/v1/applications/${encodeURIComponent(application.id)}/branch-test/resume`, {}); await onChanged(updated) }
+          catch (cause) { await onChanged(await api<Application>(`/api/v1/applications/${encodeURIComponent(application.id)}`)); throw cause }
+        },
+      },
+    })
+    if (state.mode === "isolated" && state.parentApplicationId) actions.push({ label: "View parent application", icon: Layers01Icon, href: `/applications/${state.parentApplicationId}` })
+    if (state.mode === "isolated" && canManage) actions.push({ label: "Remove preview", icon: Delete02Icon, onSelect: onSettings, disabled })
+  }
   return <>
     {state && <section aria-label="Branch test" className="mb-5 rounded-xl border border-primary/30 bg-primary/5 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0"><p className="break-all text-sm font-semibold text-primary">Testing branch: {state.revision}</p><p className="mt-1 text-sm text-muted-foreground">{state.mode === "existing" ? "Existing environment · normal source reconciliation is paused" : "Isolated preview · manual deployment"}</p></div>
-        <div className="flex flex-wrap items-center gap-2">
-          {canManage && <Button size="sm" variant="outline" disabled={disabled} onClick={onReview}>Review branch changes</Button>}
-          {mergeRequestUrl && <a href={mergeRequestUrl} target="_blank" rel="noreferrer"><Button size="sm" variant="outline">Open PR / MR ↗</Button></a>}
-          {state.mode === "existing" && canManage && <ConfirmDisclosure trigger={`Resume ${state.baseRevision}`} triggerVariant="outline" confirmVariant="default" title="Return to the tracked source?" description="This ends the branch override. Review and deploy a fresh plan to restore the tracked source, then resume automatic reconciliation. Database migrations and data changes are not undone." confirmLabel="Restore tracked source" disabled={disabled} onConfirm={async () => {
-            try { const updated = await apiPost<Application>(`/api/v1/applications/${encodeURIComponent(application.id)}/branch-test/resume`, {}); await onChanged(updated) }
-            catch (cause) { await onChanged(await api<Application>(`/api/v1/applications/${encodeURIComponent(application.id)}`)); throw cause }
-          }} />}
-          {state.mode === "isolated" && <>{state.parentApplicationId && <Link href={`/applications/${state.parentApplicationId}`} className="text-sm underline underline-offset-4">Parent application</Link>}{canManage && <Button size="sm" variant="outline" disabled={disabled} onClick={onSettings}>Remove preview</Button>}</>}
-        </div>
+        <RowActions label={`branch test ${state.revision}`} primary={canManage ? <Button size="sm" disabled={disabled} onClick={onReview}>Review branch changes</Button> : undefined} items={actions} />
       </div>
     </section>}
-    <ConnectionDialog open={open} onOpenChange={onOpenChange} title="Test a branch" description="Choose how to deploy changes before opening a pull or merge request." busy={busy}>
+    <AppDialog open={open} onOpenChange={onOpenChange} title="Test a branch" description="Choose how to deploy changes before opening a pull request." busy={busy}>
       <form className="space-y-5" onSubmit={(event) => void start(event)}>
         {error != null && <ErrorNotice error={error} />}
         <FormField label="Branch or Git revision" htmlFor="test-branch-revision"><Input id="test-branch-revision" autoFocus value={revision} onChange={(event) => setRevision(event.target.value)} placeholder="feature/my-change" required /></FormField>
@@ -88,8 +100,8 @@ export function BranchTestControls({ application, canManage, disabled, onChanged
           <FormField label="Preview overlay path" htmlFor="test-branch-path" hint="Repository-relative path with preview hostnames and dependencies."><Input id="test-branch-path" value={manifestPath} onChange={(event) => setManifestPath(event.target.value)} placeholder="envs/preview/my-app" required /></FormField>
           <p className="text-sm text-muted-foreground">The preview inherits the workspace cluster credential. Configure preview-safe databases, ingress hosts and secrets in the overlay. External services are not copied or isolated automatically. Remove the preview through its application settings when finished. Cleanup removes its managed resources through a reviewed plan; the namespace and any untracked resources remain.</p>
         </>}
-        <div className="flex justify-end gap-2 border-t pt-4"><Button variant="outline" type="button" disabled={busy} onClick={() => onOpenChange(false)}>Cancel</Button><Button type="submit" loading={busy} loadingText="Verifying branch…" disabled={!revision.trim() || (mode === "existing" ? !confirmed : !namespace.trim() || !manifestPath.trim())}>Prepare branch test</Button></div>
+        <DialogFooter><DialogCancel disabled={busy} /><Button type="submit" loading={busy} loadingText="Verifying branch…" disabled={!revision.trim() || (mode === "existing" ? !confirmed : !namespace.trim() || !manifestPath.trim())}>Prepare branch test</Button></DialogFooter>
       </form>
-    </ConnectionDialog>
+    </AppDialog>
   </>
 }

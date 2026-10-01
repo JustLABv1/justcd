@@ -2,8 +2,12 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Layers01Icon, Settings02Icon, Globe02Icon, DatabaseIcon, CubeIcon, Router02Icon, ServerStack01Icon, Files01Icon, FileTextIcon, Key01Icon, Shield01Icon, Clock01Icon, PlayIcon, Route01Icon, WorkflowSquare04Icon, Folder01Icon } from "@hugeicons/core-free-icons"
+import { ArrowLeft01Icon, ArrowRight01Icon, Cancel01Icon, CenterFocusIcon, FocusPointIcon, FullScreenIcon, Maximize01Icon, MinusSignIcon, PlusSignIcon, RefreshIcon, Layers01Icon, Settings02Icon, Globe02Icon, DatabaseIcon, CubeIcon, Router02Icon, ServerStack01Icon, Files01Icon, FileTextIcon, Key01Icon, Shield01Icon, Clock01Icon, PlayIcon, Route01Icon, WorkflowSquare04Icon, Folder01Icon } from "@hugeicons/core-free-icons"
+import { ActionMenu } from "@/components/action-menu"
 import { Button } from "@/components/ui/button"
+import { Disclosure } from "@/components/ui/collapsible"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { EmptyState, StatusBadge } from "@/components/ui-kit"
 import styles from "./resource-map.module.css"
 import { ResourceActions } from "@/components/resource-actions"
@@ -13,7 +17,7 @@ import { identityKey, observed, workload, relatedNodes, syncState, topologyLayou
 import type { Application, Identity, ManagedResource, Operation, PlanRecord, ResourceTopology, TopologyNode } from "@/lib/types"
 
 const labels: Record<SyncState, string> = { syncing: "Applying", applied: "Deployed · health separate", failed: "Failed", create: "Will be created", update: "Out of sync", delete: "Will be destroyed", synced: "Deployed", unknown: "State unknown", observed: "Observed" }
-const stateDot: Record<SyncState, string> = { syncing: "bg-blue-600", applied: "bg-emerald-600", failed: "bg-rose-600", create: "bg-blue-600", update: "bg-amber-500", delete: "bg-rose-600", synced: "bg-emerald-600", unknown: "bg-muted-foreground", observed: "bg-muted-foreground" }
+const stateDot: Record<SyncState, string> = { syncing: "bg-info", applied: "bg-success", failed: "bg-destructive", create: "bg-info", update: "bg-warning", delete: "bg-destructive", synced: "bg-success", unknown: "bg-muted-foreground", observed: "bg-muted-foreground" }
 const resourceIcons: Record<string, typeof CubeIcon> = {
   Service: Router02Icon, Pod: CubeIcon, Deployment: Layers01Icon,
   ReplicaSet: Files01Icon, StatefulSet: ServerStack01Icon, DaemonSet: WorkflowSquare04Icon,
@@ -39,9 +43,9 @@ function health(node: TopologyNode) {
   return node.uid ? "Health not reported" : "Not observed in cluster"
 }
 function healthTone(node: TopologyNode) {
-  if (node.readiness === "Ready" || node.phase === "Succeeded") return "font-medium text-emerald-700 dark:text-emerald-300"
-  if (node.readiness === "Not ready" || node.phase === "Failed" || node.healthSummary?.failureReason || node.healthSummary?.conditions?.some((item) => item.status === "False")) return "font-medium text-rose-600 dark:text-rose-300"
-  if (node.readiness === "Unknown") return "font-medium text-amber-700 dark:text-amber-300"
+  if (node.readiness === "Ready" || node.phase === "Succeeded") return "font-medium text-success-foreground dark:text-success"
+  if (node.readiness === "Not ready" || node.phase === "Failed" || node.healthSummary?.failureReason || node.healthSummary?.conditions?.some((item) => item.status === "False")) return "font-medium text-destructive"
+  if (node.readiness === "Unknown") return "font-medium text-warning-foreground dark:text-warning"
   return "text-muted-foreground"
 }
 function fallback(plan: PlanRecord | null, inventory: ManagedResource[]): ResourceTopology {
@@ -122,34 +126,37 @@ export function ResourceMap({ view, onViewChange, application, plan, inventory, 
   return <section ref={root} aria-label="Application resource topology" className="mb-6 min-w-0 overflow-hidden rounded-xl border bg-card fullscreen:overflow-auto fullscreen:rounded-none">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
       <div><h2 className="text-base font-semibold">Resources</h2><p className="mt-1 text-sm text-muted-foreground">{application.name} · {graph.nodes.length} resources · {changedCount} changes · {graph.nodes.filter(observed).length} observed</p></div>
-      <div className="flex gap-2"><Button type="button" variant="outline" onClick={onRefresh} loading={refreshing} loadingText="Refreshing…">Refresh cluster</Button><Button type="button" variant="outline" onClick={() => void toggleFullscreen()}>{fullscreen ? "Exit fullscreen" : "Fullscreen"}</Button></div>
+      <div className="flex items-center gap-2">
+        <Button type="button" variant="outline" onClick={onRefresh} loading={refreshing} loadingText="Refreshing…"><HugeiconsIcon icon={RefreshIcon} strokeWidth={1.8} aria-hidden="true" />Refresh cluster</Button>
+        <ActionMenu label="View" variant="outline" items={[
+          { label: focus ? "Show all resources" : "Focus selection", icon: FocusPointIcon, disabled: !selected, onSelect: () => setFocus(!focus) },
+          { label: fullscreen ? "Exit fullscreen" : "Fullscreen", icon: FullScreenIcon, onSelect: () => void toggleFullscreen() },
+        ]} />
+      </div>
     </header>
     <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
-      <div role="group" aria-label="Resource view" className="flex gap-1 rounded-lg border p-1">{(["graph", "list"] as const).map((value) => <Button key={value} size="sm" variant={view === value ? "secondary" : "ghost"} aria-pressed={view === value} onClick={() => onViewChange(value)} className="capitalize">{value}</Button>)}</div>
+      <ToggleGroup aria-label="Resource view" value={[view]} onValueChange={(next) => { if (next[0] === "graph" || next[0] === "list") onViewChange(next[0]) }}>
+        <ToggleGroupItem value="graph">Graph</ToggleGroupItem>
+        <ToggleGroupItem value="list">List</ToggleGroupItem>
+      </ToggleGroup>
       <Input aria-label="Search resources" placeholder="Find a resource…" className="w-full sm:w-56" value={query} onChange={(event) => { setQuery(event.target.value); setMode("all"); setFocus(false) }} />
-      <div role="group" aria-label="Topology filter" className="flex gap-1">{["all", "changes", "observed"].map((value) => <Button type="button" key={value} variant={mode === value ? "secondary" : "ghost"} aria-pressed={mode === value} onClick={() => setMode(value)} className="capitalize">{value}</Button>)}</div>
-      <Button type="button" variant="outline" disabled={!selected} aria-pressed={focus} onClick={() => setFocus(!focus)}>{focus ? "Show all resources" : "Focus selection"}</Button>
-      {view === "graph" && <div className="ml-auto flex flex-wrap items-center gap-1">
-        <Button type="button" variant="outline" onClick={fit}>Fit all</Button>
-        <Button type="button" variant="outline" disabled={!selected || !layout.positions.has(selected.id)} onClick={() => selected && center(selected.id)}>Center selection</Button>
-        <Button type="button" variant="ghost" aria-label="Zoom out" onClick={() => setZoom(Math.max(.15, zoom - .1))}>−</Button>
-        <Button type="button" variant="ghost" aria-label="Reset zoom to 100 percent" onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</Button>
-        <Button type="button" variant="ghost" aria-label="Zoom in" onClick={() => setZoom(Math.min(1.6, zoom + .1))}>+</Button>
-      </div>
-      }
+      <ToggleGroup aria-label="Topology filter" value={[mode]} onValueChange={(next) => { if (next[0]) setMode(next[0]) }}>
+        {["all", "changes", "observed"].map((value) => <ToggleGroupItem key={value} value={value} className="capitalize">{value}</ToggleGroupItem>)}
+      </ToggleGroup>
+      {focus && <Button type="button" variant="outline" size="sm" onClick={() => setFocus(false)}>Show all resources</Button>}
     </div>
     {query && <p role="status" className="px-5 py-2 text-sm text-muted-foreground">{matches.size} matching resources</p>}
     {(running || operation?.status === "failed") && <div role="status" className="border-b bg-muted/30 px-5 py-3 text-sm"><strong>{operation?.type === "rollback" ? "Rollback" : "Sync"} {operation?.status === "failed" ? "stopped" : operation?.status === "queued" ? "queued" : "running"}</strong> · {operation?.progress?.completed?.length ?? 0}/{operation?.progress?.total ?? 0} resource steps completed{operation?.progress?.current ? ` · ${operation.progress.current.kind}/${operation.progress.current.name}` : ""}<span className="mt-1 block text-muted-foreground">Applied does not mean Healthy. {operation?.status === "failed" ? operation.message : ""}</span></div>}
-    {(notice || graph.warnings.length > 0) && <p role="status" className="border-b px-5 py-3 text-sm text-amber-700 dark:text-amber-300">{[notice, ...graph.warnings].filter(Boolean).join(" · ")}</p>}
+    {(notice || graph.warnings.length > 0) && <p role="status" className="border-b px-5 py-3 text-sm text-warning-foreground dark:text-warning">{[notice, ...graph.warnings].filter(Boolean).join(" · ")}</p>}
     <div className={`grid min-w-0 ${selected ? "xl:grid-cols-[minmax(0,1fr)_360px]" : ""}`}>
       {view === "list" ? <div className="min-w-0 p-4"><DataGridList rows={graph.nodes.filter((node) => (!query.trim() || matches.has(node.id)) && (mode === "all" || mode === "observed" && observed(node) || mode === "changes" && ["create", "update", "delete", "failed"].includes(stateFor(node))) && (!focus || !selected || related.has(node.id)))} columns={[
-        { id: "resource", title: "Resource", cell: (node) => <Button variant="link" className="h-auto max-w-full justify-start whitespace-normal p-0 text-left" onClick={() => setSelectedId(node.id)} aria-pressed={selectedId === node.id}>{node.identity.name}</Button> },
+        { id: "resource", title: "Resource", cell: (node) => <Button variant="link" className="h-auto max-w-full justify-start whitespace-normal p-0 text-left" onClick={() => setSelectedId(node.id)} aria-current={selectedId === node.id ? "true" : undefined}>{node.identity.name}</Button> },
         { id: "kind", title: "Kind", cell: (node) => <span className="text-xs">{node.identity.kind}</span> },
         { id: "namespace", title: "Namespace", cell: (node) => <span className="text-xs text-muted-foreground">{node.identity.namespace || "Cluster scope"}</span> },
         { id: "health", title: "Runtime health", cell: (node) => <span className={`text-xs ${healthTone(node)}`}>{health(node)}</span> },
         { id: "sync", title: "Sync state", cell: (node) => <span className="text-xs">{labels[stateFor(node)]}</span> },
         { id: "management", title: "Management", cell: (node) => <span className="text-xs text-muted-foreground">{inventory.some((resource) => identityKey(resource.identity) === identityKey(node.identity)) ? "Managed by JustCD" : observed(node) ? "Observed · managed by Kubernetes" : "Desired · not managed yet"}</span> },
-      ]} empty="No matching resources. Refresh the cluster or try another filter." /></div> : <div ref={viewport} tabIndex={0} aria-label="Topology canvas. Drag empty space to pan; use arrow keys to scroll." className={`${styles.canvas} relative h-[min(72svh,900px)] min-h-96 min-w-0 touch-pan-x touch-pan-y overflow-auto bg-muted/10 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary fullscreen:h-[80svh]`} onPointerDown={(event) => {
+      ]} empty="No matching resources. Refresh the cluster or try another filter." /></div> : <div className="relative min-w-0"><div ref={viewport} tabIndex={0} aria-label="Topology canvas. Drag empty space to pan; use arrow keys to scroll." className={`${styles.canvas} relative h-[min(72svh,900px)] min-h-96 min-w-0 touch-pan-x touch-pan-y overflow-auto bg-muted/10 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary fullscreen:h-[80svh]`} onPointerDown={(event) => {
         if (event.button !== 0 || event.pointerType === "touch" || (event.target as HTMLElement).closest("button")) return
         const el = event.currentTarget
         drag.current = { x: event.clientX, y: event.clientY, left: el.scrollLeft, top: el.scrollTop }
@@ -194,15 +201,22 @@ export function ResourceMap({ view, onViewChange, application, plan, inventory, 
                 <span className="mt-2.5 flex items-center justify-between gap-1.5 text-xs leading-4 text-muted-foreground"><span className="inline-flex items-center gap-1.5"><span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${stateDot[state]}`} />{labels[state]}</span>
                 <span title={health(node)} className={`truncate text-xs leading-4 ${node.source === "sample" ? "text-muted-foreground" : healthTone(node)}`}>{health(node)}</span></span>
               </button>
-              {descendants.length > 0 && <button type="button" aria-expanded={expanded.has(node.id)} onClick={() => setExpanded((old) => { const next = new Set(old); if (next.has(node.id)) next.delete(node.id); else next.add(node.id); return next })} className="absolute inset-x-0 bottom-0 border-t bg-muted/25 px-3.5 py-1.5 text-left text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary">{expanded.has(node.id) ? "−" : "+"} Pods {pods.filter((n) => n.readiness === "Ready" && n.source !== "sample").length}/{pods.filter((n) => n.source !== "sample").length} ready · {replicas.length} ReplicaSets{descendants.some((n) => n.source === "sample") ? " · samples" : ""}</button>}
+              {descendants.length > 0 && <button type="button" aria-expanded={expanded.has(node.id)} onClick={() => setExpanded((old) => { const next = new Set(old); if (next.has(node.id)) next.delete(node.id); else next.add(node.id); return next })} className="absolute inset-x-0 bottom-0 border-t bg-muted/25 px-3.5 py-1.5 text-left text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"><HugeiconsIcon icon={expanded.has(node.id) ? MinusSignIcon : PlusSignIcon} strokeWidth={2} aria-hidden="true" className="mr-1 inline size-3 align-[-1px]" />Pods {pods.filter((n) => n.readiness === "Ready" && n.source !== "sample").length}/{pods.filter((n) => n.source !== "sample").length} ready · {replicas.length} ReplicaSets{descendants.some((n) => n.source === "sample") ? " · samples" : ""}</button>}
             </div>
           })}
         </div></div>}
-      </div>}
+      </div>
+      <div role="group" aria-label="Canvas view controls" className="absolute bottom-3 right-3 z-10 flex items-center gap-0.5 rounded-lg border bg-card/95 p-0.5 shadow-sm backdrop-blur">
+        <Tooltip><TooltipTrigger render={<Button type="button" variant="ghost" size="icon-sm" aria-label="Fit all resources" onClick={fit} />}><HugeiconsIcon icon={Maximize01Icon} strokeWidth={1.8} aria-hidden="true" /></TooltipTrigger><TooltipContent>Fit all</TooltipContent></Tooltip>
+        <Tooltip><TooltipTrigger render={<Button type="button" variant="ghost" size="icon-sm" aria-label="Center selection" disabled={!selected || !layout.positions.has(selected.id)} onClick={() => selected && center(selected.id)} />}><HugeiconsIcon icon={CenterFocusIcon} strokeWidth={1.8} aria-hidden="true" /></TooltipTrigger><TooltipContent>Center selection</TooltipContent></Tooltip>
+        <Tooltip><TooltipTrigger render={<Button type="button" variant="ghost" size="icon-sm" aria-label="Zoom out" onClick={() => setZoom(Math.max(.15, zoom - .1))} />}><HugeiconsIcon icon={MinusSignIcon} strokeWidth={1.8} aria-hidden="true" /></TooltipTrigger><TooltipContent>Zoom out</TooltipContent></Tooltip>
+        <Tooltip><TooltipTrigger render={<Button type="button" variant="ghost" size="sm" className="tabular-nums" aria-label="Reset zoom to 100 percent" onClick={() => setZoom(1)} />}>{Math.round(zoom * 100)}%</TooltipTrigger><TooltipContent>Reset zoom</TooltipContent></Tooltip>
+        <Tooltip><TooltipTrigger render={<Button type="button" variant="ghost" size="icon-sm" aria-label="Zoom in" onClick={() => setZoom(Math.min(1.6, zoom + .1))} />}><HugeiconsIcon icon={PlusSignIcon} strokeWidth={1.8} aria-hidden="true" /></TooltipTrigger><TooltipContent>Zoom in</TooltipContent></Tooltip>
+      </div></div>}
       {selected && <aside aria-label="Resource details" className={`${styles.inspector} min-w-0 space-y-5 border-t p-5 xl:h-[min(72svh,900px)] xl:overflow-auto xl:border-t-0 xl:border-l`}>
-        <div className="flex items-start justify-between gap-2"><div className="flex min-w-0 items-center gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-xl border bg-muted/40 text-muted-foreground"><HugeiconsIcon icon={iconFor(selected.identity.kind)} strokeWidth={1.6} className="size-5" aria-hidden="true" /></span><div className="min-w-0"><p className="text-sm font-medium uppercase tracking-widest text-muted-foreground">{selected.identity.kind}</p><h3 className="mt-1 break-all text-base font-semibold">{selected.identity.name}</h3></div></div><Button type="button" variant="ghost" aria-label="Close resource details" onClick={() => { setSelectedId(null); setFocus(false) }}>×</Button></div>
+        <div className="flex items-start justify-between gap-2"><div className="flex min-w-0 items-center gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-xl border bg-muted/40 text-muted-foreground"><HugeiconsIcon icon={iconFor(selected.identity.kind)} strokeWidth={1.6} className="size-5" aria-hidden="true" /></span><div className="min-w-0"><p className="text-sm font-medium uppercase tracking-widest text-muted-foreground">{selected.identity.kind}</p><h3 className="mt-1 break-all text-base font-semibold">{selected.identity.name}</h3></div></div><Button type="button" variant="ghost" size="icon" aria-label="Close resource details" onClick={() => { setSelectedId(null); setFocus(false) }}><HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} aria-hidden="true" /></Button></div>
 
-        <div className="space-y-2 rounded-xl border bg-muted/20 p-3"><p className={`text-sm font-medium ${healthTone(selected)}`}>{health(selected)}</p><div className="flex flex-wrap gap-2"><StatusBadge status={labels[stateFor(selected)]} />{application.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}</div></div>
+        <div className="space-y-2 rounded-xl border bg-muted/20 p-3"><p className={`text-sm font-medium ${healthTone(selected)}`}>{health(selected)}</p><div className="flex flex-wrap gap-2"><StatusBadge status={labels[stateFor(selected)]} />{application.autoSyncPaused && <StatusBadge status="Auto-sync paused" />}</div></div>
         {canManageResources && onResourceActionComplete && selectedManagedResource?.identity.namespace && !selectedManagedResource.identity.clusterScoped && <ResourceActions key={selectedManagedResource.uid} applicationID={application.id} resource={selectedManagedResource} disabled={resourceActionsDisabled} onComplete={onResourceActionComplete} />}
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs">{[["Namespace", selected.identity.namespace || "Cluster scope"], ["API version", selected.identity.apiVersion], ["Source", selected.source], ["Last observed", selected.observedAt ? new Date(selected.observedAt).toLocaleString() : "Not available"], ["Resource version", selected.resourceVersion || "Not available"]].map(([key, value]) => <div key={key}><dt className="text-xs text-muted-foreground">{key}</dt><dd className="mt-1 break-words font-medium">{value}</dd></div>)}</dl>
         {selected.healthSummary && <section aria-label="Kubernetes health details" className="space-y-3 border-t pt-4">
@@ -218,17 +232,17 @@ export function ResourceMap({ view, onViewChange, application, plan, inventory, 
             {selected.healthSummary.failed !== undefined && <div><dt className="text-muted-foreground">Failed pods</dt><dd className="mt-1 font-medium">{selected.healthSummary.failed}</dd></div>}
           </dl>
           {selected.healthSummary.failureReason && <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive"><strong>{selected.healthSummary.failureReason}</strong>{selected.healthSummary.failureMessage ? ` · ${selected.healthSummary.failureMessage}` : ""}</p>}
-          {selected.healthSummary.conditions?.length ? <div className="space-y-2"><h5 className="text-xs font-semibold">Conditions</h5><ul className="space-y-2">{selected.healthSummary.conditions.map((condition, index) => <li key={`${condition.type}-${index}`} className="rounded-lg border bg-muted/15 p-2.5 text-xs"><details><summary className="cursor-pointer list-none"><div className="flex flex-wrap items-center gap-1.5"><strong>{condition.type}</strong><StatusBadge status={condition.status} />{condition.reason && <span className="text-muted-foreground">{condition.reason}</span>}</div></summary>{condition.message && <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">{condition.message}</p>}{condition.lastTransitionTime && <p className="mt-1 text-sm text-muted-foreground">Transitioned {new Date(condition.lastTransitionTime).toLocaleString()}</p>}</details></li>)}</ul></div> : <p className="text-sm text-muted-foreground">Kubernetes has not reported explicit status conditions for this resource.</p>}
+          {selected.healthSummary.conditions?.length ? <div className="space-y-2"><h5 className="text-xs font-semibold">Conditions</h5><ul className="space-y-2">{selected.healthSummary.conditions.map((condition, index) => <li key={`${condition.type}-${index}`} className="rounded-lg border bg-muted/15 p-2.5 text-sm"><Disclosure summary={<span className="flex flex-wrap items-center gap-1.5"><strong>{condition.type}</strong><StatusBadge status={condition.status} />{condition.reason && <span className="font-normal text-muted-foreground">{condition.reason}</span>}</span>}>{condition.message && <p className="whitespace-pre-wrap break-words text-muted-foreground">{condition.message}</p>}{condition.lastTransitionTime && <p className="mt-1 text-sm text-muted-foreground">Transitioned {new Date(condition.lastTransitionTime).toLocaleString()}</p>}</Disclosure></li>)}</ul></div> : <p className="text-sm text-muted-foreground">Kubernetes has not reported explicit status conditions for this resource.</p>}
         </section>}
 
         {operation && <p className="text-sm text-muted-foreground">Plan operation: {operation.status} · {new Date(operation.finishedAt || operation.startedAt).toLocaleString()}</p>}
-        {plan?.plan.changes.some((change) => identityKey(change.identity) === identityKey(selected.identity)) && <Button type="button" variant="outline" onClick={async () => { if (document.fullscreenElement === root.current) await document.exitFullscreen(); onViewDiff(selected.identity) }}>View diff →</Button>}
+        {plan?.plan.changes.some((change) => identityKey(change.identity) === identityKey(selected.identity)) && <Button type="button" variant="outline" onClick={async () => { if (document.fullscreenElement === root.current) await document.exitFullscreen(); onViewDiff(selected.identity) }}>View diff<HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} data-icon="inline-end" aria-hidden="true" /></Button>}
         <div><h4 className="text-sm font-semibold">Relationships ({connections.length})</h4><div className="mt-2 space-y-2">{connections.map((edge, i) => {
           const other = graph.nodes.find((node) => node.id === (edge.from === selected.id ? edge.to : edge.from))
-          return other ? <Button type="button" key={i} variant="outline" className="h-auto w-full justify-start gap-3 whitespace-normal rounded-lg py-2.5 text-left text-xs" onClick={() => { setSelectedId(other.id); setMode("all") }}><HugeiconsIcon icon={iconFor(other.identity.kind)} strokeWidth={1.6} className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" /><span>{edge.from === selected.id ? `${edge.relation} →` : `← ${edge.relation} from`}<span className="mt-1 block break-all font-medium">{other.identity.kind}/{other.identity.name}</span></span></Button> : null
+          return other ? <Button type="button" key={i} variant="outline" className="h-auto w-full justify-start gap-3 whitespace-normal rounded-lg py-2.5 text-left text-xs" onClick={() => { setSelectedId(other.id); setMode("all") }}><HugeiconsIcon icon={iconFor(other.identity.kind)} strokeWidth={1.6} className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" /><span><span className="inline-flex items-center gap-1">{edge.from !== selected.id && <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={2} aria-hidden="true" className="size-3" />}{edge.from === selected.id ? edge.relation : `${edge.relation} from`}{edge.from === selected.id && <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} aria-hidden="true" className="size-3" />}</span><span className="mt-1 block break-all font-medium">{other.identity.kind}/{other.identity.name}</span></span></Button> : null
         })}{!connections.length && <p className="text-sm text-muted-foreground">No relationship detected in available manifests or observations.</p>}</div></div>
       </aside>}
     </div>
-    <footer className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t px-5 py-3 text-xs text-muted-foreground" aria-label="Topology status legend"><span className="font-medium text-foreground">Sync state</span><span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-2 rounded-full bg-emerald-600" />Deployed</span><span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-2 rounded-full bg-amber-500" />Out of sync</span><span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-2 rounded-full bg-blue-600" />Will be created / applying</span><span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-2 rounded-full bg-rose-600" />Will be destroyed / failed</span><span className="mx-1 hidden h-4 border-l sm:block" /><span><i aria-hidden="true" className="mr-1 inline-block size-2 rounded-full bg-emerald-600" />Pod Ready is health; deployed resources without reported health say so explicitly.</span></footer>
+    <footer className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t px-5 py-3 text-xs text-muted-foreground" aria-label="Topology status legend"><span className="font-medium text-foreground">Sync state</span><span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-2 rounded-full bg-success" />Deployed</span><span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-2 rounded-full bg-warning" />Out of sync</span><span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-2 rounded-full bg-info" />Will be created / applying</span><span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-2 rounded-full bg-destructive" />Will be destroyed / failed</span><span className="mx-1 hidden h-4 border-l sm:block" /><span><i aria-hidden="true" className="mr-1 inline-block size-2 rounded-full bg-success" />Pod Ready is health; deployed resources without reported health say so explicitly.</span></footer>
   </section>
 }

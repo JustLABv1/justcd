@@ -2,13 +2,17 @@
 
 import { useCallback, useEffect, useState } from "react"
 import type { FormEvent } from "react"
-import { ConfirmDisclosure } from "@/components/confirm-disclosure"
-import { RepositoryPRSettingsControl } from "@/components/repository-pr-settings"
-import { ConnectionDialog } from "@/components/connection-dialog"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { Copy01Icon, Delete02Icon, GitBranchIcon, PauseIcon, PlayIcon, Settings02Icon, Tick02Icon } from "@hugeicons/core-free-icons"
+import { RowActions } from "@/components/action-menu"
+import { RepositoryPRSettingsDialog } from "@/components/repository-pr-settings"
+import { Badge } from "@/components/reui/badge"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
-import { FormField } from "@/components/ui-kit"
+import { ConnectionRow, FormField, Panel } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
 import { api, apiDelete, apiPost, errorMessage } from "@/lib/api"
 import type {
@@ -31,6 +35,26 @@ spec:
     namespace: shop
   syncPolicy: manual`
 
+function ExampleYaml() {
+  const [copied, setCopied] = useState(false)
+  const toast = useToast()
+  useEffect(() => {
+    if (!copied) return
+    const timer = setTimeout(() => setCopied(false), 2000)
+    return () => clearTimeout(timer)
+  }, [copied])
+  return <div className="rounded-lg border bg-muted/30 p-3">
+    <div className="mb-2 flex items-center justify-between gap-3">
+      <p className="text-sm font-medium">Example justcd.yaml</p>
+      <Button type="button" size="xs" variant="outline" onClick={() => { navigator.clipboard.writeText(example).then(() => setCopied(true), () => toast.error("Could not copy to the clipboard.")) }}>
+        <HugeiconsIcon icon={copied ? Tick02Icon : Copy01Icon} strokeWidth={1.8} aria-hidden="true" />{copied ? "Copied" : "Copy"}
+      </Button>
+    </div>
+    <pre className="overflow-x-auto text-xs leading-5">{example}</pre>
+    <span role="status" aria-live="polite" className="sr-only">{copied ? "Example copied to clipboard" : ""}</span>
+  </div>
+}
+
 export function RepositoryConfigurations({
   workspace,
   sources,
@@ -46,6 +70,7 @@ export function RepositoryConfigurations({
   const [sourceId, setSourceId] = useState("")
   const [revision, setRevision] = useState("main")
   const [busy, setBusy] = useState("")
+  const [settingsFor, setSettingsFor] = useState<RepositoryConfiguration | null>(null)
   const load = useCallback(async () => {
     try {
       const result = await api<ListResponse<RepositoryConfiguration>>(
@@ -141,106 +166,68 @@ export function RepositoryConfigurations({
     }
   }
 
+  const owner = workspace.role === "owner"
+  const nameOf = (item: RepositoryConfiguration) => `${sources.find((source) => source.id === item.sourceId)?.name ?? "Repository"} · ${item.revision}`
   return (
-    <section className="overflow-hidden rounded-xl border bg-card">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
-        <div>
-          <h3 className="text-sm font-medium">Applications managed by Git</h3>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Place a justcd.yaml beside each overlay or chart. JustCD discovers
-            applications and keeps their configuration current.
-          </p>
-        </div>
-        {workspace.role === "owner" && (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={!sources.length || Boolean(busy)}
-            onClick={() => {
-              setSourceId(sources[0]?.id ?? "")
-              setOpen(true)
-            }}
-          >
-            Manage applications from Git
-          </Button>
-        )}
-      </div>
+    <Panel
+      title="Applications managed by Git"
+      description="Place a justcd.yaml beside each overlay or chart. JustCD discovers applications and keeps their configuration current."
+      action={owner ? <Button size="sm" variant="outline" disabled={!sources.length || Boolean(busy)} onClick={() => { setSourceId(sources[0]?.id ?? ""); setOpen(true) }}>Connect repository branch</Button> : undefined}
+    >
       {error && (
-        <p role="alert" className="px-5 py-4 text-sm text-destructive">
-          {error}
-        </p>
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 text-sm text-destructive">
+          <span>{error}</span>
+          <Button type="button" size="sm" variant="outline" onClick={() => { setLoading(true); void load() }}>Retry</Button>
+        </div>
       )}
       {loading ? (
-        <p role="status" className="px-5 py-4 text-sm text-muted-foreground">
-          Loading repository discovery…
-        </p>
+        <div role="status" aria-label="Loading repository discovery" className="space-y-3 p-5"><Skeleton className="h-12 rounded-lg" /><Skeleton className="h-12 rounded-lg" /></div>
       ) : !items.length && !error ? (
         <p className="px-5 py-4 text-sm text-muted-foreground">
-          No branches connected for application discovery yet.
+          No branches connected for application discovery yet.{" "}
+          {owner ? (sources.length ? "Use “Connect repository branch” to start." : "Connect a Git source first.") : "Ask a workspace owner to connect one."}
         </p>
       ) : (
-        <div className="divide-y">
+        <ul className="divide-y">
           {items.map((item) => (
-            <div
+            <ConnectionRow
               key={item.id}
-              className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:justify-between"
-            >
-              <div className="min-w-0">
-                <p className="text-sm font-medium">
-                  {sources.find((source) => source.id === item.sourceId)
-                    ?.name ?? "Repository"}{" "}
-                  <span className="font-mono text-muted-foreground">
-                    · {item.revision}
-                  </span>
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {item.enabled ? "Discovery enabled" : "Discovery paused"}
-                  {item.lastCommit && ` · ${item.lastCommit.slice(0, 12)}`}
-                  {item.lastCheckedAt &&
-                    ` · Checked ${new Date(item.lastCheckedAt).toLocaleString()}`}
-                </p>
-                {item.lastError && (
-                  <p
-                    role="alert"
-                    className="mt-2 text-xs break-words text-destructive"
-                  >
-                    {item.lastError}
-                  </p>
-                )}
-              </div>
-              {workspace.role === "owner" && (
-                <div className="flex shrink-0 flex-wrap gap-2">
-                  <RepositoryPRSettingsControl repository={item} onSaved={load} />
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={Boolean(busy) || !item.enabled}
-                    loading={busy === item.id}
-                    onClick={() => void update(item, "refresh")}
-                  >
-                    Discover now
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={Boolean(busy)}
-                    onClick={() => void update(item, "toggle")}
-                  >
-                    {item.enabled ? "Pause discovery" : "Resume discovery"}
-                  </Button>
-                  <ConfirmDisclosure trigger="Remove" title="Remove repository discovery?" description="Remove this branch’s application discovery connection. Pause discovery and remove its managed applications first. The Git source and repository remain." confirmLabel="Remove discovery" disabled={Boolean(busy)} onConfirm={async () => { await apiDelete(`/api/v1/repository-configurations/${encodeURIComponent(item.id)}`); setItems((current) => current.filter((value) => value.id !== item.id)); toast.success("Repository discovery removed.") }} />
-                </div>
-              )}
-            </div>
+              icon={<HugeiconsIcon icon={GitBranchIcon} strokeWidth={1.8} className="size-4" />}
+              title={nameOf(item)}
+              badges={<>
+                <Badge size="sm" radius="full" variant={item.enabled ? "success-light" : "outline"}>{item.enabled ? "Discovery on" : "Discovery paused"}</Badge>
+                {item.prSettings?.enabled && <Badge size="sm" radius="full" variant="info-light">Pull requests on</Badge>}
+              </>}
+              meta={<>
+                {item.lastCommit && <span className="font-mono">{item.lastCommit.slice(0, 12)}</span>}
+                {item.lastCheckedAt && <>{item.lastCommit ? " · " : ""}Checked {new Date(item.lastCheckedAt).toLocaleString()}</>}
+                {item.lastError && <p role="alert" className="mt-1 break-words text-sm text-destructive">{item.lastError}</p>}
+              </>}
+              actions={owner ? <RowActions
+                label={nameOf(item)}
+                primary={<Button size="sm" variant="outline" disabled={Boolean(busy) || !item.enabled} loading={busy === item.id} onClick={() => void update(item, "refresh")}>Discover now</Button>}
+                items={[
+                  { label: "PR discovery settings", icon: Settings02Icon, onSelect: () => setSettingsFor(item) },
+                  { label: item.enabled ? "Pause discovery" : "Resume discovery", icon: item.enabled ? PauseIcon : PlayIcon, disabled: Boolean(busy), onSelect: () => void update(item, "toggle") },
+                  { label: "Remove", icon: Delete02Icon, destructive: true, disabled: Boolean(busy), confirm: {
+                    title: `Remove ${nameOf(item)}?`,
+                    description: "Remove this branch’s application discovery connection. Pause discovery and remove its managed applications first. The Git source and repository remain.",
+                    confirmLabel: "Remove from discovery",
+                    onConfirm: async () => { await apiDelete(`/api/v1/repository-configurations/${encodeURIComponent(item.id)}`); setItems((current) => current.filter((value) => value.id !== item.id)); toast.success("Repository discovery removed.") },
+                  } },
+                ]}
+              /> : undefined}
+            />
           ))}
-        </div>
+        </ul>
       )}
-      <ConnectionDialog
+      {settingsFor && <RepositoryPRSettingsDialog repository={items.find((item) => item.id === settingsFor.id) ?? settingsFor} open onOpenChange={(next) => { if (!next) setSettingsFor(null) }} onSaved={load} />}
+      <AppDialog
         open={open}
         onOpenChange={setOpen}
         busy={Boolean(busy)}
-        title="Manage applications from Git"
-        description="Connect a branch to this workspace. Existing cluster and namespace connections define where its applications can deploy."
+        title="Connect repository branch"
+        description="Connect a branch to this workspace. Existing cluster and namespace access define where its applications can deploy."
       >
         <form className="space-y-4" onSubmit={(event) => void connect(event)}>
           <FormField label="Repository" htmlFor="discovery-source">
@@ -248,46 +235,22 @@ export function RepositoryConfigurations({
               id="discovery-source"
               value={sourceId}
               onValueChange={setSourceId}
-              items={sources.map((source) => ({
-                value: source.id,
-                label: source.name,
-              }))}
+              items={sources.map((source) => ({ value: source.id, label: source.name }))}
             />
           </FormField>
-          <FormField
-            label="Tracked branch or revision"
-            htmlFor="discovery-revision"
-          >
-            <Input
-              id="discovery-revision"
-              value={revision}
-              onChange={(event) => setRevision(event.target.value)}
-              required
-              maxLength={256}
-            />
+          <FormField label="Tracked branch or revision" htmlFor="discovery-revision">
+            <Input id="discovery-revision" value={revision} onChange={(event) => setRevision(event.target.value)} required maxLength={256} />
           </FormField>
-          <div className="rounded-lg border bg-muted/30 p-3">
-            <p className="mb-2 text-xs font-medium">Example justcd.yaml</p>
-            <pre className="overflow-x-auto text-xs leading-5">{example}</pre>
-          </div>
+          <ExampleYaml />
           <p className="text-sm leading-5 text-muted-foreground">
-            Paths are relative to this file. Use an existing cluster name or ID
-            and a namespace bound to this workspace. For Helm, set renderer to
-            helm and optionally source.valuesFiles. Definitions are checked
-            every minute. Removing a definition stops automatic processing and
-            keeps workloads in place.
+            Paths are relative to this file. Use an existing cluster name or ID and a namespace this workspace has access to. For Helm, set renderer to helm and optionally source.valuesFiles. Definitions are checked every minute. Removing a definition stops automatic processing and keeps workloads in place.
           </p>
-          <Button
-            type="submit"
-            size="sm"
-            loading={busy === "connect"}
-            loadingText="Discovering applications…"
-            disabled={!sourceId || !revision.trim() || Boolean(busy)}
-          >
-            Connect and discover
-          </Button>
+          <DialogFooter>
+            <DialogCancel disabled={Boolean(busy)} />
+            <Button type="submit" loading={busy === "connect"} loadingText="Discovering applications…" disabled={!sourceId || !revision.trim() || Boolean(busy)}>Connect and discover</Button>
+          </DialogFooter>
         </form>
-      </ConnectionDialog>
-    </section>
+      </AppDialog>
+    </Panel>
   )
 }

@@ -1,31 +1,28 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { useRouter } from "next/navigation"
-import { usePathname } from "next/navigation"
+import { useRouter, usePathname } from "next/navigation"
 import Link from "next/link"
-import { ClusterAgentConnection } from "@/components/cluster-agent-connection"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { ArrowLeft01Icon, ArrowRight01Icon, PlusSignIcon } from "@hugeicons/core-free-icons"
 import { WorkspaceIcon } from "@/components/workspace-ui"
-import { ErrorDetailsButton } from "@/components/error-details"
-import { ConfirmDisclosure } from "@/components/confirm-disclosure"
-import { ConnectionDialog } from "@/components/connection-dialog"
 import { Button } from "@/components/ui/button"
-import { Spinner } from "@/components/ui/spinner"
-import { Checkbox } from "@/components/ui/checkbox"
-import { FormSelect } from "@/components/ui/form-select"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { EmptyState, FormField, PageHeading } from "@/components/ui-kit"
+import { Skeleton } from "@/components/ui/skeleton"
+import { EmptyState, PageHeading, Panel } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
-import { api, apiDelete, apiPost, errorMessage } from "@/lib/api"
-import { RepositoryConfigurations } from "@/components/repository-configurations"
+import { api, errorMessage } from "@/lib/api"
 import { WorkspaceConnectionShares } from "@/components/workspace-connection-shares"
+import { ClusterPanel } from "@/components/settings/cluster-panel"
+import { CredentialPanel } from "@/components/settings/credential-panel"
+import { GitSourcePanel } from "@/components/settings/git-source-panel"
+import { NamespacePanel } from "@/components/settings/namespace-panel"
+import { OIDCPanel } from "@/components/settings/oidc-panel"
+import { PlatformUsersPanel } from "@/components/settings/users-panel"
+import { LoadErrorNotice, SectionSkeleton, type ActionRunner } from "@/components/settings/shared"
 import type {
   Cluster,
   Credential,
   GitSource,
-  KubernetesPermissionReport,
-  KubernetesPermissionTest,
   ListResponse,
   NamespaceBinding,
   OIDCProvider,
@@ -33,9 +30,29 @@ import type {
   User,
 } from "@/lib/types"
 
-const inputClass = "min-h-24 font-mono text-sm"
-
 const workspaceSections = ["git-sources", "clusters", "namespaces", "credentials", "shares"]
+
+const navGroups = [
+  { title: "Delivery", ids: ["git-sources", "clusters", "namespaces"] },
+  { title: "Security & access", ids: ["credentials", "shares", "oidc", "users"] },
+]
+
+type LoadKind = "base" | "scope" | "bindings" | "providers"
+
+/** One notice used on the instance settings landing and on every instance section. */
+function InstanceNotice() {
+  return (
+    <Panel className="mb-6">
+      <div className="flex items-start gap-3 p-4">
+        <WorkspaceIcon name="shield" className="mt-0.5 size-5 shrink-0 text-primary" />
+        <div>
+          <p className="text-sm font-semibold">Instance settings</p>
+          <p className="mt-1 text-sm text-muted-foreground">These settings apply to the whole instance and every workspace on it.</p>
+        </div>
+      </div>
+    </Panel>
+  )
+}
 
 export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixedWorkspaceId?: string; sectionOverride?: string }) {
   const router = useRouter()
@@ -44,43 +61,13 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
   const workspaceScoped = Boolean(fixedWorkspaceId)
   const section = sectionOverride ?? pathname.split("/")[2] ?? ""
   const sections = [
-    {
-      id: "git-sources",
-      title: "Git sources",
-      description: "Repositories tracked by your workspaces",
-    },
-    {
-      id: "clusters",
-      title: "Kubernetes clusters",
-      description: "Direct API connections and outbound cluster agents",
-    },
-    {
-      id: "namespaces",
-      title: "Namespace bindings",
-      description: "Workspace targets and per-namespace access",
-    },
-    {
-      id: "credentials",
-      title: "Credentials",
-      description: "Encrypted Git and Kubernetes secrets",
-    },
-    {
-      id: "shares",
-      title: "Shared connections",
-      description: "Review connection offers and workspace access",
-    },
-    {
-      id: "oidc",
-      title: "OIDC providers",
-      description: "Organization sign-in and group mapping",
-      adminOnly: true,
-    },
-    {
-      id: "users",
-      title: "Platform users",
-      description: "Accounts and access on this JustCD instance",
-      adminOnly: true,
-    },
+    { id: "git-sources", title: "Git sources", description: "Repositories this workspace deploys from" },
+    { id: "clusters", title: "Kubernetes clusters", description: "Direct API connections and outbound cluster agents" },
+    { id: "namespaces", title: "Namespace access", description: "Namespaces this workspace can deploy to" },
+    { id: "credentials", title: "Credentials", description: "Encrypted Git and Kubernetes secrets" },
+    { id: "shares", title: "Shared connections", description: "Review connection offers and workspace access" },
+    { id: "oidc", title: "OIDC providers", description: "Organization sign-in and group mapping", adminOnly: true },
+    { id: "users", title: "Platform users", description: "Accounts and access on this JustCD instance", adminOnly: true },
   ]
   const visibleSections = sections.filter((item) => workspaceScoped ? workspaceSections.includes(item.id) : !workspaceSections.includes(item.id))
   const current = visibleSections.find((item) => item.id === section)
@@ -96,55 +83,44 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
   const [sources, setSources] = useState<GitSource[]>([])
   const [bindings, setBindings] = useState<NamespaceBinding[]>([])
   const [providers, setProviders] = useState<OIDCProvider[]>([])
-  const [error, setError] = useState<unknown | null>(null)
+  const [providersLoaded, setProvidersLoaded] = useState(false)
+  const [errors, setErrors] = useState<Partial<Record<LoadKind, unknown>>>({})
+  const [ticks, setTicks] = useState<Record<LoadKind, number>>({ base: 0, scope: 0, bindings: 0, providers: 0 })
   const [busy, setBusy] = useState(false)
-  const [busyMessage, setBusyMessage] = useState("")
   const [loading, setLoading] = useState(true)
-  const [registeredPrimaryAction, setRegisteredPrimaryAction] = useState<{
-    section: string
-    run: () => void
-  } | null>(null)
-  const registerPrimaryAction = useCallback(
-    (actionSection: string, run: (() => void) | null) => {
-      setRegisteredPrimaryAction(run ? { section: actionSection, run } : null)
-    },
-    []
-  )
-  const registerCredentialAction = useCallback(
-    (run: (() => void) | null) => registerPrimaryAction("credentials", run),
-    [registerPrimaryAction]
-  )
-  const registerNamespaceAction = useCallback(
-    (run: (() => void) | null) => registerPrimaryAction("namespaces", run),
-    [registerPrimaryAction]
-  )
+  const [credentialDialogOpen, setCredentialDialogOpen] = useState(false)
+  const [namespaceDialogOpen, setNamespaceDialogOpen] = useState(false)
 
-  const loadBase = useCallback(async () => {
-    const [session, workspaceList] = await Promise.all([
-      api<{ user: User }>("/api/v1/auth/session"),
-      api<ListResponse<Workspace>>("/api/v1/workspaces"),
-    ])
-    setUser(session.user)
-    setWorkspaces(workspaceList.items)
-    const queryId =
-      new URLSearchParams(window.location.search).get("workspaceId") ?? ""
-    const selected =
-      workspaceList.items.find((workspace) => workspace.id === (fixedWorkspaceId ?? queryId)) ?? (!workspaceScoped ? workspaceList.items[0] : undefined)
-    if (selected) setWorkspaceId(selected.id)
-    const clusterList = selected
-      ? await api<ListResponse<Cluster>>(`/api/v1/clusters?workspaceId=${encodeURIComponent(selected.id)}`)
-      : { items: [] as Cluster[] }
-    setClusters(clusterList.items)
-    const initialCluster = clusterList.items[0]
-    if (initialCluster) setClusterId(initialCluster.id)
-  }, [fixedWorkspaceId, workspaceScoped])
+  const setError = useCallback((kind: LoadKind, cause: unknown) => setErrors((current) => ({ ...current, [kind]: cause })), [])
+  function retry(kind: LoadKind) {
+    setErrors((current) => ({ ...current, [kind]: undefined }))
+    if (kind === "base") setLoading(true)
+    setTicks((current) => ({ ...current, [kind]: current[kind] + 1 }))
+  }
 
   useEffect(() => {
-    Promise.resolve()
-      .then(loadBase)
-      .catch((cause) => setError(cause))
+    async function loadBase() {
+      const [session, workspaceList] = await Promise.all([
+        api<{ user: User }>("/api/v1/auth/session"),
+        api<ListResponse<Workspace>>("/api/v1/workspaces"),
+      ])
+      setUser(session.user)
+      setWorkspaces(workspaceList.items)
+      const queryId = new URLSearchParams(window.location.search).get("workspaceId") ?? ""
+      const selected =
+        workspaceList.items.find((workspace) => workspace.id === (fixedWorkspaceId ?? queryId)) ?? (!workspaceScoped ? workspaceList.items[0] : undefined)
+      if (selected) setWorkspaceId(selected.id)
+      const clusterList = selected
+        ? await api<ListResponse<Cluster>>(`/api/v1/clusters?workspaceId=${encodeURIComponent(selected.id)}`)
+        : { items: [] as Cluster[] }
+      setClusters(clusterList.items)
+      const initialCluster = clusterList.items[0]
+      if (initialCluster) setClusterId(initialCluster.id)
+    }
+    loadBase()
+      .catch((cause) => setError("base", cause))
       .finally(() => setLoading(false))
-  }, [loadBase])
+  }, [fixedWorkspaceId, workspaceScoped, ticks.base, setError])
 
   useEffect(() => {
     if (!workspaceScoped && workspaceSections.includes(section) && !loading) {
@@ -156,106 +132,115 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
     if (!workspaceId) return
     let active = true
     Promise.all([
-      api<ListResponse<Credential>>(
-        `/api/v1/credentials?workspaceId=${encodeURIComponent(workspaceId)}`
-      ),
-      api<ListResponse<GitSource>>(
-        `/api/v1/git-sources?workspaceId=${encodeURIComponent(workspaceId)}`
-      ),
+      api<ListResponse<Credential>>(`/api/v1/credentials?workspaceId=${encodeURIComponent(workspaceId)}`),
+      api<ListResponse<GitSource>>(`/api/v1/git-sources?workspaceId=${encodeURIComponent(workspaceId)}`),
     ])
       .then(([credentialList, sourceList]) => {
-        if (active) {
-          setCredentials(credentialList.items)
-          setSources(sourceList.items)
-          setLoadedWorkspaceId(workspaceId)
-        }
+        if (!active) return
+        setCredentials(credentialList.items)
+        setSources(sourceList.items)
+        setLoadedWorkspaceId(workspaceId)
       })
-      .catch((cause) => {
-        if (active) setError(cause)
-      })
-    return () => {
-      active = false
-    }
-  }, [workspaceId])
+      .catch((cause) => { if (active) setError("scope", cause) })
+    return () => { active = false }
+  }, [workspaceId, ticks.scope, setError])
 
   useEffect(() => {
     if (!workspaceId || !clusterId) return
     let active = true
-    api<ListResponse<NamespaceBinding>>(
-      `/api/v1/clusters/${encodeURIComponent(clusterId)}/bindings?workspaceId=${encodeURIComponent(workspaceId)}`
-    )
+    api<ListResponse<NamespaceBinding>>(`/api/v1/clusters/${encodeURIComponent(clusterId)}/bindings?workspaceId=${encodeURIComponent(workspaceId)}`)
       .then((result) => {
-        if (active) {
-          setBindings(result.items)
-          setLoadedBindingsKey(`${workspaceId}:${clusterId}`)
-        }
+        if (!active) return
+        setBindings(result.items)
+        setLoadedBindingsKey(`${workspaceId}:${clusterId}`)
       })
-      .catch((cause) => {
-        if (active) setError(cause)
-      })
-    return () => {
-      active = false
-    }
-  }, [workspaceId, clusterId])
+      .catch((cause) => { if (active) setError("bindings", cause) })
+    return () => { active = false }
+  }, [workspaceId, clusterId, ticks.bindings, setError])
 
   useEffect(() => {
     if (!user?.isAdmin) return
     let active = true
     api<ListResponse<OIDCProvider>>("/api/v1/admin/oidc-providers")
       .then((result) => {
-        if (active) setProviders(result.items)
+        if (!active) return
+        setProviders(result.items)
+        setProvidersLoaded(true)
       })
-      .catch((cause) => {
-        if (active) setError(cause)
-      })
-    return () => {
-      active = false
-    }
-  }, [user])
+      .catch((cause) => { if (active) setError("providers", cause) })
+    return () => { active = false }
+  }, [user, ticks.providers, setError])
+
   const scopeLoading = !!workspaceId && loadedWorkspaceId !== workspaceId
-  const bindingsLoading =
-    !!workspaceId &&
-    !!clusterId &&
-    loadedBindingsKey !== `${workspaceId}:${clusterId}`
+  const bindingsLoading = !!workspaceId && !!clusterId && loadedBindingsKey !== `${workspaceId}:${clusterId}`
 
-  const workspace = useMemo(
-    () => workspaces.find((item) => item.id === workspaceId),
-    [workspaces, workspaceId]
-  )
-  const globalKubeCredentials = credentials.filter(
-    (item) =>
-      !item.workspaceId && ["kubernetes-token", "kubeconfig"].includes(item.kind)
-  )
-  const gitCredentials = credentials.filter((item) =>
-    ["git-ssh", "git-https"].includes(item.kind)
-  )
-  const namespaceCredentials = credentials.filter((item) =>
-    ["kubernetes-token", "kubeconfig"].includes(item.kind)
-  )
+  const workspace = useMemo(() => workspaces.find((item) => item.id === workspaceId), [workspaces, workspaceId])
+  const globalKubeCredentials = credentials.filter((item) => !item.workspaceId && ["kubernetes-token", "kubeconfig"].includes(item.kind))
+  const gitCredentials = credentials.filter((item) => ["git-ssh", "git-https"].includes(item.kind))
+  const namespaceCredentials = credentials.filter((item) => ["kubernetes-token", "kubeconfig"].includes(item.kind))
 
-  async function action<T>(
-    work: () => Promise<T>,
-    success: string | ((result: T) => string),
-    after?: (value: T) => void
-  ) {
+  const action: ActionRunner = async (work, success, after) => {
     setBusy(true)
-    setBusyMessage(typeof success === "function" ? "Testing connection…" : success === "Cluster authentication verified." ? "Testing cluster connection…" : success === "Git source connection verified." ? "Testing Git source…" : "Saving changes…")
-    setError(null)
     try {
       const result = await work()
       after?.(result)
       toast.success(typeof success === "function" ? success(result) : success)
+      return true
     } catch (cause) {
       toast.error(errorMessage(cause), cause)
+      return false
     } finally {
       setBusy(false)
-      setBusyMessage("")
     }
   }
 
   if (!workspaceScoped && workspaceSections.includes(section)) {
-    return <div role="status" className="rounded-xl border bg-card p-6 text-sm text-muted-foreground">Opening workspace connections…</div>
+    return (
+      <div role="status" aria-label="Opening workspace connections">
+        <span className="sr-only">Opening workspace connections</span>
+        <Skeleton className="mb-5 h-8 w-64" />
+        <SectionSkeleton label="Opening workspace connections" />
+      </div>
+    )
   }
+
+  const isOwner = workspaceScoped && workspace?.role === "owner" && !scopeLoading
+  const headerAction = !isOwner || !workspace ? null
+    : section === "git-sources" ? (
+      <Button nativeButton={false} render={<Link href={`/workspaces/${workspace.id}/git-sources/new`} />}>
+        <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} aria-hidden="true" />
+        Connect Git source
+      </Button>
+    ) : section === "clusters" ? (
+      <Button nativeButton={false} render={<Link href={`/workspaces/${workspace.id}/clusters/new`} />}>
+        <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} aria-hidden="true" />
+        Connect cluster
+      </Button>
+    ) : section === "credentials" ? (
+      <Button type="button" onClick={() => setCredentialDialogOpen(true)}>
+        <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} aria-hidden="true" />
+        Add credential
+      </Button>
+    ) : section === "namespaces" && clusterId ? (
+      <Button type="button" onClick={() => setNamespaceDialogOpen(true)}>
+        <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} aria-hidden="true" />
+        Grant namespace access
+      </Button>
+    ) : null
+
+  // A failed load must never render as an empty list, so it replaces the section content.
+  const sectionError: { kind: LoadKind; title: string } | null = errors.base !== undefined
+    ? { kind: "base", title: "Could not load settings" }
+    : workspaceScoped && errors.scope !== undefined
+      ? { kind: "scope", title: "Could not load workspace connections" }
+      : section === "namespaces" && errors.bindings !== undefined
+        ? { kind: "bindings", title: "Could not load namespace access" }
+        : current?.adminOnly && user?.isAdmin && errors.providers !== undefined && section === "oidc"
+          ? { kind: "providers", title: "Could not load OIDC providers" }
+          : null
+
+  const adminVisibleSections = visibleSections.filter((item) => !item.adminOnly || user?.isAdmin)
+  const providersPending = section === "oidc" && !providersLoaded && errors.providers === undefined
 
   return (
     <>
@@ -265,2580 +250,177 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
           current?.description ??
           (workspaceScoped ? "Repositories, Kubernetes access, and credentials for this workspace." : "Sign-in providers and accounts for the JustCD instance.")
         }
-        actions={
-          workspaceScoped && workspace?.role === "owner" && !scopeLoading ? (
-            section === "git-sources" ? (
-              <Button
-                nativeButton={false} render={<Link href={`/workspaces/${workspace.id}/git-sources/new`} />}
-              >
-                Connect a Git source
-              </Button>
-            ) : section === "clusters" ? (
-              <Button
-                nativeButton={false} render={<Link href={`/workspaces/${workspace.id}/clusters/new`} />}
-              >
-                Connect a cluster
-              </Button>
-            ) : section === "credentials" ? (
-              <Button
-                type="button"
-                disabled={busy || registeredPrimaryAction?.section !== section}
-                onClick={() => registeredPrimaryAction?.run()}
-              >
-                Add credential
-              </Button>
-            ) : section === "namespaces" && clusterId ? (
-              <Button
-                type="button"
-                disabled={busy || registeredPrimaryAction?.section !== section}
-                onClick={() => registeredPrimaryAction?.run()}
-              >
-                Grant namespace access
-              </Button>
-            ) : null
-          ) : null
-        }
+        actions={headerAction}
       />
-      {error && (
-        <div
-          role="alert"
-          className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive"
-        >
-          <span>{errorMessage(error)}</span>
-          <ErrorDetailsButton error={error} />
-        </div>
-      )}
-      {busy && <div role="status" aria-live="polite" className="mb-4 flex items-center gap-2 rounded-lg border bg-muted/40 px-4 py-3 text-sm text-foreground"><Spinner aria-hidden="true" className="size-4 motion-reduce:animate-none" />{busyMessage}</div>}
-      {loading ? (
-        <div role="status" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: section ? 1 : 6 }, (_, index) => (
-            <div
-              key={index}
-              className="h-28 animate-pulse rounded-xl border bg-muted/40"
-            />
-          ))}
-        </div>
+      {loading && !sectionError ? (
+        <SectionSkeleton rows={section ? 3 : 2} label="Loading settings" />
+      ) : sectionError ? (
+        <LoadErrorNotice error={errors[sectionError.kind]} title={sectionError.title} onRetry={() => retry(sectionError.kind)} />
+      ) : section && !current ? (
+        <EmptyState title="Section not found" description="Choose a settings section to continue." href="/settings" action="View settings" />
       ) : (
-        <>
-          {section && !current && !(!workspaceScoped && workspaceSections.includes(section)) ? (
-            <EmptyState
-              title="Section not found"
-              description="Choose a settings section to continue."
-              href="/settings"
-              action="View settings"
-            />
-          ) : (
-            <>
-              <div
-                className={
-                  current && !workspaceScoped
-                    ? "grid items-start gap-8 lg:grid-cols-[200px_minmax(0,1fr)]"
-                    : ""
-                }
+        <div className={current && !workspaceScoped ? "grid items-start gap-8 lg:grid-cols-[200px_minmax(0,1fr)]" : ""}>
+          {current && !workspaceScoped && (
+            <nav
+              aria-label="Settings sections"
+              className="flex min-w-0 items-center gap-2 overflow-x-auto rounded-xl border bg-card p-2 pr-10 [mask-image:linear-gradient(to_right,black_calc(100%-2.5rem),transparent)] lg:sticky lg:top-24 lg:block lg:overflow-visible lg:pr-2 lg:[mask-image:none]"
+            >
+              <Link
+                href="/settings"
+                className="flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-3 text-sm font-medium whitespace-nowrap text-muted-foreground hover:bg-muted lg:mb-2 lg:border-b"
               >
-                {current && !workspaceScoped && (
-                  <nav
-                    aria-label="Settings sections"
-                    className="flex min-w-0 gap-2 overflow-x-auto rounded-xl border bg-card p-2 lg:sticky lg:top-24 lg:block"
-                  >
-                    <Link
-                      href={workspaceScoped ? `/workspaces/${fixedWorkspaceId}?tab=connections` : "/settings"}
-                      className="block shrink-0 rounded-lg px-3 py-3 text-sm font-medium whitespace-nowrap text-muted-foreground hover:bg-muted lg:mb-2 lg:border-b"
-                    >
-                      ← {workspaceScoped ? "Workspace connections" : "All settings"}
-                    </Link>
-                    {[
-                      {
-                        title: "Delivery",
-                        ids: ["git-sources", "clusters", "namespaces"],
-                      },
-                      {
-                        title: "Security & access",
-                        ids: ["credentials", "shares", "oidc", "users"],
-                      },
-                    ].filter((group) => group.ids.some((id) => visibleSections.some((item) => item.id === id))).map((group) => (
-                      <div
-                        key={group.title}
-                        className="flex shrink-0 gap-2 lg:mb-2 lg:block"
-                      >
-                        <p className="hidden px-3 py-2 text-sm font-semibold tracking-wider text-muted-foreground uppercase lg:block">
-                          {group.title}
-                        </p>
-                        {visibleSections
-                          .filter(
-                            (item) =>
-                              group.ids.includes(item.id) &&
-                              (!item.adminOnly || user?.isAdmin)
-                          )
-                          .map((item) => (
-                            <Link
-                              key={item.id}
-                              href={sectionHref(item.id)}
-                              aria-current={
-                                section === item.id ? "page" : undefined
-                              }
-                              className={`block shrink-0 rounded-lg px-3 py-2.5 text-sm font-medium whitespace-nowrap transition-colors lg:mb-1 ${section === item.id ? "bg-primary/10 text-primary" : "bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground"}`}
-                            >
-                              {item.title}
-                            </Link>
-                          ))}
-                      </div>
-                    ))}
-                  </nav>
-                )}
-                <div className="min-w-0">
-                  {current?.adminOnly && (
-                    <div className="mb-6 flex items-center gap-3 rounded-xl border bg-card p-4">
-                      <WorkspaceIcon
-                        name="shield"
-                        className="size-5 text-primary"
-                      />
-                      <div>
-                        <p className="text-sm font-semibold">
-                          Instance settings
-                        </p>
-                        <p className="mt-1 text-sm text-muted-foreground">
-                          These settings apply to the whole workspace, across
-                          all workspaces.
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                  {current?.adminOnly && !user?.isAdmin && (
-                    <EmptyState
-                      title="Administrator access required"
-                      description="Only instance administrators can manage sign-in providers and local accounts."
-                      href="/settings"
-                      action="Back to settings"
-                    />
-                  )}
-
-                  {workspaceScoped && !workspace && <EmptyState title="Workspace unavailable" description="You need workspace access to manage its connections." href="/workspaces" action="View workspaces" />}
-                  {!section && !user?.isAdmin ? <EmptyState title="Administrator access required" description="Instance settings are available to administrators. Workspace connections live on each workspace page." href="/workspaces" action="View workspaces" /> : !section ? (
-                    <div className="space-y-8">
-                      <div className="flex flex-col justify-between gap-4 rounded-2xl border bg-card p-6 sm:flex-row sm:items-center">
-                        <div className="flex items-start gap-4">
-                          <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-primary/7 text-primary">
-                            <WorkspaceIcon name="settings" />
-                          </span>
-                          <div>
-                            <h2 className="text-sm font-semibold">
-                              Instance configuration
-                            </h2>
-                            <p className="mt-1 text-sm leading-5 text-muted-foreground">
-                              Manage sign-in and accounts for the entire JustCD instance.
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                      {[
-                        {
-                          title: "Authentication & users",
-                          description: "Control how people sign in to JustCD.",
-                          ids: ["oidc", "users"],
-                        },
-                      ].map((group) => (
-                        <section key={group.title}>
-                          <div className="mb-4">
-                            <h2 className="text-base font-semibold tracking-tight">
-                              {group.title}
-                            </h2>
-                            <p className="mt-1 text-sm text-muted-foreground">
-                              {group.description}
-                            </p>
-                          </div>
-                          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                            {visibleSections
-                              .filter(
-                                (item) =>
-                                  group.ids.includes(item.id) &&
-                                  (!item.adminOnly || user?.isAdmin)
-                              )
-                              .map((item) => (
-                                <Link
-                                  key={item.id}
-                                  href={sectionHref(item.id)}
-                                  className="workspace-card group flex min-h-48 flex-col rounded-2xl border bg-card p-5"
-                                >
-                                  <div className="flex items-center justify-between">
-                                    <span className="grid size-10 place-items-center rounded-xl border bg-muted/30 text-muted-foreground">
-                                      <WorkspaceIcon
-                                        name={
-                                          item.id === "git-sources"
-                                            ? "branch"
-                                            : item.id === "clusters" ||
-                                                item.id === "namespaces"
-                                              ? "server"
-                                              : "shield"
-                                        }
-                                      />
-                                    </span>
-                                    <span className="text-xs text-muted-foreground">
-                                      Instance admin
-                                    </span>
-                                  </div>
-                                  <h3 className="mt-5 text-sm font-semibold group-hover:text-primary">
-                                    {item.title}
-                                  </h3>
-                                  <p className="mt-1.5 text-sm leading-5 text-muted-foreground">
-                                    {item.description}
-                                  </p>
-                                  <div className="mt-5 flex items-center justify-between border-t pt-3 text-sm">
-                                    <span className="text-muted-foreground">
-                                      Configure
-                                    </span>
-                                    <WorkspaceIcon
-                                      name="arrow"
-                                      className="size-4 text-muted-foreground group-hover:text-primary"
-                                    />
-                                  </div>
-                                </Link>
-                              ))}
-                          </div>
-                        </section>
+                <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={2} className="size-4" aria-hidden="true" />
+                All settings
+              </Link>
+              {navGroups
+                .filter((group) => group.ids.some((id) => adminVisibleSections.some((item) => item.id === id)))
+                .map((group) => (
+                  <div key={group.title} className="flex shrink-0 items-center gap-2 lg:mb-2 lg:block">
+                    <p className="px-2 text-sm font-semibold whitespace-nowrap text-muted-foreground lg:px-3 lg:py-2 lg:tracking-wider lg:uppercase">{group.title}</p>
+                    {adminVisibleSections
+                      .filter((item) => group.ids.includes(item.id))
+                      .map((item) => (
+                        <Link
+                          key={item.id}
+                          href={sectionHref(item.id)}
+                          aria-current={section === item.id ? "page" : undefined}
+                          className={`block shrink-0 rounded-lg px-3 py-2.5 text-sm font-medium whitespace-nowrap transition-colors lg:mb-1 ${section === item.id ? "bg-primary/10 text-primary" : "bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                        >
+                          {item.title}
+                        </Link>
                       ))}
-                    </div>
-                  ) : (
-                    <div className="settings-content min-w-0">
-                      {scopeLoading && !current?.adminOnly && (
-                        <p
-                          role="status"
-                          className="rounded-xl border bg-card p-6 text-sm text-muted-foreground"
-                        >
-                          Loading workspace connections…
-                        </p>
-                      )}
-                      {workspaceScoped && workspace && section === "credentials" && !scopeLoading && (
-                        <CredentialPanel
-                          key={workspaceId}
-                          workspace={workspace}
-                          user={user}
-                          credentials={credentials}
-                          busy={busy}
-                          action={action}
-                          onCreated={(credential) =>
-                            setCredentials((items) => [credential, ...items])
-                          }
-                          onUpdated={(credential) =>
-                            setCredentials((items) =>
-                              items.map((item) =>
-                                item.id === credential.id ? credential : item
-                              )
-                            )
-                          }
-                          onPrimaryActionChange={registerCredentialAction}
-                          onDeleted={(value) => setCredentials((items) => items.filter((item) => item.id !== value))}
-                        />
-                      )}
-                      {workspaceScoped && workspace && section === "clusters" && !scopeLoading && (
-                        <ClusterPanel
-                          key={workspace?.id}
-                          user={user}
-                          workspace={workspace}
-                          clusters={clusters}
-                          globalCredentials={globalKubeCredentials}
-                          workspaceCredentials={namespaceCredentials.filter(
-                            (item) => item.workspaceId === workspaceId
-                          )}
-                          busy={busy}
-                          action={action}
-                          onCreated={(cluster) => {
-                            setClusters((items) => [...items, cluster])
-                            setClusterId(cluster.id)
-                          }}
-                          onUpdated={(cluster) =>
-                            setClusters((items) =>
-                              items.map((item) =>
-                                item.id === cluster.id ? cluster : item
-                              )
-                            )
-                          }
-                          onDeleted={(value) => setClusters((items) => items.filter((item) => item.id !== value))}
-                        />
-                      )}
-                      {workspaceScoped && workspace && section === "git-sources" && !scopeLoading && (
-                        <GitSourcePanel
-                          key={workspaceId}
-                          workspace={workspace}
-                          credentials={gitCredentials}
-                          sources={sources}
-                          busy={busy}
-                          action={action}
-                          onCreated={(source) =>
-                            setSources((items) => [source, ...items])
-                          }
-                          onUpdated={(source) =>
-                            setSources((items) =>
-                              items.map((item) =>
-                                item.id === source.id ? source : item
-                              )
-                            )
-                          }
-                          onDeleted={(value) => setSources((items) => items.filter((item) => item.id !== value))}
-                        />
-                      )}
-                      {workspaceScoped && workspace && section === "shares" && !scopeLoading && (
-                        <WorkspaceConnectionShares
-                          workspace={workspace}
-                          workspaces={workspaces}
-                          clusters={clusters}
-                          sources={sources}
-                          credentials={credentials}
-                        />
-                      )}
-                      {workspaceScoped && workspace && section === "namespaces" && bindingsLoading && (
-                        <p
-                          role="status"
-                          className="rounded-xl border bg-card p-6 text-sm text-muted-foreground"
-                        >
-                          Loading namespace access…
-                        </p>
-                      )}
-                      {workspaceScoped && workspace && section === "namespaces" &&
-                        !scopeLoading &&
-                        !bindingsLoading && (
-                          <NamespacePanel
-                            key={`${workspaceId}:${clusterId}`}
-                            workspace={workspace}
-                            cluster={clusters.find(
-                              (item) => item.id === clusterId
-                            )}
-                            credentials={namespaceCredentials}
-                            bindings={bindings}
-                            clusters={clusters}
-                            activeClusterId={clusterId}
-                            onClusterChange={(value) => {
-                              setError(null)
-                              setClusterId(value)
-                            }}
-                            busy={busy}
-                            action={action}
-                            onCreated={(binding) =>
-                              setBindings((items) =>
-                                [...items, binding].sort((a, b) =>
-                                  a.namespace.localeCompare(b.namespace)
-                                )
-                              )
-                            }
-                            onUpdated={(binding) =>
-                              setBindings((items) =>
-                                items.map((item) =>
-                                  item.namespace === binding.namespace
-                                    ? binding
-                                    : item
-                                )
-                              )
-                            }
-                            onPrimaryActionChange={registerNamespaceAction}
-                          onDeleted={(value) => setBindings((items) => items.filter((item) => item.namespace !== value))}
-                        />
-                        )}
-                      {section === "oidc" && user?.isAdmin && (
-                        <OIDCPanel
-                          providers={providers}
-                          workspaces={workspaces}
-                          busy={busy}
-                          action={action}
-                          onDeleted={(id) => setProviders((items) => items.filter((item) => item.id !== id))}
-                          onCreated={(provider) =>
-                            setProviders((items) => items.some((item) => item.id === provider.id) ? items.map((item) => item.id === provider.id ? provider : item) : [...items, provider])
-                          }
-                        />
-                      )}
-                      {section === "users" && user?.isAdmin && (
-                        <PlatformUsersPanel currentUserId={user.id} busy={busy} action={action} />
-                      )}
-                    </div>
-                  )}
-
-                  {section === "credentials" && (
-                    <div className="mt-5 rounded-xl border bg-card px-5 py-4">
-                      <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
-                        <div>
-                          <p className="text-sm font-semibold">
-                            Credentials never leave the server
-                          </p>
-                          <p className="mt-1 max-w-3xl text-sm leading-5 text-muted-foreground">
-                            Secrets are encrypted at rest using
-                            JUSTCD_ENCRYPTION_KEY and are not returned to the
-                            browser. Git deploy keys require pinned known_hosts;
-                            kubeconfig exec plugins and token files are
-                            disabled.
-                          </p>
-                        </div>
-                        <span className="w-fit rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium tracking-wide text-emerald-700 uppercase">
-                          Encrypted
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </>
+                  </div>
+                ))}
+            </nav>
           )}
-        </>
-      )}
-    </>
-  )
-}
-
-function CredentialPanel({
-  workspace,
-  user,
-  credentials,
-  busy,
-  action,
-  onCreated,
-  onUpdated,
-  onDeleted,
-  onPrimaryActionChange,
-}: {
-  workspace?: Workspace
-  user: User | null
-  credentials: Credential[]
-  busy: boolean
-  action: <T>(
-    work: () => Promise<T>,
-    success: string,
-    after?: (value: T) => void
-  ) => Promise<void>
-  onCreated: (value: Credential) => void
-  onUpdated: (value: Credential) => void
-  onDeleted: (value: string) => void
-  onPrimaryActionChange: (run: (() => void) | null) => void
-}) {
-  const [name, setName] = useState("")
-  const [kind, setKind] = useState<Credential["kind"]>("kubernetes-token")
-  const [secretOne, setSecretOne] = useState("")
-  const [secretTwo, setSecretTwo] = useState("")
-  const [username, setUsername] = useState("")
-  const [editing, setEditing] = useState<Credential | null>(null)
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const isAdmin = user?.isAdmin ?? false
-  const openCreateDialog = useCallback(() => {
-    setEditing(null)
-    setName("")
-    setKind("kubernetes-token")
-    setSecretOne("")
-    setSecretTwo("")
-    setUsername("")
-    setDialogOpen(true)
-  }, [])
-  useEffect(() => {
-    onPrimaryActionChange(openCreateDialog)
-    return () => onPrimaryActionChange(null)
-  }, [onPrimaryActionChange, openCreateDialog])
-  const fields =
-    kind === "git-ssh"
-      ? {
-          first: "Private key",
-          second: "Pinned known_hosts",
-          firstKey: "privateKey",
-          secondKey: "knownHosts",
-        }
-      : kind === "git-https"
-        ? {
-            first: "Access token",
-            second: "",
-            firstKey: "token",
-            secondKey: "",
-          }
-        : kind === "kubeconfig"
-          ? {
-              first: "Static kubeconfig content",
-              second: "",
-              firstKey: "content",
-              secondKey: "",
-            }
-          : {
-              first: "Bearer token",
-              second: "",
-              firstKey: "token",
-              secondKey: "",
-            }
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const workspaceId = workspace?.id
-    await action(
-      async () => {
-        const secret = {
-          [fields.firstKey]: secretOne,
-          ...(fields.secondKey ? { [fields.secondKey]: secretTwo } : {}),
-          ...(kind === "git-https" ? { username } : {}),
-        }
-        const result = editing
-          ? await api<Credential>(
-              `/api/v1/credentials/${encodeURIComponent(editing.id)}`,
-              {
-                method: "PUT",
-                body: JSON.stringify({
-                  name,
-                  ...(kind === "git-https" ? { username } : {}),
-                  ...(secretOne ? { secret } : {}),
-                }),
-              }
-            )
-          : await apiPost<Credential>("/api/v1/credentials", {
-              workspaceId,
-              name,
-              kind,
-              secret,
-            })
-        setName("")
-        setSecretOne("")
-        setSecretTwo("")
-        setUsername("")
-        setEditing(null)
-        setDialogOpen(false)
-        return result
-      },
-      editing
-        ? "Credential updated. Existing token was kept unless you entered a replacement."
-        : "Encrypted credential added.",
-      editing ? onUpdated : onCreated
-    )
-  }
-  function edit(credential: Credential) {
-    setEditing(credential)
-    setName(credential.name)
-    setKind(credential.kind)
-    setSecretOne("")
-    setSecretTwo("")
-    setUsername(credential.username ?? "")
-    setDialogOpen(true)
-  }
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-6">
-        <SettingsInventory title="Available credentials" count={credentials.length}>
-          {credentials.length ? (
-            <div className="divide-y">
-              {credentials.map((credential) => (
-                <div
-                  key={credential.id}
-                  className="flex flex-wrap items-center gap-3 px-5 py-3"
-                >
-                  <span className="grid size-7 place-items-center rounded-md bg-muted text-xs">
-                    {credential.kind.startsWith("git") ? "G" : "K"}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">
-                      {credential.name}
-                    </span>
-                    <span className="block text-xs text-muted-foreground capitalize">
-                      {credential.kind.replaceAll("-", " ")}
-                      {!credential.workspaceId && " · legacy instance-wide"}
-                    </span>
-                  </span>
-                  {credential.expiresAt && (
-                    <span className="text-xs text-muted-foreground">
-                      expires{" "}
-                      {new Date(credential.expiresAt).toLocaleDateString()}
-                    </span>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    type="button"
-                    disabled={
-                      busy ||
-                      (!!credential.workspaceId && workspace?.role !== "owner") ||
-                      (!credential.workspaceId && !isAdmin)
-                    }
-                    onClick={() => edit(credential)}
-                  >
-                    Edit
-                  </Button>
-                  <ConnectionDeleteAction endpoint={`/api/v1/credentials/${encodeURIComponent(credential.id)}`} name={credential.name} description="Delete this stored credential. Assigned credentials must be replaced or detached first." disabled={busy || (credential.workspaceId ? workspace?.role !== "owner" : !isAdmin)} onDeleted={() => onDeleted(credential.id)} />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <EmptyState title="No credentials yet" description="Add a credential to connect a private repository or Kubernetes cluster. Secret values are never shown after saving." />
-          )}
-        </SettingsInventory>
-        <ConnectionDialog open={dialogOpen} onOpenChange={setDialogOpen} busy={busy} title={editing ? "Edit credential" : "Add credential"} description="Credentials are encrypted and their secret values are never shown again.">
-        <form
-          className="space-y-5"
-          onSubmit={submit}
-        >
-          <div className="grid gap-3 sm:grid-cols-2">
-            <FormField label="Name" htmlFor="credential-name">
-              <Input
-                id="credential-name"
-                placeholder="production deploy token"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                required
-                maxLength={100}
+          <div className="min-w-0">
+            {current?.adminOnly && user?.isAdmin && <InstanceNotice />}
+            {current?.adminOnly && !user?.isAdmin && (
+              <EmptyState
+                title="Administrator access required"
+                description="Only instance administrators can manage sign-in providers and local accounts."
+                href="/settings"
+                action="Back to settings"
               />
-            </FormField>
-            <FormField label="Credential type" htmlFor="credential-kind">
-              <FormSelect
-                id="credential-kind"
-                value={kind}
-                onValueChange={(value) => setKind(value as Credential["kind"])}
-                disabled={!!editing}
-                items={[
-                  {
-                    value: "kubernetes-token",
-                    label: "Kubernetes bearer token",
-                  },
-                  { value: "kubeconfig", label: "Static kubeconfig" },
-                  { value: "git-https", label: "Git over HTTPS" },
-                  { value: "git-ssh", label: "Git over SSH" },
-                ]}
-              />
-            </FormField>
-          </div>
-          {kind === "git-https" && (
-            <FormField
-              label="Git username"
-              htmlFor="git-username"
-              hint="Use the username required by your Git provider; the token is sent as the password."
-            >
-              <Input
-                id="git-username"
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-                required
-              />
-            </FormField>
-          )}
-          <FormField
-            label={fields.first}
-            htmlFor="credential-secret"
-            hint={
-              editing
-                ? "Leave blank to keep the encrypted secret. To rotate it, enter all secret fields again."
-                : kind === "kubeconfig"
-                  ? "Exec plugins, auth-provider plugins, and token files are rejected."
-                  : undefined
-            }
-          >
-            <Textarea
-              id="credential-secret"
-              className={inputClass}
-              value={secretOne}
-              onChange={(event) => setSecretOne(event.target.value)}
-              required={!editing}
-            />
-          </FormField>
-          {fields.second && (
-            <FormField
-              label={fields.second}
-              htmlFor="credential-secret-two"
-              hint="Host keys must be explicitly pinned; unknown hosts are not accepted."
-            >
-              <Textarea
-                id="credential-secret-two"
-                className={inputClass}
-                value={secretTwo}
-                onChange={(event) => setSecretTwo(event.target.value)}
-                required={!editing || !!secretOne}
-              />
-            </FormField>
-          )}
-          {!workspace && (
-            <p className="text-xs text-amber-700">
-              Select a workspace to add a scoped credential.
-            </p>
-          )}
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              type="submit"
-              loading={busy}
-              loadingText={editing ? "Saving credential…" : "Adding credential…"}
-              disabled={
-                busy ||
-                (editing
-                  ? editing.workspaceId
-                    ? workspace?.role !== "owner"
-                    : !isAdmin
-                  : workspace?.role !== "owner")
-              }
-            >
-              {editing ? "Save credential" : "Add credential"}
-            </Button>
-            <Button
-                size="sm"
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setDialogOpen(false)
-                }}
-              >
-                Cancel
-              </Button>
-          </div>
-        </form>
-        </ConnectionDialog>
-      </div>
-    </div>
-  )
-}
-
-function ClusterPanel({
-  user,
-  workspace,
-  clusters,
-  globalCredentials,
-  workspaceCredentials,
-  busy,
-  action,
-  onCreated,
-  onUpdated,
-  onDeleted,
-}: {
-  user: User | null
-  workspace?: Workspace
-  clusters: Cluster[]
-  globalCredentials: Credential[]
-  workspaceCredentials: Credential[]
-  busy: boolean
-  action: <T>(
-    work: () => Promise<T>,
-    success: string | ((result: T) => string),
-    after?: (value: T) => void
-  ) => Promise<void>
-  onCreated: (value: Cluster) => void
-  onUpdated: (value: Cluster) => void
-  onDeleted: (value: string) => void
-}) {
-  const [name, setName] = useState("")
-  const [apiServer, setApiServer] = useState("")
-  const [caDataBase64, setCaDataBase64] = useState("")
-  const [defaultCredentialId, setDefaultCredentialId] = useState("")
-  const [clusterScopeCredentialId, setClusterScopeCredentialId] = useState("")
-  const [maxConcurrentOperations, setMaxConcurrentOperations] = useState("2")
-  const [operationsPerMinute, setOperationsPerMinute] = useState("30")
-  const [workspaceCredentialId, setWorkspaceCredentialId] = useState("")
-  const [authDialogOpen, setAuthDialogOpen] = useState(false)
-  const [newWorkspaceCredentialId, setNewWorkspaceCredentialId] = useState("")
-  const [selectedClusterId, setSelectedClusterId] = useState("")
-  const [credentialLoadedFor, setCredentialLoadedFor] = useState("")
-  const [credentialLoadError, setCredentialLoadError] = useState<unknown | null>(null)
-  const [insecure, setInsecure] = useState(false)
-  const [editing, setEditing] = useState<Cluster | null>(null)
-  const [testingClusterId, setTestingClusterId] = useState("")
-  const [latestTests, setLatestTests] = useState<Record<string, KubernetesPermissionTest>>({})
-  const [workspaceCredentialByCluster, setWorkspaceCredentialByCluster] = useState<Record<string, string | null>>({})
-  const activeClusterId = selectedClusterId || clusters[0]?.id || ""
-  const activeCluster = clusters.find((cluster) => cluster.id === activeClusterId)
-  useEffect(() => {
-    if (!workspace) return
-    let active = true
-    Promise.all(clusters.map(async (cluster) => {
-      const [testResult, credentialResult] = await Promise.all([
-        api<ListResponse<KubernetesPermissionTest>>(`/api/v1/clusters/${encodeURIComponent(cluster.id)}/tests?workspaceId=${encodeURIComponent(workspace.id)}`).catch(() => ({ items: [] })),
-        api<{ credentialId: string | null }>(`/api/v1/clusters/${encodeURIComponent(cluster.id)}/workspace-credential?workspaceId=${encodeURIComponent(workspace.id)}`).catch(() => ({ credentialId: null })),
-      ])
-      const latest = [...testResult.items].sort((left, right) => right.checkedAt.localeCompare(left.checkedAt))[0]
-      return [cluster.id, latest, credentialResult.credentialId] as const
-    })).then((results) => {
-      if (!active) return
-      setLatestTests(Object.fromEntries(results.flatMap(([id, latest]) => latest ? [[id, latest]] : [])))
-      setWorkspaceCredentialByCluster(Object.fromEntries(results.map((result) => [result[0], result[2]])))
-    })
-    return () => { active = false }
-  }, [clusters, workspace])
-  useEffect(() => {
-    if (!workspace || !activeClusterId) return
-    let active = true
-    api<{ credentialId: string | null }>(
-      `/api/v1/clusters/${encodeURIComponent(activeClusterId)}/workspace-credential?workspaceId=${encodeURIComponent(workspace.id)}`
-    )
-      .then((result) => {
-        if (active) {
-          setWorkspaceCredentialId(result.credentialId ?? "")
-          setCredentialLoadedFor(activeClusterId)
-          setCredentialLoadError(null)
-        }
-      })
-      .catch((cause) => {
-        if (active) setCredentialLoadError(cause)
-      })
-    return () => {
-      active = false
-    }
-  }, [workspace, activeClusterId])
-  async function saveWorkspaceCredential() {
-    if (!workspace || !activeClusterId) return
-    await action(
-      () =>
-        api<{ credentialId: string | null }>(
-          `/api/v1/clusters/${encodeURIComponent(activeClusterId)}/workspace-credential`,
-          {
-            method: "PUT",
-            body: JSON.stringify({
-              workspaceId: workspace.id,
-              credentialId: workspaceCredentialId || null,
-            }),
-          }
-        ),
-      "Workspace credential saved for this cluster.",
-      (result) => {
-        setWorkspaceCredentialByCluster((current) => ({ ...current, [activeClusterId]: result.credentialId }))
-        setAuthDialogOpen(false)
-      }
-    )
-  }
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    await action(
-      async () => {
-        const result = editing
-          ? await api<Cluster>(
-              `/api/v1/clusters/${encodeURIComponent(editing.id)}`,
-              {
-                method: "PUT",
-                body: JSON.stringify({
-                  name,
-                  apiServer,
-                  ...(caDataBase64 ? { caDataBase64 } : {}),
-                  insecureSkipVerify: insecure,
-                  defaultCredentialId: defaultCredentialId || null,
-                  clusterScopeCredentialId: clusterScopeCredentialId || null,
-                  maxConcurrentOperations: Number(maxConcurrentOperations),
-                  operationsPerMinute: Number(operationsPerMinute),
-                }),
-              }
-            )
-          : await apiPost<Cluster>("/api/v1/clusters", {
-              name,
-              apiServer,
-              caDataBase64,
-              insecureSkipVerify: insecure,
-              defaultCredentialId: defaultCredentialId || undefined,
-              clusterScopeCredentialId: clusterScopeCredentialId || undefined,
-              maxConcurrentOperations: Number(maxConcurrentOperations),
-              operationsPerMinute: Number(operationsPerMinute),
-              workspaceId: workspace?.id,
-              workspaceCredentialId: newWorkspaceCredentialId || undefined,
-            })
-        if (editing && workspace) {
-          const authentication = await api<{ credentialId: string | null }>(`/api/v1/clusters/${encodeURIComponent(editing.id)}/workspace-credential`, {
-            method: "PUT",
-            body: JSON.stringify({ workspaceId: workspace.id, credentialId: workspaceCredentialId || null }),
-          })
-          setWorkspaceCredentialByCluster((current) => ({ ...current, [editing.id]: authentication.credentialId }))
-        }
-        setName("")
-        setApiServer("")
-        setCaDataBase64("")
-        setNewWorkspaceCredentialId("")
-        setDefaultCredentialId("")
-        setClusterScopeCredentialId("")
-        setMaxConcurrentOperations("2")
-        setOperationsPerMinute("30")
-        setInsecure(false)
-        setEditing(null)
-        return result
-      },
-      editing
-        ? "Cluster updated. Existing CA certificate was kept unless replaced."
-        : "Cluster connected. Add a namespace binding to a workspace before creating applications.",
-      editing ? onUpdated : onCreated
-    )
-  }
-  function edit(cluster: Cluster) {
-    if (activeClusterId !== cluster.id) {
-      setSelectedClusterId(cluster.id)
-      setCredentialLoadedFor("")
-      setCredentialLoadError(null)
-    }
-    setEditing(cluster)
-    setName(cluster.name)
-    setApiServer(cluster.apiServer)
-    setCaDataBase64("")
-    setInsecure(cluster.insecureSkipVerify)
-    setDefaultCredentialId(cluster.defaultCredentialId ?? "")
-    setClusterScopeCredentialId(cluster.clusterScopeCredentialId ?? "")
-    setMaxConcurrentOperations(String(cluster.maxConcurrentOperations || 2))
-    setOperationsPerMinute(String(cluster.operationsPerMinute || 30))
-  }
-  async function test(cluster: Cluster) {
-    if (!workspace) return
-    setTestingClusterId(cluster.id)
-    try {
-      await action(
-        () =>
-          apiPost<KubernetesPermissionReport>(
-            `/api/v1/clusters/${encodeURIComponent(cluster.id)}/test`,
-            {
-              workspaceId: workspace.id,
-            }
-          ),
-        (result) => {
-          const missing = result.checks.filter(
-            (check) => check.status === "missing"
-          ).length
-          return result.status === "passed"
-            ? `${cluster.name}: all Kubernetes permissions passed in ${result.namespace}.`
-            : result.status === "partial"
-              ? `${cluster.name}: ${missing} Kubernetes permission${missing === 1 ? "" : "s"} missing in ${result.namespace}.`
-              : `${cluster.name}: ${result.failure?.message ?? "Kubernetes permission test failed."}`
-        },
-        (result) => setLatestTests((current) => ({ ...current, [cluster.id]: { workspaceId: workspace.id, clusterId: cluster.id, namespace: result.namespace, report: result, checkedAt: result.checkedAt } }))
-      )
-    } finally {
-      setTestingClusterId("")
-    }
-  }
-  return (
-    <div className="space-y-6">
-      <SettingsInventory title="Connected clusters" count={clusters.length}>
-        {clusters.length ? (
-          <div className="divide-y">
-            {clusters.map((cluster) => (
-              <div
-                key={cluster.id}
-                className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div className="flex min-w-0 flex-1 items-start gap-3">
-                  <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-violet-500/10 text-sm text-violet-700">
-                    K8s
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-medium">
-                      {cluster.name}
-                    </span>
-                    <span className="block truncate font-mono text-xs text-muted-foreground">
-                      {cluster.connectionMode === "agent" ? "Outbound cluster agent" : cluster.apiServer}
-                    </span>
-                    <span className="mt-2 flex flex-wrap gap-1.5">
-                      <span className="inline-flex rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-                        {cluster.shared ? `Shared by ${cluster.ownerWorkspaceName ?? "another workspace"}` : cluster.workspaceId ? "Private to this workspace" : "Legacy instance-owned"}
-                      </span>
-                      <span className="inline-flex rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-                        {workspaceCredentialByCluster[cluster.id] ? `Default: ${workspaceCredentials.find((item) => item.id === workspaceCredentialByCluster[cluster.id])?.name ?? "configured"}` : cluster.connectionMode === "agent" ? "Agent local credentials" : cluster.shared ? "Workspace credential needed" : cluster.defaultCredentialId ? "Legacy instance default" : "No workspace default"}
-                      </span>
-                      <span className="inline-flex rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-                        {latestTests[cluster.id] ? `Last test: ${latestTests[cluster.id].report.status} · ${new Date(latestTests[cluster.id].checkedAt).toLocaleString()}` : "Not tested yet"}
-                      </span>
-                    </span>
-                  </span>
-                </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    type="button"
-                    loading={testingClusterId === cluster.id}
-                    loadingText="Testing…"
-                    disabled={busy || !workspace}
-                    onClick={() => test(cluster)}
-                  >
-                    Test
-                  </Button>
-                  {workspace && <ClusterAgentConnection cluster={cluster} workspace={workspace} canManage={workspace.role === "owner" && (cluster.workspaceId === workspace.id || (!cluster.workspaceId && !!user?.isAdmin))} onModeChange={(mode) => onUpdated({ ...cluster, connectionMode: mode })} />}
-                  {cluster.connectionMode !== "agent" && <Button size="sm" variant="outline" type="button" disabled={busy || workspace?.role !== "owner"} onClick={() => { if (activeClusterId !== cluster.id) { setSelectedClusterId(cluster.id); setCredentialLoadedFor(""); setCredentialLoadError(null) }; setAuthDialogOpen(true) }}>Credentials</Button>}
-                  {workspace?.role === "owner" && (cluster.workspaceId === workspace.id || (!cluster.workspaceId && user?.isAdmin)) && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      type="button"
-                      disabled={busy}
-                      onClick={() => edit(cluster)}
-                    >
-                      Edit
-                    </Button>
-                  )}
-                  {!cluster.shared && (cluster.workspaceId === workspace?.id ? workspace?.role === "owner" : !cluster.workspaceId && user?.isAdmin) && <ConnectionDeleteAction endpoint={`/api/v1/clusters/${encodeURIComponent(cluster.id)}`} name={cluster.name} description="Remove this cluster connection and its namespace bindings from JustCD. Kubernetes resources remain. Applications and active shares must be removed first." disabled={busy} onDeleted={() => { if (editing?.id === cluster.id) setEditing(null); if (activeClusterId === cluster.id) setSelectedClusterId(""); onDeleted(cluster.id) }} />}
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : null}
-        {!clusters.length && (
-          <EmptyState title="No connected clusters yet" description="Connect a new cluster or ask another workspace owner to offer one. Credentials stay private to each workspace." />
-        )}
-      </SettingsInventory>
-      {workspace && clusters.some((item) => item.connectionMode !== "agent") && (
-        <section className="overflow-hidden rounded-xl border bg-card">
-          <div className="border-b px-5 py-4"><h2 className="text-sm font-semibold">Default credential for namespace access</h2><p className="mt-1 text-sm text-muted-foreground">This credential applies to all namespace bindings on the cluster unless a binding has its own credential. The token’s Kubernetes RBAC determines which namespaces it can access.</p></div>
-          <div className="grid gap-4 px-5 py-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-            <div className="max-w-sm"><FormField label="Cluster" htmlFor="workspace-cluster"><FormSelect id="workspace-cluster" value={activeClusterId} onValueChange={(value) => { setSelectedClusterId(value); setCredentialLoadedFor(""); setCredentialLoadError(null) }} emptyOption="Select cluster" items={clusters.filter((cluster) => cluster.connectionMode !== "agent").map((cluster) => ({ value: cluster.id, label: cluster.name }))} /></FormField></div>
-            <div className="flex flex-wrap items-center gap-3 sm:justify-end"><span className="text-sm text-muted-foreground">{workspaceCredentialByCluster[activeClusterId] ? "Credential configured" : "No workspace credential"}</span><Button size="sm" variant="outline" type="button" disabled={workspace.role !== "owner" || !activeClusterId || credentialLoadedFor !== activeClusterId} onClick={() => setAuthDialogOpen(true)}>Configure</Button></div>
-          </div>
-          {credentialLoadError != null && (
-            <div role="alert" className="flex flex-wrap items-center justify-between gap-3 border-t px-5 py-3 text-sm text-destructive"><span>{errorMessage(credentialLoadError)}</span><ErrorDetailsButton error={credentialLoadError} /></div>
-          )}
-        </section>
-      )}
-      <ConnectionDialog open={authDialogOpen} onOpenChange={setAuthDialogOpen} busy={busy} title="Configure cluster default credential" description={`Use one credential for all namespace bindings on ${activeCluster?.name ?? "this cluster"}. Namespace-specific credentials override it. This setting is private to your workspace.`}>
-          <div className="space-y-5"><FormField
-              label="Default Kubernetes credential"
-              htmlFor="workspace-cluster-credential"
-            >
-              <FormSelect
-                id="workspace-cluster-credential"
-                disabled={
-                  !activeClusterId ||
-                  credentialLoadedFor !== activeClusterId
-                }
-                value={workspaceCredentialId}
-                onValueChange={setWorkspaceCredentialId}
-                emptyOption={activeCluster?.shared || activeCluster?.workspaceId ? "No workspace credential" : "Use legacy instance default"}
-                items={workspaceCredentials.map((credential) => ({
-                  value: credential.id,
-                  label: credential.name,
-                }))}
-              />
-            </FormField>
-          <Button
-            size="sm"
-            type="button"
-            disabled={
-              busy ||
-              !activeClusterId ||
-              credentialLoadedFor !== activeClusterId ||
-              workspace?.role !== "owner"
-            }
-            onClick={saveWorkspaceCredential}
-          >
-            Save default credential
-          </Button>
-          </div>
-      </ConnectionDialog>
-      {editing ? (
-        <ConnectionDialog open={!!editing} onOpenChange={(open) => { if (!open) setEditing(null) }} busy={busy} title="Edit cluster connection" description="Update the endpoint and authentication settings for this cluster.">
-        <form
-          className="space-y-5"
-          onSubmit={submit}
-        >
-          <div className="grid gap-3 sm:grid-cols-2">
-            <FormField label="Cluster name" htmlFor="cluster-name">
-              <Input
-                id="cluster-name"
-                placeholder="prod-eu-1"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                required
-              />
-            </FormField>
-            <FormField label="Kubernetes API URL" htmlFor="cluster-api">
-              <Input
-                id="cluster-api"
-                type="url"
-                placeholder="https://api.example.com:6443"
-                value={apiServer}
-                onChange={(event) => setApiServer(event.target.value)}
-                required
-              />
-            </FormField>
-          </div>
-          <details
-            className="rounded-xl border bg-muted/20 p-4"
-            open={editing ? true : undefined}
-          >
-            <summary className="cursor-pointer text-sm font-medium">
-              Authentication & TLS settings
-            </summary>
-            <div className="mt-5 space-y-5">
-              {" "}
-              <FormField
-                label="CA certificate (base64)"
-                htmlFor="cluster-ca"
-                hint={
-                  editing
-                    ? "Leave blank to keep the current CA certificate."
-                    : "Optional when the system trust store is sufficient."
-                }
-              >
-                <Textarea
-                  id="cluster-ca"
-                  className={inputClass}
-                  value={caDataBase64}
-                  onChange={(event) => setCaDataBase64(event.target.value)}
-                />
-              </FormField>
-              {workspace && <FormField label="Default Kubernetes credential for this workspace" htmlFor="edit-workspace-credential" hint="Used by all namespace bindings without their own credential. A cluster-wide ServiceAccount token can be selected here.">
-                <FormSelect id="edit-workspace-credential" value={workspaceCredentialId} onValueChange={setWorkspaceCredentialId} disabled={credentialLoadedFor !== editing.id} emptyOption="No workspace default" items={workspaceCredentials.map((credential) => ({ value: credential.id, label: credential.name }))} />
-              </FormField>}
-              {credentialLoadError != null && <p role="alert" className="text-sm text-destructive">{errorMessage(credentialLoadError)}</p>}
-              {editing && !editing.workspaceId && user?.isAdmin && globalCredentials.length > 0 && <div className="grid gap-3 sm:grid-cols-2">
-                <FormField
-                  label="Default cluster credential"
-                  htmlFor="cluster-default"
-                >
-                  <FormSelect
-                    id="cluster-default"
-                    value={defaultCredentialId}
-                    onValueChange={setDefaultCredentialId}
-                    emptyOption="None yet"
-                    items={globalCredentials.map((credential) => ({
-                      value: credential.id,
-                      label: credential.name,
-                    }))}
-                  />
-                </FormField>
-                <FormField
-                  label="Cluster-scope credential"
-                  htmlFor="cluster-scope"
-                >
-                  <FormSelect
-                    id="cluster-scope"
-                    value={clusterScopeCredentialId}
-                    onValueChange={setClusterScopeCredentialId}
-                    emptyOption="Disabled (recommended)"
-                    items={globalCredentials.map((credential) => ({
-                      value: credential.id,
-                      label: credential.name,
-                    }))}
-                  />
-                </FormField>
-              </div>}
-              <p className="text-sm text-muted-foreground">
-                Instance-wide credentials are optional. Workspace credentials are
-                kept separate and are never shared across workspaces.
-              </p>
-              <label className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
-                <Checkbox
-                  checked={insecure}
-                  onCheckedChange={(checked) => setInsecure(Boolean(checked))}
-                  className="mt-0.5"
-                />
-                Skip TLS certificate verification{" "}
-                <span className="text-amber-700">
-                  — only for temporary development clusters.
-                </span>
-              </label>
-            </div>
-          </details>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <FormField label="Max concurrent operations" htmlFor="cluster-max-concurrent" hint="Bounds simultaneous operations against this cluster (1–20).">
-              <Input id="cluster-max-concurrent" type="number" min={1} max={20} value={maxConcurrentOperations} onChange={(event) => setMaxConcurrentOperations(event.target.value)} required />
-            </FormField>
-            <FormField label="Operations per minute" htmlFor="cluster-operations-per-minute" hint="Minimum spacing is applied between operation starts (1–1000).">
-              <Input id="cluster-operations-per-minute" type="number" min={1} max={1000} value={operationsPerMinute} onChange={(event) => setOperationsPerMinute(event.target.value)} required />
-            </FormField>
-          </div>
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              type="submit"
-              loading={busy}
-              loadingText="Saving cluster…"
-              disabled={Boolean(workspace && editing && credentialLoadedFor !== editing.id)}
-            >
-              Save cluster
-            </Button>
-            {editing && (
-              <Button
-                size="sm"
-                variant="outline"
-                type="button"
-                onClick={() => {
-                  setEditing(null)
-                  setName("")
-                  setApiServer("")
-                  setCaDataBase64("")
-                  setDefaultCredentialId("")
-                  setClusterScopeCredentialId("")
-                  setMaxConcurrentOperations("2")
-                  setOperationsPerMinute("30")
-                  setInsecure(false)
-                }}
-              >
-                Cancel
-              </Button>
             )}
-          </div>
-        </form>
-        </ConnectionDialog>
-      ) : null}
-    </div>
-  )
-}
-
-function GitSourcePanel({
-  workspace,
-  credentials,
-  sources,
-  busy,
-  action,
-  onCreated,
-  onUpdated,
-  onDeleted,
-}: {
-  workspace?: Workspace
-  credentials: Credential[]
-  sources: GitSource[]
-  busy: boolean
-  action: <T>(
-    work: () => Promise<T>,
-    success: string | ((result: T) => string),
-    after?: (value: T) => void
-  ) => Promise<void>
-  onCreated: (value: GitSource) => void
-  onUpdated: (value: GitSource) => void
-  onDeleted: (value: string) => void
-}) {
-  const [name, setName] = useState("")
-  const [repositoryUrl, setRepositoryUrl] = useState("")
-  const [credentialId, setCredentialId] = useState("")
-  const [editing, setEditing] = useState<GitSource | null>(null)
-  const [testingSourceId, setTestingSourceId] = useState("")
-  const [webhookSource, setWebhookSource] = useState<GitSource | null>(null)
-  const [webhookInfo, setWebhookInfo] = useState<{ configured: boolean; webhookUrl: string } | null>(null)
-  const [webhookSecret, setWebhookSecret] = useState("")
-  const [lastTestResults, setLastTestResults] = useState<Record<string, { commit: string; testedAt: string }>>({})
-  async function openWebhook(source: GitSource) {
-    setWebhookSource(source)
-    setWebhookInfo(null)
-    setWebhookSecret("")
-    await action(
-      () => api<{ configured: boolean; webhookUrl: string; managedByOwner?: boolean }>(`/api/v1/git-sources/${encodeURIComponent(source.id)}/push-webhook?workspaceId=${encodeURIComponent(workspace?.id ?? "")}`),
-      "Webhook settings loaded.",
-      setWebhookInfo
-    )
-  }
-  async function saveWebhook(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!webhookSource) return
-    await action(
-      () => api<{ configured: boolean; webhookUrl: string; managedByOwner?: boolean }>(`/api/v1/git-sources/${encodeURIComponent(webhookSource.id)}/push-webhook`, { method: "PUT", body: JSON.stringify({ secret: webhookSecret }) }),
-      "Push webhook configured.",
-      (value) => { setWebhookInfo(value); setWebhookSecret("") }
-    )
-  }
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    await action(
-      async () => {
-        const source = editing
-          ? await api<GitSource>(
-              `/api/v1/git-sources/${encodeURIComponent(editing.id)}`,
-              {
-                method: "PUT",
-                body: JSON.stringify({
-                  name,
-                  repositoryUrl,
-                  credentialId: credentialId || null,
-                }),
-              }
-            )
-          : await apiPost<GitSource>("/api/v1/git-sources", {
-              workspaceId: workspace?.id,
-              name,
-              repositoryUrl,
-              credentialId: credentialId || undefined,
-            })
-        setName("")
-        setRepositoryUrl("")
-        setCredentialId("")
-        setEditing(null)
-        return source
-      },
-      editing ? "Git source updated." : "Git source connected.",
-      editing ? onUpdated : onCreated
-    )
-  }
-  function edit(source: GitSource) {
-    setEditing(source)
-    setName(source.name)
-    setRepositoryUrl(source.repositoryUrl)
-    setCredentialId(source.credentialId ?? "")
-  }
-  async function test(source: GitSource) {
-    setTestingSourceId(source.id)
-    try { await action(
-      () => apiPost<{ status: string; commit: string }>(
-        `/api/v1/git-sources/${encodeURIComponent(source.id)}/test?workspaceId=${encodeURIComponent(workspace?.id ?? "")}`
-      ),
-      (result) => `${source.name}: HEAD ${result.commit.slice(0, 12)} reachable`,
-      (result) => setLastTestResults((current) => ({ ...current, [source.id]: { commit: result.commit, testedAt: new Date().toISOString() } }))
-    ) } finally { setTestingSourceId("") }
-  }
-  return (
-    <div className="space-y-6">
-      <SettingsInventory title="Connected repositories" count={sources.length}>
-        {sources.length ? (
-          <div className="divide-y">
-            {sources.map((source) => (
-              <div
-                key={source.id}
-                className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium">{source.name}</p>
-                  <p className="mt-0.5 truncate font-mono text-sm text-muted-foreground">
-                    {source.repositoryUrl}
-                  </p>
-                  <span className="mt-2 flex flex-wrap gap-1.5">
-                    <span className="inline-flex rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-                      {source.shared ? `Shared by ${source.ownerWorkspaceName ?? "another workspace"}` : "Private to this workspace"}
-                    </span>
-                    <span className="inline-flex rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-                      {source.credentialId ? "Credential configured" : "No Git credential"}
-                    </span>
-                    <span className="inline-flex rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-                      {lastTestResults[source.id] ? `Last test: HEAD ${lastTestResults[source.id].commit.slice(0, 8)} · ${new Date(lastTestResults[source.id].testedAt).toLocaleString()}` : "Not tested in this session"}
-                    </span>
-                  </span>
-                </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    type="button"
-                    loading={testingSourceId === source.id}
-                    loadingText="Testing…"
-                    disabled={busy}
-                    onClick={() => test(source)}
-                  >
-                    Test
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    type="button"
-                    disabled={busy || workspace?.role !== "owner" || source.shared || source.workspaceId !== workspace.id}
-                    onClick={() => edit(source)}
-                  >
-                    Edit
-                  </Button>
-                  {!source.shared && <Button size="sm" variant="outline" type="button" disabled={busy || workspace?.role !== "owner"} onClick={() => void openWebhook(source)}>Push webhook</Button>}
-                  {!source.shared && source.workspaceId === workspace?.id && <ConnectionDeleteAction endpoint={`/api/v1/git-sources/${encodeURIComponent(source.id)}`} name={source.name} description="Remove this Git source from JustCD. The repository remains. Applications, repository configurations, and active shares must be removed first." disabled={busy || workspace?.role !== "owner"} onDeleted={() => { if (editing?.id === source.id) setEditing(null); if (webhookSource?.id === source.id) setWebhookSource(null); onDeleted(source.id) }} />}
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : null}
-        {!sources.length && (
-          <EmptyState title="No Git sources connected yet" description="Use the guided flow to reuse an accessible source or connect a repository with workspace-owned credentials." />
-        )}
-      </SettingsInventory>
-      {workspace && <RepositoryConfigurations key={workspace.id} workspace={workspace} sources={sources} />}
-      {webhookSource && <ConnectionDialog open={!!webhookSource} onOpenChange={(open) => { if (!open) setWebhookSource(null) }} busy={busy} title={`Push webhook · ${webhookSource.name}`} description="Configure push events for this Git source. An existing PR webhook already accepts pushes too."><form className="space-y-4" onSubmit={(event) => void saveWebhook(event)}>
-        {webhookInfo && <div className="mt-4 rounded-lg border bg-muted/30 p-3 text-sm"><p>{webhookInfo.configured ? "Configured" : "Not configured"}</p><code className="mt-1 block break-all">{webhookInfo.webhookUrl}</code><p className="mt-2 text-muted-foreground">For GitHub/GitLab, enable push events with this secret. For other senders, POST JSON with ref and after (commit SHA), sign the raw body with HMAC-SHA256 in X-JustCD-Signature-256, and send a unique X-JustCD-Delivery ID.</p></div>}
-        <div className="mt-4"><FormField label={webhookInfo?.configured ? "Rotate webhook secret" : "Webhook secret"} htmlFor="generic-push-secret" hint="At least 16 characters. The value is never shown again."><Input id="generic-push-secret" type="password" minLength={16} required value={webhookSecret} onChange={(event) => setWebhookSecret(event.target.value)} autoComplete="new-password" /></FormField></div>
-        <Button className="mt-4" size="sm" type="submit" disabled={busy || !webhookInfo || webhookSecret.length < 16}>Save push webhook</Button>
-      </form></ConnectionDialog>}
-      {editing && <ConnectionDialog open={!!editing} onOpenChange={(open) => { if (!open) setEditing(null) }} busy={busy} title="Edit Git source" description="Update this repository and its workspace credential."><form
-        className="space-y-5"
-        onSubmit={submit}
-      >
-        <div className="grid gap-3 sm:grid-cols-2">
-          <FormField label="Source name" htmlFor="source-name">
-            <Input
-              id="source-name"
-              placeholder="platform-config"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              required
-            />
-          </FormField>
-          <FormField label="Repository URL" htmlFor="source-url">
-            <Input
-              id="source-url"
-              placeholder="https://github.com/org/repo.git"
-              value={repositoryUrl}
-              onChange={(event) => setRepositoryUrl(event.target.value)}
-              required
-            />
-          </FormField>
-        </div>
-        <FormField label="Git credential" htmlFor="source-credential">
-          <FormSelect
-            id="source-credential"
-            value={credentialId}
-            onValueChange={setCredentialId}
-            emptyOption="Public repository"
-            items={credentials.map((credential) => ({
-              value: credential.id,
-              label: `${credential.name} · ${credential.kind}`,
-            }))}
-          />
-        </FormField>
-        {!workspace && (
-          <p className="text-xs text-amber-700">
-            Select a workspace to configure Git sources.
-          </p>
-        )}
-        {!credentials.length && (
-          <Link
-            href={workspace ? `/workspaces/${workspace.id}/connections/credentials` : "/workspaces"}
-            className="inline-flex text-sm font-medium text-primary hover:underline"
-          >
-            Add credentials for a private repository →
-          </Link>
-        )}
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            type="submit"
-            loading={busy}
-            loadingText={editing ? "Saving Git source…" : "Adding Git source…"}
-            disabled={busy || !workspace || workspace.role !== "owner"}
-          >
-            {editing ? "Save Git source" : "Add Git source"}
-          </Button>
-          {editing && (
-            <Button
-              size="sm"
-              variant="outline"
-              type="button"
-              onClick={() => {
-                setEditing(null)
-                setName("")
-                setRepositoryUrl("")
-                setCredentialId("")
-              }}
-            >
-              Cancel
-            </Button>
-          )}
-        </div>
-      </form></ConnectionDialog>}
-    </div>
-  )
-}
-
-function NamespacePanel({
-  workspace,
-  cluster,
-  clusters,
-  activeClusterId,
-  onClusterChange,
-  credentials,
-  bindings,
-  busy,
-  action,
-  onCreated,
-  onUpdated,
-  onDeleted,
-  onPrimaryActionChange,
-}: {
-  workspace?: Workspace
-  cluster?: Cluster
-  clusters: Cluster[]
-  activeClusterId: string
-  onClusterChange: (value: string) => void
-  credentials: Credential[]
-  bindings: NamespaceBinding[]
-  busy: boolean
-  action: <T>(
-    work: () => Promise<T>,
-    success: string | ((result: T) => string),
-    after?: (value: T) => void
-  ) => Promise<void>
-  onCreated: (value: NamespaceBinding) => void
-  onUpdated: (value: NamespaceBinding) => void
-  onDeleted: (value: string) => void
-  onPrimaryActionChange: (run: (() => void) | null) => void
-}) {
-  const [namespace, setNamespace] = useState("")
-  const [credentialId, setCredentialId] = useState("")
-  const [editing, setEditing] = useState<NamespaceBinding | null>(null)
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [workspaceDefault, setWorkspaceDefault] = useState(false)
-  const [reports, setReports] = useState<
-    Record<string, KubernetesPermissionTest>
-  >({})
-  const [testingNamespace, setTestingNamespace] = useState("")
-  const [includeClusterScope, setIncludeClusterScope] = useState(false)
-  const openCreateDialog = useCallback(() => {
-    setEditing(null)
-    setNamespace("")
-    setCredentialId("")
-    setDialogOpen(true)
-  }, [])
-  useEffect(() => {
-    onPrimaryActionChange(openCreateDialog)
-    return () => onPrimaryActionChange(null)
-  }, [onPrimaryActionChange, openCreateDialog])
-  useEffect(() => {
-    if (!workspace || !cluster) return
-    api<{ credentialId: string | null }>(
-      `/api/v1/clusters/${encodeURIComponent(cluster.id)}/workspace-credential?workspaceId=${encodeURIComponent(workspace.id)}`
-    )
-      .then((result) => setWorkspaceDefault(!!result.credentialId))
-      .catch(() => setWorkspaceDefault(false))
-  }, [workspace, cluster])
-  useEffect(() => {
-    if (!workspace || !cluster) return
-    let active = true
-    api<ListResponse<KubernetesPermissionTest>>(
-      `/api/v1/clusters/${encodeURIComponent(cluster.id)}/tests?workspaceId=${encodeURIComponent(workspace.id)}`
-    )
-      .then((result) => {
-        if (active) {
-          setReports(
-            Object.fromEntries(
-              result.items.map((item) => [item.namespace, item])
-            )
-          )
-        }
-      })
-      .catch(() => {
-        if (active) setReports({})
-      })
-    return () => {
-      active = false
-    }
-  }, [workspace, cluster])
-  async function runSelfTest(targetNamespace: string, clusterScope = false) {
-    if (!workspace || !cluster) return
-    setTestingNamespace(targetNamespace)
-    try {
-      await action(
-        () =>
-          apiPost<KubernetesPermissionReport>(
-            `/api/v1/clusters/${encodeURIComponent(cluster.id)}/test`,
-            {
-              workspaceId: workspace.id,
-              namespace: targetNamespace,
-              includeClusterScope: clusterScope,
-            }
-          ),
-        (report) =>
-          report.status === "passed"
-            ? `Kubernetes permissions passed in ${report.namespace}.`
-            : (report.failure?.message ??
-              `Kubernetes permission checks are ${report.status} in ${report.namespace}.`),
-        (report) =>
-          setReports((current) => ({
-            ...current,
-            [report.namespace]: {
-              workspaceId: workspace.id,
-              clusterId: cluster.id,
-              namespace: report.namespace,
-              report,
-              checkedAt: report.checkedAt,
-            },
-          }))
-      )
-    } finally {
-      setTestingNamespace("")
-    }
-  }
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!workspace || !cluster) return
-    if (editing) {
-      const updatedNamespace = editing.namespace
-      let updatedBinding = false
-      await action(
-        async () => {
-          const binding = await api<NamespaceBinding>(
-            `/api/v1/clusters/${encodeURIComponent(cluster.id)}/bindings/${encodeURIComponent(editing.namespace)}`,
-            {
-              method: "PUT",
-              body: JSON.stringify({
-                workspaceId: workspace.id,
-                credentialId: credentialId || null,
-              }),
-            }
-          )
-          setNamespace("")
-          setCredentialId("")
-          setEditing(null)
-          setDialogOpen(false)
-          return binding
-        },
-        "Namespace credential updated.",
-        (binding) => {
-          updatedBinding = true
-          onUpdated(binding)
-        }
-      )
-      if (updatedBinding) await runSelfTest(updatedNamespace)
-      return
-    }
-    let createdBinding: NamespaceBinding | undefined
-    await action(
-      async () => {
-        const binding = await apiPost<NamespaceBinding>(
-          `/api/v1/clusters/${encodeURIComponent(cluster.id)}/bindings`,
-          {
-            workspaceId: workspace.id,
-            namespace,
-            credentialId: credentialId || undefined,
-          }
-        )
-        setNamespace("")
-        setCredentialId("")
-        setDialogOpen(false)
-        return binding
-      },
-      "Namespace access binding added.",
-      (binding) => {
-        createdBinding = binding
-        onCreated(binding)
-      }
-    )
-    if (createdBinding) await runSelfTest(createdBinding.namespace)
-  }
-  return (
-    <div className="space-y-6">
-      <SettingsInventory title="Allowed namespaces" count={bindings.length} control={<FormField label="Active cluster" htmlFor="active-cluster"><FormSelect id="active-cluster" value={activeClusterId} onValueChange={onClusterChange} emptyOption="Select cluster" items={clusters.map((item) => ({ value: item.id, label: item.name }))} /></FormField>}>
-        {bindings.length ? (
-          <div className="divide-y">
-            {bindings.map((binding) => {
-              const record = reports[binding.namespace]
-              const report = record?.report
-              return (
-                <div
-                  key={binding.namespace}
-                  className="grid gap-3 px-5 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
-                >
-                  <div className="min-w-0">
-                    <p className="font-mono text-sm">{binding.namespace}</p>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {cluster?.connectionMode === "agent" ? "Agent local namespace profile" : binding.credentialId
-                        ? credentials.find(
-                            (item) => item.id === binding.credentialId
-                          )?.name || "Namespace credential"
-                        : workspaceDefault
-                          ? "Cluster default credential (workspace)"
-                          : "Cluster default"}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2 sm:justify-end">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      type="button"
-                      loading={testingNamespace === binding.namespace}
-                      loadingText="Testing…"
-                      disabled={busy || !workspace || !cluster}
-                      onClick={() =>
-                        void runSelfTest(binding.namespace, includeClusterScope)
-                      }
-                    >
-                      Run self-test
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      type="button"
-                      disabled={busy || workspace?.role !== "owner"}
-                      onClick={() => {
-                        setEditing(binding)
-                        setNamespace(binding.namespace)
-                        setCredentialId(binding.credentialId ?? "")
-                        setDialogOpen(true)
-                      }}
-                    >
-                      Edit
-                    </Button>
-                    <ConnectionDeleteAction endpoint={`/api/v1/clusters/${encodeURIComponent(cluster?.id ?? "")}/bindings/${encodeURIComponent(binding.namespace)}?workspaceId=${encodeURIComponent(workspace?.id ?? "")}`} name={`${binding.namespace} namespace access`} description="Remove this workspace’s namespace binding from JustCD. The Kubernetes namespace and its resources remain. Applications using this binding must be removed first." disabled={busy || workspace?.role !== "owner" || !cluster} confirmLabel="Remove binding" trigger="Remove" onDeleted={() => { if (editing?.namespace === binding.namespace) { setEditing(null); setDialogOpen(false) }; onDeleted(binding.namespace) }} />
-                  </div>
-                  <div className="text-xs text-muted-foreground sm:col-span-2">
-                    {record ? (
-                      <>
-                        Latest self-test:{" "}
-                        <span className="font-medium text-foreground">
-                          {report?.status}
-                        </span>
-                        {" · "}
-                        {new Date(record.checkedAt).toLocaleString()}
-                        <details className="mt-2 rounded-lg border bg-muted/20 p-3 text-sm">
-                          <summary className="cursor-pointer font-medium">
-                            View permission checks and suggested RBAC
-                          </summary>
-                          {report && (
-                            <PermissionReportDetails report={report} />
-                          )}
-                        </details>
-                      </>
-                    ) : (
-                      "No permission self-test saved yet. New namespace bindings are tested automatically."
-                    )}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        ) : null}
-        {!bindings.length && (
-          <EmptyState title="No allowed namespaces yet" description="Grant access to a namespace to get started." />
-        )}
-      </SettingsInventory>
-      <div className="rounded-xl border bg-card px-5 py-4">
-        <label className="flex items-start gap-3 text-sm">
-          <Checkbox
-            checked={includeClusterScope}
-            disabled={
-              busy ||
-              workspace?.role !== "owner" ||
-              !cluster
-            }
-            onCheckedChange={(checked) =>
-              setIncludeClusterScope(Boolean(checked))
-            }
-          />
-          <span>
-            <span className="block font-medium">
-              Include optional cluster-wide checks
-            </span>
-            <span className="mt-1 block text-muted-foreground">
-              Uses the configured cluster-scope credential, or the effective namespace credential, to check namespace get,
-              list, create, apply, and delete permissions. No namespaces are
-              changed.
-            </span>
-          </span>
-        </label>
-        {!cluster?.clusterScopeCredentialId && (
-          <p className="mt-2 pl-7 text-sm text-muted-foreground">
-            These read-only checks can use your namespace or cluster-default credential. They do not enable cluster-wide deployments.
-          </p>
-        )}
-        {workspace?.role !== "owner" && (
-          <p className="mt-2 pl-7 text-sm text-muted-foreground">
-            Only workspace owners can request cluster-wide permission checks.
-          </p>
-        )}
-      </div>
-      <ConnectionDialog open={dialogOpen} onOpenChange={setDialogOpen} busy={busy} title={editing ? "Edit namespace access" : "Grant namespace access"} description="Choose the namespace and credential this workspace will use on the selected cluster."><form
-        className="space-y-5"
-        onSubmit={submit}
-      >
-        <div className="grid gap-3 sm:grid-cols-2">
-          <FormField
-            label="Namespace"
-            htmlFor="namespace-name"
-            hint="Kubernetes namespace, up to 63 characters."
-          >
-            <Input
-              id="namespace-name"
-              placeholder="payments"
-              value={namespace}
-              onChange={(event) => setNamespace(event.target.value)}
-              required
-              maxLength={63}
-              readOnly={!!editing}
-            />
-          </FormField>
-          {cluster?.connectionMode === "agent" ? <p className="self-center text-sm text-muted-foreground">Access uses the agent’s local namespace profile.</p> : <FormField
-            label="Credential for this namespace"
-            htmlFor="namespace-credential"
-          >
-            <FormSelect
-              id="namespace-credential"
-              value={credentialId}
-              onValueChange={setCredentialId}
-              emptyOption={
-                workspaceDefault
-                  ? "Use cluster default credential (workspace)"
-                  : "Use cluster default"
-              }
-              items={credentials.map((credential) => ({
-                value: credential.id,
-                label: credential.name,
-              }))}
-            />
-          </FormField>}
-        </div>
-        {cluster?.connectionMode !== "agent" && !cluster?.defaultCredentialId && !workspaceDefault && !credentialId && (
-          <p className="text-xs text-amber-700">
-            Choose a namespace credential or configure a cluster default
-            credential.
-          </p>
-        )}
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            type="submit"
-            loading={busy}
-            loadingText={editing ? "Saving binding…" : "Binding namespace…"}
-            disabled={busy || !workspace || workspace.role !== "owner" || !cluster}
-          >
-            {editing ? "Save binding" : "Bind namespace"}
-          </Button>
-          {(
-            <Button
-              size="sm"
-              variant="outline"
-              type="button"
-              onClick={() => {
-                setDialogOpen(false)
-              }}
-            >
-              Cancel
-            </Button>
-          )}
-        </div>
-      </form></ConnectionDialog>
-    </div>
-  )
-}
-
-function PermissionReportDetails({
-  report,
-}: {
-  report: KubernetesPermissionReport
-}) {
-  const checks = [...report.checks, ...(report.clusterScope?.checks ?? [])]
-  const suggestions = [
-    ["Role", report.suggestions.roleYaml],
-    ["RoleBinding", report.suggestions.roleBindingYaml],
-    ["ClusterRole", report.suggestions.clusterRoleYaml],
-    ["ClusterRoleBinding", report.suggestions.clusterRoleBindingYaml],
-  ].filter((item): item is [string, string] => Boolean(item[1]))
-  return (
-    <div className="mt-3 space-y-3">
-      <p className="text-sm text-muted-foreground">
-        {report.serverVersion ? `Kubernetes ${report.serverVersion} · ` : ""}
-        Checks use SelfSubjectAccessReview and do not touch deployment
-        resources.
-      </p>
-      {report.failure && (
-        <div className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-xs">
-          <p className="font-medium">
-            {report.failure.category}: {report.failure.message}
-          </p>
-          <p className="mt-1 text-muted-foreground">
-            {report.failure.remediation}
-          </p>
-        </div>
-      )}
-      {report.clusterScope?.failure && (
-        <div className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-xs">
-          <p className="font-medium">
-            Cluster-scope check: {report.clusterScope.failure.message}
-          </p>
-          <p className="mt-1 text-muted-foreground">
-            {report.clusterScope.failure.remediation}
-          </p>
-        </div>
-      )}
-      {report.clusterScope?.status === "not_configured" && (
-        <p className="text-sm text-muted-foreground">
-          Cluster-scope checks were requested, but no cluster-scope credential
-          is configured.
-        </p>
-      )}
-      <ul className="grid gap-1 sm:grid-cols-2">
-        {checks.map((check) => (
-          <li
-            key={`${check.scope}-${check.id}`}
-            className="flex items-center justify-between gap-3 rounded-md bg-muted/40 px-2 py-1.5 text-xs"
-          >
-            <span>{check.title}</span>
-            <span
-              className={
-                check.status === "passed"
-                  ? "font-medium text-emerald-700"
-                  : check.status === "missing"
-                    ? "font-medium text-amber-700"
-                    : "text-muted-foreground"
-              }
-            >
-              {check.status}
-            </span>
-          </li>
-        ))}
-      </ul>
-      {suggestions.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-xs font-medium">
-            Suggested RBAC for missing permissions
-          </p>
-          {suggestions.map(([title, value]) => (
-            <div key={title}>
-              <p className="mb-1 text-sm text-muted-foreground">{title}</p>
-              <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">
-                {value}
-              </pre>
-            </div>
-          ))}
-          <p className="text-sm text-muted-foreground">
-            Review and replace the placeholder subject before applying these
-            suggestions.
-          </p>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function OIDCPanel({
-  providers,
-  workspaces,
-  busy,
-  action,
-  onCreated,
-  onDeleted,
-}: {
-  providers: OIDCProvider[]
-  workspaces: Workspace[]
-  busy: boolean
-  action: <T>(
-    work: () => Promise<T>,
-    success: string,
-    after?: (value: T) => void
-  ) => Promise<void>
-  onCreated: (value: OIDCProvider) => void
-  onDeleted: (id: string) => void
-}) {
-  const toast = useToast()
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [editing, setEditing] = useState<OIDCProvider | null>(null)
-  const [enabled, setEnabled] = useState(true)
-  function openProvider(provider: OIDCProvider | null) {
-    setEditing(provider)
-    setName(provider?.name ?? "")
-    setIssuer(provider?.issuer ?? "")
-    setClientId(provider?.clientId ?? "")
-    setClientSecret("")
-    setGroupsClaim(provider?.groupsClaim ?? "groups")
-    setEnabled(provider?.enabled ?? true)
-    setDialogOpen(true)
-  }
-  const [name, setName] = useState("")
-  const [issuer, setIssuer] = useState("")
-  const [clientId, setClientId] = useState("")
-  const [clientSecret, setClientSecret] = useState("")
-  const [groupsClaim, setGroupsClaim] = useState("groups")
-  const [providerId, setProviderId] = useState("")
-  const [workspaceId, setWorkspaceId] = useState("")
-  const [groupName, setGroupName] = useState("")
-  const [groupRole, setGroupRole] = useState("viewer")
-  const [oidcPending, setOidcPending] = useState<"provider" | "group" | null>(
-    null
-  )
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setOidcPending("provider")
-    try {
-      await action(
-        async () => {
-          const values = {
-            name,
-            issuer,
-            clientId,
-            clientSecret,
-            groupsClaim,
-            enabled,
-          }
-          const provider = editing
-            ? await api<OIDCProvider>(
-                `/api/v1/admin/oidc-providers/${encodeURIComponent(editing.id)}`,
-                { method: "PUT", body: JSON.stringify(values) }
-              )
-            : await apiPost<OIDCProvider>(
-                "/api/v1/admin/oidc-providers",
-                values
-              )
-          setDialogOpen(false)
-          setName("")
-          setClientId("")
-          setClientSecret("")
-          return provider
-        },
-        editing
-          ? "OIDC provider updated."
-          : "OIDC provider added. Verify the callback URL in your identity provider.",
-        onCreated
-      )
-    } finally {
-      setOidcPending(null)
-    }
-  }
-  async function mapGroup(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const selectedProvider = providerId || providers[0]?.id
-    const selectedWorkspace = workspaceId || workspaces[0]?.id
-    if (!selectedProvider || !selectedWorkspace) return
-    setOidcPending("group")
-    try {
-      await action(
-        () =>
-          apiPost(
-            `/api/v1/admin/oidc-providers/${encodeURIComponent(selectedProvider)}/groups`,
-            {
-              group: groupName,
-              workspaceId: selectedWorkspace,
-              role: groupRole,
-            }
-          ),
-        "OIDC group mapping saved.",
-        () => setGroupName("")
-      )
-    } finally {
-      setOidcPending(null)
-    }
-  }
-  return (
-    <div className="space-y-6">
-      <SettingsInventory
-        title="Identity providers"
-        count={providers.length}
-        control={
-          <div className="flex justify-end">
-            <Button size="sm" disabled={busy} onClick={() => openProvider(null)}>
-              Add OIDC provider
-            </Button>
-          </div>
-        }
-      >
-        {providers.length ? (
-          <div className="divide-y border-b">
-            {providers.map((provider) => (
-              <div
-                key={provider.id}
-                className="flex items-center justify-between gap-4 px-5 py-3"
-              >
-                <div className="min-w-0">
-                  <span className="block text-sm font-medium">
-                    {provider.name}
-                  </span>
-                  <span className="mt-1 block font-mono text-sm break-all text-muted-foreground">
-                    Callback: {provider.redirectUrl}
-                  </span>
-                </div>
-                <div className="flex shrink-0 items-center gap-3">
-                  <span
-                    className={`rounded-full border px-2 py-0.5 text-xs ${provider.enabled ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "text-muted-foreground"}`}
-                  >
-                    {provider.enabled ? "enabled" : "disabled"}
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() => openProvider(provider)}
-                  >
-                    Edit
-                  </Button>
-                  <ConfirmDisclosure
-                    trigger="Delete"
-                    title={`Delete ${provider.name}?`}
-                    description="Sign-in through this provider will stop. Its identity links, pending logins, group mappings, and granted workspace access will be removed. User accounts and existing sessions remain."
-                    confirmLabel="Delete provider"
-                    disabled={busy}
-                    onConfirm={async () => {
-                      await apiDelete(`/api/v1/admin/oidc-providers/${encodeURIComponent(provider.id)}`)
-                      if (providerId === provider.id) setProviderId("")
-                      onDeleted(provider.id)
-                      toast.success("OIDC provider deleted.")
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : null}
-        {!providers.length && (
-          <EmptyState
-            title="No identity providers yet"
-            description="Add a provider to enable organization sign-in."
-          />
-        )}
-      </SettingsInventory>
-      <ConnectionDialog
-        open={dialogOpen}
-        onOpenChange={(open) => {
-          setDialogOpen(open)
-          if (!open) setClientSecret("")
-        }}
-        busy={busy || oidcPending === "provider"}
-        title={editing ? "Edit OIDC provider" : "Add OIDC provider"}
-        description="Configure organization sign-in and workspace group claims."
-      >
-        <form className="space-y-5" onSubmit={submit}>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <FormField label="Display name" htmlFor="oidc-name">
-              <Input
-                id="oidc-name"
-                placeholder="Company SSO"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                required
-              />
-            </FormField>
-            <FormField label="Issuer URL" htmlFor="oidc-issuer">
-              <Input
-                id="oidc-issuer"
-                type="url"
-                placeholder="https://id.example.com"
-                value={issuer}
-                onChange={(event) => setIssuer(event.target.value)}
-                required
-              />
-            </FormField>
-            <FormField label="Client ID" htmlFor="oidc-client">
-              <Input
-                id="oidc-client"
-                value={clientId}
-                onChange={(event) => setClientId(event.target.value)}
-                required
-              />
-            </FormField>
-            <FormField label="Groups claim" htmlFor="oidc-groups">
-              <Input
-                id="oidc-groups"
-                value={groupsClaim}
-                onChange={(event) => setGroupsClaim(event.target.value)}
-              />
-            </FormField>
-          </div>
-          <FormField label="Client secret" htmlFor="oidc-secret">
-            <Input
-              id="oidc-secret"
-              type="password"
-              autoComplete="new-password"
-              value={clientSecret}
-              onChange={(event) => setClientSecret(event.target.value)}
-              placeholder={
-                editing ? "Leave empty to keep the existing secret" : undefined
-              }
-              required={!editing}
-            />
-          </FormField>
-          <p className="text-sm leading-5 text-muted-foreground">
-            {editing ? (
+            {workspaceScoped && !workspace && (
+              <EmptyState title="Workspace unavailable" description="You need workspace access to manage its connections." href="/workspaces" action="View workspaces" />
+            )}
+            {!section && !user?.isAdmin ? (
+              <EmptyState title="Administrator access required" description="Instance settings are available to administrators. Workspace connections live on each workspace page." href="/workspaces" action="View workspaces" />
+            ) : !section ? (
               <>
-                Callback URL: <code>{editing.redirectUrl}</code>
+                <InstanceNotice />
+                <Panel title="Authentication & users" description="Control how people sign in to JustCD." className="overflow-hidden">
+                  <ul className="divide-y">
+                    {adminVisibleSections.map((item) => (
+                      <li key={item.id}>
+                        <Link href={sectionHref(item.id)} className="group flex items-center gap-4 px-5 py-4 outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
+                          <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
+                            <WorkspaceIcon name="shield" className="size-4" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <h3 className="text-sm font-medium group-hover:text-primary">{item.title}</h3>
+                            <p className="mt-0.5 text-sm text-muted-foreground">{item.description}</p>
+                          </span>
+                          <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} aria-hidden="true" className="size-4 shrink-0 text-muted-foreground group-hover:text-primary" />
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </Panel>
               </>
             ) : (
-              <>
-                Callback URL: use the JustCD public URL plus{" "}
-                <code className="font-mono">
-                  /api/v1/auth/oidc/&lt;provider-id&gt;/callback
-                </code>
-                . It is available after the provider is created.
-              </>
+              <div className="settings-content min-w-0">
+                {workspaceScoped && workspace && scopeLoading && <SectionSkeleton label="Loading workspace connections" />}
+                {workspaceScoped && workspace && section === "credentials" && !scopeLoading && (
+                  <CredentialPanel
+                    key={workspaceId}
+                    workspace={workspace}
+                    user={user}
+                    credentials={credentials}
+                    busy={busy}
+                    action={action}
+                    createOpen={credentialDialogOpen}
+                    onCreateOpenChange={setCredentialDialogOpen}
+                    onCreated={(credential) => setCredentials((items) => [credential, ...items])}
+                    onUpdated={(credential) => setCredentials((items) => items.map((item) => (item.id === credential.id ? credential : item)))}
+                    onDeleted={(value) => setCredentials((items) => items.filter((item) => item.id !== value))}
+                  />
+                )}
+                {workspaceScoped && workspace && section === "clusters" && !scopeLoading && (
+                  <ClusterPanel
+                    key={workspace.id}
+                    user={user}
+                    workspace={workspace}
+                    clusters={clusters}
+                    globalCredentials={globalKubeCredentials}
+                    workspaceCredentials={namespaceCredentials.filter((item) => item.workspaceId === workspaceId)}
+                    busy={busy}
+                    action={action}
+                    onUpdated={(cluster) => setClusters((items) => items.map((item) => (item.id === cluster.id ? cluster : item)))}
+                    onDeleted={(value) => setClusters((items) => items.filter((item) => item.id !== value))}
+                  />
+                )}
+                {workspaceScoped && workspace && section === "git-sources" && !scopeLoading && (
+                  <GitSourcePanel
+                    key={workspaceId}
+                    workspace={workspace}
+                    credentials={gitCredentials}
+                    sources={sources}
+                    busy={busy}
+                    action={action}
+                    onUpdated={(source) => setSources((items) => items.map((item) => (item.id === source.id ? source : item)))}
+                    onDeleted={(value) => setSources((items) => items.filter((item) => item.id !== value))}
+                  />
+                )}
+                {workspaceScoped && workspace && section === "shares" && !scopeLoading && (
+                  <WorkspaceConnectionShares workspace={workspace} workspaces={workspaces} clusters={clusters} sources={sources} credentials={credentials} />
+                )}
+                {workspaceScoped && workspace && section === "namespaces" && !scopeLoading && bindingsLoading && (
+                  <SectionSkeleton label="Loading namespace access" />
+                )}
+                {workspaceScoped && workspace && section === "namespaces" && !scopeLoading && !bindingsLoading && (
+                  <NamespacePanel
+                    key={`${workspaceId}:${clusterId}`}
+                    workspace={workspace}
+                    cluster={clusters.find((item) => item.id === clusterId)}
+                    credentials={namespaceCredentials}
+                    bindings={bindings}
+                    clusters={clusters}
+                    activeClusterId={clusterId}
+                    onClusterChange={(value) => {
+                      setErrors((current) => ({ ...current, bindings: undefined }))
+                      setClusterId(value)
+                    }}
+                    busy={busy}
+                    action={action}
+                    createOpen={namespaceDialogOpen}
+                    onCreateOpenChange={setNamespaceDialogOpen}
+                    onCreated={(binding) => setBindings((items) => [...items, binding].sort((a, b) => a.namespace.localeCompare(b.namespace)))}
+                    onUpdated={(binding) => setBindings((items) => items.map((item) => (item.namespace === binding.namespace ? binding : item)))}
+                    onDeleted={(value) => setBindings((items) => items.filter((item) => item.namespace !== value))}
+                  />
+                )}
+                {section === "oidc" && user?.isAdmin && providersPending && <SectionSkeleton rows={2} label="Loading OIDC providers" />}
+                {section === "oidc" && user?.isAdmin && providersLoaded && (
+                  <OIDCPanel
+                    providers={providers}
+                    workspaces={workspaces}
+                    busy={busy}
+                    action={action}
+                    onDeleted={(id) => setProviders((items) => items.filter((item) => item.id !== id))}
+                    onCreated={(provider) =>
+                      setProviders((items) => items.some((item) => item.id === provider.id) ? items.map((item) => (item.id === provider.id ? provider : item)) : [...items, provider])
+                    }
+                  />
+                )}
+                {section === "users" && user?.isAdmin && <PlatformUsersPanel currentUserId={user.id} busy={busy} action={action} />}
+              </div>
             )}
-          </p>
-          <FormField label="Status" htmlFor="oidc-enabled">
-            <FormSelect
-              id="oidc-enabled"
-              value={enabled ? "enabled" : "disabled"}
-              onValueChange={(value) => setEnabled(value === "enabled")}
-              items={[
-                { value: "enabled", label: "Enabled" },
-                { value: "disabled", label: "Disabled" },
-              ]}
-            />
-          </FormField>
-          <Button
-            size="sm"
-            type="submit"
-            loading={oidcPending === "provider"}
-            loadingText={editing ? "Saving provider…" : "Adding provider…"}
-            disabled={busy}
-          >
-            {editing ? "Save changes" : "Add OIDC provider"}
-          </Button>
-        </form>
-      </ConnectionDialog>
-      {providers.length > 0 && workspaces.length > 0 && (
-        <form
-          className="settings-editor space-y-5 rounded-2xl border bg-card p-6"
-          onSubmit={mapGroup}
-        >
-          <div>
-            <h2 className="text-base font-semibold">Assign group access</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Verified ID-token groups grant the selected workspace role at each
-              login.
-            </p>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <FormField label="Provider" htmlFor="mapping-provider">
-              <FormSelect
-                id="mapping-provider"
-                value={providerId || providers[0]?.id || ""}
-                onValueChange={setProviderId}
-                placeholder="Choose provider"
-                items={providers.map((provider) => ({
-                  value: provider.id,
-                  label: provider.name,
-                }))}
-              />
-            </FormField>
-            <FormField label="Workspace" htmlFor="mapping-workspace">
-              <FormSelect
-                id="mapping-workspace"
-                value={workspaceId || workspaces[0]?.id || ""}
-                onValueChange={setWorkspaceId}
-                placeholder="Choose workspace"
-                items={workspaces.map((workspace) => ({
-                  value: workspace.id,
-                  label: workspace.name,
-                }))}
-              />
-            </FormField>
-            <FormField label="Group claim value" htmlFor="mapping-group">
-              <Input
-                id="mapping-group"
-                placeholder="platform-deployers"
-                value={groupName}
-                onChange={(event) => setGroupName(event.target.value)}
-                required
-              />
-            </FormField>
-            <FormField label="Granted role" htmlFor="mapping-role">
-              <FormSelect
-                id="mapping-role"
-                value={groupRole}
-                onValueChange={setGroupRole}
-                items={[
-                  { value: "viewer", label: "Viewer" },
-                  { value: "deployer", label: "Deployer" },
-                  { value: "owner", label: "Owner" },
-                ]}
-              />
-            </FormField>
-          </div>
-          <Button
-            size="sm"
-            type="submit"
-            loading={oidcPending === "group"}
-            loadingText="Saving mapping…"
-            disabled={busy || !groupName}
-          >
-            Save group mapping
-          </Button>
-        </form>
+        </div>
       )}
-    </div>
-  )
-}
-
-function PlatformUsersPanel({
-  currentUserId,
-  busy,
-  action,
-}: {
-  currentUserId: string
-  busy: boolean
-  action: <T>(
-    work: () => Promise<T>,
-    success: string,
-    after?: (value: T) => void
-  ) => Promise<void>
-}) {
-  const toast = useToast()
-  const [email, setEmail] = useState("")
-  const [displayName, setDisplayName] = useState("")
-  const [password, setPassword] = useState("")
-  const [isAdmin, setIsAdmin] = useState(false)
-  const [users, setUsers] = useState<User[]>([])
-  const [editingUserId, setEditingUserId] = useState<string | null>(null)
-  const [editEmail, setEditEmail] = useState("")
-  const [editDisplayName, setEditDisplayName] = useState("")
-  const [editPassword, setEditPassword] = useState("")
-  const [editIsAdmin, setEditIsAdmin] = useState(false)
-  const [mutatingUserId, setMutatingUserId] = useState<string | null>(null)
-  const [usersLoading, setUsersLoading] = useState(true)
-  const [usersError, setUsersError] = useState<unknown | null>(null)
-  const fetchUsers = useCallback(
-    () => api<ListResponse<User>>("/api/v1/admin/users"),
-    []
-  )
-  const loadUsers = useCallback(async () => {
-    setUsersLoading(true)
-    setUsersError(null)
-    try {
-      const result = await fetchUsers()
-      setUsers(result.items)
-    } catch (cause) {
-      setUsersError(cause)
-    } finally {
-      setUsersLoading(false)
-    }
-  }, [fetchUsers])
-  useEffect(() => {
-    let active = true
-    fetchUsers()
-      .then((result) => {
-        if (active) setUsers(result.items)
-      })
-      .catch((cause) => {
-        if (active) setUsersError(cause)
-      })
-      .finally(() => {
-        if (active) setUsersLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [fetchUsers])
-
-  function startEditing(user: User) {
-    setEditingUserId(user.id)
-    setEditEmail(user.email)
-    setEditDisplayName(user.displayName)
-    setEditPassword("")
-    setEditIsAdmin(user.isAdmin)
-  }
-
-  async function saveUser(event: React.FormEvent<HTMLFormElement>, user: User) {
-    event.preventDefault()
-    await action(
-      () => api<User>(`/api/v1/admin/users/${encodeURIComponent(user.id)}`, {
-        method: "PUT",
-        body: JSON.stringify({
-          email: editEmail,
-          displayName: editDisplayName,
-          password: editPassword,
-          isAdmin: user.id === currentUserId ? user.isAdmin : editIsAdmin,
-          disabled: user.disabled,
-        }),
-      }),
-      "Platform user updated.",
-      (updated) => {
-        setUsers((items) => items.map((item) => item.id === updated.id ? updated : item))
-        setEditingUserId(null)
-        setEditPassword("")
-      }
-    )
-  }
-
-  async function toggleLock(user: User) {
-    await action(
-      () => api<User>(`/api/v1/admin/users/${encodeURIComponent(user.id)}`, {
-        method: "PUT",
-        body: JSON.stringify({
-          email: user.email,
-          displayName: user.displayName,
-          isAdmin: user.isAdmin,
-          disabled: !user.disabled,
-        }),
-      }),
-      user.disabled ? "User unlocked." : "User locked. Active sessions were revoked.",
-      (updated) => setUsers((items) => items.map((item) => item.id === updated.id ? updated : item))
-    )
-  }
-
-  async function deleteUser(user: User) {
-    setMutatingUserId(user.id)
-    try {
-      await api<void>(`/api/v1/admin/users/${encodeURIComponent(user.id)}`, { method: "DELETE" })
-      const deletedAt = new Date().toISOString()
-      setUsers((items) => items.map((item) => item.id === user.id
-        ? { ...item, email: `deleted+${item.id}@deleted.justcd.invalid`, displayName: "Deleted user", isAdmin: false, disabled: true, deletedAt }
-        : item))
-      if (editingUserId === user.id) setEditingUserId(null)
-      toast.success("User deleted. Account details were anonymized and access was revoked.")
-    } finally {
-      setMutatingUserId(null)
-    }
-  }
-
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    await action(async () => {
-      const user = await apiPost<User>("/api/v1/admin/users", {
-        email,
-        displayName,
-        password,
-        isAdmin,
-      })
-      setEmail("")
-      setDisplayName("")
-      setPassword("")
-      setIsAdmin(false)
-      setUsers((items) => [...items, user].sort((a, b) => a.email.localeCompare(b.email)))
-      return user
-    }, "Local user added.")
-  }
-  return (
-    <div className="space-y-6">
-      <SettingsInventory title="Platform users" count={users.length}>
-        {usersError !== null && usersError !== undefined && (
-          <div role="alert" className="flex flex-wrap items-center justify-between gap-3 border-b border-destructive/20 bg-destructive/5 px-5 py-3 text-sm text-destructive">
-            <span>{errorMessage(usersError)}</span>
-            <div className="flex items-center gap-2">
-              <ErrorDetailsButton error={usersError} />
-              <Button type="button" size="xs" variant="outline" onClick={() => void loadUsers()}>Try again</Button>
-            </div>
-          </div>
-        )}
-        {usersLoading && <p role="status" className="px-5 py-4 text-sm text-muted-foreground">Loading platform users…</p>}
-        {users.length > 0 && (
-          <ul className="divide-y border-b">
-            {users.map((user) => {
-              const deleted = Boolean(user.deletedAt)
-              const self = user.id === currentUserId
-              const rowBusy = busy || mutatingUserId !== null
-              return (
-                <li key={user.id} className="px-5 py-3">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-xs font-semibold uppercase">
-                      {(user.displayName || user.email).slice(0, 2)}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-sm">
-                      <span className="font-medium">{user.displayName || user.email}</span>
-                      <span className="text-muted-foreground"> · {user.email}</span>
-                      <span className="mt-1 flex flex-wrap gap-1.5">
-                        <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-                          {user.isAdmin ? "Instance admin" : "User"}
-                        </span>
-                        {deleted ? (
-                          <span className="rounded-full border border-destructive/25 bg-destructive/5 px-2 py-0.5 text-xs text-destructive">Deleted</span>
-                        ) : user.disabled ? (
-                          <span className="rounded-full border border-amber-500/30 bg-amber-500/5 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">Locked</span>
-                        ) : null}
-                        {self && !deleted && <span className="text-xs text-muted-foreground">Current account</span>}
-                      </span>
-                    </span>
-                    {!deleted && (
-                      <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-                        <Button type="button" size="xs" variant="outline" disabled={rowBusy || editingUserId === user.id} onClick={() => startEditing(user)}>
-                          Edit
-                        </Button>
-                        <Button type="button" size="xs" variant="outline" disabled={rowBusy || self || editingUserId === user.id} title={self ? "Use another administrator to lock this account." : undefined} onClick={() => void toggleLock(user)}>
-                          {user.disabled ? "Unlock" : "Lock"}
-                        </Button>
-                        <ConfirmDisclosure
-                          trigger="Delete"
-                          title={`Delete ${user.displayName || user.email}?`}
-                          description="This removes the account's workspace and SSO access, revokes sessions, and anonymizes its identity. Plan, approval, and audit history remains attached to a Deleted user record. Transfer ownership first if this user is the last active owner of a workspace."
-                          confirmLabel="Delete user"
-                          onConfirm={() => deleteUser(user)}
-                          disabled={rowBusy || self}
-                        />
-                      </div>
-                    )}
-                  </div>
-                  {editingUserId === user.id && !deleted && (
-                    <form className="mt-4 space-y-3 rounded-lg border bg-muted/10 p-4" onSubmit={(event) => void saveUser(event, user)}>
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <FormField label="Email" htmlFor={`edit-user-email-${user.id}`}>
-                          <Input id={`edit-user-email-${user.id}`} type="email" value={editEmail} onChange={(event) => setEditEmail(event.target.value)} required />
-                        </FormField>
-                        <FormField label="Display name" htmlFor={`edit-user-name-${user.id}`}>
-                          <Input id={`edit-user-name-${user.id}`} value={editDisplayName} onChange={(event) => setEditDisplayName(event.target.value)} maxLength={200} />
-                        </FormField>
-                      </div>
-                      <FormField label="Reset password" htmlFor={`edit-user-password-${user.id}`} hint="Leave blank to keep the current password. A new password must contain at least 12 characters.">
-                        <Input id={`edit-user-password-${user.id}`} type="password" autoComplete="new-password" minLength={12} value={editPassword} onChange={(event) => setEditPassword(event.target.value)} />
-                      </FormField>
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        {self ? (
-                          <span className="text-xs text-muted-foreground">Your administrator access cannot be changed here.</span>
-                        ) : (
-                          <label className="flex items-center gap-2 text-xs">
-                            <Checkbox checked={editIsAdmin} onCheckedChange={(checked) => setEditIsAdmin(Boolean(checked))} />
-                            Instance administrator
-                          </label>
-                        )}
-                        <div className="flex gap-2">
-                          <Button type="button" size="sm" variant="outline" disabled={rowBusy} onClick={() => setEditingUserId(null)}>Cancel</Button>
-                          <Button size="sm" type="submit" loading={busy} loadingText="Saving user…" disabled={mutatingUserId !== null}>Save user</Button>
-                        </div>
-                      </div>
-                    </form>
-                  )}
-                </li>
-              )
-            })}
-          </ul>
-        )}
-        {!usersLoading && !usersError && !users.length && (
-          <EmptyState title="No platform users yet" description="Use the form below to create the first local account." />
-        )}
-      </SettingsInventory>
-      <form
-        className="settings-editor space-y-5 rounded-2xl border bg-card p-6"
-        onSubmit={submit}
-      >
-        <div className="border-b pb-4">
-          <h2 className="text-base font-semibold">Create a local user</h2>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            Add a person who signs in directly with an email address and
-            password.
-          </p>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <FormField label="Email" htmlFor="user-email">
-            <Input
-              id="user-email"
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              required
-            />
-          </FormField>
-          <FormField label="Display name" htmlFor="user-display">
-            <Input
-              id="user-display"
-              value={displayName}
-              onChange={(event) => setDisplayName(event.target.value)}
-            />
-          </FormField>
-        </div>
-        <FormField
-          label="Password"
-          htmlFor="user-password"
-          hint="At least 12 characters. Share the initial password securely with the account owner."
-        >
-          <Input
-            id="user-password"
-            type="password"
-            autoComplete="new-password"
-            minLength={12}
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            required
-          />
-        </FormField>
-        <label className="flex items-center gap-2 text-xs">
-          <Checkbox
-            checked={isAdmin}
-            onCheckedChange={(checked) => setIsAdmin(Boolean(checked))}
-          />
-          Instance administrator
-        </label>
-      <Button size="sm" type="submit" loading={busy} loadingText="Adding user…">
-          Add platform user
-      </Button>
-      </form>
-    </div>
-  )
-}
-
-function SettingsInventory({
-  title,
-  count,
-  control,
-  children,
-}: {
-  title: string
-  count: number
-  control?: React.ReactNode
-  children: React.ReactNode
-}) {
-  return (
-    <section className="overflow-hidden rounded-xl border bg-card">
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b px-5 py-4">
-        <div className="flex items-center gap-2"><h2 className="text-sm font-semibold">{title}</h2><span className="rounded-md bg-muted px-2 py-1 text-sm text-muted-foreground tabular-nums">{count}</span></div>
-        {control && <div className="w-full sm:w-56">{control}</div>}
-      </div>
-      {children}
-    </section>
-  )
-}
-
-function ConnectionDeleteAction({ endpoint, name, description, disabled, onDeleted, trigger = "Delete", confirmLabel = "Delete connection" }: {
-  endpoint: string
-  name: string
-  description: string
-  disabled: boolean
-  onDeleted: () => void
-  trigger?: string
-  confirmLabel?: string
-}) {
-  const toast = useToast()
-  return (
-    <ConfirmDisclosure
-      trigger={trigger}
-      title={`${trigger} ${name}?`}
-      description={description}
-      disabled={disabled}
-      confirmLabel={confirmLabel}
-      onConfirm={async () => {
-        await apiDelete(endpoint)
-        onDeleted()
-        toast.success(`${name} removed from JustCD.`)
-      }}
-    />
+    </>
   )
 }

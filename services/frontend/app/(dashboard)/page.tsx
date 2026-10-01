@@ -1,7 +1,11 @@
 "use client"
 
 import Link from "next/link"
-import { PageHeading, EmptyState, StatusBadge } from "@/components/ui-kit"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { Add01Icon, Alert02Icon, ArrowRight01Icon, MinusSignCircleIcon, Tick02Icon } from "@hugeicons/core-free-icons"
+import { Badge } from "@/components/reui/badge"
+import { Button } from "@/components/ui/button"
+import { PageHeading, EmptyState, Panel, StatusBadge } from "@/components/ui-kit"
 import {
   ActionLink,
   CollectionSkeleton,
@@ -11,6 +15,15 @@ import {
 import { useWorkspace, needsAttention, isApplicationHealthy } from "@/hooks/use-workspace"
 import { applicationAttentionReason } from "@/lib/application-status"
 import { useWorkspaceSelection } from "@/hooks/workspace-selection"
+
+function TrailingLink({ href, children, label }: { href: string; children: React.ReactNode; label?: string }) {
+  return (
+    <Button render={<Link href={href} aria-label={label} />} nativeButton={false} variant="link" size="sm" className="px-0">
+      {children}
+      <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={1.8} aria-hidden="true" />
+    </Button>
+  )
+}
 
 export default function OverviewPage() {
   const { applications, loading, error, refresh } = useWorkspace()
@@ -25,6 +38,14 @@ export default function OverviewPage() {
         (Date.parse(a.lastCheckedAt || a.createdAt) || 0)
     )
     .slice(0, 4)
+  const total = applications.length
+  const listHref = (status?: string) =>
+    workspaceId ? `/applications?workspaceId=${encodeURIComponent(workspaceId)}${status ? `&status=${status}` : ""}` : "/workspaces"
+  const segments = [
+    { label: "In sync", value: synced, bar: "bg-success", href: listHref("synced") },
+    { label: "Needs attention", value: attention.length, bar: "bg-warning", href: listHref("attention") },
+    { label: "Other states", value: other, bar: "bg-muted-foreground/40", href: listHref("other") },
+  ]
 
   return (
     <>
@@ -32,14 +53,9 @@ export default function OverviewPage() {
         title={workspace ? `${workspace.name} overview` : "Overview"}
         description={workspace ? "A clear view of what’s running and what needs you next in this workspace." : "Select a workspace to view its delivery status."}
         actions={
-          <>
-            <ActionLink href="/workspaces/new" secondary>
-              New workspace
-            </ActionLink>
-            <ActionLink href={workspaceId ? `/applications/new?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces"}>
-              <span aria-hidden="true">＋</span> New application
-            </ActionLink>
-          </>
+          <ActionLink href={workspaceId ? `/applications/new?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces"}>
+            <HugeiconsIcon icon={Add01Icon} strokeWidth={1.8} aria-hidden="true" /> New application
+          </ActionLink>
         }
       />
       {error ? (
@@ -48,94 +64,61 @@ export default function OverviewPage() {
         <CollectionSkeleton />
       ) : (
         <>
-          <section
-            aria-label="Delivery overview"
-            className="mb-8 rounded-xl border bg-card"
+          <Panel
+            title="Deployment status"
+            action={<TrailingLink href="/applications">View applications</TrailingLink>}
+            className="mb-8"
           >
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-4">
-              <h2 className="text-sm font-semibold">Deployment status</h2>
-              <Link
-                href="/applications"
-                className="text-xs font-medium text-primary hover:underline"
+            <div className="p-5 sm:p-6">
+              <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Applications</p>
+                  <p className="mt-1 text-3xl font-semibold tracking-tight tabular-nums">{total}</p>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {workspace?.name ?? "No workspace selected"} ·{" "}
+                  {total ? `${Math.round((synced / total) * 100)}% of applications healthy` : "No applications connected yet"}
+                </p>
+              </div>
+              <div
+                role="img"
+                aria-label={`${synced} in sync, ${attention.length} need attention, ${other} in other states`}
+                className="mt-5 flex h-3 overflow-hidden rounded-full bg-muted"
               >
-                View applications →
-              </Link>
-            </div>
-            <div className="grid grid-cols-2 divide-x divide-border sm:grid-cols-4">
-              {[
-                {
-                  label: "Applications",
-                  value: applications.length,
-                  color: "bg-primary",
-                  href: workspaceId ? `/applications?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces",
-                },
-                {
-                  label: "In sync",
-                  value: synced,
-                  color: "bg-emerald-500",
-                  href: workspaceId ? `/applications?workspaceId=${encodeURIComponent(workspaceId)}&status=synced` : "/workspaces",
-                },
-                {
-                  label: "Needs attention",
-                  value: attention.length,
-                  color: "bg-amber-500",
-                  href: workspaceId ? `/applications?workspaceId=${encodeURIComponent(workspaceId)}&status=attention` : "/workspaces",
-                },
-                {
-                  label: "Other states",
-                  value: other,
-                  color: "bg-muted-foreground",
-                  href: workspaceId ? `/applications?workspaceId=${encodeURIComponent(workspaceId)}&status=other` : "/workspaces",
-                },
-              ].map((item) => (
-                <Link
-                  key={item.label}
-                  href={item.href}
-                  className="p-5 transition-colors hover:bg-muted/40 sm:p-6"
-                >
-                  <span className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <span className={`size-1.5 rounded-full ${item.color}`} />
-                    {item.label}
-                  </span>
-                  <span className="mt-3 block text-3xl font-semibold tracking-tight tabular-nums">
-                    {item.value}
-                  </span>
-                </Link>
-              ))}
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t px-6 py-3 text-xs text-muted-foreground">
-              <span>
-                {workspace?.name ?? "No workspace selected"} ·{" "}
-                {applications.length
-                  ? `${Math.round((synced / applications.length) * 100)}% of applications healthy`
-                  : "No applications connected yet"}
-              </span>
-              {!applications.length && (
-                <Link
-                  href={workspaceId ? `/applications/new?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces/new"}
-                  className="font-medium text-primary hover:underline"
-                >
-                  {workspaceId ? "Create an application" : "Create your first workspace"}{" "}
-                  →
-                </Link>
+                {total > 0 && segments.map((segment) => segment.value > 0 && (
+                  <span key={segment.label} className={segment.bar} style={{ width: `${(segment.value / total) * 100}%` }} />
+                ))}
+              </div>
+              <ul className="mt-4 grid gap-2 sm:grid-cols-3">
+                {segments.map((segment) => (
+                  <li key={segment.label}>
+                    <Link href={segment.href} className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-sm transition-colors hover:bg-muted/40">
+                      <span className="flex items-center gap-2 text-muted-foreground">
+                        <span aria-hidden="true" className={`size-2 rounded-full ${segment.bar}`} />
+                        {segment.label}
+                      </span>
+                      <span className="text-lg font-semibold tabular-nums">{segment.value}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+              {!total && (
+                <div className="mt-4">
+                  <TrailingLink href={workspaceId ? `/applications/new?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces/new"}>
+                    {workspaceId ? "Create an application" : "Create your first workspace"}
+                  </TrailingLink>
+                </div>
               )}
             </div>
-          </section>
+          </Panel>
           <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_320px]">
-            <section className="min-w-0">
-              <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-base font-semibold tracking-tight">
-                  Needs attention{" "}
-                  <span className="ml-2 rounded-md bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300">
-                    {attention.length}
-                  </span>
+            <section className="min-w-0" aria-labelledby="needs-attention-heading">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h2 id="needs-attention-heading" className="flex items-center gap-2 text-sm font-semibold">
+                  Needs attention
+                  <Badge variant="warning-light" radius="full">{attention.length}</Badge>
                 </h2>
-                <Link
-                  href={workspaceId ? `/applications?status=attention&workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces"}
-                  className="text-xs text-muted-foreground hover:text-foreground"
-                >
-                  View all →
-                </Link>
+                <TrailingLink href={workspaceId ? `/applications?status=attention&workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces"}>View all</TrailingLink>
               </div>
               <div className="overflow-hidden rounded-xl border bg-card">
                 {attention.length ? (
@@ -146,7 +129,7 @@ export default function OverviewPage() {
                         href={`/applications/${app.id}`}
                         className="flex flex-wrap items-center gap-3 p-4 transition-colors hover:bg-muted/40 sm:p-5"
                       >
-                        <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                        <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-lg bg-warning/10 text-warning-foreground dark:text-warning">
                           <WorkspaceIcon name="app" className="size-4" />
                         </span>
                         <span className="min-w-0 flex-1">
@@ -156,7 +139,7 @@ export default function OverviewPage() {
                           <span className="mt-1 block truncate text-xs text-muted-foreground">
                             {app.workspaceName} · {app.revision}
                           </span>
-                          <span className="mt-1 block text-xs text-amber-700 dark:text-amber-300">{applicationAttentionReason(app)}</span>
+                          <span className="mt-1 block text-sm text-warning-foreground dark:text-warning">{applicationAttentionReason(app)}</span>
                         </span>
                         <StatusBadge status={app.health} />{app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}
                         <WorkspaceIcon
@@ -181,12 +164,6 @@ export default function OverviewPage() {
                   />
                 )}
               </div>
-              <div className="mt-8 rounded-xl border bg-card p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div><h2 className="text-sm font-semibold">Workspace connections</h2><p className="mt-1 text-sm text-muted-foreground">Manage repositories, deployment clusters, and credentials for {workspace?.name ?? "this workspace"}.</p></div>
-                  {workspaceId && <Link href={`/workspaces/${workspaceId}?tab=connections`} className="text-xs font-medium text-primary hover:underline">Manage connections →</Link>}
-                </div>
-              </div>
             </section>
             <aside className="space-y-6">
               <section className="rounded-xl border bg-card p-5">
@@ -200,39 +177,52 @@ export default function OverviewPage() {
                 <p className="mt-1 text-sm text-muted-foreground">
                   Most recently checked applications
                 </p>
-                <div className="mt-5 space-y-5">
+                <ul className="mt-5 space-y-5">
                   {recent.length ? (
-                    recent.map((app) => (
-                      <Link
-                        key={app.id}
-                        href={`/applications/${app.id}`}
-                        className="group flex gap-3"
-                      >
-                        <span
-                          className={`mt-1.5 size-2 shrink-0 rounded-full ${isApplicationHealthy(app) ? "bg-emerald-500" : needsAttention(app) ? "bg-amber-500" : "bg-muted-foreground/40"}`}
-                        />
-                        <span className="min-w-0">
-                          <span className="block truncate text-xs font-medium group-hover:text-primary">
-                            {app.name}
-                          </span>
-                          <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                            {app.lastCheckedAt
-                              ? new Date(app.lastCheckedAt).toLocaleString()
-                              : "Not checked yet"}
-                          </span>
-                          <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">
-                            {app.lastSyncedRevision || app.revision}
-                          </span>
-                        </span>
-                      </Link>
-                    ))
+                    recent.map((app) => {
+                      const state = isApplicationHealthy(app)
+                        ? { label: "In sync", icon: Tick02Icon, className: "text-success-foreground dark:text-success" }
+                        : needsAttention(app)
+                          ? { label: "Needs attention", icon: Alert02Icon, className: "text-warning-foreground dark:text-warning" }
+                          : { label: "Other state", icon: MinusSignCircleIcon, className: "text-muted-foreground" }
+                      return (
+                        <li key={app.id}>
+                          <Link href={`/applications/${app.id}`} className="group flex gap-3">
+                            <span className={`mt-0.5 shrink-0 ${state.className}`}>
+                              <HugeiconsIcon icon={state.icon} strokeWidth={2} className="size-4" aria-hidden="true" />
+                              <span className="sr-only">{state.label}: </span>
+                            </span>
+                            <span className="min-w-0">
+                              <span className="block truncate text-sm font-medium group-hover:text-primary">
+                                {app.name}
+                              </span>
+                              <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                                {app.lastCheckedAt
+                                  ? new Date(app.lastCheckedAt).toLocaleString()
+                                  : "Not checked yet"}
+                              </span>
+                              <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">
+                                {app.lastSyncedRevision || app.revision}
+                              </span>
+                            </span>
+                          </Link>
+                        </li>
+                      )
+                    })
                   ) : (
-                    <p className="text-sm leading-5 text-muted-foreground">
+                    <li className="text-sm leading-5 text-muted-foreground">
                       Checks will appear after you add an application.
-                    </p>
+                    </li>
                   )}
-                </div>
+                </ul>
               </section>
+              {workspaceId && (
+                <section aria-labelledby="quick-actions-heading" className="rounded-xl border bg-card px-5 py-4">
+                  <h2 id="quick-actions-heading" className="text-sm font-semibold">Quick actions</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">Repositories, clusters, and credentials for {workspace?.name ?? "this workspace"}.</p>
+                  <div className="mt-2"><TrailingLink href={`/workspaces/${workspaceId}?tab=connections`}>Manage connections</TrailingLink></div>
+                </section>
+              )}
             </aside>
           </div>
         </>

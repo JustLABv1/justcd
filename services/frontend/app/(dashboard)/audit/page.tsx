@@ -1,7 +1,12 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { Cancel01Icon, Clock01Icon, Refresh01Icon, Tick02Icon } from "@hugeicons/core-free-icons"
+import { Badge } from "@/components/reui/badge"
 import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Input } from "@/components/ui/input"
 import { EmptyState, PageHeading } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
@@ -57,6 +62,13 @@ function actionLabel(action: string) {
 function actorLabel(event: AuditEvent) {
   if (event.actorId === "justcd-system") return "JustCD automation"
   return event.actorName || (event.actorId ? "Unknown user" : "System")
+}
+
+function eventStatus(action: string) {
+  if (action.endsWith("failed")) return { label: "Failed", icon: Cancel01Icon, className: "text-destructive" }
+  if (action.endsWith("succeeded")) return { label: "Succeeded", icon: Tick02Icon, className: "text-success-foreground dark:text-success" }
+  if (action.endsWith("queued")) return { label: "Queued", icon: Clock01Icon, className: "text-warning-foreground dark:text-warning" }
+  return null
 }
 
 function dateLabel(value: string) {
@@ -236,12 +248,14 @@ export default function AuditPage() {
       <PageHeading
         title="Audit trail"
         description="A record of configuration changes, access decisions, plans, and deployments."
+        badge={<Badge variant="outline" radius="full">Instance administrators only</Badge>}
         actions={
           <Button
             variant="outline"
             onClick={() => void refresh()}
             disabled={loading || loadingMore}
           >
+            <HugeiconsIcon icon={Refresh01Icon} strokeWidth={1.8} aria-hidden="true" />
             {loading ? "Refreshing…" : "Refresh"}
           </Button>
         }
@@ -257,28 +271,20 @@ export default function AuditPage() {
               your local time zone.
             </p>
           </div>
-          <p className="text-sm text-muted-foreground">
-            Instance administrators only
-          </p>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div
-            className="flex flex-wrap gap-1"
-            role="group"
+          <ToggleGroup
+            value={[filter]}
+            onValueChange={(next) => { if (next[0]) setFilter(next[0] as EventFilter) }}
             aria-label="Filter audit events"
+            className="flex-wrap"
           >
             {filters.map((item) => (
-              <Button
-                key={item.id}
-                size="sm"
-                variant={filter === item.id ? "secondary" : "ghost"}
-                onClick={() => setFilter(item.id)}
-                aria-pressed={filter === item.id}
-              >
+              <ToggleGroupItem key={item.id} value={item.id}>
                 {item.label}
-              </Button>
+              </ToggleGroupItem>
             ))}
-          </div>
+          </ToggleGroup>
           <Input
             className="w-full sm:max-w-64"
             aria-label="Search loaded audit events"
@@ -289,8 +295,8 @@ export default function AuditPage() {
         </div>
       </div>
       {loading && events.length === 0 ? (
-        <div className="rounded-xl border bg-card px-5 py-12 text-center text-sm text-muted-foreground">
-          Loading audit events…
+        <div role="status" aria-label="Loading audit events" className="space-y-px overflow-hidden rounded-xl border bg-card">
+          {[0, 1, 2, 3].map((item) => <div key={item} className="space-y-2 p-5"><Skeleton className="h-4 w-1/3" /><Skeleton className="h-3 w-2/3" /></div>)}
         </div>
       ) : events.length === 0 && error ? (
         <div className="rounded-xl border bg-card px-5 py-10 text-center text-sm text-muted-foreground">
@@ -313,30 +319,26 @@ export default function AuditPage() {
               <div className="divide-y lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain">
                 {visible.map((event) => {
                   const active = selected?.id === event.id
-                  const tone = event.action.endsWith("failed")
-                    ? "bg-rose-500"
-                    : event.action.endsWith("succeeded")
-                      ? "bg-emerald-500"
-                      : event.action.endsWith("queued")
-                        ? "bg-amber-500"
-                        : "bg-muted-foreground/50"
+                  const status = eventStatus(event.action)
                   return (
                     <div key={event.id}>
                       <button
                         type="button"
                         onClick={() => setSelectedId(event.id)}
-                        aria-pressed={active}
+                        aria-current={active ? "true" : undefined}
                         className={
                           "flex w-full min-w-0 items-start gap-3 px-4 py-4 text-left transition-colors hover:bg-muted/40 focus-visible:relative focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-primary sm:px-5 " +
                           (active ? "bg-muted/50" : "")
                         }
                       >
-                        <span
-                          className={
-                            "mt-1.5 size-2 shrink-0 rounded-full " + tone
-                          }
-                          aria-hidden="true"
-                        />
+                        {status ? (
+                          <span className={"mt-0.5 grid size-5 shrink-0 place-items-center " + status.className}>
+                            <HugeiconsIcon icon={status.icon} strokeWidth={2} className="size-4" aria-hidden="true" />
+                            <span className="sr-only">{status.label}: </span>
+                          </span>
+                        ) : (
+                          <span className="mt-0.5 grid size-5 shrink-0 place-items-center" aria-hidden="true"><span className="size-2 rounded-full bg-muted-foreground/50" /></span>
+                        )}
                         <span className="min-w-0 flex-1">
                           <span className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
                             <span className="font-medium">

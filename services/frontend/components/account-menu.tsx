@@ -2,8 +2,9 @@
 
 import { useTheme } from "next-themes"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { ArrowDown01Icon, Logout01Icon, Moon01Icon, Sun01Icon, SunMoonIcon } from "@hugeicons/core-free-icons"
+import { ArrowDown01Icon, Logout01Icon } from "@hugeicons/core-free-icons"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { themeOptions } from "@/components/theme-picker"
 import type { User } from "@/lib/types"
 
 export function AccountMenu({ user, onSignOut, compact = false }: { user: User; onSignOut: () => Promise<void>; compact?: boolean }) {
@@ -25,7 +26,7 @@ export function AccountMenu({ user, onSignOut, compact = false }: { user: User; 
       <DropdownMenuGroup>
         <DropdownMenuLabel>Appearance</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={theme ?? "system"} onValueChange={setTheme} aria-label="Appearance">
-          {[{ value: "light", label: "Light", icon: Sun01Icon }, { value: "dark", label: "Dark", icon: Moon01Icon }, { value: "system", label: "System", icon: SunMoonIcon }].map(option => <DropdownMenuRadioItem key={option.value} value={option.value} className="gap-2 py-2"><HugeiconsIcon icon={option.icon} className="size-4" aria-hidden="true" />{option.label}</DropdownMenuRadioItem>)}
+          {themeOptions.map(option => <DropdownMenuRadioItem key={option.value} value={option.value} className="gap-2 py-2"><HugeiconsIcon icon={option.icon} className="size-4" aria-hidden="true" />{option.label}</DropdownMenuRadioItem>)}
         </DropdownMenuRadioGroup>
       </DropdownMenuGroup>
       <DropdownMenuSeparator />

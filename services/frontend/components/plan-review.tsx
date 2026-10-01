@@ -1,7 +1,11 @@
 "use client"
 
 import { useRef, useState, type ReactNode } from "react"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { FullScreenIcon } from "@hugeicons/core-free-icons"
+import { Badge } from "@/components/reui/badge"
 import { Button } from "@/components/ui/button"
+import { useToast } from "@/components/toast-provider"
 import { Input } from "@/components/ui/input"
 import { FormSelect } from "@/components/ui/form-select"
 import { EmptyState } from "@/components/ui-kit"
@@ -15,7 +19,7 @@ export function PlanReview({ changes, ignored, selected, onSelect, identityKey, 
 }) {
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState("all")
-  const [fullscreenError, setFullscreenError] = useState("")
+  const toast = useToast()
   const root = useRef<HTMLElement>(null)
   const entries = [...[...changes].sort((a, b) => Number(b.kind === "delete") - Number(a.kind === "delete")).map((change) => ({ change, ignored: false })), ...ignored.map((change) => ({ change, ignored: true }))]
   const key = (entry: typeof entries[number]) => `${entry.ignored ? "ignored:" : ""}${identityKey(entry.change)}`
@@ -28,11 +32,10 @@ export function PlanReview({ changes, ignored, selected, onSelect, identityKey, 
     try {
       if (document.fullscreenElement) await document.exitFullscreen()
       else await root.current?.requestFullscreen()
-    } catch { setFullscreenError("Fullscreen is unavailable in this browser. The review remains available below.") }
+    } catch { toast.error("Fullscreen is unavailable in this browser. The review remains available below.") }
   }
   return <section ref={root} aria-label="Resource review" className="min-w-0 bg-card fullscreen:overflow-auto fullscreen:p-5">
-    <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><h3 className="text-base font-semibold">Review resources <span className="font-normal text-muted-foreground">({entries.length})</span></h3><Button type="button" variant="outline" onClick={() => void toggleFullscreen()}>Toggle fullscreen</Button></div>
-    {fullscreenError && <p role="status" className="mb-3 text-sm text-muted-foreground">{fullscreenError}</p>}
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><h3 className="text-base font-semibold">Review resources <span className="font-normal text-muted-foreground">({entries.length})</span></h3><Button type="button" variant="outline" size="sm" onClick={() => void toggleFullscreen()}><HugeiconsIcon icon={FullScreenIcon} strokeWidth={1.8} aria-hidden="true" />Toggle fullscreen</Button></div>
     <div className="grid min-w-0 gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
       <nav aria-label="Plan resources" className="min-w-0 rounded-lg border bg-muted/10 p-3 lg:self-start">
         <Input aria-label="Search plan resources" placeholder="Find a resource…" value={query} onChange={(event) => setQuery(event.target.value)} />
@@ -40,11 +43,11 @@ export function PlanReview({ changes, ignored, selected, onSelect, identityKey, 
         <p className="mb-2 text-sm text-muted-foreground" role="status">{matching.length} of {entries.length} resources</p>
         <div className="h-48 overflow-auto lg:h-[60svh]">
           {matching.map((entry) => <Button type="button" key={key(entry)} variant={active === entry ? "secondary" : "ghost"} aria-current={active === entry ? "true" : undefined} className="mb-1 h-auto w-full justify-start whitespace-normal px-3 py-3 text-left" onClick={() => onSelect(key(entry))}>
-            <span className="min-w-0"><span className="block break-all text-sm font-medium">{entry.change.identity.name}</span><span className="mt-1 block text-xs text-muted-foreground">{entry.change.identity.kind} · {entry.change.identity.namespace || "cluster"}</span><span className={`mt-2 block text-xs capitalize ${entry.ignored ? "text-muted-foreground" : entry.change.kind === "delete" ? "text-rose-600 dark:text-rose-300" : entry.change.kind === "create" ? "text-emerald-700 dark:text-emerald-300" : "text-blue-600 dark:text-blue-300"}`}>{entry.ignored ? "Excluded · not applied" : `${entry.change.kind}${isExcluded(entry.change) ? " · Exclusion draft" : ""}`}{entry.change.takeover ? " · Takeover" : ""}</span></span>
+            <span className="min-w-0"><span className="block break-all text-sm font-medium">{entry.change.identity.name}</span><span className="mt-1 block text-xs text-muted-foreground">{entry.change.identity.kind} · {entry.change.identity.namespace || "cluster"}</span><span className="mt-2 flex flex-wrap items-center gap-1"><Badge variant={entry.ignored ? "secondary" : entry.change.kind === "delete" ? "destructive-light" : entry.change.kind === "create" ? "success-light" : "info-light"} radius="full" className="capitalize">{entry.ignored ? "Excluded · not applied" : entry.change.kind}</Badge>{!entry.ignored && isExcluded(entry.change) && <Badge variant="outline" radius="full">Exclusion draft</Badge>}{entry.change.takeover && <Badge variant="warning-light" radius="full">Takeover</Badge>}</span></span>
           </Button>)}
         </div>
       </nav>
-      <div className="min-w-0">{active ? renderChange(active.change, active.ignored) : <div className="rounded-xl border border-dashed"><EmptyState title="No matching resources" description="Try a different resource filter or search term." /></div>}</div>
+      <div className="min-w-0">{active ? renderChange(active.change, active.ignored) : <div className="rounded-xl border border-dashed"><EmptyState title={entries.length ? "No matching resources" : "No resources to review"} description={entries.length ? "Try a different resource filter or search term." : "This plan contains no resource changes."} /></div>}</div>
     </div>
   </section>
 }

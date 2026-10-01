@@ -10,7 +10,8 @@ import {
   Shield01Icon,
   ServerStack01Icon,
 } from "@hugeicons/core-free-icons"
-import { buttonVariants } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
+import { Badge } from "@/components/reui/badge"
 import { ErrorDetailsButton, ErrorGuidance } from "@/components/error-details"
 import { errorMessage } from "@/lib/api"
 import type { Workspace } from "@/lib/types"
@@ -56,7 +57,7 @@ export function ActionLink({
       href={href}
       className={buttonVariants({
         variant: secondary ? "outline" : "default",
-        className: "h-9 gap-2 px-3.5 text-xs",
+        className: "h-9 gap-2 px-3.5 text-xs [&_svg:not([class*='size-'])]:size-4",
       })}
     >
       {children}
@@ -96,13 +97,9 @@ export function LoadError({
       <span className="min-w-0 flex-1">{errorMessage(error)}</span>
       <div className="flex items-center gap-2">
         <ErrorDetailsButton error={error} />
-        <button
-          type="button"
-          onClick={retry}
-          className="rounded-md px-2 py-1 font-medium underline underline-offset-4"
-        >
+        <Button type="button" size="xs" variant="link" onClick={retry} className="text-destructive">
           Try again
-        </button>
+        </Button>
       </div>
       <div className="basis-full">
         <ErrorGuidance error={error} />
@@ -146,9 +143,9 @@ export function WorkspaceCard({
         <span className="grid size-10 place-items-center rounded-xl border bg-muted/40 text-muted-foreground">
           <WorkspaceIcon name="folder" />
         </span>
-        <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground capitalize">
+        <Badge variant="secondary" className="capitalize">
           {workspace.role}
-        </span>
+        </Badge>
       </div>
       <h3 className="mt-5 truncate text-base font-semibold tracking-tight">
         {workspace.name}
@@ -171,16 +168,17 @@ export function WorkspaceCard({
       </div>
       <div
         className="mt-3 flex h-1 overflow-hidden rounded-full bg-muted"
+        role="img"
         aria-label={`${synced} in sync, ${attention} need attention, ${total - synced - attention} other`}
       >
         {total > 0 && (
           <>
             <span
-              className="bg-emerald-500"
+              className="bg-success"
               style={{ width: `${(synced / total) * 100}%` }}
             />
             <span
-              className="bg-amber-500"
+              className="bg-warning"
               style={{ width: `${(attention / total) * 100}%` }}
             />
           </>

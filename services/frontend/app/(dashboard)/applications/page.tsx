@@ -3,9 +3,10 @@
 import { Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import { ApplicationCollection } from "@/components/application-collection"
+import { Add01Icon, Layers01Icon } from "@hugeicons/core-free-icons"
+import { ActionMenu } from "@/components/action-menu"
 import { PageHeading } from "@/components/ui-kit"
 import {
-  ActionLink,
   CollectionSkeleton,
   LoadError,
 } from "@/components/workspace-ui"
@@ -36,14 +37,15 @@ function ApplicationsContent() {
       <PageHeading
         title="Applications"
         description="Deployments across your workspaces, from Git revision to running workload."
-        actions={<>
-          <ActionLink href={workspaceId ? `/applications/new?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces"}>
-            <span aria-hidden="true">＋</span> New application
-          </ActionLink>
-          <ActionLink secondary href={workspaceId ? `/application-groups/new?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces"}>
-            <span aria-hidden="true">＋</span> Deploy to multiple targets
-          </ActionLink>
-        </>}
+        actions={<ActionMenu
+          label="New"
+          variant="default"
+          icon={Add01Icon}
+          items={[
+            { label: "New application", icon: Add01Icon, href: workspaceId ? `/applications/new?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces" },
+            { label: "New deployment group", icon: Layers01Icon, href: workspaceId ? `/application-groups/new?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces" },
+          ]}
+        />}
       />
       {error ? (
         <LoadError error={error} retry={refresh} />

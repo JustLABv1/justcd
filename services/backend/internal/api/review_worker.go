@@ -160,12 +160,6 @@ func (s *Server) processReview(ctx context.Context, review store.PullRequestRevi
 		}
 		return nil
 	}
-	if review.Phase == "planned" && review.ProcessedSHA == review.HeadSHA && (review.ExpiresAt == nil || review.ExpiresAt.After(time.Now())) {
-		if review.ReportedPhase != review.Phase {
-			return s.reportReview(ctx, connection, review, string(token))
-		}
-		return nil
-	}
 	app, err := s.Store.ApplicationByID(ctx, connection.ApplicationID)
 	if err != nil {
 		return err
@@ -178,6 +172,9 @@ func (s *Server) processReview(ctx context.Context, review store.PullRequestRevi
 	}
 	if review.PreviewApplicationID == nil {
 		watched := reviewPaths(app, connection.PreviewProfile)
+		if app.Renderer == "kustomize" {
+			watched = s.kustomizeReviewPaths(ctx, source, app, connection, review)
+		}
 		if watched != nil {
 			changedPaths, filesErr := (scm.Client{}).ChangedPaths(ctx, connection.Provider, connection.APIURL, connection.Repository, string(token), review.Number)
 			// Incomplete provider data must not hide a potentially relevant PR.
@@ -191,6 +188,12 @@ func (s *Server) processReview(ctx context.Context, review store.PullRequestRevi
 				return err
 			}
 		}
+	}
+	if review.Phase == "planned" && review.ProcessedSHA == review.HeadSHA && (review.ExpiresAt == nil || review.ExpiresAt.After(time.Now())) {
+		if review.ReportedPhase != review.Phase {
+			return s.reportReview(ctx, connection, review, string(token))
+		}
+		return nil
 	}
 	result := review
 	result.Error = ""

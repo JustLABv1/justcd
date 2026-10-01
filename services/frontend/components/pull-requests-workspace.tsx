@@ -32,7 +32,7 @@ type PreviewProfile = {
   quotaMemory: string
 }
 
-type Connection = { id: string; enabled: boolean; provider: "github" | "gitlab"; apiUrl: string; repository: string; previewProfile: PreviewProfile; statusCredentialId?: string }
+type Connection = { managedByGit?: boolean; id: string; enabled: boolean; provider: "github" | "gitlab"; apiUrl: string; repository: string; previewProfile: PreviewProfile; statusCredentialId?: string }
 type SourceDetails = { repositoryUrl: string; provider: "github" | "gitlab"; apiUrl: string; repository: string; selfHosted: boolean }
 type ConnectionResponse = { source: SourceDetails; connection: Connection | null; webhookUrl: string; webhookConfigured?: boolean }
 type Review = { id: string; number: number; headSha: string; sourceUrl: string; phase: string; error?: string; reportError?: string; plan?: PlanRecord; previewApplicationId?: string; expiresAt?: string; updatedAt: string; headBranch?: string; adoptedBranchPreview?: boolean; sharedEnvironment?: boolean; branchPreviews?: Application[] }
@@ -186,7 +186,7 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
     setSavedMessage("Webhook removed from JustCD. PR reporting continues by polling. Remove the repository webhook at your Git provider too.")
   }
 
-  const reportingActions = source && (canConfigure ?? ownerAccess) && (showSettings
+  const reportingActions = connection?.managedByGit ? <span className="text-sm text-muted-foreground">Managed by justcd.yaml · spec.pullRequests</span> : source && (canConfigure ?? ownerAccess) && (showSettings
     ? <Button variant="outline" size="sm" onClick={() => setShowSettings(false)}>Back to reviews</Button>
     : <><Button size="sm" variant={connection ? "outline" : "default"} onClick={() => setShowSettings(true)}>{connection ? "Edit settings" : "Enable PR reporting"}</Button>
       {connection && <Button type="button" size="sm" variant={connection.enabled ? "destructive" : "outline"} className={connection.enabled ? undefined : "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 dark:hover:bg-emerald-950"} loading={changingState} onClick={() => void setReportingEnabled(!connection.enabled)}>{connection.enabled ? "Disable reporting" : "Enable reporting"}</Button>}</>)

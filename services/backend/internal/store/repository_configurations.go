@@ -83,6 +83,23 @@ func (s *Store) ApplyRepositoryApplications(ctx context.Context, repository Repo
 	if !enabled {
 		return errors.New("repository discovery is paused")
 	}
+	// Lock PR connections before application rows, matching PR worker lock order.
+	rowsPR, err := tx.QueryContext(ctx, `SELECT c.id FROM source_control_connections c JOIN applications a ON a.id=c.application_id WHERE a.repository_configuration_id=$1 ORDER BY c.id FOR UPDATE OF c`, repository.ID)
+	if err != nil {
+		return err
+	}
+	for rowsPR.Next() {
+		var id string
+		if err := rowsPR.Scan(&id); err != nil {
+			rowsPR.Close()
+			return err
+		}
+	}
+	err = rowsPR.Err()
+	rowsPR.Close()
+	if err != nil {
+		return err
+	}
 	ids := []string{}
 	for _, app := range apps {
 		existing, err := scanApplication(tx.QueryRowContext(ctx, `SELECT `+applicationColumns+` FROM applications WHERE repository_configuration_id=$1 AND name=$2 FOR UPDATE`, repository.ID, app.Name))
@@ -139,6 +156,11 @@ func (s *Store) ApplyRepositoryApplications(ctx context.Context, repository Repo
 				return fmt.Errorf("application %q: %w", app.Name, err)
 			}
 		}
+		if existing.RollbackResumeState == nil {
+			if err := reconcileRepositoryPR(ctx, tx, app); err != nil {
+				return fmt.Errorf("%s: %w", app.ConfigurationPath, err)
+			}
+		}
 		ids = append(ids, app.ID)
 		if _, err := tx.ExecContext(ctx, `UPDATE applications SET repository_configuration_id=$2,configuration_path=$3,configuration_commit=$4,configuration_hash=$5,last_checked_at=CASE WHEN configuration_missing THEN NULL ELSE last_checked_at END,configuration_missing=FALSE,helm_release_name=$6 WHERE id=$1`, app.ID, repository.ID, app.ConfigurationPath, commit, app.ConfigurationHash, app.HelmReleaseName); err != nil {
 			return err
@@ -164,6 +186,13 @@ func (s *Store) ApplyRepositoryApplications(ctx context.Context, repository Repo
 		return err
 	}
 	for _, id := range missingIDs {
+		missing, err := scanApplication(tx.QueryRowContext(ctx, `SELECT `+applicationColumns+` FROM applications WHERE id=$1`, id))
+		if err != nil {
+			return err
+		}
+		if err := reconcileRepositoryPR(ctx, tx, missing); err != nil {
+			return err
+		}
 		var active bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM operations WHERE application_id=$1 AND status IN ('queued','running'))`, id).Scan(&active); err != nil {
 			return err

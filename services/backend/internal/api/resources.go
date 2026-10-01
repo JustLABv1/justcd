@@ -18,48 +18,13 @@ import (
 	"github.com/justlab/justcd/services/backend/internal/render"
 	"github.com/justlab/justcd/services/backend/internal/security"
 	"github.com/justlab/justcd/services/backend/internal/store"
-
-	"sigs.k8s.io/yaml"
 )
 
 var resourceNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?$`)
 var namespaceNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 
 func validateHelmValuesInput(renderer string, files []string, valuesYAML string) ([]string, string, error) {
-	valuesYAML = strings.TrimSpace(valuesYAML)
-	if renderer != "helm" {
-		if len(files) > 0 || valuesYAML != "" {
-			return nil, "", errors.New("Helm values can only be set for Helm applications")
-		}
-		return nil, "", nil
-	}
-	if len(files) > 16 {
-		return nil, "", errors.New("at most 16 Helm values files may be configured")
-	}
-	cleanFiles := make([]string, 0, len(files))
-	seen := map[string]bool{}
-	for _, filename := range files {
-		filename = strings.TrimSpace(filename)
-		clean := path.Clean(filename)
-		if filename == "" || strings.ContainsRune(filename, '\x00') || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || path.IsAbs(clean) {
-			return nil, "", errors.New("Helm values file paths must be repository-relative")
-		}
-		if seen[clean] {
-			return nil, "", errors.New("Helm values file paths must be unique")
-		}
-		seen[clean] = true
-		cleanFiles = append(cleanFiles, clean)
-	}
-	if len(valuesYAML) > 2<<20 {
-		return nil, "", errors.New("Helm values YAML exceeds 2 MiB")
-	}
-	if valuesYAML != "" {
-		var values map[string]any
-		if err := yaml.Unmarshal([]byte(valuesYAML), &values); err != nil || values == nil {
-			return nil, "", errors.New("Helm values must be a YAML mapping")
-		}
-	}
-	return cleanFiles, valuesYAML, nil
+	return store.ValidateHelmValuesInput(renderer, files, valuesYAML)
 }
 
 func validateNamespaceHelmValuesInput(renderer string, namespaceValues map[string]core.HelmValuesOverride, namespaces []string) (map[string]core.HelmValuesOverride, error) {

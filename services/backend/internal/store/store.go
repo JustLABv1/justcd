@@ -1331,6 +1331,7 @@ type Application struct {
 	BranchTest                     *BranchTest                        `json:"branchTest,omitempty"`
 	ClusterName                    string                             `json:"clusterName,omitempty"`
 	CreateNamespaces               bool                               `json:"createNamespaces"`
+	RepositoryPullRequests         *RepositoryPRConfig                `json:"-"`
 	RepositoryIgnoreRules          []core.IgnoreRule                  `json:"-"`
 	RepositoryIgnoreSelectors      []core.IgnoreSelector              `json:"-"`
 	HelmReleaseName                string                             `json:"helmReleaseName,omitempty"`

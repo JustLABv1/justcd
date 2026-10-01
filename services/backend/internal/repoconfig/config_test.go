@@ -159,3 +159,64 @@ func TestDiscoverCreateNamespaces(t *testing.T) {
 		t.Fatal("option not tracked by semantic hash")
 	}
 }
+
+func TestPullRequestsDefinition(t *testing.T) {
+	root := t.TempDir()
+	writeDefinition(t, root, "justcd.yaml", validDefinition+`  pullRequests:
+    enabled: true
+    credentialId: git-api
+    previewProfile:
+      enabled: true
+      deploymentMode: existing
+      confirmShared: true
+      approvalActors:
+        "123": justcd-user
+`)
+	defs, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(defs) != 1 || defs[0].Spec.PullRequests.CredentialID != "git-api" || !defs[0].Spec.PullRequests.PreviewProfile.ConfirmShared {
+		t.Fatalf("PR settings missing: %+v", defs)
+	}
+	for _, input := range []string{
+		"  pullRequests:\n    enabled: true\n",
+		"  pullRequests:\n    enabled: true\n    credentialId: cred\n    statusToken: plaintext-secret\n",
+		"  pullRequests:\n    credentialId: cred\n    previewProfile:\n      enabled: true\n      deploymentMode: existing\n",
+		"  pullRequests:\n    credentialId: cred\n    previewProfile:\n      approvalActors:\n        invalid: user\n",
+	} {
+		writeDefinition(t, root, "justcd.yaml", validDefinition+input)
+		if _, err := Discover(root); err == nil {
+			t.Fatalf("invalid PR config accepted: %s", input)
+		}
+	}
+}
+
+func TestPullRequestPreviewPathsRelativeToDefinition(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "apps/preview"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeDefinition(t, root, "apps/dev/justcd.yaml", validDefinition+`  pullRequests:
+    enabled: true
+    credentialId: git-api
+    previewProfile:
+      enabled: true
+      deploymentMode: isolated
+      manifestPath: ../preview
+      namespacePrefix: preview
+      hostSuffix: preview.example.com
+      databaseStrategy: none
+      maxActive: 5
+      maxLifetimeHours: 72
+      quotaCpu: "2"
+      quotaMemory: 2Gi
+`)
+	defs, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defs[0].Spec.PullRequests.PreviewProfile.ManifestPath != "apps/preview" {
+		t.Fatal("preview path not resolved relative to definition")
+	}
+}

@@ -9,11 +9,15 @@ import (
 
 // reviewPaths lists repository inputs that JustCD renders for this application.
 // Kustomize can import bases outside its overlay; the configured path alone is
-// insufficient to prove an unrelated change, so it remains repository-wide.
+// insufficient alone; the worker discovers their dependencies from Git.
 func reviewPaths(app store.Application, profile store.PreviewProfile) []string {
 	if app.Renderer == "kustomize" {
 		return nil
 	}
+	return configuredReviewPaths(app, profile)
+}
+
+func configuredReviewPaths(app store.Application, profile store.PreviewProfile) []string {
 	paths := []string{app.ManifestPath, app.TargetManifestPath}
 	for _, p := range app.NamespaceManifestPaths {
 		paths = append(paths, p)

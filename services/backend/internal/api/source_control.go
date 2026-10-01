@@ -8,19 +8,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path"
 	"reflect"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/justlab/justcd/services/backend/internal/scm"
 	"github.com/justlab/justcd/services/backend/internal/security"
 	"github.com/justlab/justcd/services/backend/internal/store"
-	"k8s.io/apimachinery/pkg/api/resource"
 )
-
-var previewDNSName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,39}[a-z0-9]$`)
 
 type sourceControlInput struct {
 	StatusCredentialID string               `json:"statusCredentialId"`
@@ -46,74 +41,7 @@ func validateSourceControlInput(input *sourceControlInput, source store.GitSourc
 	if previous != nil && previous.Provider != input.Provider && input.StatusToken == "" && input.StatusCredentialID == "" {
 		return errors.New("changing provider requires a new statusToken")
 	}
-	p := &input.PreviewProfile
-	if p.DeploymentMode != "" && p.DeploymentMode != "isolated" && p.DeploymentMode != "existing" {
-		return errors.New("deploymentMode must be isolated or existing")
-	}
-	for providerID, userID := range p.ApprovalActors {
-		if !regexp.MustCompile(`^[1-9][0-9]*$`).MatchString(providerID) || userID == "" {
-			return errors.New("approval actors require a numeric provider user ID and a JustCD user ID")
-		}
-	}
-	if !p.Enabled {
-		return nil
-	}
-	if p.DeploymentMode == "existing" {
-		if !p.ConfirmShared || p.AllowForks || app.ApplicationGroupID != "" {
-			return errors.New("existing-environment PR deployments require confirmation, a standalone application, and forks disabled")
-		}
-		return nil
-	}
-	if !previewDNSName.MatchString(p.NamespacePrefix) || p.MaxActive < 1 || p.MaxActive > 100 || p.MaxLifetimeHours < 1 || p.MaxLifetimeHours > 168 {
-		return errors.New("preview profile needs a namespacePrefix, maxActive (1-100), and maxLifetimeHours (1-168)")
-	}
-	if p.QuotaCPU == "" || p.QuotaMemory == "" {
-		return errors.New("preview profile needs CPU and memory quotas")
-	}
-	if _, err := resource.ParseQuantity(p.QuotaCPU); err != nil {
-		return errors.New("quotaCpu must be a Kubernetes quantity")
-	}
-	if _, err := resource.ParseQuantity(p.QuotaMemory); err != nil {
-		return errors.New("quotaMemory must be a Kubernetes quantity")
-	}
-	if p.DatabaseStrategy != "none" && p.DatabaseStrategy != "shared-preview" && p.DatabaseStrategy != "schema-per-pr" && p.DatabaseStrategy != "ephemeral" && p.DatabaseStrategy != "sanitized-snapshot" {
-		return errors.New("databaseStrategy must name a preview-safe strategy")
-	}
-	if p.ManifestPath == "" && p.HelmValuesYAML == "" && len(p.HelmValuesFiles) == 0 {
-		return errors.New("preview profile needs a preview manifest path or Helm values override")
-	}
-	if (p.HelmValuesYAML != "" || len(p.HelmValuesFiles) > 0) && app.Renderer != "helm" {
-		return errors.New("preview Helm values require a Helm application")
-	}
-	if app.Renderer != "helm" && (p.ManifestPath == "" || p.ManifestPath == app.ManifestPath) {
-		return errors.New("non-Helm previews need a separate preview overlay path")
-	}
-	if app.Renderer == "helm" {
-		files, values, err := validateHelmValuesInput("helm", p.HelmValuesFiles, p.HelmValuesYAML)
-		if err != nil {
-			return err
-		}
-		p.HelmValuesFiles, p.HelmValuesYAML = files, values
-	}
-	if p.ManifestPath != "" {
-		clean := path.Clean(p.ManifestPath)
-		if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || path.IsAbs(clean) || strings.ContainsRune(clean, '\x00') {
-			return errors.New("preview manifestPath must be repository-relative")
-		}
-		p.ManifestPath = clean
-	}
-	if p.HostSuffix == "" || strings.ContainsAny(p.HostSuffix, "/:@ \\?") || !strings.Contains(p.HostSuffix, ".") {
-		return errors.New("preview profile needs a valid hostSuffix for ingress validation")
-	}
-	for _, name := range p.AllowedSecrets {
-		if !namespaceNamePattern.MatchString(name) {
-			return errors.New("invalid allowed secret name")
-		}
-	}
-	if p.AllowForks && len(p.AllowedSecrets) > 0 {
-		return errors.New("fork previews cannot use allowed secrets")
-	}
-	return nil
+	return store.ValidatePreviewProfile(&input.PreviewProfile, app)
 }
 
 func sourceMatchesConnection(sourceURL, provider string, apiURL *url.URL, repository string) bool {
@@ -128,6 +56,10 @@ func (s *Server) putSourceControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
+		return
+	}
+	if connection, err := s.Store.SourceControlConnectionByApplication(r.Context(), app.ID); err == nil && connection.ManagedByGit {
+		writeError(w, http.StatusConflict, "PR handling is managed by justcd.yaml; edit spec.pullRequests in Git")
 		return
 	}
 	source, err := s.Store.GitSourceForWorkspace(r.Context(), app.SourceID, app.WorkspaceID)
@@ -200,6 +132,10 @@ func (s *Server) putSourceControl(w http.ResponseWriter, r *http.Request) {
 	enabled := previous == nil || previous.Enabled
 	c := store.SourceControlConnection{ID: id, Enabled: enabled, WorkspaceID: app.WorkspaceID, ApplicationID: app.ID, Provider: input.Provider, APIURL: input.APIURL, Repository: input.Repository, WebhookSecretCipher: webhookCipher, StatusTokenCipher: statusCipher, StatusCredentialID: statusCredentialID, PreviewProfile: input.PreviewProfile}
 	if err := s.Store.SaveSourceControlConnection(r.Context(), c); err != nil {
+		if errors.Is(err, store.ErrGitManagedPR) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeStoreError(w, "could not save source control connection")
 		return
 	}
@@ -284,6 +220,10 @@ func (s *Server) setSourceControlEnabled(w http.ResponseWriter, r *http.Request)
 	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
+	if connection, err := s.Store.SourceControlConnectionByApplication(r.Context(), app.ID); err == nil && connection.ManagedByGit {
+		writeError(w, http.StatusConflict, "PR handling is managed by justcd.yaml; edit spec.pullRequests in Git")
+		return
+	}
 	var input struct {
 		Enabled *bool `json:"enabled"`
 	}
@@ -300,7 +240,7 @@ func (s *Server) setSourceControlEnabled(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusNotFound, "PR reporting is not configured")
 			return
 		}
-		if errors.Is(err, store.ErrActivePreviews) {
+		if errors.Is(err, store.ErrActivePreviews) || errors.Is(err, store.ErrGitManagedPR) {
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
@@ -320,12 +260,16 @@ func (s *Server) deleteSourceControl(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
+	if connection, err := s.Store.SourceControlConnectionByApplication(r.Context(), app.ID); err == nil && connection.ManagedByGit {
+		writeError(w, http.StatusConflict, "PR handling is managed by justcd.yaml; edit spec.pullRequests in Git")
+		return
+	}
 	if err := s.Store.DeleteSourceControlConnection(r.Context(), app.ID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "PR reporting is not configured")
 			return
 		}
-		if errors.Is(err, store.ErrActivePreviews) {
+		if errors.Is(err, store.ErrActivePreviews) || errors.Is(err, store.ErrGitManagedPR) {
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}

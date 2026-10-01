@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/justlab/justcd/services/backend/internal/store"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/yaml"
 )
@@ -44,9 +45,10 @@ type Definition struct {
 			Cluster          string `json:"cluster"`
 			Namespace        string `json:"namespace"`
 		} `json:"destination"`
-		IgnoreResources []IgnoreResource `json:"ignoreResources,omitempty"`
-		SyncPolicy      string           `json:"syncPolicy,omitempty"`
-		PollSeconds     int              `json:"pollSeconds,omitempty"`
+		PullRequests    *store.RepositoryPRConfig `json:"pullRequests,omitempty"`
+		IgnoreResources []IgnoreResource          `json:"ignoreResources,omitempty"`
+		SyncPolicy      string                    `json:"syncPolicy,omitempty"`
+		PollSeconds     int                       `json:"pollSeconds,omitempty"`
 	} `json:"spec"`
 	File string `json:"-"`
 	Hash string `json:"-"`
@@ -166,6 +168,30 @@ func Discover(root string) ([]Definition, error) {
 		}
 		if err := validateIgnores(d.Spec.IgnoreResources, d.Spec.Destination.Namespace); err != nil {
 			return fail(err)
+		}
+		if pr := d.Spec.PullRequests; pr != nil {
+			if pr.CredentialID == "" {
+				return fail(fmt.Errorf("pullRequests.credentialId must reference an existing HTTPS credential"))
+			}
+			if pr.Provider != "" && pr.Provider != "github" && pr.Provider != "gitlab" {
+				return fail(fmt.Errorf("pullRequests.provider must be github or gitlab"))
+			}
+			profile := &pr.PreviewProfile
+			if profile.ManifestPath != "" {
+				profile.ManifestPath, err = resolvePath(root, filepath.Dir(file), profile.ManifestPath)
+				if err != nil {
+					return fail(err)
+				}
+			}
+			for i, filename := range profile.HelmValuesFiles {
+				profile.HelmValuesFiles[i], err = resolvePath(root, filepath.Dir(file), filename)
+				if err != nil {
+					return fail(err)
+				}
+			}
+			if err := store.ValidatePreviewProfile(profile, store.Application{Renderer: source.Renderer, ManifestPath: source.Path}); err != nil {
+				return fail(fmt.Errorf("pullRequests: %w", err))
+			}
 		}
 		if d.Spec.SyncPolicy == "" {
 			d.Spec.SyncPolicy = "manual"

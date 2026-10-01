@@ -164,13 +164,18 @@ The optional webhook can be removed independently in PR reporting settings;
 polling, saved provider access, and review history remain available. Remove
 the repository webhook at the Git provider as well.
 
+PR handling can also be managed through `spec.pullRequests` in `justcd.yaml`,
+using an existing HTTPS credential reference. See [declarative PR handling](docs/repository-applications.md#pull-request-handling) for review-only, isolated, and shared-environment examples.
+
 PR reporting is configured per application. Each configured application discovers
 open PRs for the repository. Before planning, JustCD checks changed file paths
 against that application's manifest paths, Helm values files, and optional
 preview path. Renames check both old and new paths. PRs without a matching path
 are hidden from that application's review list and do not receive its status.
-Kustomize remains repository-wide because an overlay can import bases from
-outside its configured path. If a provider cannot return a complete file list,
+Kustomize follows local bases, components, patches, replacements, and generator
+files outside the overlay path. Unrelated applications are skipped. Remote inputs,
+custom plugins, Helm generators, missing inputs, or unsupported dependency features
+keep repository-wide checking to avoid hiding relevant changes. If a provider cannot return a complete file list,
 JustCD conservatively reviews the PR. Status contexts include the application
 ID so multiple applications do not overwrite each other's status.
 

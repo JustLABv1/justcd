@@ -30,6 +30,7 @@ type PreviewProfile struct {
 }
 
 type SourceControlConnection struct {
+	ManagedByGit        bool           `json:"managedByGit"`
 	StatusCredentialID  *string        `json:"statusCredentialId,omitempty"`
 	ID                  string         `json:"id"`
 	Enabled             bool           `json:"enabled"`
@@ -44,12 +45,12 @@ type SourceControlConnection struct {
 	CreatedAt           time.Time      `json:"createdAt"`
 }
 
-const connectionColumns = `id,enabled,workspace_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile,created_at,status_credential_id`
+const connectionColumns = `id,enabled,workspace_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile,created_at,status_credential_id,managed_by_git`
 
 func scanSourceControlConnection(row interface{ Scan(...any) error }) (SourceControlConnection, error) {
 	var c SourceControlConnection
 	var profile []byte
-	err := row.Scan(&c.ID, &c.Enabled, &c.WorkspaceID, &c.ApplicationID, &c.Provider, &c.APIURL, &c.Repository, &c.WebhookSecretCipher, &c.StatusTokenCipher, &profile, &c.CreatedAt, &c.StatusCredentialID)
+	err := row.Scan(&c.ID, &c.Enabled, &c.WorkspaceID, &c.ApplicationID, &c.Provider, &c.APIURL, &c.Repository, &c.WebhookSecretCipher, &c.StatusTokenCipher, &profile, &c.CreatedAt, &c.StatusCredentialID, &c.ManagedByGit)
 	if err == nil {
 		err = json.Unmarshal(profile, &c.PreviewProfile)
 	}
@@ -68,6 +69,9 @@ func (s *Store) SaveSourceControlConnection(ctx context.Context, c SourceControl
 	defer tx.Rollback()
 	previous, err := scanSourceControlConnection(tx.QueryRowContext(ctx, `SELECT `+connectionColumns+` FROM source_control_connections WHERE application_id=$1 FOR UPDATE`, c.ApplicationID))
 	if err == nil {
+		if previous.ManagedByGit {
+			return ErrGitManagedPR
+		}
 		active, checkErr := sourceControlHasActivePreviews(ctx, tx, previous.ID)
 		if checkErr != nil {
 			return checkErr
@@ -121,6 +125,8 @@ func (s *Store) EnabledSourceControlConnections(ctx context.Context) ([]SourceCo
 	return items, rows.Err()
 }
 
+var ErrGitManagedPR = errors.New("PR handling is managed by justcd.yaml; edit spec.pullRequests in Git")
+
 var ErrActivePreviews = errors.New("close active previews before changing PR reporting")
 var ErrSourceControlDisabled = errors.New("PR reporting is disabled")
 
@@ -138,8 +144,12 @@ func (s *Store) SetSourceControlConnectionEnabled(ctx context.Context, applicati
 	}
 	defer tx.Rollback()
 	var id string
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM source_control_connections WHERE application_id=$1 FOR UPDATE`, applicationID).Scan(&id); err != nil {
+	var managed bool
+	if err := tx.QueryRowContext(ctx, `SELECT id,managed_by_git FROM source_control_connections WHERE application_id=$1 FOR UPDATE`, applicationID).Scan(&id, &managed); err != nil {
 		return err
+	}
+	if managed {
+		return ErrGitManagedPR
 	}
 	if !enabled {
 		active, err := sourceControlHasActivePreviews(ctx, tx, id)
@@ -163,8 +173,12 @@ func (s *Store) DeleteSourceControlConnection(ctx context.Context, applicationID
 	}
 	defer tx.Rollback()
 	var id string
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM source_control_connections WHERE application_id=$1 FOR UPDATE`, applicationID).Scan(&id); err != nil {
+	var managed bool
+	if err := tx.QueryRowContext(ctx, `SELECT id,managed_by_git FROM source_control_connections WHERE application_id=$1 FOR UPDATE`, applicationID).Scan(&id, &managed); err != nil {
 		return err
+	}
+	if managed {
+		return ErrGitManagedPR
 	}
 	active, err := sourceControlHasActivePreviews(ctx, tx, id)
 	if err != nil {
@@ -303,7 +317,7 @@ func (s *Store) DueReviews(ctx context.Context, limit int) ([]PullRequestReview,
 		phase='pending' OR (expires_at<=NOW() AND NOT closed AND phase NOT IN ('cleanup_pending','removed'))
 		OR (phase IN ('approval_required','syncing','ready','degraded','cleanup_pending') AND updated_at < NOW()-INTERVAL '30 seconds')
 		OR (phase='failed' AND updated_at < NOW()-INTERVAL '60 seconds')
-		OR (reported_phase<>phase AND updated_at < NOW()-INTERVAL '30 seconds'))
+		OR (phase<>'ignored' AND reported_phase<>phase AND updated_at < NOW()-INTERVAL '30 seconds'))
 		ORDER BY updated_at LIMIT $1 FOR UPDATE SKIP LOCKED)
 		RETURNING `+reviewColumns, limit)
 	if err != nil {

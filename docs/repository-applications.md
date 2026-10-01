@@ -250,3 +250,84 @@ deleted during app decommissioning. Explicit Namespace manifests remain under
 the normal GitOps ownership and deletion rules. Namespace creation is not atomic
 with deployment: if a workload fails, the new namespace remains for a retry.
 Certificate and connectivity failures are not bypassed by this option.
+
+## Pull request handling
+
+Use `spec.pullRequests` to manage PR reporting and deployments alongside the
+application. The repository comes from the application's Git source. Reference
+an existing JustCD **Git HTTPS credential by ID**; never commit API tokens.
+That credential needs provider API access for reading PRs and comments and
+writing plan comments and commit statuses. Git fetches continue to use the Git
+source credential. Reporting uses polling; existing webhook configuration is
+preserved.
+
+Review-only example (add this block under `spec`):
+
+```yaml
+pullRequests:
+  enabled: true
+  credentialId: existing-https-credential-id
+  # Required for a custom GitLab host; omitted for github.com or gitlab.com:
+  provider: gitlab
+  apiUrl: https://gitlab.example.com/api/v4
+  previewProfile:
+    enabled: false
+    approvalActors:
+      "123456": justcd-user-id
+```
+
+For isolated deployments, including draft PRs:
+
+```yaml
+pullRequests:
+  enabled: true
+  credentialId: existing-https-credential-id
+  previewProfile:
+    enabled: true
+    deploymentMode: isolated
+    manifestPath: ../preview
+    namespacePrefix: preview
+    hostSuffix: preview.example.com
+    databaseStrategy: ephemeral
+    maxActive: 5
+    maxLifetimeHours: 72
+    quotaCpu: "2"
+    quotaMemory: 2Gi
+    allowedSecrets: []
+    allowForks: false
+    approvalActors:
+      "123456": justcd-user-id
+```
+
+`manifestPath` and `helmValuesFiles` are relative to the `justcd.yaml` file,
+just like the application's source paths. Helm previews can supply
+`helmValuesFiles` and/or `helmValuesYaml` instead of a separate manifest path.
+Preview overlays must configure safe ingress hosts and data services; JustCD
+does not create databases or copy production secrets.
+
+To use the application's existing environment, use this profile instead:
+
+```yaml
+previewProfile:
+  enabled: true
+  deploymentMode: existing
+  confirmShared: true
+  allowForks: false
+```
+
+This permits one PR at a time and pauses reconciliation. Closing or merging
+restores the tracked source with a return plan to review; migrations and data
+changes are not undone. Deployment and approval policies still apply in both
+modes. A mapped provider account can approve the current plan using
+`/justcd approve <plan-id> <digest>`; current JustCD permissions are checked.
+
+While the block exists, PR settings are marked as Git-managed and cannot be
+edited, disabled, or deleted through the UI/API. Set `enabled: false` in Git to
+disable reporting. Removing the block disables reporting and returns settings
+to manual management, retaining history and webhook configuration. Removing an
+application definition also disables its Git-managed reporting. These changes,
+and profile changes, are rejected while previews are active; the complete
+repository snapshot remains unchanged until the conflict is resolved. An active
+Test branch freezes the tracked definition until the tracked source is resumed.
+Omitting the block from an application that has manually configured PR reporting
+leaves those settings unchanged.

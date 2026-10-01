@@ -135,7 +135,7 @@ func (s *Service) ReconcileRepository(parent context.Context, id string) (result
 			HelmReleaseName: definition.Spec.Source.ReleaseName, HelmValuesFiles: definition.Spec.Source.ValuesFiles, HelmValuesYAML: definition.Spec.Source.ValuesYAML,
 			KustomizeHelmEnabled: definition.Spec.Source.KustomizeHelmEnabled, KustomizeNamespaceOverride: definition.Spec.Source.KustomizeNamespaceOverride,
 			CreateNamespaces: definition.Spec.Destination.CreateNamespaces, ClusterID: clusterID, Namespaces: []store.NamespaceBinding{binding}, SyncPolicy: definition.Spec.SyncPolicy, PollSeconds: definition.Spec.PollSeconds, RetryPolicy: store.DefaultRetryPolicy(),
-			RepositoryConfigurationID: id, ConfigurationPath: definition.File, ConfigurationHash: definition.Hash,
+			RepositoryPullRequests: definition.Spec.PullRequests, RepositoryConfigurationID: id, ConfigurationPath: definition.File, ConfigurationHash: definition.Hash,
 		})
 		app := &apps[len(apps)-1]
 		for _, ignore := range definition.Spec.IgnoreResources {

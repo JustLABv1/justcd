@@ -86,7 +86,7 @@ func (s *Store) ApplyRepositoryApplications(ctx context.Context, repository Repo
 	ids := []string{}
 	for _, app := range apps {
 		existing, err := scanApplication(tx.QueryRowContext(ctx, `SELECT `+applicationColumns+` FROM applications WHERE repository_configuration_id=$1 AND name=$2 FOR UPDATE`, repository.ID, app.Name))
-		changed := errors.Is(err, sql.ErrNoRows) || (err == nil && existing.ConfigurationHash != app.ConfigurationHash && existing.RollbackResumeState == nil)
+		changed := errors.Is(err, sql.ErrNoRows) || (err == nil && existing.ConfigurationHash != app.ConfigurationHash && existing.RollbackResumeState == nil && existing.BranchTest == nil)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			var conflict bool
@@ -104,19 +104,25 @@ func (s *Store) ApplyRepositoryApplications(ctx context.Context, repository Repo
 			return err
 		default:
 			app.ID = existing.ID
+			// A branch test freezes the complete tracked definition until resume.
+			// Do not register destinations or update metadata from the base branch.
+			if existing.BranchTest != nil {
+				ids = append(ids, existing.ID)
+				continue
+			}
 			// Legacy adoption changed the policy instead of pausing. Repair that
 			// drift without allowing automatic sync before a fresh review.
-			if existing.ConfigurationHash == app.ConfigurationHash && existing.SyncPolicy != app.SyncPolicy && existing.RollbackResumeState == nil {
+			if existing.ConfigurationHash == app.ConfigurationHash && existing.SyncPolicy != app.SyncPolicy && existing.RollbackResumeState == nil && existing.BranchTest == nil {
 				if _, err := tx.ExecContext(ctx, `UPDATE applications SET auto_sync_paused=TRUE WHERE id=$1`, app.ID); err != nil {
 					return err
 				}
 			}
 			// Operational rollback pins remain effective until explicitly resumed.
-			if (existing.ConfigurationHash != app.ConfigurationHash || existing.SyncPolicy != app.SyncPolicy) && existing.RollbackResumeState == nil {
+			if (existing.ConfigurationHash != app.ConfigurationHash || existing.SyncPolicy != app.SyncPolicy) && existing.RollbackResumeState == nil && existing.BranchTest == nil {
 				if err := updateApplication(ctx, tx, app); err != nil {
 					return fmt.Errorf("application %q: %w", app.Name, err)
 				}
-			} else if existing.RollbackResumeState != nil {
+			} else if existing.RollbackResumeState != nil || existing.BranchTest != nil {
 				app.ConfigurationHash = existing.ConfigurationHash
 				app.HelmReleaseName = existing.HelmReleaseName
 			}
@@ -139,7 +145,7 @@ func (s *Store) ApplyRepositoryApplications(ctx context.Context, repository Repo
 		}
 	}
 	// Lock missing applications before invalidating plans, as the operation queue does.
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM applications WHERE repository_configuration_id=$1 AND NOT(id=ANY($2::text[])) ORDER BY id FOR UPDATE`, repository.ID, ids)
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM applications WHERE repository_configuration_id=$1 AND branch_test IS NULL AND NOT(id=ANY($2::text[])) ORDER BY id FOR UPDATE`, repository.ID, ids)
 	if err != nil {
 		return err
 	}
@@ -167,10 +173,10 @@ func (s *Store) ApplyRepositoryApplications(ctx context.Context, repository Repo
 		}
 	}
 	// Invalidate outstanding plans when a definition disappears. Workloads stay intact.
-	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE status='current' AND application_id IN (SELECT id FROM applications WHERE repository_configuration_id=$1 AND NOT configuration_missing AND NOT(id=ANY($2::text[])))`, repository.ID, ids); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE status='current' AND application_id IN (SELECT id FROM applications WHERE repository_configuration_id=$1 AND branch_test IS NULL AND NOT configuration_missing AND NOT(id=ANY($2::text[])))`, repository.ID, ids); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE applications SET configuration_missing=TRUE WHERE repository_configuration_id=$1 AND NOT(id=ANY($2::text[]))`, repository.ID, ids); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET configuration_missing=TRUE WHERE repository_configuration_id=$1 AND branch_test IS NULL AND NOT(id=ANY($2::text[]))`, repository.ID, ids); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE repository_configurations SET last_checked_at=NOW(),last_commit=$2,last_error='' WHERE id=$1`, repository.ID, commit); err != nil {

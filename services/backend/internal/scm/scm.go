@@ -20,6 +20,7 @@ import (
 )
 
 type Event struct {
+	HeadBranch string
 	Kind       string
 	DeliveryID string
 	Repository string
@@ -79,6 +80,7 @@ func VerifyAndParse(provider, secret string, header http.Header, body []byte, no
 				UpdatedAt time.Time `json:"updated_at"`
 				Head      struct {
 					SHA  string `json:"sha"`
+					Ref  string `json:"ref"`
 					Repo struct {
 						FullName string `json:"full_name"`
 					} `json:"repo"`
@@ -296,6 +298,7 @@ func (c Client) ListOpen(ctx context.Context, provider, apiURL, repository, toke
 			UpdatedAt time.Time `json:"updated_at"`
 			Head      struct {
 				SHA  string `json:"sha"`
+				Ref  string `json:"ref"`
 				Repo struct {
 					FullName string `json:"full_name"`
 				} `json:"repo"`
@@ -305,8 +308,9 @@ func (c Client) ListOpen(ctx context.Context, provider, apiURL, repository, toke
 					FullName string `json:"full_name"`
 				} `json:"repo"`
 			} `json:"base"`
-			SourceProjectID int `json:"source_project_id"`
-			TargetProjectID int `json:"target_project_id"`
+			SourceBranch    string `json:"source_branch"`
+			SourceProjectID int    `json:"source_project_id"`
+			TargetProjectID int    `json:"target_project_id"`
 		}
 		err = json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(&raw)
 		res.Body.Close()
@@ -316,8 +320,10 @@ func (c Client) ListOpen(ctx context.Context, provider, apiURL, repository, toke
 		for _, v := range raw {
 			e := Event{Repository: repository, EventAt: v.UpdatedAt}
 			if provider == "github" {
+				e.HeadBranch = v.Head.Ref
 				e.Number, e.HeadSHA, e.URL, e.Fork = v.Number, v.Head.SHA, v.HTMLURL, v.Head.Repo.FullName != v.Base.Repo.FullName
 			} else {
+				e.HeadBranch = v.SourceBranch
 				e.Number, e.HeadSHA, e.URL, e.Fork = v.IID, v.SHA, v.WebURL, v.SourceProjectID == 0 || v.TargetProjectID == 0 || v.SourceProjectID != v.TargetProjectID
 			}
 			if e.Number <= 0 || len(e.HeadSHA) != 40 || e.EventAt.IsZero() {
@@ -374,6 +380,7 @@ func (c Client) Current(ctx context.Context, provider, apiURL, repository, token
 		UpdatedAt time.Time  `json:"updated_at"`
 		Head      struct {
 			SHA  string `json:"sha"`
+			Ref  string `json:"ref"`
 			Repo struct {
 				FullName string `json:"full_name"`
 			} `json:"repo"`
@@ -383,20 +390,23 @@ func (c Client) Current(ctx context.Context, provider, apiURL, repository, token
 				FullName string `json:"full_name"`
 			} `json:"repo"`
 		} `json:"base"`
-		SourceProjectID int `json:"source_project_id"`
-		TargetProjectID int `json:"target_project_id"`
+		SourceBranch    string `json:"source_branch"`
+		SourceProjectID int    `json:"source_project_id"`
+		TargetProjectID int    `json:"target_project_id"`
 	}
 	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&raw); err != nil {
 		return Event{}, err
 	}
 	e := Event{Number: number, Repository: repository, EventAt: raw.UpdatedAt}
 	if provider == "github" {
+		e.HeadBranch = raw.Head.Ref
 		e.HeadSHA = raw.Head.SHA
 		e.URL = raw.HTMLURL
 		e.Fork = raw.Head.Repo.FullName != raw.Base.Repo.FullName
 		e.Closed = raw.State == "closed"
 	}
 	if provider == "gitlab" {
+		e.HeadBranch = raw.SourceBranch
 		e.HeadSHA = raw.SHA
 		e.URL = raw.WebURL
 		e.Fork = raw.SourceProjectID == 0 || raw.TargetProjectID == 0 || raw.SourceProjectID != raw.TargetProjectID

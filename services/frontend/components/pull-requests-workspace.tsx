@@ -4,15 +4,19 @@ import Link from "next/link"
 import { useParams } from "next/navigation"
 import { useCallback, useEffect, useState, type FormEvent } from "react"
 import { Button } from "@/components/ui/button"
+import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { EmptyState, FormField, PageHeading, Panel, StatusBadge } from "@/components/ui-kit"
 import { APIError, api } from "@/lib/api"
-import type { Application, ListResponse, PlanRecord, Workspace } from "@/lib/types"
+import type { Application, ListResponse, PlanRecord, Workspace, WorkspaceMember, User } from "@/lib/types"
 
 type PreviewProfile = {
+  deploymentMode: "isolated" | "existing"
+  confirmShared: boolean
+  approvalActors: Record<string, string>
   enabled: boolean
   manifestPath: string
   namespacePrefix: string
@@ -28,13 +32,13 @@ type PreviewProfile = {
   quotaMemory: string
 }
 
-type Connection = { id: string; enabled: boolean; provider: "github" | "gitlab"; apiUrl: string; repository: string; previewProfile: PreviewProfile }
+type Connection = { id: string; enabled: boolean; provider: "github" | "gitlab"; apiUrl: string; repository: string; previewProfile: PreviewProfile; statusCredentialId?: string }
 type SourceDetails = { repositoryUrl: string; provider: "github" | "gitlab"; apiUrl: string; repository: string; selfHosted: boolean }
 type ConnectionResponse = { source: SourceDetails; connection: Connection | null; webhookUrl: string; webhookConfigured?: boolean }
-type Review = { id: string; number: number; headSha: string; sourceUrl: string; phase: string; error?: string; reportError?: string; plan?: PlanRecord; previewApplicationId?: string; expiresAt?: string; updatedAt: string }
+type Review = { id: string; number: number; headSha: string; sourceUrl: string; phase: string; error?: string; reportError?: string; plan?: PlanRecord; previewApplicationId?: string; expiresAt?: string; updatedAt: string; headBranch?: string; adoptedBranchPreview?: boolean; sharedEnvironment?: boolean; branchPreviews?: Application[] }
 
 const defaultProfile: PreviewProfile = {
-  enabled: false, manifestPath: "", namespacePrefix: "preview", hostSuffix: "preview.example.com", helmValuesYaml: "", helmValuesFiles: [],
+  deploymentMode: "isolated", confirmShared: false, approvalActors: {}, enabled: false, manifestPath: "", namespacePrefix: "preview", hostSuffix: "preview.example.com", helmValuesYaml: "", helmValuesFiles: [],
   allowedSecrets: [], databaseStrategy: "none", maxActive: 5, maxLifetimeHours: 72, allowForks: false, quotaCpu: "2", quotaMemory: "2Gi",
 }
 
@@ -50,6 +54,10 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
   const [apiUrl, setApiUrl] = useState("")
   const [webhookSecret, setWebhookSecret] = useState("")
   const [statusToken, setStatusToken] = useState("")
+  const [statusCredentialId, setStatusCredentialId] = useState("")
+  const [credentials, setCredentials] = useState<{ id: string; name: string; kind: string }[]>([])
+  const [approvalActors, setApprovalActors] = useState<{ key: string; providerId: string; userId: string }[]>([])
+  const [members, setMembers] = useState<WorkspaceMember[]>([])
   const [profile, setProfile] = useState<PreviewProfile>(defaultProfile)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -63,6 +71,20 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
     setSource(null)
     const app = await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`)
     setApplication(app)
+    if (canConfigure !== false) {
+      const list = await api<ListResponse<{ id: string; name: string; kind: string }>>(`/api/v1/credentials?workspaceId=${encodeURIComponent(app.workspaceId)}`)
+      setCredentials(list.items.filter(item => item.kind === "git-https"))
+      const memberList = await api<ListResponse<WorkspaceMember>>(`/api/v1/workspaces/${encodeURIComponent(app.workspaceId)}/members`)
+      const session = await api<{ user: User }>("/api/v1/auth/session")
+      const selectableMembers = [...memberList.items]
+      if (session.user.isAdmin) {
+        const users = await api<ListResponse<User>>("/api/v1/admin/users")
+        for (const user of users.items.filter(user => user.isAdmin && !user.disabled && !user.deletedAt)) {
+          if (!selectableMembers.some(member => member.id === user.id)) selectableMembers.push({ ...user, role: "administrator", managedBySSO: false, editable: false })
+        }
+      }
+      setMembers(selectableMembers)
+    }
     if (canConfigure === undefined) {
       const workspaces = await api<ListResponse<Workspace>>("/api/v1/workspaces")
       setOwnerAccess(workspaces.items.some((workspace) => workspace.id === app.workspaceId && workspace.role === "owner"))
@@ -82,6 +104,8 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
     setWebhookConfigured(result.webhookConfigured ?? Boolean(result.connection && result.webhookUrl))
     setApiUrl(result.connection?.apiUrl ?? result.source.apiUrl)
     setProfile({ ...defaultProfile, ...result.connection?.previewProfile })
+    setStatusCredentialId(result.connection?.statusCredentialId ?? "")
+    setApprovalActors(Object.entries(result.connection?.previewProfile.approvalActors ?? {}).map(([providerId, userId]) => ({ key: crypto.randomUUID(), providerId, userId })))
     if (result.connection) {
       const list = await api<ListResponse<Review>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/pull-requests`)
       setReviews(list.items)
@@ -102,6 +126,14 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
     }
   }, [loading, reviews])
 
+  useEffect(() => {
+    if (!connection || showSettings) return
+    const timer = window.setInterval(() => {
+      void api<ListResponse<Review>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/pull-requests`).then(list => setReviews(list.items)).catch(setError)
+    }, 10000)
+    return () => window.clearInterval(timer)
+  }, [applicationID, connection, showSettings])
+
   function updateProfile<K extends keyof PreviewProfile>(key: K, value: PreviewProfile[K]) {
     setProfile((current) => ({ ...current, [key]: value }))
   }
@@ -110,8 +142,14 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
     event.preventDefault()
     setSaving(true); setError(null); setSavedMessage("")
     try {
+      const actors: Record<string, string> = {}
+      for (const row of approvalActors) {
+        const providerID = row.providerId.trim()
+        if (!/^[1-9][0-9]*$/.test(providerID) || !row.userId || actors[providerID]) throw new Error("Each approval mapping needs a unique numeric provider account ID and a JustCD user.")
+        actors[providerID] = row.userId
+      }
       const result = await api<ConnectionResponse>(`/api/v1/applications/${encodeURIComponent(applicationID)}/source-control`, {
-        method: "PUT", body: JSON.stringify({ provider: source?.selfHosted ? "gitlab" : "", apiUrl: source?.selfHosted ? apiUrl : "", webhookSecret, statusToken, previewProfile: profile }),
+        method: "PUT", body: JSON.stringify({ provider: source?.selfHosted ? "gitlab" : "", apiUrl: source?.selfHosted ? apiUrl : "", webhookSecret, statusToken: statusCredentialId ? "" : statusToken, statusCredentialId, previewProfile: { ...profile, approvalActors: actors } }),
       })
       setSource(result.source)
       setConnection(result.connection)
@@ -162,33 +200,53 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
     {savedMessage && <p role="status" className="rounded-lg border border-emerald-300/50 bg-emerald-50 p-3 text-sm text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">{savedMessage}</p>}
     {loading ? <p role="status" className="text-sm text-muted-foreground">Loading pull requests…</p> : source ? <>
       {showSettings ? <>
-      <Panel title="PR reporting settings" description="JustCD checks this repository for pull requests every two minutes and reports plans on their commits.">
+      <Panel title="PR reporting settings" description="Report plans for pull requests, including drafts." className="max-w-4xl">
         <form onSubmit={(event) => void save(event)} className="grid gap-4 p-5 md:grid-cols-2">
-          <div className="md:col-span-2 rounded-lg border bg-muted/30 p-3 text-sm"><p className="font-medium">{source?.provider === "github" ? "GitHub" : source?.selfHosted ? connection ? "GitLab (self-managed)" : "Custom Git host · GitLab required" : "GitLab"} · {connection?.repository ?? source?.repository}</p><p className="mt-1 break-all font-mono text-sm text-muted-foreground">{source?.repositoryUrl}</p><p className="mt-2 text-sm text-muted-foreground">The repository comes from this application’s Git source. To change it, edit the Git source.</p></div>
-          <p className="md:col-span-2 text-sm leading-5 text-muted-foreground">JustCD checks PR file changes against this application’s manifest paths and Helm values files before planning. Kustomize reviews remain repository-wide because overlays may import shared bases outside their path.</p>
+          <div className="md:col-span-2 rounded-lg border bg-muted/30 p-3 text-sm"><p className="font-medium">{source?.provider === "github" ? "GitHub" : source?.selfHosted ? connection ? "GitLab (self-managed)" : "Custom Git host · GitLab required" : "GitLab"} · {connection?.repository ?? source?.repository}</p><p className="mt-1 break-all font-mono text-sm text-muted-foreground">{source?.repositoryUrl}</p></div>
+
           {source?.selfHosted && <>
-            {!connection && <div className="md:col-span-2 text-xs leading-5 text-muted-foreground">JustCD cannot identify the provider for a custom Git host. Saving these settings connects it as GitLab. Check that this repository runs GitLab and that its API URL is correct.</div>}
+            {!connection && <div className="md:col-span-2 text-xs leading-5 text-muted-foreground">This custom host will connect as GitLab. Verify its API URL.</div>}
             <div className="md:col-span-2"><FormField label="GitLab API URL" htmlFor="api-url" hint="Use the HTTPS API URL for this host, including any installation subpath and /api/v4."><Input id="api-url" required type="url" value={apiUrl} onChange={(event) => setApiUrl(event.target.value)} /></FormField></div>
           </>}
-          <div className="md:col-span-2 border-t pt-4"><p className="text-sm font-medium">Provider API access</p><p className="mt-1 text-sm leading-5 text-muted-foreground">JustCD uses this token to discover PRs/MRs, check their current commits, and post plan status. Git fetches use the Git source credential.</p></div>
-          <div className="md:col-span-2"><FormField label={source?.provider === "github" ? "GitHub API token" : "GitLab API token"} htmlFor="status-token" hint={`${source?.provider === "github" ? "Use a fine-grained token for this repository with Pull requests: read and Commit statuses: read and write." : "Use a project or personal access token with the api scope and access to this project."} Minimum 16 characters.${connection ? " Leave blank to keep the saved value." : ""}`}><Input id="status-token" type="password" minLength={16} required={!connection} value={statusToken} onChange={(event) => setStatusToken(event.target.value)} autoComplete="new-password" /></FormField></div>
-          <div className="md:col-span-2 border-t pt-4"><p className="text-sm font-medium">Optional: faster webhook updates</p><p className="mt-1 text-sm leading-5 text-muted-foreground">Polling works without a webhook. To receive changes sooner, set a webhook secret here, save, then add the URL and same secret to your repository webhook settings.</p></div>
-          <div className="md:col-span-2"><FormField label={source?.provider === "github" ? "GitHub webhook secret (optional)" : "GitLab webhook signing token or secret token (optional)"} htmlFor="webhook-secret" hint={`At least 16 characters when used.${webhookConfigured ? " Leave blank to keep the saved value, or use Remove webhook below." : ""}`}><Input id="webhook-secret" type="password" minLength={16} value={webhookSecret} onChange={(event) => setWebhookSecret(event.target.value)} autoComplete="new-password" /></FormField></div>
+
+          <div className="md:col-span-2"><FormField label="Provider API credential" htmlFor="provider-credential" hint="HTTPS token with PR read, comment read/write and commit status write access."><FormSelect id="provider-credential" value={statusCredentialId} onValueChange={setStatusCredentialId} emptyOption="Separate API token" items={credentials.map(credential => ({ value: credential.id, label: credential.name }))} /></FormField></div>
+          {!statusCredentialId && <div className="md:col-span-2"><FormField label={source?.provider === "github" ? "GitHub API token" : "GitLab API token"} htmlFor="status-token" hint={`Minimum 16 characters. Needs PR/MR read, comments read/write and commit status write access.${connection ? " Leave blank to keep the saved value." : ""}`}><Input id="status-token" type="password" minLength={16} required={!connection || Boolean(connection.statusCredentialId)} value={statusToken} onChange={(event) => setStatusToken(event.target.value)} autoComplete="new-password" /></FormField></div>}
+          <details className="md:col-span-2 rounded-lg border p-3"><summary className="cursor-pointer text-sm font-medium">PR comment approvals</summary><div className="mt-4 grid gap-4">          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">Link provider accounts to workspace members. Their current permissions and the plan’s approval policy apply.</p>
+            {members.length === 0 && <p className="text-sm text-muted-foreground">Add workspace members to make users available here.</p>}
+            {approvalActors.length === 0 && <p className="text-sm text-muted-foreground">No accounts linked. Approvals remain available in JustCD.</p>}
+            {approvalActors.map((row, index) => <div key={row.key} className="grid items-end gap-3 sm:grid-cols-[1fr_1fr_auto]">
+              <div className="flex flex-col gap-1.5"><label className="text-sm font-medium" htmlFor={`approval-provider-${row.key}`}>{source.provider === "github" ? "GitHub" : "GitLab"} account ID</label><Input id={`approval-provider-${row.key}`} inputMode="numeric" pattern="[1-9][0-9]*" required placeholder="123456" value={row.providerId} onChange={(event) => setApprovalActors(current => current.map(item => item.key === row.key ? { ...item, providerId: event.target.value } : item))} /></div>
+              <div className="flex flex-col gap-1.5"><label className="text-sm font-medium" htmlFor={`approval-user-${row.key}`}>JustCD user</label><FormSelect id={`approval-user-${row.key}`} value={row.userId} placeholder="Select workspace member" required onValueChange={(userId) => setApprovalActors(current => current.map(item => item.key === row.key ? { ...item, userId } : item))} items={[
+                ...members.filter(member => !member.disabled || member.id === row.userId).map(member => ({ value: member.id, label: `${member.displayName || member.email} · ${member.role}${member.disabled ? " · disabled" : ""}` })),
+                ...(row.userId && !members.some(member => member.id === row.userId) ? [{ value: row.userId, label: "Previously linked user · unavailable" }] : []),
+              ]} /></div>
+              <Button type="button" variant="destructive" size="sm" aria-label={`Remove approval mapping ${index + 1}`} onClick={() => setApprovalActors(current => current.filter(item => item.key !== row.key))}>Remove</Button>
+            </div>)}
+            <Button type="button" variant="outline" size="sm" onClick={() => setApprovalActors(current => [...current, { key: crypto.randomUUID(), providerId: "", userId: "" }])}>Add account mapping</Button>
+          </div>
+          </div></details>
+          <details className="md:col-span-2 rounded-lg border p-3"><summary className="cursor-pointer text-sm font-medium">Webhook updates <span className="font-normal text-muted-foreground">· optional</span></summary><div className="mt-4 grid gap-4"><p className="text-sm text-muted-foreground">Without a webhook, JustCD checks every two minutes.</p>          <div className="md:col-span-2"><FormField label={source?.provider === "github" ? "GitHub webhook secret (optional)" : "GitLab webhook signing token or secret token (optional)"} htmlFor="webhook-secret" hint={`At least 16 characters when used.${webhookConfigured ? " Leave blank to keep the saved value, or use Remove webhook below." : ""}`}><Input id="webhook-secret" type="password" minLength={16} value={webhookSecret} onChange={(event) => setWebhookSecret(event.target.value)} autoComplete="new-password" /></FormField></div>
           {connection && (webhookConfigured ? <div className="md:col-span-2 rounded-lg border bg-muted/30 p-3 text-sm"><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="font-medium">Webhook configured{!connection.enabled && " · reporting disabled"}</p><code className="mt-1 block break-all text-xs">{webhookUrl}</code></div><ConfirmDisclosure trigger="Remove webhook" title="Remove webhook from JustCD?" description="JustCD will stop accepting this webhook and continue checking pull requests by polling. Remove the webhook in your Git provider as well." confirmLabel="Remove webhook" onConfirm={removeWebhook} /></div><p className="mt-2 text-sm text-muted-foreground">Enable pull request and push events on GitHub, or merge request and push events on GitLab. Pushes also trigger plans for applications tracking the changed branch.</p></div> : <p className="md:col-span-2 text-sm text-muted-foreground">No webhook configured. JustCD checks for pull request changes by polling.</p>)}
-          <div className="md:col-span-2 border-t pt-4"><label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={profile.enabled} onChange={(event) => updateProfile("enabled",event.target.checked)} />Deploy isolated previews</label><p className="mt-1 text-sm text-muted-foreground">A preview profile is required. Without it, JustCD reports a review-only plan and cannot change production.</p></div>
+</div></details>
+          <div className="md:col-span-2 border-t pt-4"><FormField label="PR deployment" htmlFor="pr-deployment-mode" hint="Deploy automatically when policy permits; otherwise wait for approval."><FormSelect id="pr-deployment-mode" value={profile.enabled ? profile.deploymentMode : "review-only"} onValueChange={(value) => { updateProfile("enabled", value !== "review-only"); if (value !== "review-only") updateProfile("deploymentMode", value as PreviewProfile["deploymentMode"]); if (value === "existing") updateProfile("allowForks", false) }} items={[{ value: "review-only", label: "Review plans only" }, { value: "isolated", label: "Isolated namespace per PR" }, { value: "existing", label: "Existing application environment" }]} /></FormField></div>
           {profile.enabled && <>
+            {profile.deploymentMode === "existing" ? <div className="md:col-span-2 space-y-3 rounded-lg border p-4 text-sm"><p>One PR at a time temporarily replaces this application’s source. Shared credentials and data remain available. On close or merge, review the return plan before resuming reconciliation. Migrations and data changes are not undone. Forks cannot deploy here.</p><label className="flex items-start gap-2"><input type="checkbox" checked={profile.confirmShared} onChange={(event) => updateProfile("confirmShared", event.target.checked)} />I authorize PR deployments to change this shared environment and its data.</label></div> : <>
             <FormField label="Preview manifest or overlay path" htmlFor="manifest-path" hint="Required for YAML and Kustomize; optional for Helm"><Input id="manifest-path" value={profile.manifestPath} onChange={(event) => updateProfile("manifestPath",event.target.value)} placeholder="deploy/preview" /></FormField>
-            <FormField label="Database strategy" htmlFor="database-strategy"><select id="database-strategy" className="h-8 w-full rounded-lg border bg-background px-2 text-sm" value={profile.databaseStrategy} onChange={(event) => updateProfile("databaseStrategy",event.target.value)}>{["none","shared-preview","schema-per-pr","ephemeral","sanitized-snapshot"].map((value)=><option key={value} value={value}>{value}</option>)}</select></FormField>
-            <FormField label="Namespace prefix" htmlFor="namespace-prefix"><Input id="namespace-prefix" value={profile.namespacePrefix} onChange={(event) => updateProfile("namespacePrefix",event.target.value)} /></FormField>
+            <FormField label="Database strategy" htmlFor="database-strategy"><FormSelect id="database-strategy" value={profile.databaseStrategy} onValueChange={(value) => updateProfile("databaseStrategy", value)} items={["none","shared-preview","schema-per-pr","ephemeral","sanitized-snapshot"].map(value => ({ value, label: value }))} /></FormField>
             <FormField label="Ingress host suffix" htmlFor="host-suffix" hint="All preview ingress hosts must end in the generated namespace and this suffix."><Input id="host-suffix" value={profile.hostSuffix} onChange={(event) => updateProfile("hostSuffix",event.target.value)} /></FormField>
+            <details className="md:col-span-2 rounded-lg border p-3"><summary className="cursor-pointer text-sm font-medium">Preview limits and access</summary><div className="mt-4 grid gap-4 md:grid-cols-2">            <FormField label="Namespace prefix" htmlFor="namespace-prefix"><Input id="namespace-prefix" value={profile.namespacePrefix} onChange={(event) => updateProfile("namespacePrefix",event.target.value)} /></FormField>
             <FormField label="Maximum active previews" htmlFor="max-active"><Input id="max-active" type="number" min="1" max="100" value={profile.maxActive} onChange={(event) => updateProfile("maxActive",Number(event.target.value))} /></FormField>
             <FormField label="Maximum lifetime (hours)" htmlFor="max-lifetime"><Input id="max-lifetime" type="number" min="1" max="168" value={profile.maxLifetimeHours} onChange={(event) => updateProfile("maxLifetimeHours",Number(event.target.value))} /></FormField>
             <FormField label="CPU quota" htmlFor="quota-cpu"><Input id="quota-cpu" value={profile.quotaCpu} onChange={(event) => updateProfile("quotaCpu",event.target.value)} /></FormField>
             <FormField label="Memory quota" htmlFor="quota-memory"><Input id="quota-memory" value={profile.quotaMemory} onChange={(event) => updateProfile("quotaMemory",event.target.value)} /></FormField>
             <FormField label="Allowed preview secrets" htmlFor="allowed-secrets" hint="Comma separated names of secrets already provisioned in the preview namespace."><Input id="allowed-secrets" value={profile.allowedSecrets.join(", ")} onChange={(event) => updateProfile("allowedSecrets",event.target.value.split(",").map((item)=>item.trim()).filter(Boolean))} /></FormField>
-            <FormField label="Helm values files" htmlFor="helm-values-files" hint="Comma separated, repository-relative preview values files."><Input id="helm-values-files" value={profile.helmValuesFiles.join(", ")} onChange={(event) => updateProfile("helmValuesFiles",event.target.value.split(",").map((item)=>item.trim()).filter(Boolean))} /></FormField>
-            <div className="md:col-span-2"><FormField label="Preview Helm values YAML" htmlFor="helm-values-yaml" hint="Supports {{namespace}}, {{number}}, and {{sha}} placeholders. Quote placeholders in YAML strings."><Textarea id="helm-values-yaml" value={profile.helmValuesYaml} onChange={(event) => updateProfile("helmValuesYaml",event.target.value)} className="min-h-32 font-mono" /></FormField></div>
             <label className="md:col-span-2 flex items-center gap-2 text-sm"><input type="checkbox" checked={profile.allowForks} onChange={(event) => updateProfile("allowForks",event.target.checked)} />Allow fork PRs with owner approval and no secrets</label>
+</div></details>
+            <details className="md:col-span-2 rounded-lg border p-3"><summary className="cursor-pointer text-sm font-medium">Helm values <span className="font-normal text-muted-foreground">· optional</span></summary><div className="mt-4 grid gap-4">            <FormField label="Helm values files" htmlFor="helm-values-files" hint="Comma separated, repository-relative preview values files."><Input id="helm-values-files" value={profile.helmValuesFiles.join(", ")} onChange={(event) => updateProfile("helmValuesFiles",event.target.value.split(",").map((item)=>item.trim()).filter(Boolean))} /></FormField>
+            <div className="md:col-span-2"><FormField label="Preview Helm values YAML" htmlFor="helm-values-yaml" hint="Supports {{namespace}}, {{number}}, and {{sha}} placeholders. Quote placeholders in YAML strings."><Textarea id="helm-values-yaml" value={profile.helmValuesYaml} onChange={(event) => updateProfile("helmValuesYaml",event.target.value)} className="min-h-32 font-mono" /></FormField></div>
+</div></details>
+            </>}
           </>}
           <div className="md:col-span-2 flex justify-end"><Button type="submit" loading={saving} loadingText="Saving…">Save PR reporting</Button></div>
           {connection && <div className="md:col-span-2 flex flex-wrap items-center justify-between gap-3 border-t pt-4"><p className="text-sm text-muted-foreground">Deleting also removes stored review history. Remove the webhook from your Git provider separately. Close active previews first.</p><ConfirmDisclosure trigger="Delete PR reporting" title="Delete PR reporting?" description="This permanently removes the webhook connection and its review history. Existing repository webhooks must be removed separately. Close active previews before deleting." confirmLabel="Delete PR reporting" onConfirm={deleteReporting} /></div>}
@@ -196,10 +254,14 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
       </Panel>
       </> : <>
       {connection ? <>
-      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-medium ${connection.enabled ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300" : "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-300"}`}><span className="size-1.5 rounded-full bg-current" />{connection.enabled ? "Reporting enabled" : "Reporting disabled"}</span><span className="font-medium text-foreground">{connection.repository}</span><span aria-hidden="true">·</span><span>{connection.provider === "github" ? "GitHub" : "GitLab"}</span><span aria-hidden="true">·</span><span>{connection.previewProfile.enabled ? "Isolated previews enabled" : "Review-only plans"}</span></div>
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-medium ${connection.enabled ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300" : "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-300"}`}><span className="size-1.5 rounded-full bg-current" />{connection.enabled ? "Reporting enabled" : "Reporting disabled"}</span><span className="font-medium text-foreground">{connection.repository}</span><span aria-hidden="true">·</span><span>{connection.provider === "github" ? "GitHub" : "GitLab"}</span><span aria-hidden="true">·</span><span>{connection.previewProfile.enabled ? connection.previewProfile.deploymentMode === "existing" ? "Shared environment deployments" : "Isolated previews enabled" : "Review-only plans"}</span></div>
       <Panel title="Recent pull requests" description="Each PR/MR status links back to its plan and preview details.">
         <div className="divide-y">{reviews.length===0 ? <EmptyState title="No pull requests found yet" description="Open pull requests will appear after the next provider check, usually within two minutes." /> : reviews.map((review)=><div key={review.id} id={`review-${review.number}`} className="space-y-2 p-5">
           <div className="flex flex-wrap items-center gap-3"><a href={review.sourceUrl} target="_blank" rel="noreferrer" className="font-medium text-primary hover:underline">PR/MR #{review.number} ↗</a><StatusBadge status={review.phase} /><code className="text-xs text-muted-foreground">{review.headSha.slice(0,12)}</code>{review.previewApplicationId && <Link href={`/applications/${review.previewApplicationId}`} className="text-xs text-primary hover:underline">Preview application →</Link>}</div>
+          {review.phase === "adoption_available" && <div className="space-y-3 rounded-lg border bg-muted/20 p-4"><p className="text-sm">An isolated branch preview already exists for {review.headBranch}. Reuse it to keep its resources and avoid creating another environment.</p><div className="flex flex-wrap gap-2">{(canConfigure ?? ownerAccess) && <>{review.branchPreviews?.map(preview => <ConfirmDisclosure key={preview.id} trigger={`Reuse ${preview.name}`} triggerVariant="outline" confirmVariant="default" title="Transfer this preview to the PR?" description="Existing resources remain. JustCD validates the preview against the PR profile and creates a fresh plan. Future commits and reviewed resource cleanup follow the PR; the namespace and untracked resources remain." confirmLabel="Reuse preview" onConfirm={async () => { await api(`/api/v1/applications/${encodeURIComponent(applicationID)}/pull-requests/${review.id}/branch-preview`, { method: "POST", body: JSON.stringify({ applicationId: preview.id }) }); await load() }} />)}<Button size="sm" variant="outline" onClick={() => { void api(`/api/v1/applications/${encodeURIComponent(applicationID)}/pull-requests/${review.id}/branch-preview`, { method: "POST", body: JSON.stringify({ applicationId: "" }) }).then(load).catch(setError) }}>Create a separate PR preview</Button></>}</div></div>}
+          {review.adoptedBranchPreview && <p className="text-sm text-muted-foreground">Reused branch preview · cleanup retains its namespace and untracked resources.</p>}
+          {review.sharedEnvironment && <p className="text-sm text-muted-foreground">Deploys to the existing application environment · reconciliation remains paused.</p>}
+          {review.phase === "approval_required" && review.plan && <p className="text-sm text-muted-foreground">Approve in JustCD or post <code className="break-all">/justcd approve {review.plan.id} {review.plan.plan.digest}</code> in the PR using a mapped account.</p>}
           {review.error && <p className="text-xs text-destructive">{review.error}</p>}
           {review.reportError && <p className="text-xs text-destructive">{review.reportError}</p>}
           {review.expiresAt && <p className="text-sm text-muted-foreground">Expires {new Date(review.expiresAt).toLocaleString()}</p>}

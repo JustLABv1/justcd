@@ -135,7 +135,7 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 		t.Fatal(err)
 	}
 	s := &Store{DB: db}
-	if pending == 1 {
+	if files[len(files)-pending] == "migrations/033_repair_plan_namespace_creations.sql" {
 		// Reproduce an installation whose ledger contains 032 but whose
 		// schema came from the earlier version without the plan column.
 		if _, err := db.ExecContext(ctx, `ALTER TABLE plans DROP COLUMN namespace_creations`); err != nil {

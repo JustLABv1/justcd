@@ -11,22 +11,26 @@ import (
 // PreviewProfile is deliberately explicit: application owners provide a preview
 // overlay and its dependency policy before JustCD may deploy untrusted code.
 type PreviewProfile struct {
-	Enabled          bool     `json:"enabled"`
-	ManifestPath     string   `json:"manifestPath,omitempty"`
-	NamespacePrefix  string   `json:"namespacePrefix,omitempty"`
-	HostSuffix       string   `json:"hostSuffix,omitempty"`
-	HelmValuesYAML   string   `json:"helmValuesYaml,omitempty"`
-	HelmValuesFiles  []string `json:"helmValuesFiles,omitempty"`
-	AllowedSecrets   []string `json:"allowedSecrets,omitempty"`
-	DatabaseStrategy string   `json:"databaseStrategy,omitempty"`
-	MaxActive        int      `json:"maxActive,omitempty"`
-	MaxLifetimeHours int      `json:"maxLifetimeHours,omitempty"`
-	AllowForks       bool     `json:"allowForks,omitempty"`
-	QuotaCPU         string   `json:"quotaCpu,omitempty"`
-	QuotaMemory      string   `json:"quotaMemory,omitempty"`
+	DeploymentMode   string            `json:"deploymentMode,omitempty"`
+	ApprovalActors   map[string]string `json:"approvalActors,omitempty"`
+	ConfirmShared    bool              `json:"confirmShared,omitempty"`
+	Enabled          bool              `json:"enabled"`
+	ManifestPath     string            `json:"manifestPath,omitempty"`
+	NamespacePrefix  string            `json:"namespacePrefix,omitempty"`
+	HostSuffix       string            `json:"hostSuffix,omitempty"`
+	HelmValuesYAML   string            `json:"helmValuesYaml,omitempty"`
+	HelmValuesFiles  []string          `json:"helmValuesFiles,omitempty"`
+	AllowedSecrets   []string          `json:"allowedSecrets,omitempty"`
+	DatabaseStrategy string            `json:"databaseStrategy,omitempty"`
+	MaxActive        int               `json:"maxActive,omitempty"`
+	MaxLifetimeHours int               `json:"maxLifetimeHours,omitempty"`
+	AllowForks       bool              `json:"allowForks,omitempty"`
+	QuotaCPU         string            `json:"quotaCpu,omitempty"`
+	QuotaMemory      string            `json:"quotaMemory,omitempty"`
 }
 
 type SourceControlConnection struct {
+	StatusCredentialID  *string        `json:"statusCredentialId,omitempty"`
 	ID                  string         `json:"id"`
 	Enabled             bool           `json:"enabled"`
 	WorkspaceID         string         `json:"workspaceId"`
@@ -40,12 +44,12 @@ type SourceControlConnection struct {
 	CreatedAt           time.Time      `json:"createdAt"`
 }
 
-const connectionColumns = `id,enabled,workspace_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile,created_at`
+const connectionColumns = `id,enabled,workspace_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile,created_at,status_credential_id`
 
 func scanSourceControlConnection(row interface{ Scan(...any) error }) (SourceControlConnection, error) {
 	var c SourceControlConnection
 	var profile []byte
-	err := row.Scan(&c.ID, &c.Enabled, &c.WorkspaceID, &c.ApplicationID, &c.Provider, &c.APIURL, &c.Repository, &c.WebhookSecretCipher, &c.StatusTokenCipher, &profile, &c.CreatedAt)
+	err := row.Scan(&c.ID, &c.Enabled, &c.WorkspaceID, &c.ApplicationID, &c.Provider, &c.APIURL, &c.Repository, &c.WebhookSecretCipher, &c.StatusTokenCipher, &profile, &c.CreatedAt, &c.StatusCredentialID)
 	if err == nil {
 		err = json.Unmarshal(profile, &c.PreviewProfile)
 	}
@@ -57,13 +61,34 @@ func (s *Store) SaveSourceControlConnection(ctx context.Context, c SourceControl
 	if err != nil {
 		return err
 	}
-	_, err = s.DB.ExecContext(ctx, `INSERT INTO source_control_connections(id,workspace_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	previous, err := scanSourceControlConnection(tx.QueryRowContext(ctx, `SELECT `+connectionColumns+` FROM source_control_connections WHERE application_id=$1 FOR UPDATE`, c.ApplicationID))
+	if err == nil {
+		active, checkErr := sourceControlHasActivePreviews(ctx, tx, previous.ID)
+		if checkErr != nil {
+			return checkErr
+		}
+		oldProfile, _ := json.Marshal(previous.PreviewProfile)
+		if active && (previous.Provider != c.Provider || previous.APIURL != c.APIURL || previous.Repository != c.Repository || string(oldProfile) != string(profile)) {
+			return ErrActivePreviews
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO source_control_connections(id,workspace_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile,status_credential_id)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)
 		ON CONFLICT(application_id) DO UPDATE SET provider=EXCLUDED.provider,api_url=EXCLUDED.api_url,repository=EXCLUDED.repository,
 		webhook_secret_cipher=EXCLUDED.webhook_secret_cipher,status_token_cipher=EXCLUDED.status_token_cipher,
-		preview_profile=EXCLUDED.preview_profile,updated_at=NOW()`,
-		c.ID, c.WorkspaceID, c.ApplicationID, c.Provider, c.APIURL, c.Repository, c.WebhookSecretCipher, c.StatusTokenCipher, string(profile))
-	return err
+		preview_profile=EXCLUDED.preview_profile,status_credential_id=EXCLUDED.status_credential_id,updated_at=NOW()`,
+		c.ID, c.WorkspaceID, c.ApplicationID, c.Provider, c.APIURL, c.Repository, c.WebhookSecretCipher, c.StatusTokenCipher, string(profile), c.StatusCredentialID)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) SourceControlConnectionByID(ctx context.Context, id string) (SourceControlConnection, error) {
@@ -155,31 +180,37 @@ func (s *Store) DeleteSourceControlConnection(ctx context.Context, applicationID
 }
 
 type PullRequestReview struct {
-	ID                   string          `json:"id"`
-	ConnectionID         string          `json:"connectionId"`
-	Number               int             `json:"number"`
-	HeadSHA              string          `json:"headSha"`
-	SourceURL            string          `json:"sourceUrl"`
-	Fork                 bool            `json:"fork"`
-	Closed               bool            `json:"closed"`
-	Phase                string          `json:"phase"`
-	Plan                 json.RawMessage `json:"plan,omitempty"`
-	Error                string          `json:"error,omitempty"`
-	ReportError          string          `json:"reportError,omitempty"`
-	PreviewApplicationID *string         `json:"previewApplicationId,omitempty"`
-	ExpiresAt            *time.Time      `json:"expiresAt,omitempty"`
-	ProcessedSHA         string          `json:"processedSha,omitempty"`
-	ReportedPhase        string          `json:"-"`
-	EventAt              time.Time       `json:"-"`
-	UpdatedAt            time.Time       `json:"updatedAt"`
+	ReportedPlanID        string          `json:"-"`
+	BranchPreviewDeclined bool            `json:"-"`
+	HeadBranch            string          `json:"headBranch,omitempty"`
+	AdoptedBranchPreview  bool            `json:"adoptedBranchPreview,omitempty"`
+	SharedEnvironment     bool            `json:"sharedEnvironment,omitempty"`
+	BranchPreviews        []Application   `json:"branchPreviews,omitempty"`
+	ID                    string          `json:"id"`
+	ConnectionID          string          `json:"connectionId"`
+	Number                int             `json:"number"`
+	HeadSHA               string          `json:"headSha"`
+	SourceURL             string          `json:"sourceUrl"`
+	Fork                  bool            `json:"fork"`
+	Closed                bool            `json:"closed"`
+	Phase                 string          `json:"phase"`
+	Plan                  json.RawMessage `json:"plan,omitempty"`
+	Error                 string          `json:"error,omitempty"`
+	ReportError           string          `json:"reportError,omitempty"`
+	PreviewApplicationID  *string         `json:"previewApplicationId,omitempty"`
+	ExpiresAt             *time.Time      `json:"expiresAt,omitempty"`
+	ProcessedSHA          string          `json:"processedSha,omitempty"`
+	ReportedPhase         string          `json:"-"`
+	EventAt               time.Time       `json:"-"`
+	UpdatedAt             time.Time       `json:"updatedAt"`
 }
 
-const reviewColumns = `id,connection_id,number,head_sha,source_url,fork,closed,phase,plan,error,report_error,preview_application_id,expires_at,processed_sha,reported_phase,event_at,updated_at`
+const reviewColumns = `id,connection_id,number,head_sha,source_url,fork,closed,phase,plan,error,report_error,preview_application_id,expires_at,processed_sha,reported_phase,event_at,updated_at,head_branch,adopted_branch_preview,shared_environment,branch_preview_declined,reported_plan_id`
 
 func scanReview(row interface{ Scan(...any) error }) (PullRequestReview, error) {
 	var v PullRequestReview
 	var plan []byte
-	err := row.Scan(&v.ID, &v.ConnectionID, &v.Number, &v.HeadSHA, &v.SourceURL, &v.Fork, &v.Closed, &v.Phase, &plan, &v.Error, &v.ReportError, &v.PreviewApplicationID, &v.ExpiresAt, &v.ProcessedSHA, &v.ReportedPhase, &v.EventAt, &v.UpdatedAt)
+	err := row.Scan(&v.ID, &v.ConnectionID, &v.Number, &v.HeadSHA, &v.SourceURL, &v.Fork, &v.Closed, &v.Phase, &plan, &v.Error, &v.ReportError, &v.PreviewApplicationID, &v.ExpiresAt, &v.ProcessedSHA, &v.ReportedPhase, &v.EventAt, &v.UpdatedAt, &v.HeadBranch, &v.AdoptedBranchPreview, &v.SharedEnvironment, &v.BranchPreviewDeclined, &v.ReportedPlanID)
 	if err == nil {
 		v.Plan = plan
 	}
@@ -252,12 +283,12 @@ func (s *Store) RecordReviewEvent(ctx context.Context, connectionID, deliveryID 
 	if inserted == 0 {
 		return false, tx.Commit()
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO pull_request_reviews(id,connection_id,number,head_sha,source_url,fork,closed,phase,event_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,'pending',$8)
+	_, err = tx.ExecContext(ctx, `INSERT INTO pull_request_reviews(id,connection_id,number,head_sha,source_url,fork,closed,phase,event_at,head_branch)
+		VALUES($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9)
 		ON CONFLICT(connection_id,number) DO UPDATE SET head_sha=EXCLUDED.head_sha,source_url=EXCLUDED.source_url,
-		fork=EXCLUDED.fork,closed=EXCLUDED.closed,phase='pending',plan=NULL,error='',report_error='',reported_phase='',event_at=EXCLUDED.event_at,updated_at=NOW()
+		head_branch=CASE WHEN EXCLUDED.head_branch<>'' THEN EXCLUDED.head_branch ELSE pull_request_reviews.head_branch END,fork=EXCLUDED.fork,closed=EXCLUDED.closed,phase='pending',plan=NULL,error='',report_error='',reported_phase='',event_at=EXCLUDED.event_at,updated_at=NOW()
 		WHERE pull_request_reviews.event_at <= EXCLUDED.event_at`,
-		v.ID, connectionID, v.Number, v.HeadSHA, v.SourceURL, v.Fork, v.Closed, v.EventAt)
+		v.ID, connectionID, v.Number, v.HeadSHA, v.SourceURL, v.Fork, v.Closed, v.EventAt, v.HeadBranch)
 	if err != nil {
 		return false, err
 	}
@@ -332,7 +363,7 @@ func (s *Store) SetReviewWorkerError(ctx context.Context, id, message string) er
 
 func (s *Store) ActivePreviewCount(ctx context.Context, connectionID string) (int, error) {
 	var count int
-	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM pull_request_reviews WHERE connection_id=$1 AND preview_application_id IS NOT NULL AND phase NOT IN ('removed','cleanup_pending')`, connectionID).Scan(&count)
+	err := s.DB.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM preview_slots WHERE connection_id=$1) + (SELECT COUNT(*) FROM pull_request_reviews WHERE connection_id=$1 AND preview_application_id IS NOT NULL)`, connectionID).Scan(&count)
 	return count, err
 }
 

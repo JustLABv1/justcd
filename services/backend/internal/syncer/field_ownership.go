@@ -3,7 +3,6 @@ package syncer
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/justlab/justcd/services/backend/internal/core"
 	"github.com/justlab/justcd/services/backend/internal/render"
@@ -79,7 +78,7 @@ func (s *Service) detectFieldTakeovers(ctx context.Context, input planInput, pla
 			_, err = rc.Patch(ctx, change.Identity.Name, types.ApplyPatchType, body, options)
 		}
 		if err != nil {
-			return fmt.Errorf("update dry-run failed for %s %s/%s: %w", change.Identity.Kind, change.Identity.Namespace, change.Identity.Name, err)
+			return &resourceAccessError{identity: change.Identity, action: "patch (dry-run)", err: err}
 		}
 	}
 	return nil

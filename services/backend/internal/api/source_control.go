@@ -23,12 +23,13 @@ import (
 var previewDNSName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,39}[a-z0-9]$`)
 
 type sourceControlInput struct {
-	Provider       string               `json:"provider"`
-	APIURL         string               `json:"apiUrl"`
-	Repository     string               `json:"repository,omitempty"`
-	WebhookSecret  string               `json:"webhookSecret"`
-	StatusToken    string               `json:"statusToken"`
-	PreviewProfile store.PreviewProfile `json:"previewProfile"`
+	StatusCredentialID string               `json:"statusCredentialId"`
+	Provider           string               `json:"provider"`
+	APIURL             string               `json:"apiUrl"`
+	Repository         string               `json:"repository,omitempty"`
+	WebhookSecret      string               `json:"webhookSecret"`
+	StatusToken        string               `json:"statusToken"`
+	PreviewProfile     store.PreviewProfile `json:"previewProfile"`
 }
 
 func validateSourceControlInput(input *sourceControlInput, source store.GitSource, app store.Application, previous *store.SourceControlConnection) error {
@@ -39,14 +40,28 @@ func validateSourceControlInput(input *sourceControlInput, source store.GitSourc
 		return err
 	}
 	input.Provider, input.APIURL, input.Repository = details.Provider, details.APIURL, details.Repository
-	if input.WebhookSecret != "" && len(input.WebhookSecret) < 16 || (previous == nil || input.StatusToken != "") && len(input.StatusToken) < 16 {
+	if input.WebhookSecret != "" && len(input.WebhookSecret) < 16 || input.StatusCredentialID == "" && (previous == nil || input.StatusToken != "") && len(input.StatusToken) < 16 {
 		return errors.New("webhookSecret, when supplied, and statusToken must each have at least 16 characters")
 	}
-	if previous != nil && previous.Provider != input.Provider && input.StatusToken == "" {
+	if previous != nil && previous.Provider != input.Provider && input.StatusToken == "" && input.StatusCredentialID == "" {
 		return errors.New("changing provider requires a new statusToken")
 	}
 	p := &input.PreviewProfile
+	if p.DeploymentMode != "" && p.DeploymentMode != "isolated" && p.DeploymentMode != "existing" {
+		return errors.New("deploymentMode must be isolated or existing")
+	}
+	for providerID, userID := range p.ApprovalActors {
+		if !regexp.MustCompile(`^[1-9][0-9]*$`).MatchString(providerID) || userID == "" {
+			return errors.New("approval actors require a numeric provider user ID and a JustCD user ID")
+		}
+	}
 	if !p.Enabled {
+		return nil
+	}
+	if p.DeploymentMode == "existing" {
+		if !p.ConfirmShared || p.AllowForks || app.ApplicationGroupID != "" {
+			return errors.New("existing-environment PR deployments require confirmation, a standalone application, and forks disabled")
+		}
 		return nil
 	}
 	if !previewDNSName.MatchString(p.NamespacePrefix) || p.MaxActive < 1 || p.MaxActive > 100 || p.MaxLifetimeHours < 1 || p.MaxLifetimeHours > 168 {
@@ -115,7 +130,7 @@ func (s *Server) putSourceControl(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
-	source, err := s.Store.GitSourceByID(r.Context(), app.SourceID)
+	source, err := s.Store.GitSourceForWorkspace(r.Context(), app.SourceID, app.WorkspaceID)
 	if err != nil {
 		writeStoreError(w, "Git source unavailable")
 		return
@@ -139,7 +154,7 @@ func (s *Server) putSourceControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if previous != nil {
-		active, err := s.Store.PreviewSlotCount(r.Context(), previous.ID)
+		active, err := s.Store.ActivePreviewCount(r.Context(), previous.ID)
 		if err != nil {
 			writeStoreError(w, "could not check active previews")
 			return
@@ -159,7 +174,21 @@ func (s *Server) putSourceControl(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if input.StatusToken == "" && previous != nil {
+	var statusCredentialID *string
+	if input.StatusCredentialID != "" {
+		if input.StatusToken != "" {
+			writeError(w, http.StatusBadRequest, "choose a saved credential or a new API token")
+			return
+		}
+		candidate := store.SourceControlConnection{WorkspaceID: app.WorkspaceID, StatusCredentialID: &input.StatusCredentialID}
+		if _, err := s.sourceControlToken(r.Context(), candidate); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		statusCredentialID = &input.StatusCredentialID
+		statusCipher = []byte{}
+	} else if input.StatusToken == "" && previous != nil {
+		statusCredentialID = previous.StatusCredentialID
 		statusCipher = previous.StatusTokenCipher
 	} else {
 		statusCipher, err = security.Encrypt(s.EncryptionKey, []byte(input.StatusToken), "source-control-status:"+id)
@@ -169,7 +198,7 @@ func (s *Server) putSourceControl(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	enabled := previous == nil || previous.Enabled
-	c := store.SourceControlConnection{ID: id, Enabled: enabled, WorkspaceID: app.WorkspaceID, ApplicationID: app.ID, Provider: input.Provider, APIURL: input.APIURL, Repository: input.Repository, WebhookSecretCipher: webhookCipher, StatusTokenCipher: statusCipher, PreviewProfile: input.PreviewProfile}
+	c := store.SourceControlConnection{ID: id, Enabled: enabled, WorkspaceID: app.WorkspaceID, ApplicationID: app.ID, Provider: input.Provider, APIURL: input.APIURL, Repository: input.Repository, WebhookSecretCipher: webhookCipher, StatusTokenCipher: statusCipher, StatusCredentialID: statusCredentialID, PreviewProfile: input.PreviewProfile}
 	if err := s.Store.SaveSourceControlConnection(r.Context(), c); err != nil {
 		writeStoreError(w, "could not save source control connection")
 		return
@@ -203,7 +232,7 @@ func (s *Server) getSourceControl(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "viewer") {
 		return
 	}
-	source, err := s.Store.GitSourceByID(r.Context(), app.SourceID)
+	source, err := s.Store.GitSourceForWorkspace(r.Context(), app.SourceID, app.WorkspaceID)
 	if err != nil {
 		writeStoreError(w, "Git source unavailable")
 		return
@@ -326,6 +355,15 @@ func (s *Server) listPullRequestReviews(w http.ResponseWriter, r *http.Request) 
 		writeStoreError(w, "could not load pull request reviews")
 		return
 	}
+	for i := range items {
+		if items[i].Phase == "adoption_available" {
+			items[i].BranchPreviews, err = s.Store.MatchingBranchPreviews(r.Context(), app, items[i])
+			if err != nil {
+				writeStoreError(w, "could not load matching branch previews")
+				return
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
@@ -377,7 +415,7 @@ func (s *Server) sourceControlWebhook(w http.ResponseWriter, r *http.Request) {
 			writeStoreError(w, "could not load webhook application")
 			return
 		}
-		source, err := s.Store.GitSourceByID(r.Context(), app.SourceID)
+		source, err := s.Store.GitSourceForWorkspace(r.Context(), app.SourceID, app.WorkspaceID)
 		apiURL, parseErr := url.Parse(c.APIURL)
 		if err != nil || parseErr != nil || !sourceMatchesConnection(source.RepositoryURL, c.Provider, apiURL, c.Repository) {
 			writeError(w, http.StatusConflict, "application Git source no longer matches source control connection")

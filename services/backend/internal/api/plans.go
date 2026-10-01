@@ -364,16 +364,7 @@ func (s *Server) applyPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if previewErr == nil && !record.Plan.Decommission {
-		_, namespace := previewIdentity(previewConnection.ID, previewReview.Number, previewConnection.PreviewProfile.NamespacePrefix)
-		if previewReview.Closed || previewReview.ExpiresAt == nil || !previewReview.ExpiresAt.After(time.Now()) || record.Plan.Revision != previewReview.HeadSHA || len(app.Namespaces) != 1 || app.Namespaces[0].Namespace != namespace {
-			writeError(w, http.StatusConflict, "preview is closed, expired, or no longer matches this plan")
-			return
-		}
-		_, desired, err := s.Syncer.CalculatePlanWithSelection(r.Context(), app, record.Plan.Selection)
-		if err != nil || validatePreviewResources(desired, previewConnection.PreviewProfile, namespace, previewReview.Fork) != nil {
-			writeError(w, http.StatusConflict, "preview plan does not satisfy its isolation policy")
-			return
-		}
+		if err := s.validatePRDeployment(r.Context(), previewConnection, previewReview, app, record); err != nil { writeError(w, http.StatusConflict, err.Error()); return }
 	}
 	if record.Plan.Decommission && !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return

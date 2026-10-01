@@ -65,6 +65,8 @@ go test -tags integration ./internal/store -run '^TestIntegrationMigrationUpgrad
 
 go test -tags integration ./internal/syncer -run '^TestIntegrationRepositoryConfiguration$' -count=1 -v -timeout 2m 2>&1 | tee "$artifacts/repository.log"
 
+go test -tags integration ./internal/api -run '^TestIntegrationPRCredentialsAndCommentApprovals$' -count=1 -v -timeout 2m 2>&1 | tee "$artifacts/pr-workflow.log"
+
 if [[ "$mode" == full ]]; then
   if ! command -v kind >/dev/null 2>&1; then
     echo "Install kind to run the full cluster suite." >&2

@@ -260,6 +260,7 @@ func testRepositoryConfigurationSafety(t *testing.T, ctx context.Context, s *Sto
 	if err != nil || stored.ConfigurationMissing {
 		t.Fatalf("restored definition not resumed: %+v %v", stored, err)
 	}
+	testBranchTestSafety(t, ctx, s, repository, app)
 	if err := s.SetRepositoryConfigurationEnabled(ctx, repository.ID, false); err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +271,7 @@ func testRepositoryConfigurationSafety(t *testing.T, ctx context.Context, s *Sto
 		t.Fatal(err)
 	}
 	recorded, err := s.RepositoryConfigurationByID(ctx, repository.ID)
-	if err != nil || recorded.LastCommit != "commit-6" || recorded.LastError == "" {
+	if err != nil || recorded.LastCommit != "new-main" || recorded.LastError == "" {
 		t.Fatalf("failed discovery lost last valid commit: %+v %v", recorded, err)
 	}
 }

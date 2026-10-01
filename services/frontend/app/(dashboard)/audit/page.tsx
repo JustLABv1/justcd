@@ -82,7 +82,7 @@ function AuditDetail({ event }: { event: AuditEvent }) {
       aria-label="Event details"
     >
       <div className="border-b px-5 py-5 sm:px-6">
-        <p className="text-xs font-medium text-muted-foreground">
+        <p className="text-sm font-medium text-muted-foreground">
           EVENT #{event.id}
         </p>
         <h2 className="mt-2 text-lg font-semibold tracking-tight">
@@ -251,13 +251,13 @@ export default function AuditPage() {
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div>
             <h2 className="text-sm font-semibold">Activity</h2>
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p className="mt-1 text-sm text-muted-foreground">
               {events.length} events loaded
               {hasMore ? "; older events available" : ""}. Times are shown in
               your local time zone.
             </p>
           </div>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             Instance administrators only
           </p>
         </div>

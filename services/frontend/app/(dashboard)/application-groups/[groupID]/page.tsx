@@ -107,7 +107,7 @@ export default function ApplicationGroupPage() {
               return <div key={app.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
                 <div className="min-w-0">
                   <Link href={"/applications/" + app.id} className="text-sm font-medium hover:text-primary">{app.name}</Link>
-                  <p className="mt-1 truncate text-xs text-muted-foreground">{cluster?.name ?? app.clusterId} / {namespaces}</p>
+                  <p className="mt-1 truncate text-sm text-muted-foreground">{cluster?.name ?? app.clusterId} / {namespaces}</p>
                 </div>
                 <div className="flex items-center gap-2"><StatusBadge status={app.health} /><Link href={"/applications/" + app.id + "/edit"} className="text-xs font-medium text-primary hover:underline">Target settings</Link></div>
               </div>
@@ -119,7 +119,7 @@ export default function ApplicationGroupPage() {
           {workspace?.role === "owner" ? <form className="space-y-4 p-5" onSubmit={save}>
             <FormField label="Git source" htmlFor="group-source"><FormSelect id="group-source" value={group.sourceId} onValueChange={(value) => setGroup({ ...group, sourceId: value })} items={sources.map((source) => ({ value: source.id, label: source.name }))} /></FormField>
             <FormField label="Git revision" htmlFor="group-revision"><Input id="group-revision" value={revision} onChange={(event) => setRevision(event.target.value)} required /></FormField>
-            <p className="text-xs text-muted-foreground">Renderer: <span className="font-medium text-foreground">{group.renderer === "helm" ? "Helm" : "Kustomize"}</span></p>
+            <p className="text-sm text-muted-foreground">Renderer: <span className="font-medium text-foreground">{group.renderer === "helm" ? "Helm" : "Kustomize"}</span></p>
             <FormField label={group.renderer === "helm" ? "Chart path" : "Shared Kustomize path"} htmlFor="group-path" hint={group.renderer === "helm" ? undefined : "Fallback path for targets. Cluster or namespace paths must include this base when needed."}><Input id="group-path" value={manifestPath} onChange={(event) => setManifestPath(event.target.value)} required /></FormField>
             {group.renderer === "helm" ? <>
               <FormField label="Shared values files" htmlFor="group-files" hint="One Git path per line; later files override earlier files."><Textarea id="group-files" value={valuesFiles} onChange={(event) => setValuesFiles(event.target.value)} className="font-mono text-xs" /></FormField>
@@ -137,7 +137,7 @@ export default function ApplicationGroupPage() {
             <p><span className="font-medium">Git revision:</span> {group.revision}</p>
             <p><span className="font-medium">Renderer:</span> {group.renderer}</p>
             <p><span className="font-medium">{group.renderer === "helm" ? "Chart path" : "Shared Kustomize path:"}</span> <span className="font-mono">{group.manifestPath}</span></p>
-            {group.renderer === "helm" ? <><p className="font-medium">Git values files</p><pre className="overflow-auto rounded-lg bg-muted/50 p-3 font-mono text-[11px]">{group.helmValuesFiles.join("\n") || "None"}</pre><p className="font-medium">Shared JustCD values</p><pre className="overflow-auto rounded-lg bg-muted/50 p-3 font-mono text-[11px]">{group.helmValuesYaml || "None"}</pre></> : <p>Namespace transform: {group.kustomizeNamespaceOverride ? "enabled" : "disabled"}; Helm charts: {group.kustomizeHelmEnabled ? "enabled" : "disabled"}</p>}
+            {group.renderer === "helm" ? <><p className="font-medium">Git values files</p><pre className="overflow-auto rounded-lg bg-muted/50 p-3 font-mono text-xs">{group.helmValuesFiles.join("\n") || "None"}</pre><p className="font-medium">Shared JustCD values</p><pre className="overflow-auto rounded-lg bg-muted/50 p-3 font-mono text-xs">{group.helmValuesYaml || "None"}</pre></> : <p>Namespace transform: {group.kustomizeNamespaceOverride ? "enabled" : "disabled"}; Helm charts: {group.kustomizeHelmEnabled ? "enabled" : "disabled"}</p>}
           </div>}
         </Panel>
       </div>

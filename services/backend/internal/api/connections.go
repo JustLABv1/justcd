@@ -397,7 +397,13 @@ func (s *Server) testCluster(w http.ResponseWriter, r *http.Request) {
 	clusterScopeStatus := ""
 	if input.IncludeClusterScope {
 		if cluster.ClusterScopeCredential == nil {
-			clusterScopeStatus = "not_configured"
+			// Access reviews are read-only. Testing the effective namespace
+			// credential does not authorize cluster-scoped deployments.
+			clusterClient = client
+			if clientErr != nil {
+				failure := kube.ClassifyPermissionTestError(clientErr)
+				clusterScopeFailure = &failure
+			}
 		} else {
 			clusterClient, err = kube.ForBinding(r.Context(), s.Store, s.EncryptionKey, cluster, cluster.ClusterScopeCredential, true)
 			if err != nil {

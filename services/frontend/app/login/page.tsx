@@ -46,9 +46,9 @@ export default function LoginPage() {
             <Button className="w-full" type="submit" loading={busy} loadingText="Signing in…">Continue with email</Button>
           </form>
 
-          {providers.length > 0 && <div className="mt-6"><div className="relative mb-4 text-center"><span className="relative z-10 bg-card px-3 text-[10px] uppercase tracking-wider text-muted-foreground">or continue with</span><span className="absolute inset-x-0 top-1/2 border-t" /></div><div className="space-y-2">{providers.map((provider) => <a key={provider.id} href={`/api/v1/auth/oidc/${encodeURIComponent(provider.id)}/start`} className="flex h-11 w-full items-center justify-center gap-2 rounded-lg border bg-background text-sm font-medium transition-colors hover:bg-muted"><span className="grid size-5 place-items-center rounded-full bg-muted text-[10px]">↗</span>{provider.name}</a>)}</div></div>}
+          {providers.length > 0 && <div className="mt-6"><div className="relative mb-4 text-center"><span className="relative z-10 bg-card px-3 text-xs uppercase tracking-wider text-muted-foreground">or continue with</span><span className="absolute inset-x-0 top-1/2 border-t" /></div><div className="space-y-2">{providers.map((provider) => <a key={provider.id} href={`/api/v1/auth/oidc/${encodeURIComponent(provider.id)}/start`} className="flex h-11 w-full items-center justify-center gap-2 rounded-lg border bg-background text-sm font-medium transition-colors hover:bg-muted"><span className="grid size-5 place-items-center rounded-full bg-muted text-xs">↗</span>{provider.name}</a>)}</div></div>}
 
-          <p className="mt-8 text-center text-xs leading-5 text-muted-foreground">{signupAvailable ? <Link href="/signup" className="font-medium text-primary hover:underline">Set up the first administrator</Link> : "Access is managed by your JustCD administrator. OIDC accounts need a verified email address."}</p>
+          <p className="mt-8 text-center text-sm leading-5 text-muted-foreground">{signupAvailable ? <Link href="/signup" className="font-medium text-primary hover:underline">Set up the first administrator</Link> : "Access is managed by your JustCD administrator. OIDC accounts need a verified email address."}</p>
     </AuthShell>
   )
 }

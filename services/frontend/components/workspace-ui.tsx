@@ -146,14 +146,14 @@ export function WorkspaceCard({
         <span className="grid size-10 place-items-center rounded-xl border bg-muted/40 text-muted-foreground">
           <WorkspaceIcon name="folder" />
         </span>
-        <span className="rounded-md bg-muted px-2 py-1 text-[11px] text-muted-foreground capitalize">
+        <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground capitalize">
           {workspace.role}
         </span>
       </div>
       <h3 className="mt-5 truncate text-base font-semibold tracking-tight">
         {workspace.name}
       </h3>
-      <p className="mt-1.5 line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground">
+      <p className="mt-1.5 line-clamp-2 min-h-10 text-sm leading-5 text-muted-foreground">
         {workspace.description ||
           "Applications, connections, and team access in one place."}
       </p>
@@ -186,7 +186,7 @@ export function WorkspaceCard({
           </>
         )}
       </div>
-      <p className="mt-2 text-[11px] text-muted-foreground">
+      <p className="mt-2 text-sm text-muted-foreground">
         {total === 0
           ? "Ready for your first application"
           : `${synced} in sync · ${attention} need attention`}

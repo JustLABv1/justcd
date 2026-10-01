@@ -183,7 +183,7 @@ export default function OverviewPage() {
               </div>
               <div className="mt-8 rounded-xl border bg-card p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div><h2 className="text-sm font-semibold">Workspace connections</h2><p className="mt-1 text-xs text-muted-foreground">Manage repositories, deployment clusters, and credentials for {workspace?.name ?? "this workspace"}.</p></div>
+                  <div><h2 className="text-sm font-semibold">Workspace connections</h2><p className="mt-1 text-sm text-muted-foreground">Manage repositories, deployment clusters, and credentials for {workspace?.name ?? "this workspace"}.</p></div>
                   {workspaceId && <Link href={`/workspaces/${workspaceId}?tab=connections`} className="text-xs font-medium text-primary hover:underline">Manage connections →</Link>}
                 </div>
               </div>
@@ -197,7 +197,7 @@ export default function OverviewPage() {
                     className="size-4 text-muted-foreground"
                   />
                 </div>
-                <p className="mt-1 text-xs text-muted-foreground">
+                <p className="mt-1 text-sm text-muted-foreground">
                   Most recently checked applications
                 </p>
                 <div className="mt-5 space-y-5">
@@ -215,19 +215,19 @@ export default function OverviewPage() {
                           <span className="block truncate text-xs font-medium group-hover:text-primary">
                             {app.name}
                           </span>
-                          <span className="mt-1 block text-[11px] leading-5 text-muted-foreground">
+                          <span className="mt-1 block text-xs leading-5 text-muted-foreground">
                             {app.lastCheckedAt
                               ? new Date(app.lastCheckedAt).toLocaleString()
                               : "Not checked yet"}
                           </span>
-                          <span className="mt-1 block truncate font-mono text-[10px] text-muted-foreground">
+                          <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">
                             {app.lastSyncedRevision || app.revision}
                           </span>
                         </span>
                       </Link>
                     ))
                   ) : (
-                    <p className="text-xs leading-5 text-muted-foreground">
+                    <p className="text-sm leading-5 text-muted-foreground">
                       Checks will appear after you add an application.
                     </p>
                   )}

@@ -104,7 +104,7 @@ function StepCard({ step, index, isNext, busy, acknowledgeEncryptionKey }: { ste
       <span className={`grid size-8 shrink-0 place-items-center rounded-full text-xs font-semibold ${complete ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : failed ? "bg-rose-500/10 text-rose-700 dark:text-rose-300" : "bg-muted text-muted-foreground"}`}>{complete ? "✓" : index + 1}</span>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2"><h2 className="text-sm font-semibold">{step.title}</h2>{isNext && <Badge size="xs" radius="full" variant="primary-light">Next</Badge>}{step.category && !complete && <Badge size="xs" radius="full" variant="outline" className="text-muted-foreground">{categoryLabels[step.category] ?? step.category}</Badge>}</div>
-        <p className="mt-1.5 text-xs leading-5 text-muted-foreground">{step.summary}</p>
+        <p className="mt-1.5 text-sm leading-5 text-muted-foreground">{step.summary}</p>
         {step.remediation && !complete && <p className="mt-2 rounded-lg bg-muted/50 px-3 py-2 text-xs leading-5"><strong>How to fix:</strong> {step.remediation}</p>}
         <div className="mt-3 flex flex-wrap items-center gap-3">
           {step.id === "encryption-key" && !complete && <Button size="sm" loading={busy} loadingText="Saving…" onClick={() => void acknowledgeEncryptionKey()}>I backed up the key</Button>}

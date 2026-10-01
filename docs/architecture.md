@@ -33,8 +33,9 @@ cluster. Users can sign in with local accounts or configured OIDC providers.
 The website lets them configure Git sources and inspect and manage deployed
 resources. The backend owns Kubernetes credentials; browser code never receives
 tokens. A connection has a stable cluster ID, API endpoint, TLS trust
-configuration, and a credential reference. Each namespace binding selects its
-own credential reference. Store credential material in an encrypted secret
+configuration, and a credential reference. Each namespace binding can select its own credential reference. Otherwise it
+inherits the workspace’s default credential for that cluster; legacy instance
+defaults are used only where permitted. Store credential material in an encrypted secret
 store; the application database stores only references and metadata. Never log
 tokens or serialize them in API responses.
 
@@ -126,3 +127,20 @@ Kustomize wrapper. Identical cluster-scoped resources across namespace builds
 are coalesced; conflicting output stops planning. Helm charts in Kustomize are
 available as an explicit render option. A shared group edit invalidates each
 child's existing plans; each child still requires its own review and sync.
+
+## Managing connections
+
+On the workspace Clusters page, use **Credentials** on a cluster to configure
+one default Kubernetes credential for all its namespace bindings. Per-namespace
+credentials override this default. The default remains private to the workspace,
+including when the cluster is shared. A cluster-wide ServiceAccount token can be
+used here; Kubernetes RBAC determines its effective access. Namespace bindings
+still explicitly grant the workspace access to each deployment target.
+
+Owners can delete unused Git sources, credentials, and owned cluster connections.
+Legacy instance-owned clusters and global credentials require an administrator.
+Active shares must be revoked and application references removed first. Removing
+a namespace binding removes JustCD access configuration, not the Kubernetes
+namespace. Connection deletion never deletes Kubernetes workloads or a Git
+repository. Repository discovery connections can be removed after their managed
+applications have been removed; pause discovery first to prevent rediscovery.

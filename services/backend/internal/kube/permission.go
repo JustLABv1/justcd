@@ -192,7 +192,7 @@ func reviewPermission(ctx context.Context, client *Clients, namespace, scope str
 	attributes := map[string]any{
 		"verb":     spec.verb,
 		"resource": spec.resource,
-		"apiGroup": spec.apiGroup,
+		"group":    spec.apiGroup,
 	}
 	if scope == "namespace" {
 		attributes["namespace"] = namespace

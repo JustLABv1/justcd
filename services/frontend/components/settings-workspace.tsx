@@ -32,7 +32,7 @@ import type {
   User,
 } from "@/lib/types"
 
-const inputClass = "min-h-24 font-mono text-xs"
+const inputClass = "min-h-24 font-mono text-sm"
 
 const workspaceSections = ["git-sources", "clusters", "namespaces", "credentials", "shares"]
 
@@ -268,13 +268,13 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
           workspaceScoped && workspace?.role === "owner" && !scopeLoading ? (
             section === "git-sources" ? (
               <Button
-                render={<Link href={`/workspaces/${workspace.id}/git-sources/new`} />}
+                nativeButton={false} render={<Link href={`/workspaces/${workspace.id}/git-sources/new`} />}
               >
                 Connect a Git source
               </Button>
             ) : section === "clusters" ? (
               <Button
-                render={<Link href={`/workspaces/${workspace.id}/clusters/new`} />}
+                nativeButton={false} render={<Link href={`/workspaces/${workspace.id}/clusters/new`} />}
               >
                 Connect a cluster
               </Button>
@@ -342,7 +342,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                   >
                     <Link
                       href={workspaceScoped ? `/workspaces/${fixedWorkspaceId}?tab=connections` : "/settings"}
-                      className="block shrink-0 rounded-lg px-3 py-3 text-xs font-medium whitespace-nowrap text-muted-foreground hover:bg-muted lg:mb-2 lg:border-b"
+                      className="block shrink-0 rounded-lg px-3 py-3 text-sm font-medium whitespace-nowrap text-muted-foreground hover:bg-muted lg:mb-2 lg:border-b"
                     >
                       ← {workspaceScoped ? "Workspace connections" : "All settings"}
                     </Link>
@@ -360,7 +360,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                         key={group.title}
                         className="flex shrink-0 gap-2 lg:mb-2 lg:block"
                       >
-                        <p className="hidden px-3 py-2 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase lg:block">
+                        <p className="hidden px-3 py-2 text-sm font-semibold tracking-wider text-muted-foreground uppercase lg:block">
                           {group.title}
                         </p>
                         {visibleSections
@@ -376,7 +376,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                               aria-current={
                                 section === item.id ? "page" : undefined
                               }
-                              className={`block shrink-0 rounded-lg px-3 py-2.5 text-xs font-medium whitespace-nowrap transition-colors lg:mb-1 ${section === item.id ? "bg-primary/10 text-primary" : "bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                              className={`block shrink-0 rounded-lg px-3 py-2.5 text-sm font-medium whitespace-nowrap transition-colors lg:mb-1 ${section === item.id ? "bg-primary/10 text-primary" : "bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground"}`}
                             >
                               {item.title}
                             </Link>
@@ -393,10 +393,10 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                         className="size-5 text-primary"
                       />
                       <div>
-                        <p className="text-xs font-semibold">
+                        <p className="text-sm font-semibold">
                           Instance settings
                         </p>
-                        <p className="mt-1 text-xs text-muted-foreground">
+                        <p className="mt-1 text-sm text-muted-foreground">
                           These settings apply to the whole workspace, across
                           all workspaces.
                         </p>
@@ -424,7 +424,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                             <h2 className="text-sm font-semibold">
                               Instance configuration
                             </h2>
-                            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                            <p className="mt-1 text-sm leading-5 text-muted-foreground">
                               Manage sign-in and accounts for the entire JustCD instance.
                             </p>
                           </div>
@@ -442,7 +442,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                             <h2 className="text-base font-semibold tracking-tight">
                               {group.title}
                             </h2>
-                            <p className="mt-1 text-xs text-muted-foreground">
+                            <p className="mt-1 text-sm text-muted-foreground">
                               {group.description}
                             </p>
                           </div>
@@ -472,17 +472,17 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                                         }
                                       />
                                     </span>
-                                    <span className="text-[10px] text-muted-foreground">
+                                    <span className="text-xs text-muted-foreground">
                                       Instance admin
                                     </span>
                                   </div>
                                   <h3 className="mt-5 text-sm font-semibold group-hover:text-primary">
                                     {item.title}
                                   </h3>
-                                  <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+                                  <p className="mt-1.5 text-sm leading-5 text-muted-foreground">
                                     {item.description}
                                   </p>
-                                  <div className="mt-5 flex items-center justify-between border-t pt-3 text-xs">
+                                  <div className="mt-5 flex items-center justify-between border-t pt-3 text-sm">
                                     <span className="text-muted-foreground">
                                       Configure
                                     </span>
@@ -526,6 +526,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                             )
                           }
                           onPrimaryActionChange={registerCredentialAction}
+                          onDeleted={(value) => setCredentials((items) => items.filter((item) => item.id !== value))}
                         />
                       )}
                       {workspaceScoped && workspace && section === "clusters" && !scopeLoading && (
@@ -551,6 +552,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                               )
                             )
                           }
+                          onDeleted={(value) => setClusters((items) => items.filter((item) => item.id !== value))}
                         />
                       )}
                       {workspaceScoped && workspace && section === "git-sources" && !scopeLoading && (
@@ -571,6 +573,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                               )
                             )
                           }
+                          onDeleted={(value) => setSources((items) => items.filter((item) => item.id !== value))}
                         />
                       )}
                       {workspaceScoped && workspace && section === "shares" && !scopeLoading && (
@@ -626,7 +629,8 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                               )
                             }
                             onPrimaryActionChange={registerNamespaceAction}
-                          />
+                          onDeleted={(value) => setBindings((items) => items.filter((item) => item.namespace !== value))}
+                        />
                         )}
                       {section === "oidc" && user?.isAdmin && (
                         <OIDCPanel
@@ -650,10 +654,10 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                     <div className="mt-5 rounded-xl border bg-card px-5 py-4">
                       <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
                         <div>
-                          <p className="text-xs font-semibold">
+                          <p className="text-sm font-semibold">
                             Credentials never leave the server
                           </p>
-                          <p className="mt-1 max-w-3xl text-[11px] leading-5 text-muted-foreground">
+                          <p className="mt-1 max-w-3xl text-sm leading-5 text-muted-foreground">
                             Secrets are encrypted at rest using
                             JUSTCD_ENCRYPTION_KEY and are not returned to the
                             browser. Git deploy keys require pinned known_hosts;
@@ -661,7 +665,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                             disabled.
                           </p>
                         </div>
-                        <span className="w-fit rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[9px] font-medium tracking-wide text-emerald-700 uppercase">
+                        <span className="w-fit rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium tracking-wide text-emerald-700 uppercase">
                           Encrypted
                         </span>
                       </div>
@@ -685,6 +689,7 @@ function CredentialPanel({
   action,
   onCreated,
   onUpdated,
+  onDeleted,
   onPrimaryActionChange,
 }: {
   workspace?: Workspace
@@ -698,6 +703,7 @@ function CredentialPanel({
   ) => Promise<void>
   onCreated: (value: Credential) => void
   onUpdated: (value: Credential) => void
+  onDeleted: (value: string) => void
   onPrimaryActionChange: (run: (() => void) | null) => void
 }) {
   const [name, setName] = useState("")
@@ -811,20 +817,20 @@ function CredentialPanel({
                   key={credential.id}
                   className="flex flex-wrap items-center gap-3 px-5 py-3"
                 >
-                  <span className="grid size-7 place-items-center rounded-md bg-muted text-[10px]">
+                  <span className="grid size-7 place-items-center rounded-md bg-muted text-xs">
                     {credential.kind.startsWith("git") ? "G" : "K"}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-xs font-medium">
+                    <span className="block truncate text-sm font-medium">
                       {credential.name}
                     </span>
-                    <span className="block text-[9px] text-muted-foreground capitalize">
+                    <span className="block text-xs text-muted-foreground capitalize">
                       {credential.kind.replaceAll("-", " ")}
                       {!credential.workspaceId && " · legacy instance-wide"}
                     </span>
                   </span>
                   {credential.expiresAt && (
-                    <span className="text-[9px] text-muted-foreground">
+                    <span className="text-xs text-muted-foreground">
                       expires{" "}
                       {new Date(credential.expiresAt).toLocaleDateString()}
                     </span>
@@ -842,6 +848,7 @@ function CredentialPanel({
                   >
                     Edit
                   </Button>
+                  <ConnectionDeleteAction endpoint={`/api/v1/credentials/${encodeURIComponent(credential.id)}`} name={credential.name} description="Delete this stored credential. Assigned credentials must be replaced or detached first." disabled={busy || (credential.workspaceId ? workspace?.role !== "owner" : !isAdmin)} onDeleted={() => onDeleted(credential.id)} />
                 </div>
               ))}
             </div>
@@ -932,7 +939,7 @@ function CredentialPanel({
             </FormField>
           )}
           {!workspace && (
-            <p className="text-[11px] text-amber-700">
+            <p className="text-xs text-amber-700">
               Select a workspace to add a scoped credential.
             </p>
           )}
@@ -981,6 +988,7 @@ function ClusterPanel({
   action,
   onCreated,
   onUpdated,
+  onDeleted,
 }: {
   user: User | null
   workspace?: Workspace
@@ -995,6 +1003,7 @@ function ClusterPanel({
   ) => Promise<void>
   onCreated: (value: Cluster) => void
   onUpdated: (value: Cluster) => void
+  onDeleted: (value: string) => void
 }) {
   const [name, setName] = useState("")
   const [apiServer, setApiServer] = useState("")
@@ -1107,6 +1116,13 @@ function ClusterPanel({
               workspaceId: workspace?.id,
               workspaceCredentialId: newWorkspaceCredentialId || undefined,
             })
+        if (editing && workspace) {
+          const authentication = await api<{ credentialId: string | null }>(`/api/v1/clusters/${encodeURIComponent(editing.id)}/workspace-credential`, {
+            method: "PUT",
+            body: JSON.stringify({ workspaceId: workspace.id, credentialId: workspaceCredentialId || null }),
+          })
+          setWorkspaceCredentialByCluster((current) => ({ ...current, [editing.id]: authentication.credentialId }))
+        }
         setName("")
         setApiServer("")
         setCaDataBase64("")
@@ -1126,6 +1142,11 @@ function ClusterPanel({
     )
   }
   function edit(cluster: Cluster) {
+    if (activeClusterId !== cluster.id) {
+      setSelectedClusterId(cluster.id)
+      setCredentialLoadedFor("")
+      setCredentialLoadError(null)
+    }
     setEditing(cluster)
     setName(cluster.name)
     setApiServer(cluster.apiServer)
@@ -1175,24 +1196,24 @@ function ClusterPanel({
                 className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
               >
                 <div className="flex min-w-0 flex-1 items-start gap-3">
-                  <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-violet-500/10 text-xs text-violet-700">
+                  <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-violet-500/10 text-sm text-violet-700">
                     K8s
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block text-xs font-medium">
+                    <span className="block text-sm font-medium">
                       {cluster.name}
                     </span>
-                    <span className="block truncate font-mono text-[9px] text-muted-foreground">
+                    <span className="block truncate font-mono text-xs text-muted-foreground">
                       {cluster.apiServer}
                     </span>
                     <span className="mt-2 flex flex-wrap gap-1.5">
-                      <span className="inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
+                      <span className="inline-flex rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
                         {cluster.shared ? `Shared by ${cluster.ownerWorkspaceName ?? "another workspace"}` : cluster.workspaceId ? "Private to this workspace" : "Legacy instance-owned"}
                       </span>
-                      <span className="inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
-                        {workspaceCredentialByCluster[cluster.id] ? "Workspace default configured" : cluster.shared ? "Workspace credential needed" : cluster.defaultCredentialId ? "Legacy instance default" : "No workspace default"}
+                      <span className="inline-flex rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+                        {workspaceCredentialByCluster[cluster.id] ? `Default: ${workspaceCredentials.find((item) => item.id === workspaceCredentialByCluster[cluster.id])?.name ?? "configured"}` : cluster.shared ? "Workspace credential needed" : cluster.defaultCredentialId ? "Legacy instance default" : "No workspace default"}
                       </span>
-                      <span className="inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
+                      <span className="inline-flex rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
                         {latestTests[cluster.id] ? `Last test: ${latestTests[cluster.id].report.status} · ${new Date(latestTests[cluster.id].checkedAt).toLocaleString()}` : "Not tested yet"}
                       </span>
                     </span>
@@ -1210,6 +1231,7 @@ function ClusterPanel({
                   >
                     Test
                   </Button>
+                  <Button size="sm" variant="outline" type="button" disabled={busy || workspace?.role !== "owner"} onClick={() => { if (activeClusterId !== cluster.id) { setSelectedClusterId(cluster.id); setCredentialLoadedFor(""); setCredentialLoadError(null) }; setAuthDialogOpen(true) }}>Credentials</Button>
                   {workspace?.role === "owner" && (cluster.workspaceId === workspace.id || (!cluster.workspaceId && user?.isAdmin)) && (
                     <Button
                       size="sm"
@@ -1221,6 +1243,7 @@ function ClusterPanel({
                       Edit
                     </Button>
                   )}
+                  {!cluster.shared && (cluster.workspaceId === workspace?.id ? workspace?.role === "owner" : !cluster.workspaceId && user?.isAdmin) && <ConnectionDeleteAction endpoint={`/api/v1/clusters/${encodeURIComponent(cluster.id)}`} name={cluster.name} description="Remove this cluster connection and its namespace bindings from JustCD. Kubernetes resources remain. Applications and active shares must be removed first." disabled={busy} onDeleted={() => { if (editing?.id === cluster.id) setEditing(null); if (activeClusterId === cluster.id) setSelectedClusterId(""); onDeleted(cluster.id) }} />}
                 </div>
               </div>
             ))}
@@ -1232,19 +1255,19 @@ function ClusterPanel({
       </SettingsInventory>
       {workspace && clusters.length > 0 && (
         <section className="overflow-hidden rounded-xl border bg-card">
-          <div className="border-b px-5 py-4"><h2 className="text-sm font-semibold">Workspace authentication</h2><p className="mt-1 text-xs text-muted-foreground">Choose the credential this workspace uses for namespace access on each cluster.</p></div>
+          <div className="border-b px-5 py-4"><h2 className="text-sm font-semibold">Default credential for namespace access</h2><p className="mt-1 text-sm text-muted-foreground">This credential applies to all namespace bindings on the cluster unless a binding has its own credential. The token’s Kubernetes RBAC determines which namespaces it can access.</p></div>
           <div className="grid gap-4 px-5 py-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
             <div className="max-w-sm"><FormField label="Cluster" htmlFor="workspace-cluster"><FormSelect id="workspace-cluster" value={activeClusterId} onValueChange={(value) => { setSelectedClusterId(value); setCredentialLoadedFor(""); setCredentialLoadError(null) }} emptyOption="Select cluster" items={clusters.map((cluster) => ({ value: cluster.id, label: cluster.name }))} /></FormField></div>
-            <div className="flex flex-wrap items-center gap-3 sm:justify-end"><span className="text-xs text-muted-foreground">{workspaceCredentialByCluster[activeClusterId] ? "Credential configured" : "No workspace credential"}</span><Button size="sm" variant="outline" type="button" disabled={workspace.role !== "owner" || !activeClusterId || credentialLoadedFor !== activeClusterId} onClick={() => setAuthDialogOpen(true)}>Configure</Button></div>
+            <div className="flex flex-wrap items-center gap-3 sm:justify-end"><span className="text-sm text-muted-foreground">{workspaceCredentialByCluster[activeClusterId] ? "Credential configured" : "No workspace credential"}</span><Button size="sm" variant="outline" type="button" disabled={workspace.role !== "owner" || !activeClusterId || credentialLoadedFor !== activeClusterId} onClick={() => setAuthDialogOpen(true)}>Configure</Button></div>
           </div>
           {credentialLoadError != null && (
             <div role="alert" className="flex flex-wrap items-center justify-between gap-3 border-t px-5 py-3 text-sm text-destructive"><span>{errorMessage(credentialLoadError)}</span><ErrorDetailsButton error={credentialLoadError} /></div>
           )}
         </section>
       )}
-      <ConnectionDialog open={authDialogOpen} onOpenChange={setAuthDialogOpen} busy={busy} title="Configure workspace authentication" description={`Choose the credential used for namespace bindings on ${activeCluster?.name ?? "this cluster"}. It is never shared with other workspaces.`}>
+      <ConnectionDialog open={authDialogOpen} onOpenChange={setAuthDialogOpen} busy={busy} title="Configure cluster default credential" description={`Use one credential for all namespace bindings on ${activeCluster?.name ?? "this cluster"}. Namespace-specific credentials override it. This setting is private to your workspace.`}>
           <div className="space-y-5"><FormField
-              label="Workspace Kubernetes credential"
+              label="Default Kubernetes credential"
               htmlFor="workspace-cluster-credential"
             >
               <FormSelect
@@ -1273,7 +1296,7 @@ function ClusterPanel({
             }
             onClick={saveWorkspaceCredential}
           >
-            Save workspace credential
+            Save default credential
           </Button>
           </div>
       </ConnectionDialog>
@@ -1329,7 +1352,11 @@ function ClusterPanel({
                   onChange={(event) => setCaDataBase64(event.target.value)}
                 />
               </FormField>
-              {editing && !editing.workspaceId && user?.isAdmin && <div className="grid gap-3 sm:grid-cols-2">
+              {workspace && <FormField label="Default Kubernetes credential for this workspace" htmlFor="edit-workspace-credential" hint="Used by all namespace bindings without their own credential. A cluster-wide ServiceAccount token can be selected here.">
+                <FormSelect id="edit-workspace-credential" value={workspaceCredentialId} onValueChange={setWorkspaceCredentialId} disabled={credentialLoadedFor !== editing.id} emptyOption="No workspace default" items={workspaceCredentials.map((credential) => ({ value: credential.id, label: credential.name }))} />
+              </FormField>}
+              {credentialLoadError != null && <p role="alert" className="text-sm text-destructive">{errorMessage(credentialLoadError)}</p>}
+              {editing && !editing.workspaceId && user?.isAdmin && globalCredentials.length > 0 && <div className="grid gap-3 sm:grid-cols-2">
                 <FormField
                   label="Default cluster credential"
                   htmlFor="cluster-default"
@@ -1361,11 +1388,11 @@ function ClusterPanel({
                   />
                 </FormField>
               </div>}
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 Instance-wide credentials are optional. Workspace credentials are
                 kept separate and are never shared across workspaces.
               </p>
-              <label className="flex items-start gap-2 text-[11px] leading-4 text-muted-foreground">
+              <label className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
                 <Checkbox
                   checked={insecure}
                   onCheckedChange={(checked) => setInsecure(Boolean(checked))}
@@ -1392,6 +1419,7 @@ function ClusterPanel({
               type="submit"
               loading={busy}
               loadingText="Saving cluster…"
+              disabled={Boolean(workspace && editing && credentialLoadedFor !== editing.id)}
             >
               Save cluster
             </Button>
@@ -1431,6 +1459,7 @@ function GitSourcePanel({
   action,
   onCreated,
   onUpdated,
+  onDeleted,
 }: {
   workspace?: Workspace
   credentials: Credential[]
@@ -1443,6 +1472,7 @@ function GitSourcePanel({
   ) => Promise<void>
   onCreated: (value: GitSource) => void
   onUpdated: (value: GitSource) => void
+  onDeleted: (value: string) => void
 }) {
   const [name, setName] = useState("")
   const [repositoryUrl, setRepositoryUrl] = useState("")
@@ -1531,18 +1561,18 @@ function GitSourcePanel({
                 className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs font-medium">{source.name}</p>
-                  <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
+                  <p className="text-sm font-medium">{source.name}</p>
+                  <p className="mt-0.5 truncate font-mono text-sm text-muted-foreground">
                     {source.repositoryUrl}
                   </p>
                   <span className="mt-2 flex flex-wrap gap-1.5">
-                    <span className="inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
+                    <span className="inline-flex rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
                       {source.shared ? `Shared by ${source.ownerWorkspaceName ?? "another workspace"}` : "Private to this workspace"}
                     </span>
-                    <span className="inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
+                    <span className="inline-flex rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
                       {source.credentialId ? "Credential configured" : "No Git credential"}
                     </span>
-                    <span className="inline-flex rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
+                    <span className="inline-flex rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
                       {lastTestResults[source.id] ? `Last test: HEAD ${lastTestResults[source.id].commit.slice(0, 8)} · ${new Date(lastTestResults[source.id].testedAt).toLocaleString()}` : "Not tested in this session"}
                     </span>
                   </span>
@@ -1569,6 +1599,7 @@ function GitSourcePanel({
                     Edit
                   </Button>
                   {!source.shared && <Button size="sm" variant="outline" type="button" disabled={busy || workspace?.role !== "owner"} onClick={() => void openWebhook(source)}>Push webhook</Button>}
+                  {!source.shared && source.workspaceId === workspace?.id && <ConnectionDeleteAction endpoint={`/api/v1/git-sources/${encodeURIComponent(source.id)}`} name={source.name} description="Remove this Git source from JustCD. The repository remains. Applications, repository configurations, and active shares must be removed first." disabled={busy || workspace?.role !== "owner"} onDeleted={() => { if (editing?.id === source.id) setEditing(null); if (webhookSource?.id === source.id) setWebhookSource(null); onDeleted(source.id) }} />}
                 </div>
               </div>
             ))}
@@ -1580,7 +1611,7 @@ function GitSourcePanel({
       </SettingsInventory>
       {workspace && <RepositoryConfigurations key={workspace.id} workspace={workspace} sources={sources} />}
       {webhookSource && <ConnectionDialog open={!!webhookSource} onOpenChange={(open) => { if (!open) setWebhookSource(null) }} busy={busy} title={`Push webhook · ${webhookSource.name}`} description="Configure push events for this Git source. An existing PR webhook already accepts pushes too."><form className="space-y-4" onSubmit={(event) => void saveWebhook(event)}>
-        {webhookInfo && <div className="mt-4 rounded-lg border bg-muted/30 p-3 text-xs"><p>{webhookInfo.configured ? "Configured" : "Not configured"}</p><code className="mt-1 block break-all">{webhookInfo.webhookUrl}</code><p className="mt-2 text-muted-foreground">For GitHub/GitLab, enable push events with this secret. For other senders, POST JSON with ref and after (commit SHA), sign the raw body with HMAC-SHA256 in X-JustCD-Signature-256, and send a unique X-JustCD-Delivery ID.</p></div>}
+        {webhookInfo && <div className="mt-4 rounded-lg border bg-muted/30 p-3 text-sm"><p>{webhookInfo.configured ? "Configured" : "Not configured"}</p><code className="mt-1 block break-all">{webhookInfo.webhookUrl}</code><p className="mt-2 text-muted-foreground">For GitHub/GitLab, enable push events with this secret. For other senders, POST JSON with ref and after (commit SHA), sign the raw body with HMAC-SHA256 in X-JustCD-Signature-256, and send a unique X-JustCD-Delivery ID.</p></div>}
         <div className="mt-4"><FormField label={webhookInfo?.configured ? "Rotate webhook secret" : "Webhook secret"} htmlFor="generic-push-secret" hint="At least 16 characters. The value is never shown again."><Input id="generic-push-secret" type="password" minLength={16} required value={webhookSecret} onChange={(event) => setWebhookSecret(event.target.value)} autoComplete="new-password" /></FormField></div>
         <Button className="mt-4" size="sm" type="submit" disabled={busy || !webhookInfo || webhookSecret.length < 16}>Save push webhook</Button>
       </form></ConnectionDialog>}
@@ -1621,14 +1652,14 @@ function GitSourcePanel({
           />
         </FormField>
         {!workspace && (
-          <p className="text-[11px] text-amber-700">
+          <p className="text-xs text-amber-700">
             Select a workspace to configure Git sources.
           </p>
         )}
         {!credentials.length && (
           <Link
             href={workspace ? `/workspaces/${workspace.id}/connections/credentials` : "/workspaces"}
-            className="inline-flex text-xs font-medium text-primary hover:underline"
+            className="inline-flex text-sm font-medium text-primary hover:underline"
           >
             Add credentials for a private repository →
           </Link>
@@ -1676,6 +1707,7 @@ function NamespacePanel({
   action,
   onCreated,
   onUpdated,
+  onDeleted,
   onPrimaryActionChange,
 }: {
   workspace?: Workspace
@@ -1693,6 +1725,7 @@ function NamespacePanel({
   ) => Promise<void>
   onCreated: (value: NamespaceBinding) => void
   onUpdated: (value: NamespaceBinding) => void
+  onDeleted: (value: string) => void
   onPrimaryActionChange: (run: (() => void) | null) => void
 }) {
   const [namespace, setNamespace] = useState("")
@@ -1851,14 +1884,14 @@ function NamespacePanel({
                   className="grid gap-3 px-5 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
                 >
                   <div className="min-w-0">
-                    <p className="font-mono text-xs">{binding.namespace}</p>
-                    <p className="mt-1 text-[10px] text-muted-foreground">
+                    <p className="font-mono text-sm">{binding.namespace}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
                       {binding.credentialId
                         ? credentials.find(
                             (item) => item.id === binding.credentialId
                           )?.name || "Namespace credential"
                         : workspaceDefault
-                          ? "Workspace credential"
+                          ? "Cluster default credential (workspace)"
                           : "Cluster default"}
                     </p>
                   </div>
@@ -1890,8 +1923,9 @@ function NamespacePanel({
                     >
                       Edit
                     </Button>
+                    <ConnectionDeleteAction endpoint={`/api/v1/clusters/${encodeURIComponent(cluster?.id ?? "")}/bindings/${encodeURIComponent(binding.namespace)}?workspaceId=${encodeURIComponent(workspace?.id ?? "")}`} name={`${binding.namespace} namespace access`} description="Remove this workspace’s namespace binding from JustCD. The Kubernetes namespace and its resources remain. Applications using this binding must be removed first." disabled={busy || workspace?.role !== "owner" || !cluster} confirmLabel="Remove binding" trigger="Remove" onDeleted={() => { if (editing?.namespace === binding.namespace) { setEditing(null); setDialogOpen(false) }; onDeleted(binding.namespace) }} />
                   </div>
-                  <div className="text-[10px] text-muted-foreground sm:col-span-2">
+                  <div className="text-xs text-muted-foreground sm:col-span-2">
                     {record ? (
                       <>
                         Latest self-test:{" "}
@@ -1900,7 +1934,7 @@ function NamespacePanel({
                         </span>
                         {" · "}
                         {new Date(record.checkedAt).toLocaleString()}
-                        <details className="mt-2 rounded-lg border bg-muted/20 p-3 text-xs">
+                        <details className="mt-2 rounded-lg border bg-muted/20 p-3 text-sm">
                           <summary className="cursor-pointer font-medium">
                             View permission checks and suggested RBAC
                           </summary>
@@ -1923,13 +1957,13 @@ function NamespacePanel({
         )}
       </SettingsInventory>
       <div className="rounded-xl border bg-card px-5 py-4">
-        <label className="flex items-start gap-3 text-xs">
+        <label className="flex items-start gap-3 text-sm">
           <Checkbox
             checked={includeClusterScope}
             disabled={
               busy ||
               workspace?.role !== "owner" ||
-              !cluster?.clusterScopeCredentialId
+              !cluster
             }
             onCheckedChange={(checked) =>
               setIncludeClusterScope(Boolean(checked))
@@ -1940,20 +1974,19 @@ function NamespacePanel({
               Include optional cluster-wide checks
             </span>
             <span className="mt-1 block text-muted-foreground">
-              Uses the separate cluster-scope credential to check namespace get,
+              Uses the configured cluster-scope credential, or the effective namespace credential, to check namespace get,
               list, create, apply, and delete permissions. No namespaces are
               changed.
             </span>
           </span>
         </label>
         {!cluster?.clusterScopeCredentialId && (
-          <p className="mt-2 pl-7 text-[10px] text-muted-foreground">
-            Configure a cluster-scope credential in cluster settings to enable
-            these checks.
+          <p className="mt-2 pl-7 text-sm text-muted-foreground">
+            These read-only checks can use your namespace or cluster-default credential. They do not enable cluster-wide deployments.
           </p>
         )}
         {workspace?.role !== "owner" && (
-          <p className="mt-2 pl-7 text-[10px] text-muted-foreground">
+          <p className="mt-2 pl-7 text-sm text-muted-foreground">
             Only workspace owners can request cluster-wide permission checks.
           </p>
         )}
@@ -1988,7 +2021,7 @@ function NamespacePanel({
               onValueChange={setCredentialId}
               emptyOption={
                 workspaceDefault
-                  ? "Use workspace credential"
+                  ? "Use cluster default credential (workspace)"
                   : "Use cluster default"
               }
               items={credentials.map((credential) => ({
@@ -1999,7 +2032,7 @@ function NamespacePanel({
           </FormField>
         </div>
         {!cluster?.defaultCredentialId && !workspaceDefault && !credentialId && (
-          <p className="text-[10px] text-amber-700">
+          <p className="text-xs text-amber-700">
             Choose a namespace credential or configure a cluster default
             credential.
           </p>
@@ -2046,13 +2079,13 @@ function PermissionReportDetails({
   ].filter((item): item is [string, string] => Boolean(item[1]))
   return (
     <div className="mt-3 space-y-3">
-      <p className="text-[10px] text-muted-foreground">
+      <p className="text-sm text-muted-foreground">
         {report.serverVersion ? `Kubernetes ${report.serverVersion} · ` : ""}
         Checks use SelfSubjectAccessReview and do not touch deployment
         resources.
       </p>
       {report.failure && (
-        <div className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-[11px]">
+        <div className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-xs">
           <p className="font-medium">
             {report.failure.category}: {report.failure.message}
           </p>
@@ -2062,7 +2095,7 @@ function PermissionReportDetails({
         </div>
       )}
       {report.clusterScope?.failure && (
-        <div className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-[11px]">
+        <div className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-xs">
           <p className="font-medium">
             Cluster-scope check: {report.clusterScope.failure.message}
           </p>
@@ -2072,7 +2105,7 @@ function PermissionReportDetails({
         </div>
       )}
       {report.clusterScope?.status === "not_configured" && (
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           Cluster-scope checks were requested, but no cluster-scope credential
           is configured.
         </p>
@@ -2081,7 +2114,7 @@ function PermissionReportDetails({
         {checks.map((check) => (
           <li
             key={`${check.scope}-${check.id}`}
-            className="flex items-center justify-between gap-3 rounded-md bg-muted/40 px-2 py-1.5 text-[10px]"
+            className="flex items-center justify-between gap-3 rounded-md bg-muted/40 px-2 py-1.5 text-xs"
           >
             <span>{check.title}</span>
             <span
@@ -2100,18 +2133,18 @@ function PermissionReportDetails({
       </ul>
       {suggestions.length > 0 && (
         <div className="space-y-2">
-          <p className="text-[11px] font-medium">
+          <p className="text-xs font-medium">
             Suggested RBAC for missing permissions
           </p>
           {suggestions.map(([title, value]) => (
             <div key={title}>
-              <p className="mb-1 text-[10px] text-muted-foreground">{title}</p>
-              <pre className="overflow-x-auto rounded-md bg-muted p-3 text-[10px]">
+              <p className="mb-1 text-sm text-muted-foreground">{title}</p>
+              <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">
                 {value}
               </pre>
             </div>
           ))}
-          <p className="text-[10px] text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             Review and replace the placeholder subject before applying these
             suggestions.
           </p>
@@ -2249,16 +2282,16 @@ function OIDCPanel({
                 className="flex items-center justify-between gap-4 px-5 py-3"
               >
                 <div className="min-w-0">
-                  <span className="block text-xs font-medium">
+                  <span className="block text-sm font-medium">
                     {provider.name}
                   </span>
-                  <span className="mt-1 block font-mono text-xs break-all text-muted-foreground">
+                  <span className="mt-1 block font-mono text-sm break-all text-muted-foreground">
                     Callback: {provider.redirectUrl}
                   </span>
                 </div>
                 <div className="flex shrink-0 items-center gap-3">
                   <span
-                    className={`rounded-full border px-2 py-0.5 text-[9px] ${provider.enabled ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "text-muted-foreground"}`}
+                    className={`rounded-full border px-2 py-0.5 text-xs ${provider.enabled ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "text-muted-foreground"}`}
                   >
                     {provider.enabled ? "enabled" : "disabled"}
                   </span>
@@ -2355,7 +2388,7 @@ function OIDCPanel({
               required={!editing}
             />
           </FormField>
-          <p className="text-[10px] leading-4 text-muted-foreground">
+          <p className="text-sm leading-5 text-muted-foreground">
             {editing ? (
               <>
                 Callback URL: <code>{editing.redirectUrl}</code>
@@ -2399,7 +2432,7 @@ function OIDCPanel({
         >
           <div>
             <h2 className="text-base font-semibold">Assign group access</h2>
-            <p className="mt-1 text-[10px] text-muted-foreground">
+            <p className="mt-1 text-sm text-muted-foreground">
               Verified ID-token groups grant the selected workspace role at each
               login.
             </p>
@@ -2608,7 +2641,7 @@ function PlatformUsersPanel({
     <div className="space-y-6">
       <SettingsInventory title="Platform users" count={users.length}>
         {usersError !== null && usersError !== undefined && (
-          <div role="alert" className="flex flex-wrap items-center justify-between gap-3 border-b border-destructive/20 bg-destructive/5 px-5 py-3 text-xs text-destructive">
+          <div role="alert" className="flex flex-wrap items-center justify-between gap-3 border-b border-destructive/20 bg-destructive/5 px-5 py-3 text-sm text-destructive">
             <span>{errorMessage(usersError)}</span>
             <div className="flex items-center gap-2">
               <ErrorDetailsButton error={usersError} />
@@ -2616,7 +2649,7 @@ function PlatformUsersPanel({
             </div>
           </div>
         )}
-        {usersLoading && <p role="status" className="px-5 py-4 text-xs text-muted-foreground">Loading platform users…</p>}
+        {usersLoading && <p role="status" className="px-5 py-4 text-sm text-muted-foreground">Loading platform users…</p>}
         {users.length > 0 && (
           <ul className="divide-y border-b">
             {users.map((user) => {
@@ -2626,22 +2659,22 @@ function PlatformUsersPanel({
               return (
                 <li key={user.id} className="px-5 py-3">
                   <div className="flex flex-wrap items-center gap-3">
-                    <span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-[10px] font-semibold uppercase">
+                    <span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-xs font-semibold uppercase">
                       {(user.displayName || user.email).slice(0, 2)}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-xs">
+                    <span className="min-w-0 flex-1 truncate text-sm">
                       <span className="font-medium">{user.displayName || user.email}</span>
                       <span className="text-muted-foreground"> · {user.email}</span>
                       <span className="mt-1 flex flex-wrap gap-1.5">
-                        <span className="rounded-full border px-2 py-0.5 text-[9px] text-muted-foreground">
+                        <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
                           {user.isAdmin ? "Instance admin" : "User"}
                         </span>
                         {deleted ? (
-                          <span className="rounded-full border border-destructive/25 bg-destructive/5 px-2 py-0.5 text-[9px] text-destructive">Deleted</span>
+                          <span className="rounded-full border border-destructive/25 bg-destructive/5 px-2 py-0.5 text-xs text-destructive">Deleted</span>
                         ) : user.disabled ? (
-                          <span className="rounded-full border border-amber-500/30 bg-amber-500/5 px-2 py-0.5 text-[9px] text-amber-700 dark:text-amber-300">Locked</span>
+                          <span className="rounded-full border border-amber-500/30 bg-amber-500/5 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">Locked</span>
                         ) : null}
-                        {self && !deleted && <span className="text-[9px] text-muted-foreground">Current account</span>}
+                        {self && !deleted && <span className="text-xs text-muted-foreground">Current account</span>}
                       </span>
                     </span>
                     {!deleted && (
@@ -2678,9 +2711,9 @@ function PlatformUsersPanel({
                       </FormField>
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         {self ? (
-                          <span className="text-[11px] text-muted-foreground">Your administrator access cannot be changed here.</span>
+                          <span className="text-xs text-muted-foreground">Your administrator access cannot be changed here.</span>
                         ) : (
-                          <label className="flex items-center gap-2 text-[11px]">
+                          <label className="flex items-center gap-2 text-xs">
                             <Checkbox checked={editIsAdmin} onCheckedChange={(checked) => setEditIsAdmin(Boolean(checked))} />
                             Instance administrator
                           </label>
@@ -2745,7 +2778,7 @@ function PlatformUsersPanel({
             required
           />
         </FormField>
-        <label className="flex items-center gap-2 text-[11px]">
+        <label className="flex items-center gap-2 text-xs">
           <Checkbox
             checked={isAdmin}
             onCheckedChange={(checked) => setIsAdmin(Boolean(checked))}
@@ -2774,10 +2807,36 @@ function SettingsInventory({
   return (
     <section className="overflow-hidden rounded-xl border bg-card">
       <div className="flex flex-wrap items-center justify-between gap-4 border-b px-5 py-4">
-        <div className="flex items-center gap-2"><h2 className="text-sm font-semibold">{title}</h2><span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground tabular-nums">{count}</span></div>
+        <div className="flex items-center gap-2"><h2 className="text-sm font-semibold">{title}</h2><span className="rounded-md bg-muted px-2 py-1 text-sm text-muted-foreground tabular-nums">{count}</span></div>
         {control && <div className="w-full sm:w-56">{control}</div>}
       </div>
       {children}
     </section>
+  )
+}
+
+function ConnectionDeleteAction({ endpoint, name, description, disabled, onDeleted, trigger = "Delete", confirmLabel = "Delete connection" }: {
+  endpoint: string
+  name: string
+  description: string
+  disabled: boolean
+  onDeleted: () => void
+  trigger?: string
+  confirmLabel?: string
+}) {
+  const toast = useToast()
+  return (
+    <ConfirmDisclosure
+      trigger={trigger}
+      title={`${trigger} ${name}?`}
+      description={description}
+      disabled={disabled}
+      confirmLabel={confirmLabel}
+      onConfirm={async () => {
+        await apiDelete(endpoint)
+        onDeleted()
+        toast.success(`${name} removed from JustCD.`)
+      }}
+    />
   )
 }

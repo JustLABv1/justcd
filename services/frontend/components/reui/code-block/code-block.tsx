@@ -658,7 +658,7 @@ const CodeBlockLineRow = memo(function CodeBlockLineRow({
                channel and the translate makes up the difference to the line
                box, so the label sits on the code baseline's visual centre
                instead of riding high. */
-            className="bg-muted/80 text-muted-foreground hover:bg-muted ml-2 inline-flex h-(--code-block-fold-width) translate-y-[calc((var(--code-block-line-height)-var(--code-block-fold-width))/2)] cursor-pointer items-center rounded-sm px-1.5 align-top text-[0.8em] leading-none select-none"
+            className="bg-muted/80 text-muted-foreground hover:bg-muted ml-2 inline-flex h-(--code-block-fold-width) translate-y-[calc((var(--code-block-line-height)-var(--code-block-fold-width))/2)] cursor-pointer items-center rounded-sm px-1.5 align-top text-xs leading-none select-none"
           >
             {`... ${hiddenCount} lines`}
           </button>
@@ -1730,7 +1730,7 @@ function CodeBlockLanguage({
       data-slot="code-block-language"
       data-unsupported={!resolvedLanguage || undefined}
       className={cn(
-        "border-border bg-muted/60 text-muted-foreground inline-flex shrink-0 items-center rounded-md border px-1.5 py-0.5 font-mono text-[0.6875rem] leading-none uppercase",
+        "border-border bg-muted/60 text-muted-foreground inline-flex shrink-0 items-center rounded-md border px-1.5 py-0.5 font-mono text-xs leading-none uppercase",
         className
       )}
       {...props}

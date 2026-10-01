@@ -139,12 +139,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <span className="grid size-9 place-items-center rounded-xl bg-primary text-sm font-bold text-primary-foreground">J</span>
           <span>
             <span className="block text-[15px] font-semibold tracking-tight">JustCD</span>
-            <span className="block text-[11px] text-muted-foreground">continuous delivery</span>
+            <span className="block text-xs text-muted-foreground">continuous delivery</span>
           </span>
         </Link>
         <WorkspaceSelector workspaces={workspaces} selectedId={selectedWorkspaceId} onChange={selectWorkspace} loading={workspacesLoading} />
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-5">
-          <p className="px-4 pb-2 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">Workspace</p>
+          <p className="px-4 pb-2 text-sm font-medium uppercase tracking-[0.12em] text-muted-foreground">Workspace</p>
           <nav aria-label="Workspace" className="space-y-1">
             {navigation.filter((item) => !item.adminOnly).map((item) => {
               const selected = isSelected(item.href, pathname)
@@ -162,7 +162,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             })}
           </nav>
           {selectedWorkspaceId && <>
-            <p className="px-4 pb-2 pt-7 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">Connections</p>
+            <p className="px-4 pb-2 pt-7 text-sm font-medium uppercase tracking-[0.12em] text-muted-foreground">Connections</p>
             <nav aria-label="Workspace connections" className="space-y-1">
               {connectionNavigation.map((item) => {
                 const href = `/workspaces/${selectedWorkspaceId}/connections/${item.section}`
@@ -172,7 +172,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </nav>
           </>}
           {user.isAdmin && <>
-            <p className="px-4 pb-2 pt-7 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">Administration</p>
+            <p className="px-4 pb-2 pt-7 text-sm font-medium uppercase tracking-[0.12em] text-muted-foreground">Administration</p>
             <nav aria-label="Administration" className="space-y-1">
               {navigation.filter((item) => item.adminOnly).map((item) => {
                 const selected = isSelected(item.href, pathname)

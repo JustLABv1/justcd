@@ -50,7 +50,7 @@ export function Panel({
         <div className={`flex items-start justify-between gap-4 ${surface === "flat" ? "pb-4" : "border-b px-5 py-4"}`}>
           <div className="min-w-0">
             {title && <h2 className="text-sm font-semibold">{title}</h2>}
-            {description && <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>}
+            {description && <p className="mt-1 text-sm leading-5 text-muted-foreground">{description}</p>}
           </div>
           <div className="shrink-0">{action}</div>
         </div>
@@ -77,12 +77,12 @@ export function StatCard({
     <div className="rounded-xl border bg-card p-4 sm:p-5">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-medium text-muted-foreground">{label}</p>
+          <p className="text-sm font-medium text-muted-foreground">{label}</p>
           <p className="mt-3 text-2xl font-semibold tracking-tight">{value}</p>
         </div>
         <span aria-hidden="true" className={`grid size-9 shrink-0 place-items-center rounded-lg text-base leading-none ${accent}`}>{icon}</span>
       </div>
-      <p className="mt-3 text-[11px] text-muted-foreground">{note}</p>
+      <p className="mt-3 text-sm text-muted-foreground">{note}</p>
     </div>
   )
 }
@@ -96,7 +96,7 @@ export function StatusBadge({ status }: { status: string }) {
       : normalized.includes("sync") || normalized.includes("pending") || normalized.includes("running") || normalized.includes("out of") || normalized.includes("progress") || normalized === "partial" || normalized === "suspended" || normalized.includes("paused")
         ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-300"
         : "border-border bg-muted/50 text-muted-foreground"
-  return <span className={`inline-flex w-fit shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize ${styles}`}><span className="size-1.5 shrink-0 rounded-full bg-current opacity-70" />{normalized}</span>
+  return <span className={`inline-flex w-fit shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-sm font-medium capitalize ${styles}`}><span className="size-1.5 shrink-0 rounded-full bg-current opacity-70" />{normalized}</span>
 }
 
 export function EmptyState({
@@ -114,8 +114,8 @@ export function EmptyState({
     <div className="flex flex-col items-center justify-center px-5 py-12 text-center">
       <IconStack className="empty-state-icon-stack text-primary"><HugeiconsIcon icon={Layers01Icon} className="size-6" /></IconStack>
       <h3 className="mt-4 text-sm font-semibold">{title}</h3>
-      <p className="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">{description}</p>
-      {href && <Link href={href} className="mt-4 text-xs font-medium text-primary hover:underline">{action} <span aria-hidden="true">→</span></Link>}
+      <p className="mt-1 max-w-sm text-sm leading-5 text-muted-foreground">{description}</p>
+      {href && <Link href={href} className="mt-4 text-sm font-medium text-primary hover:underline">{action} <span aria-hidden="true">→</span></Link>}
     </div>
   )
 }
@@ -133,13 +133,13 @@ export function FormField({
 }) {
   return (
     <div className="space-y-1.5">
-      <label htmlFor={htmlFor} className="block text-xs font-medium">{label}</label>
+      <label htmlFor={htmlFor} className="block text-sm font-medium">{label}</label>
       {children}
-      {hint && <p className="text-[11px] leading-4 text-muted-foreground">{hint}</p>}
+      {hint && <p className="text-sm leading-4 text-muted-foreground">{hint}</p>}
     </div>
   )
 }
 
 export function InlineLink({ href, children }: { href: string; children: ReactNode }) {
-  return <Link href={href} className="text-xs font-medium text-primary hover:underline">{children}</Link>
+  return <Link href={href} className="text-sm font-medium text-primary hover:underline">{children}</Link>
 }

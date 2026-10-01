@@ -48,14 +48,14 @@ function ApplicationActions({ app, canManage, onDeleted }: { app: WorkspaceAppli
     </DropdownMenu>
     <ConfirmDisclosure open={deleteOpen} onOpenChange={setDeleteOpen} title={`Delete ${app.name}?`} description="Choose whether JustCD keeps the managed Kubernetes resources or prepares a deletion plan for review." confirmLabel="Continue" onConfirm={remove}>
       <FormSelect ariaLabel="Managed cluster resources" value={policy} onValueChange={setPolicy} items={[{ value: "keep", label: "Keep resources in Kubernetes" }, { value: "delete", label: "Delete through a reviewed plan" }]} />
-      {policy === "delete" && <p className="mt-2 text-xs text-muted-foreground">Resources are not deleted immediately. Review and approve the deletion plan on the application page.</p>}
+      {policy === "delete" && <p className="mt-2 text-sm text-muted-foreground">Resources are not deleted immediately. Review and approve the deletion plan on the application page.</p>}
     </ConfirmDisclosure>
   </>
 }
 
 function RuntimeHealth({ condition }: { condition: WorkspaceApplication["healthCondition"] }) {
   const status = condition?.status ?? "Unknown"
-  return <div className="flex flex-wrap items-center gap-2"><span className="text-[10px] text-muted-foreground">Runtime</span><StatusBadge status={status} /></div>
+  return <div className="flex flex-wrap items-center gap-2"><span className="text-xs text-muted-foreground">Runtime</span><StatusBadge status={status} /></div>
 }
 
 export function ApplicationCard({ app, canManage, onDeleted }: { app: WorkspaceApplication; canManage?: boolean; onDeleted?: (id: string) => void }) {
@@ -73,7 +73,7 @@ export function ApplicationCard({ app, canManage, onDeleted }: { app: WorkspaceA
               {app.name}
             </Link>
           </h3>
-          <p className="mt-1 truncate text-xs text-muted-foreground" title={app.workspaceName || app.workspaceId}>
+          <p className="mt-1 truncate text-sm text-muted-foreground" title={app.workspaceName || app.workspaceId}>
             {app.workspaceName || app.workspaceId}
           </p>
         </div>
@@ -81,7 +81,7 @@ export function ApplicationCard({ app, canManage, onDeleted }: { app: WorkspaceA
       </header>
 
       <div className="mt-4 space-y-2">
-        <div className="flex flex-wrap items-center gap-2"><span className="text-[10px] text-muted-foreground">Sync</span><StatusBadge status={app.health} />{app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}{app.repositoryConfigurationId && <span className="text-[10px] text-muted-foreground">Managed by Git</span>}{app.configurationMissing && <span className="text-[10px] text-destructive">Definition missing</span>}</div>
+        <div className="flex flex-wrap items-center gap-2"><span className="text-xs text-muted-foreground">Sync</span><StatusBadge status={app.health} />{app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}{app.repositoryConfigurationId && <span className="text-xs text-muted-foreground">Managed by Git</span>}{app.configurationMissing && <span className="text-xs text-destructive">Definition missing</span>}</div>
         <RuntimeHealth condition={app.healthCondition} />
         {app.statusIssues?.length > 0 && <p className="mt-2 text-xs leading-5 text-destructive" title={app.statusIssues.map((issue) => issue.summary).join("\n")}>{app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")} check failed · <Link href={`/applications/${app.id}`} className="underline underline-offset-2">Details</Link></p>}
       </div>
@@ -233,7 +233,7 @@ export function ApplicationCollection({
                 className="h-8 shrink-0 gap-2"
               >
                 {label}
-                <span className="rounded bg-background/60 px-1.5 py-0.5 text-[10px] leading-none tabular-nums">
+                <span className="rounded bg-background/60 px-1.5 py-0.5 text-xs leading-none tabular-nums">
                   {counts[value]}
                 </span>
               </Button>
@@ -269,7 +269,7 @@ export function ApplicationCollection({
         </div>
       </section>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-1">
-        <p role="status" className="text-xs text-muted-foreground">Showing {visible.length} of {available.length} applications</p>
+        <p role="status" className="text-sm text-muted-foreground">Showing {visible.length} of {available.length} applications</p>
         <div className="flex w-fit gap-1 rounded-lg border bg-card p-1" role="group" aria-label="Application view">
           {(["cards", "table"] as const).map((value) => <Button type="button" key={value} aria-pressed={view === value} onClick={() => setView(value)} size="sm" variant={view === value ? "secondary" : "ghost"} className="capitalize">{value}</Button>)}
         </div>
@@ -305,7 +305,7 @@ export function ApplicationCollection({
                 id: "health",
                 title: "Health",
                 size: 150,
-                cell: (app) => <div className="space-y-2"><div className="flex flex-wrap gap-1.5"><StatusBadge status={app.health} /><StatusBadge status={app.healthCondition?.status ?? "Unknown"} />{app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}{app.repositoryConfigurationId && <span className="text-[10px] text-muted-foreground">Managed by Git</span>}{app.configurationMissing && <span className="text-[10px] text-destructive">Definition missing</span>}</div><p className="text-[10px] text-muted-foreground" title={app.healthCondition?.message}>{app.healthCondition?.reason ?? "Health not observed"} · {app.healthCondition?.lastTransitionTime ? new Date(app.healthCondition.lastTransitionTime).toLocaleString() : "Not observed yet"}</p>{app.statusIssues?.length > 0 && <span className="block text-xs text-destructive">{app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")} check failed</span>}</div>,
+                cell: (app) => <div className="space-y-2"><div className="flex flex-wrap gap-1.5"><StatusBadge status={app.health} /><StatusBadge status={app.healthCondition?.status ?? "Unknown"} />{app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}{app.repositoryConfigurationId && <span className="text-xs text-muted-foreground">Managed by Git</span>}{app.configurationMissing && <span className="text-xs text-destructive">Definition missing</span>}</div><p className="text-sm text-muted-foreground" title={app.healthCondition?.message}>{app.healthCondition?.reason ?? "Health not observed"} · {app.healthCondition?.lastTransitionTime ? new Date(app.healthCondition.lastTransitionTime).toLocaleString() : "Not observed yet"}</p>{app.statusIssues?.length > 0 && <span className="block text-xs text-destructive">{app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")} check failed</span>}</div>,
               },
               {
                 id: "target",

@@ -54,6 +54,12 @@ func permissionTestClients(t *testing.T, allowed func(namespace, apiGroup, resou
 		if err != nil {
 			return true, nil, err
 		}
+		if _, invalid := attributes["apiGroup"]; invalid {
+			return true, nil, errors.New("ResourceAttributes uses group, not apiGroup")
+		}
+		if _, present := attributes["group"]; !present {
+			return true, nil, errors.New("ResourceAttributes group is missing")
+		}
 		stringValue := func(key string) string {
 			value, _ := attributes[key].(string)
 			return value
@@ -61,7 +67,7 @@ func permissionTestClients(t *testing.T, allowed func(namespace, apiGroup, resou
 		result := &unstructured.Unstructured{Object: map[string]any{
 			"apiVersion": "authorization.k8s.io/v1",
 			"kind":       "SelfSubjectAccessReview",
-			"status":     map[string]any{"allowed": allowed(stringValue("namespace"), stringValue("apiGroup"), stringValue("resource"), stringValue("verb"))},
+			"status":     map[string]any{"allowed": allowed(stringValue("namespace"), stringValue("group"), stringValue("resource"), stringValue("verb"))},
 		}}
 		return true, result, nil
 	})
@@ -164,5 +170,52 @@ func TestClassifyPermissionTestError(t *testing.T) {
 				t.Fatalf("failure message leaked credential material: %q", failure.Message)
 			}
 		})
+	}
+}
+
+func TestCheckPermissionsUsesKubernetesResourceAttributeGroups(t *testing.T) {
+	seen := map[string]bool{}
+	client := permissionTestClients(t, func(namespace, group, resource, verb string) bool {
+		if namespace != "payments" {
+			t.Fatalf("unexpected target namespace: %q", namespace)
+		}
+		seen[group+"/"+resource] = true
+		switch resource {
+		case "pods":
+			return group == ""
+		case "deployments", "statefulsets", "daemonsets", "replicasets":
+			return group == "apps"
+		case "jobs":
+			return group == "batch"
+		default:
+			return false
+		}
+	})
+	report := CheckPermissions(context.Background(), client, "payments", nil)
+	if report.Status != "passed" {
+		t.Fatalf("workload access falsely denied: %+v", report)
+	}
+	for _, key := range []string{"/pods", "apps/deployments", "batch/jobs"} {
+		if !seen[key] {
+			t.Fatalf("API group not reviewed correctly: %s", key)
+		}
+	}
+}
+
+func TestReadOnlyClusterChecksCanUseEffectiveNamespaceCredential(t *testing.T) {
+	client := permissionTestClients(t, func(namespace, group, resource, verb string) bool {
+		if resource == "namespaces" {
+			return namespace == "" && group == ""
+		}
+		return namespace == "payments"
+	})
+	report := CheckPermissions(context.Background(), client, "payments", client)
+	if report.Status != "passed" || report.ClusterScope == nil || report.ClusterScope.Status != "passed" {
+		t.Fatalf("effective credential cluster checks failed: %+v", report)
+	}
+	for _, action := range client.Dynamic.(*fake.FakeDynamicClient).Actions() {
+		if action.GetResource().Resource != "selfsubjectaccessreviews" {
+			t.Fatalf("read-only check mutated resources: %v", action)
+		}
 	}
 }

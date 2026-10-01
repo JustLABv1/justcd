@@ -52,7 +52,7 @@ export function ApprovalRuleEditor({
       <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_120px] sm:items-center">
         <div>
           <h3 className="text-xs font-semibold">{title}</h3>
-          <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
+          <p className="mt-1 text-sm leading-4 text-muted-foreground">
             {deletion ? "Application deletion always requires approval." : "Set to 0 to allow ordinary syncs without approval."}
           </p>
         </div>
@@ -75,7 +75,7 @@ export function ApprovalRuleEditor({
       </div>
 
       <fieldset className="mt-4 space-y-2" disabled={disabled}>
-        <legend className="mb-2 text-[11px] font-medium">Who can approve?</legend>
+        <legend className="mb-2 text-xs font-medium">Who can approve?</legend>
         <div className="flex flex-wrap gap-x-5 gap-y-2">
           {roles.map((role) => (
             <label key={role.value} className="flex items-center gap-2 text-xs">
@@ -84,19 +84,19 @@ export function ApprovalRuleEditor({
             </label>
           ))}
         </div>
-        <p className="text-[10px] leading-4 text-muted-foreground">A higher workspace role also qualifies. Selected members qualify regardless of role.</p>
+        <p className="text-sm leading-4 text-muted-foreground">A higher workspace role also qualifies. Selected members qualify regardless of role.</p>
         {members.length > 0 ? (
           <div className="mt-3 grid gap-2 border-t pt-3 sm:grid-cols-2">
             {members.map((member) => (
               <label key={member.id} className="flex min-w-0 items-center gap-2 text-xs">
                 <Checkbox checked={selectedUsers.has(member.id)} disabled={disabled || (member.disabled && !selectedUsers.has(member.id))} onCheckedChange={(checked) => toggleMember(member.id, Boolean(checked))} />
                 <span className="min-w-0 truncate">{member.displayName || member.email}</span>
-                <span className="shrink-0 text-[10px] capitalize text-muted-foreground">{member.disabled ? "locked" : member.role}</span>
+                <span className="shrink-0 text-xs capitalize text-muted-foreground">{member.disabled ? "locked" : member.role}</span>
               </label>
             ))}
           </div>
         ) : (
-          <p className="mt-3 border-t pt-3 text-[11px] text-muted-foreground">Add workspace members to select individuals.</p>
+          <p className="mt-3 border-t pt-3 text-sm text-muted-foreground">Add workspace members to select individuals.</p>
         )}
       </fieldset>
     </section>

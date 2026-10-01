@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useState } from "react"
 import type { FormEvent } from "react"
+import { ConfirmDisclosure } from "@/components/confirm-disclosure"
 import { ConnectionDialog } from "@/components/connection-dialog"
 import { Button } from "@/components/ui/button"
 import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
 import { FormField } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
-import { api, apiPost, errorMessage } from "@/lib/api"
+import { api, apiDelete, apiPost, errorMessage } from "@/lib/api"
 import type {
   GitSource,
   ListResponse,
@@ -144,7 +145,7 @@ export function RepositoryConfigurations({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
         <div>
           <h3 className="text-sm font-medium">Applications managed by Git</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="mt-1 text-sm text-muted-foreground">
             Place a justcd.yaml beside each overlay or chart. JustCD discovers
             applications and keeps their configuration current.
           </p>
@@ -169,11 +170,11 @@ export function RepositoryConfigurations({
         </p>
       )}
       {loading ? (
-        <p role="status" className="px-5 py-4 text-xs text-muted-foreground">
+        <p role="status" className="px-5 py-4 text-sm text-muted-foreground">
           Loading repository discovery…
         </p>
       ) : !items.length && !error ? (
-        <p className="px-5 py-4 text-xs text-muted-foreground">
+        <p className="px-5 py-4 text-sm text-muted-foreground">
           No branches connected for application discovery yet.
         </p>
       ) : (
@@ -184,14 +185,14 @@ export function RepositoryConfigurations({
               className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:justify-between"
             >
               <div className="min-w-0">
-                <p className="text-xs font-medium">
+                <p className="text-sm font-medium">
                   {sources.find((source) => source.id === item.sourceId)
                     ?.name ?? "Repository"}{" "}
                   <span className="font-mono text-muted-foreground">
                     · {item.revision}
                   </span>
                 </p>
-                <p className="mt-1 text-xs text-muted-foreground">
+                <p className="mt-1 text-sm text-muted-foreground">
                   {item.enabled ? "Discovery enabled" : "Discovery paused"}
                   {item.lastCommit && ` · ${item.lastCommit.slice(0, 12)}`}
                   {item.lastCheckedAt &&
@@ -207,7 +208,7 @@ export function RepositoryConfigurations({
                 )}
               </div>
               {workspace.role === "owner" && (
-                <div className="flex shrink-0 gap-2">
+                <div className="flex shrink-0 flex-wrap gap-2">
                   <Button
                     size="sm"
                     variant="outline"
@@ -225,6 +226,7 @@ export function RepositoryConfigurations({
                   >
                     {item.enabled ? "Pause discovery" : "Resume discovery"}
                   </Button>
+                  <ConfirmDisclosure trigger="Remove" title="Remove repository discovery?" description="Remove this branch’s application discovery connection. Pause discovery and remove its managed applications first. The Git source and repository remain." confirmLabel="Remove discovery" disabled={Boolean(busy)} onConfirm={async () => { await apiDelete(`/api/v1/repository-configurations/${encodeURIComponent(item.id)}`); setItems((current) => current.filter((value) => value.id !== item.id)); toast.success("Repository discovery removed.") }} />
                 </div>
               )}
             </div>
@@ -266,7 +268,7 @@ export function RepositoryConfigurations({
             <p className="mb-2 text-xs font-medium">Example justcd.yaml</p>
             <pre className="overflow-x-auto text-xs leading-5">{example}</pre>
           </div>
-          <p className="text-xs leading-5 text-muted-foreground">
+          <p className="text-sm leading-5 text-muted-foreground">
             Paths are relative to this file. Use an existing cluster name or ID
             and a namespace bound to this workspace. For Helm, set renderer to
             helm and optionally source.valuesFiles. Definitions are checked

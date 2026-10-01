@@ -113,7 +113,7 @@ export function ErrorGuidance({ error }: { error: unknown }) {
   if (!(error instanceof APIError) || !error.remediation) return null
 
   return (
-    <p className="text-xs leading-5 text-muted-foreground">
+    <p className="text-sm leading-5 text-muted-foreground">
       <span className="font-medium text-foreground">
         {error.code} · {error.retryable ? "Retryable" : "Resolve before retrying"}:
       </span>{" "}

@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import { useCallback, useEffect, useState, type FormEvent } from "react"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
 import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
@@ -32,7 +33,7 @@ type PreviewProfile = {
   quotaMemory: string
 }
 
-type Connection = { managedByGit?: boolean; id: string; enabled: boolean; provider: "github" | "gitlab"; apiUrl: string; repository: string; previewProfile: PreviewProfile; statusCredentialId?: string }
+type Connection = { repositoryPrId?: string; managedByGit?: boolean; id: string; enabled: boolean; provider: "github" | "gitlab"; apiUrl: string; repository: string; previewProfile: PreviewProfile; statusCredentialId?: string }
 type SourceDetails = { repositoryUrl: string; provider: "github" | "gitlab"; apiUrl: string; repository: string; selfHosted: boolean }
 type ConnectionResponse = { source: SourceDetails; connection: Connection | null; webhookUrl: string; webhookConfigured?: boolean }
 type Review = { scopeNote?: string; id: string; number: number; headSha: string; sourceUrl: string; phase: string; error?: string; reportError?: string; plan?: PlanRecord; previewApplicationId?: string; expiresAt?: string; updatedAt: string; headBranch?: string; adoptedBranchPreview?: boolean; sharedEnvironment?: boolean; branchPreviews?: Application[] }
@@ -186,7 +187,7 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
     setSavedMessage("Webhook removed from JustCD. PR reporting continues by polling. Remove the repository webhook at your Git provider too.")
   }
 
-  const reportingActions = connection?.managedByGit ? <span className="text-sm text-muted-foreground">Managed by justcd.yaml · spec.pullRequests</span> : source && (canConfigure ?? ownerAccess) && (showSettings
+  const reportingActions = connection?.managedByGit ? <span className="text-sm text-muted-foreground">{connection.repositoryPrId ? "Managed by repository PR discovery settings" : "Managed by justcd.yaml · spec.pullRequests"}</span> : source && (canConfigure ?? ownerAccess) && (showSettings
     ? <Button variant="outline" size="sm" onClick={() => setShowSettings(false)}>Back to reviews</Button>
     : <><Button size="sm" variant={connection ? "outline" : "default"} onClick={() => setShowSettings(true)}>{connection ? "Edit settings" : "Enable PR reporting"}</Button>
       {connection && <Button type="button" size="sm" variant={connection.enabled ? "destructive" : "outline"} className={connection.enabled ? undefined : "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 dark:hover:bg-emerald-950"} loading={changingState} onClick={() => void setReportingEnabled(!connection.enabled)}>{connection.enabled ? "Disable reporting" : "Enable reporting"}</Button>}</>)
@@ -231,7 +232,7 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
 </div></details>
           <div className="md:col-span-2 border-t pt-4"><FormField label="PR deployment" htmlFor="pr-deployment-mode" hint="Deploy automatically when policy permits; otherwise wait for approval."><FormSelect id="pr-deployment-mode" value={profile.enabled ? profile.deploymentMode : "review-only"} onValueChange={(value) => { updateProfile("enabled", value !== "review-only"); if (value !== "review-only") updateProfile("deploymentMode", value as PreviewProfile["deploymentMode"]); if (value === "existing") updateProfile("allowForks", false) }} items={[{ value: "review-only", label: "Review plans only" }, { value: "isolated", label: "Isolated namespace per PR" }, { value: "existing", label: "Existing application environment" }]} /></FormField></div>
           {profile.enabled && <>
-            {profile.deploymentMode === "existing" ? <div className="md:col-span-2 space-y-3 rounded-lg border p-4 text-sm"><p>One PR at a time temporarily replaces this application’s source. Shared credentials and data remain available. On close or merge, review the return plan before resuming reconciliation. Migrations and data changes are not undone. Forks cannot deploy here.</p><label className="flex items-start gap-2"><input type="checkbox" checked={profile.confirmShared} onChange={(event) => updateProfile("confirmShared", event.target.checked)} />I authorize PR deployments to change this shared environment and its data.</label></div> : <>
+            {profile.deploymentMode === "existing" ? <div className="md:col-span-2 space-y-3 rounded-lg border p-4 text-sm"><p>One PR at a time temporarily replaces this application’s source. Shared credentials and data remain available. On close or merge, review the return plan before resuming reconciliation. Migrations and data changes are not undone. Forks cannot deploy here.</p><label className="flex items-start gap-2"><Checkbox aria-label="Authorize shared environment PR deployments" className="mt-0.5" checked={profile.confirmShared} onCheckedChange={(checked) => updateProfile("confirmShared", checked)} />I authorize PR deployments to change this shared environment and its data.</label></div> : <>
             <FormField label="Preview manifest or overlay path" htmlFor="manifest-path" hint="Required for YAML and Kustomize; optional for Helm"><Input id="manifest-path" value={profile.manifestPath} onChange={(event) => updateProfile("manifestPath",event.target.value)} placeholder="deploy/preview" /></FormField>
             <FormField label="Database strategy" htmlFor="database-strategy"><FormSelect id="database-strategy" value={profile.databaseStrategy} onValueChange={(value) => updateProfile("databaseStrategy", value)} items={["none","shared-preview","schema-per-pr","ephemeral","sanitized-snapshot"].map(value => ({ value, label: value }))} /></FormField>
             <FormField label="Ingress host suffix" htmlFor="host-suffix" hint="All preview ingress hosts must end in the generated namespace and this suffix."><Input id="host-suffix" value={profile.hostSuffix} onChange={(event) => updateProfile("hostSuffix",event.target.value)} /></FormField>
@@ -241,7 +242,7 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
             <FormField label="CPU quota" htmlFor="quota-cpu"><Input id="quota-cpu" value={profile.quotaCpu} onChange={(event) => updateProfile("quotaCpu",event.target.value)} /></FormField>
             <FormField label="Memory quota" htmlFor="quota-memory"><Input id="quota-memory" value={profile.quotaMemory} onChange={(event) => updateProfile("quotaMemory",event.target.value)} /></FormField>
             <FormField label="Allowed preview secrets" htmlFor="allowed-secrets" hint="Comma separated names of secrets already provisioned in the preview namespace."><Input id="allowed-secrets" value={profile.allowedSecrets.join(", ")} onChange={(event) => updateProfile("allowedSecrets",event.target.value.split(",").map((item)=>item.trim()).filter(Boolean))} /></FormField>
-            <label className="md:col-span-2 flex items-center gap-2 text-sm"><input type="checkbox" checked={profile.allowForks} onChange={(event) => updateProfile("allowForks",event.target.checked)} />Allow fork PRs with owner approval and no secrets</label>
+            <label className="md:col-span-2 flex items-center gap-2 text-sm"><Checkbox aria-label="Allow fork PRs with owner approval and no secrets" checked={profile.allowForks} onCheckedChange={(checked) => updateProfile("allowForks", checked)} />Allow fork PRs with owner approval and no secrets</label>
 </div></details>
             <details className="md:col-span-2 rounded-lg border p-3"><summary className="cursor-pointer text-sm font-medium">Helm values <span className="font-normal text-muted-foreground">· optional</span></summary><div className="mt-4 grid gap-4">            <FormField label="Helm values files" htmlFor="helm-values-files" hint="Comma separated, repository-relative preview values files."><Input id="helm-values-files" value={profile.helmValuesFiles.join(", ")} onChange={(event) => updateProfile("helmValuesFiles",event.target.value.split(",").map((item)=>item.trim()).filter(Boolean))} /></FormField>
             <div className="md:col-span-2"><FormField label="Preview Helm values YAML" htmlFor="helm-values-yaml" hint="Supports {{namespace}}, {{number}}, and {{sha}} placeholders. Quote placeholders in YAML strings."><Textarea id="helm-values-yaml" value={profile.helmValuesYaml} onChange={(event) => updateProfile("helmValuesYaml",event.target.value)} className="min-h-32 font-mono" /></FormField></div>

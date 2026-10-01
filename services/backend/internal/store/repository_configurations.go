@@ -3,28 +3,35 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 )
 
 type RepositoryConfiguration struct {
-	ID            string     `json:"id"`
-	WorkspaceID   string     `json:"workspaceId"`
-	SourceID      string     `json:"sourceId"`
-	Revision      string     `json:"revision"`
-	Enabled       bool       `json:"enabled"`
-	LastCheckedAt *time.Time `json:"lastCheckedAt,omitempty"`
-	LastCommit    string     `json:"lastCommit"`
-	LastError     string     `json:"lastError"`
-	CreatedAt     time.Time  `json:"createdAt"`
+	PRSettings    RepositoryPRSettings `json:"prSettings"`
+	PRError       string               `json:"prError"`
+	ID            string               `json:"id"`
+	WorkspaceID   string               `json:"workspaceId"`
+	SourceID      string               `json:"sourceId"`
+	Revision      string               `json:"revision"`
+	Enabled       bool                 `json:"enabled"`
+	LastCheckedAt *time.Time           `json:"lastCheckedAt,omitempty"`
+	LastCommit    string               `json:"lastCommit"`
+	LastError     string               `json:"lastError"`
+	CreatedAt     time.Time            `json:"createdAt"`
 }
 
-const repositoryColumns = `id,workspace_id,source_id,revision,enabled,last_checked_at,last_commit,last_error,created_at`
+const repositoryColumns = `id,workspace_id,source_id,revision,enabled,last_checked_at,last_commit,last_error,created_at,pr_settings,pr_error`
 
 func scanRepository(row interface{ Scan(...any) error }) (RepositoryConfiguration, error) {
 	var v RepositoryConfiguration
-	err := row.Scan(&v.ID, &v.WorkspaceID, &v.SourceID, &v.Revision, &v.Enabled, &v.LastCheckedAt, &v.LastCommit, &v.LastError, &v.CreatedAt)
+	var settings []byte
+	err := row.Scan(&v.ID, &v.WorkspaceID, &v.SourceID, &v.Revision, &v.Enabled, &v.LastCheckedAt, &v.LastCommit, &v.LastError, &v.CreatedAt, &settings, &v.PRError)
+	if err == nil {
+		err = json.Unmarshal(settings, &v.PRSettings)
+	}
 	return v, err
 }
 func (s *Store) RepositoryConfigurationByID(ctx context.Context, id string) (RepositoryConfiguration, error) {
@@ -111,11 +118,19 @@ func (s *Store) ApplyRepositoryApplications(ctx context.Context, repository Repo
 				return err
 			}
 			if conflict {
-				return fmt.Errorf("application %q already exists outside this repository connection", app.Name)
-			}
-			app.ID = NewID()
-			if err := createApplication(ctx, tx, app); err != nil {
-				return err
+				promotedID, err := promoteRepositoryPR(ctx, tx, repository, app)
+				if err != nil {
+					return err
+				}
+				if promotedID == "" {
+					return fmt.Errorf("application %q already exists outside this repository connection", app.Name)
+				}
+				app.ID = promotedID
+			} else {
+				app.ID = NewID()
+				if err := createApplication(ctx, tx, app); err != nil {
+					return err
+				}
 			}
 		case err != nil:
 			return err

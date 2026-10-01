@@ -99,52 +99,13 @@ func (s *Service) ReconcileRepository(parent context.Context, id string) (result
 	if err != nil {
 		return err
 	}
-	clusters, err := s.Store.ListClusters(ctx, repository.WorkspaceID)
-	if err != nil {
-		return err
-	}
 	apps := make([]store.Application, 0, len(definitions))
 	for _, definition := range definitions {
-		clusterID := ""
-		for _, cluster := range clusters {
-			if cluster.ID == definition.Spec.Destination.Cluster || cluster.Name == definition.Spec.Destination.Cluster {
-				if clusterID != "" && clusterID != cluster.ID {
-					return fmt.Errorf("%s: cluster reference is ambiguous; use its ID", definition.File)
-				}
-				clusterID = cluster.ID
-			}
-		}
-		if clusterID == "" {
-			return fmt.Errorf("%s: cluster %q is unavailable to this workspace", definition.File, definition.Spec.Destination.Cluster)
-		}
-		binding, err := s.Store.NamespaceBinding(ctx, repository.WorkspaceID, clusterID, definition.Spec.Destination.Namespace)
+		app, err := s.ResolveRepositoryDefinition(ctx, repository, definition)
 		if err != nil {
-			if !errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("%s: load namespace binding: %w", definition.File, err)
-			}
-			if !definition.Spec.Destination.CreateNamespaces {
-				return fmt.Errorf("%s: namespace %q requires an existing workspace binding or spec.destination.createNamespaces: true", definition.File, definition.Spec.Destination.Namespace)
-			}
-			// Persist this binding with the complete application snapshot, after
-			// verifying the cluster's default credential in the transaction.
-			binding = store.NamespaceBinding{Namespace: definition.Spec.Destination.Namespace}
+			return err
 		}
-		apps = append(apps, store.Application{
-			WorkspaceID: repository.WorkspaceID, Name: definition.Metadata.Name, SourceID: repository.SourceID, Revision: repository.Revision,
-			ManifestPath: definition.Spec.Source.Path, Renderer: definition.Spec.Source.Renderer,
-			HelmReleaseName: definition.Spec.Source.ReleaseName, HelmValuesFiles: definition.Spec.Source.ValuesFiles, HelmValuesYAML: definition.Spec.Source.ValuesYAML,
-			KustomizeHelmEnabled: definition.Spec.Source.KustomizeHelmEnabled, KustomizeNamespaceOverride: definition.Spec.Source.KustomizeNamespaceOverride,
-			CreateNamespaces: definition.Spec.Destination.CreateNamespaces, ClusterID: clusterID, Namespaces: []store.NamespaceBinding{binding}, SyncPolicy: definition.Spec.SyncPolicy, PollSeconds: definition.Spec.PollSeconds, RetryPolicy: store.DefaultRetryPolicy(),
-			RepositoryPullRequests: definition.Spec.PullRequests, RepositoryConfigurationID: id, ConfigurationPath: definition.File, ConfigurationHash: definition.Hash,
-		})
-		app := &apps[len(apps)-1]
-		for _, ignore := range definition.Spec.IgnoreResources {
-			if ignore.Name != "" {
-				app.RepositoryIgnoreRules = append(app.RepositoryIgnoreRules, core.IgnoreRule{Identity: core.Identity{ClusterID: clusterID, APIVersion: ignore.APIVersion, Kind: ignore.Kind, Namespace: ignore.Namespace, Name: ignore.Name, ClusterScoped: ignore.ClusterScoped}, Reason: ignore.Reason, ManagedByGit: true})
-			} else {
-				app.RepositoryIgnoreSelectors = append(app.RepositoryIgnoreSelectors, core.IgnoreSelector{APIVersion: ignore.APIVersion, Kind: ignore.Kind, LabelKey: ignore.LabelKey, LabelValue: ignore.LabelValue, Reason: ignore.Reason, ManagedByGit: true})
-			}
-		}
+		apps = append(apps, app)
 	}
 	if err := s.Store.ApplyRepositoryApplications(ctx, repository, checkout.Commit, apps); err != nil {
 		return err
@@ -153,4 +114,52 @@ func (s *Service) ReconcileRepository(parent context.Context, id string) (result
 		_ = s.Store.Audit(ctx, "", "repository.configuration.reconciled", "repository_configuration", id, map[string]any{"commit": checkout.Commit, "applications": len(apps), "workspaceId": repository.WorkspaceID, "actor": systemActorID})
 	}
 	return nil
+}
+
+// ResolveRepositoryDefinition resolves only workspace-accessible destinations.
+func (s *Service) ResolveRepositoryDefinition(ctx context.Context, repository store.RepositoryConfiguration, definition repoconfig.Definition) (store.Application, error) {
+	clusters, err := s.Store.ListClusters(ctx, repository.WorkspaceID)
+	if err != nil {
+		return store.Application{}, err
+	}
+	clusterID := ""
+	for _, cluster := range clusters {
+		if cluster.ID == definition.Spec.Destination.Cluster || cluster.Name == definition.Spec.Destination.Cluster {
+			if clusterID != "" && clusterID != cluster.ID {
+				return store.Application{}, fmt.Errorf("%s: cluster reference is ambiguous; use its ID", definition.File)
+			}
+			clusterID = cluster.ID
+		}
+	}
+	if clusterID == "" {
+		return store.Application{}, fmt.Errorf("%s: cluster %q is unavailable to this workspace", definition.File, definition.Spec.Destination.Cluster)
+	}
+	binding, err := s.Store.NamespaceBinding(ctx, repository.WorkspaceID, clusterID, definition.Spec.Destination.Namespace)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return store.Application{}, fmt.Errorf("%s: load namespace binding: %w", definition.File, err)
+		}
+		if !definition.Spec.Destination.CreateNamespaces {
+			return store.Application{}, fmt.Errorf("%s: namespace %q requires an existing workspace binding or spec.destination.createNamespaces: true", definition.File, definition.Spec.Destination.Namespace)
+		}
+		// Persist this binding with the complete application snapshot, after
+		// verifying the cluster's default credential in the transaction.
+		binding = store.NamespaceBinding{Namespace: definition.Spec.Destination.Namespace}
+	}
+	app := store.Application{
+		WorkspaceID: repository.WorkspaceID, Name: definition.Metadata.Name, SourceID: repository.SourceID, Revision: repository.Revision,
+		ManifestPath: definition.Spec.Source.Path, Renderer: definition.Spec.Source.Renderer,
+		HelmReleaseName: definition.Spec.Source.ReleaseName, HelmValuesFiles: definition.Spec.Source.ValuesFiles, HelmValuesYAML: definition.Spec.Source.ValuesYAML,
+		KustomizeHelmEnabled: definition.Spec.Source.KustomizeHelmEnabled, KustomizeNamespaceOverride: definition.Spec.Source.KustomizeNamespaceOverride,
+		CreateNamespaces: definition.Spec.Destination.CreateNamespaces, ClusterID: clusterID, Namespaces: []store.NamespaceBinding{binding}, SyncPolicy: definition.Spec.SyncPolicy, PollSeconds: definition.Spec.PollSeconds, RetryPolicy: store.DefaultRetryPolicy(),
+		RepositoryPullRequests: definition.Spec.PullRequests, RepositoryConfigurationID: repository.ID, ConfigurationPath: definition.File, ConfigurationHash: definition.Hash,
+	}
+	for _, ignore := range definition.Spec.IgnoreResources {
+		if ignore.Name != "" {
+			app.RepositoryIgnoreRules = append(app.RepositoryIgnoreRules, core.IgnoreRule{Identity: core.Identity{ClusterID: clusterID, APIVersion: ignore.APIVersion, Kind: ignore.Kind, Namespace: ignore.Namespace, Name: ignore.Name, ClusterScoped: ignore.ClusterScoped}, Reason: ignore.Reason, ManagedByGit: true})
+		} else {
+			app.RepositoryIgnoreSelectors = append(app.RepositoryIgnoreSelectors, core.IgnoreSelector{APIVersion: ignore.APIVersion, Kind: ignore.Kind, LabelKey: ignore.LabelKey, LabelValue: ignore.LabelValue, Reason: ignore.Reason, ManagedByGit: true})
+		}
+	}
+	return app, nil
 }

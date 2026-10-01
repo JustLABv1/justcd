@@ -20,6 +20,8 @@ import (
 )
 
 type Event struct {
+	TargetBranch    string
+	Merged          bool
 	BaseSHA         string
 	BaseIsMergeBase bool
 	HeadBranch      string
@@ -306,10 +308,12 @@ func (c Client) ListOpen(ctx context.Context, provider, apiURL, repository, toke
 				} `json:"repo"`
 			} `json:"head"`
 			Base struct {
+				Ref  string `json:"ref"`
 				Repo struct {
 					FullName string `json:"full_name"`
 				} `json:"repo"`
 			} `json:"base"`
+			TargetBranch    string `json:"target_branch"`
 			SourceBranch    string `json:"source_branch"`
 			SourceProjectID int    `json:"source_project_id"`
 			TargetProjectID int    `json:"target_project_id"`
@@ -323,9 +327,11 @@ func (c Client) ListOpen(ctx context.Context, provider, apiURL, repository, toke
 			e := Event{Repository: repository, EventAt: v.UpdatedAt}
 			if provider == "github" {
 				e.HeadBranch = v.Head.Ref
+				e.TargetBranch = v.Base.Ref
 				e.Number, e.HeadSHA, e.URL, e.Fork = v.Number, v.Head.SHA, v.HTMLURL, v.Head.Repo.FullName != v.Base.Repo.FullName
 			} else {
 				e.HeadBranch = v.SourceBranch
+				e.TargetBranch = v.TargetBranch
 				e.Number, e.HeadSHA, e.URL, e.Fork = v.IID, v.SHA, v.WebURL, v.SourceProjectID == 0 || v.TargetProjectID == 0 || v.SourceProjectID != v.TargetProjectID
 			}
 			if e.Number <= 0 || len(e.HeadSHA) != 40 || e.EventAt.IsZero() {
@@ -388,6 +394,7 @@ func (c Client) Current(ctx context.Context, provider, apiURL, repository, token
 			} `json:"repo"`
 		} `json:"head"`
 		Base struct {
+			Ref  string `json:"ref"`
 			SHA  string `json:"sha"`
 			Repo struct {
 				FullName string `json:"full_name"`
@@ -397,6 +404,7 @@ func (c Client) Current(ctx context.Context, provider, apiURL, repository, token
 			BaseSHA string `json:"base_sha"`
 			HeadSHA string `json:"head_sha"`
 		} `json:"diff_refs"`
+		TargetBranch    string `json:"target_branch"`
 		SourceBranch    string `json:"source_branch"`
 		SourceProjectID int    `json:"source_project_id"`
 		TargetProjectID int    `json:"target_project_id"`
@@ -407,6 +415,8 @@ func (c Client) Current(ctx context.Context, provider, apiURL, repository, token
 	e := Event{Number: number, Repository: repository, EventAt: raw.UpdatedAt}
 	if provider == "github" {
 		e.HeadBranch = raw.Head.Ref
+		e.TargetBranch = raw.Base.Ref
+		e.Merged = raw.MergedAt != nil
 		e.HeadSHA = raw.Head.SHA
 		e.BaseSHA = raw.Base.SHA
 		e.URL = raw.HTMLURL
@@ -415,6 +425,8 @@ func (c Client) Current(ctx context.Context, provider, apiURL, repository, token
 	}
 	if provider == "gitlab" {
 		e.HeadBranch = raw.SourceBranch
+		e.TargetBranch = raw.TargetBranch
+		e.Merged = raw.State == "merged"
 		e.HeadSHA = raw.SHA
 		if raw.DiffRefs.HeadSHA == raw.SHA {
 			e.BaseSHA = raw.DiffRefs.BaseSHA

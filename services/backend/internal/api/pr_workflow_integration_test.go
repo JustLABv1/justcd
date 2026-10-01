@@ -111,4 +111,63 @@ func TestIntegrationPRCredentialsAndCommentApprovals(t *testing.T) {
 	if err = db.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM operations`).Scan(&operations); err != nil || operations != 0 {
 		t.Fatalf("stale PR queued operations: %d %v", operations, err)
 	}
+	testRepositoryPRAPIBoundaries(t, ctx, server)
+}
+
+func testRepositoryPRAPIBoundaries(t *testing.T, ctx context.Context, server *Server) {
+	db := server.Store
+	if err := db.CreateNamespaceBinding(ctx, "pr-workspace", "pr-cluster", "dev", nil); err != nil {
+		t.Fatal(err)
+	}
+	repo := store.RepositoryConfiguration{ID: "api-bootstrap", WorkspaceID: "pr-workspace", SourceID: "pr-source", Revision: "main", Enabled: true}
+	if err := db.CreateRepositoryConfiguration(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	policy := store.RepositoryPRSettings{Enabled: true, CredentialID: "pr-credential", Mode: "review-only", Destinations: []store.PRDestination{{ClusterID: "pr-cluster", Namespace: "dev"}}}
+	if err := db.SaveRepositoryPRSettings(ctx, repo.ID, policy); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := db.RepositoryConfigurationByID(ctx, repo.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := strings.Repeat("c", 40)
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"state": "closed", "head": map[string]any{"sha": head, "ref": "new-app", "repo": map[string]string{"full_name": "org/app"}}, "base": map[string]any{"ref": "main", "repo": map[string]string{"full_name": "org/app"}}})
+	}))
+	defer provider.Close()
+	app := store.Application{WorkspaceID: repo.WorkspaceID, Name: "review-only-bootstrap", SourceID: repo.SourceID, Revision: head, ManifestPath: "new-app", Renderer: "yaml", ClusterID: "pr-cluster", Namespaces: []store.NamespaceBinding{{Namespace: "dev"}}, SyncPolicy: "manual", PollSeconds: 86400, RetryPolicy: store.DefaultRetryPolicy(), ConfigurationHash: "one"}
+	c := store.SourceControlConnection{ID: store.NewID(), Provider: "github", APIURL: provider.URL, Repository: "org/app", StatusCredentialID: &policy.CredentialID, PreviewProfile: store.PreviewProfile{}}
+	v, err := db.UpsertRepositoryPRApplication(ctx, repo, store.RepositoryPRApplication{RepositoryID: repo.ID, Number: 43, DefinitionName: "new-app", Mode: "review-only"}, app, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	review, conn, err := db.ReviewByPreviewApplication(ctx, *v.ApplicationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered, err := db.ApplicationByID(ctx, *v.ApplicationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = server.validatePRDeployment(ctx, conn, review, registered, store.PlanRecord{Plan: core.Plan{ApplicationID: registered.ID, Revision: head}}); err == nil || !strings.Contains(err.Error(), "policy does not permit") {
+		t.Fatalf("review-only application allowed deployment: %v", err)
+	}
+	// Closure of an undeployed review-only app removes only JustCD configuration.
+	for i := 0; i < 2; i++ {
+		review, _, err = db.ReviewByPreviewApplication(ctx, *v.ApplicationID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = server.processReview(ctx, review); err != nil {
+			t.Fatal(err)
+		}
+	}
+	history, err := db.RepositoryPRByID(ctx, v.ID)
+	if err != nil || history.Phase != "removed" || history.ApplicationID != nil || history.ConnectionID != nil {
+		t.Fatalf("cleanup history lost: %+v %v", history, err)
+	}
+	if _, err = db.NamespaceBinding(ctx, repo.WorkspaceID, "pr-cluster", "dev"); err != nil {
+		t.Fatal("review-only cleanup removed existing namespace binding", err)
+	}
 }

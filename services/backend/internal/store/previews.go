@@ -30,6 +30,7 @@ type PreviewProfile struct {
 }
 
 type SourceControlConnection struct {
+	RepositoryPRID      *string        `json:"repositoryPrId,omitempty"`
 	ManagedByGit        bool           `json:"managedByGit"`
 	StatusCredentialID  *string        `json:"statusCredentialId,omitempty"`
 	ID                  string         `json:"id"`
@@ -45,12 +46,12 @@ type SourceControlConnection struct {
 	CreatedAt           time.Time      `json:"createdAt"`
 }
 
-const connectionColumns = `id,enabled,workspace_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile,created_at,status_credential_id,managed_by_git`
+const connectionColumns = `id,enabled,workspace_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile,created_at,status_credential_id,managed_by_git,repository_pr_id`
 
 func scanSourceControlConnection(row interface{ Scan(...any) error }) (SourceControlConnection, error) {
 	var c SourceControlConnection
 	var profile []byte
-	err := row.Scan(&c.ID, &c.Enabled, &c.WorkspaceID, &c.ApplicationID, &c.Provider, &c.APIURL, &c.Repository, &c.WebhookSecretCipher, &c.StatusTokenCipher, &profile, &c.CreatedAt, &c.StatusCredentialID, &c.ManagedByGit)
+	err := row.Scan(&c.ID, &c.Enabled, &c.WorkspaceID, &c.ApplicationID, &c.Provider, &c.APIURL, &c.Repository, &c.WebhookSecretCipher, &c.StatusTokenCipher, &profile, &c.CreatedAt, &c.StatusCredentialID, &c.ManagedByGit, &c.RepositoryPRID)
 	if err == nil {
 		err = json.Unmarshal(profile, &c.PreviewProfile)
 	}
@@ -109,7 +110,7 @@ func (s *Store) RemoveSourceControlWebhookSecret(ctx context.Context, applicatio
 }
 
 func (s *Store) EnabledSourceControlConnections(ctx context.Context) ([]SourceControlConnection, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+connectionColumns+` FROM source_control_connections WHERE enabled ORDER BY id`)
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+connectionColumns+` FROM source_control_connections WHERE enabled AND repository_pr_id IS NULL ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -345,8 +346,8 @@ func (s *Store) ReleaseReviewLease(ctx context.Context, id string) error {
 // for a SHA that has since been superseded or closed.
 func (s *Store) UpdateReviewResult(ctx context.Context, v PullRequestReview, expectedSHA string, expectedClosed bool) (bool, error) {
 	result, err := s.DB.ExecContext(ctx, `UPDATE pull_request_reviews SET phase=$2,plan=$3::jsonb,error=$4,preview_application_id=$5,
-		expires_at=$6,processed_sha=$7,updated_at=NOW() WHERE id=$1 AND head_sha=$8 AND closed=$9`,
-		v.ID, v.Phase, nullableJSON(v.Plan), v.Error, v.PreviewApplicationID, v.ExpiresAt, v.ProcessedSHA, expectedSHA, expectedClosed)
+		expires_at=$6,processed_sha=$7,shared_environment=$10,updated_at=NOW() WHERE id=$1 AND head_sha=$8 AND closed=$9`,
+		v.ID, v.Phase, nullableJSON(v.Plan), v.Error, v.PreviewApplicationID, v.ExpiresAt, v.ProcessedSHA, expectedSHA, expectedClosed, v.SharedEnvironment)
 	if err != nil {
 		return false, err
 	}

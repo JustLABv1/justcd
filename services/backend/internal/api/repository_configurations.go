@@ -68,6 +68,12 @@ func (s *Server) reconcileRepositoryConfiguration(w http.ResponseWriter, r *http
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
+	if repository.PRSettings.Enabled {
+		if err := s.discoverRepositoryPRs(r.Context(), repository); err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+	}
 	repository, err = s.Store.RepositoryConfigurationByID(r.Context(), repository.ID)
 	if err != nil {
 		writeStoreError(w, "could not load repository configuration")

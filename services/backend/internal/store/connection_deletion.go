@@ -25,6 +25,7 @@ func (s *Store) DeleteConnection(ctx context.Context, kind, id string) error {
 		usage = `SELECT EXISTS(SELECT 1 FROM workspace_git_source_shares WHERE git_source_id=$1 AND status IN ('pending','accepted'))`
 	case "repository_configuration":
 		query = `DELETE FROM repository_configurations WHERE id=$1`
+		usage = `SELECT EXISTS(SELECT 1 FROM repository_pr_applications WHERE repository_id=$1 AND application_id IS NOT NULL)`
 		lock = `SELECT id FROM repository_configurations WHERE id=$1 FOR UPDATE`
 	case "credential":
 		query = `DELETE FROM credentials WHERE id=$1`

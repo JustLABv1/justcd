@@ -107,6 +107,8 @@ func (s *Server) routes() {
 	s.Mux.Handle("GET /api/v1/clusters/{clusterID}/workspace-credential", s.requireAuth(http.HandlerFunc(s.getWorkspaceClusterCredential)))
 	s.Mux.Handle("PUT /api/v1/clusters/{clusterID}/workspace-credential", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.setWorkspaceClusterCredential))))
 	s.Mux.Handle("DELETE /api/v1/repository-configurations/{repositoryID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.deleteRepositoryConfiguration))))
+	s.Mux.Handle("GET /api/v1/repository-configurations/{repositoryID}/pull-requests", s.requireAuth(http.HandlerFunc(s.listRepositoryPRApplications)))
+	s.Mux.Handle("PUT /api/v1/repository-configurations/{repositoryID}/pull-requests/settings", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.saveRepositoryPRSettings))))
 	s.Mux.Handle("GET /api/v1/repository-configurations", s.requireAuth(http.HandlerFunc(s.listRepositoryConfigurations)))
 	s.Mux.Handle("POST /api/v1/repository-configurations", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createRepositoryConfiguration))))
 	s.Mux.Handle("PUT /api/v1/repository-configurations/{repositoryID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateRepositoryConfiguration))))

@@ -141,6 +141,19 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 	if err := s.Migrate(ctx); err != nil {
 		t.Fatalf("idempotent migration: %v", err)
 	}
+
+	clusterApps, err := s.ListApplications(ctx, "integration-workspace")
+	if err != nil || len(clusterApps) != 1 {
+		t.Fatalf("application cluster lookup: %+v %v", clusterApps, err)
+	}
+	cluster, err := s.ClusterByID(ctx, clusterApps[0].ClusterID)
+	if err != nil || clusterApps[0].ClusterName != cluster.Name {
+		t.Fatalf("application target name: %+v %v", clusterApps[0], err)
+	}
+	single, err := s.ApplicationByID(ctx, clusterApps[0].ID)
+	if err != nil || single.ClusterName != cluster.Name {
+		t.Fatalf("application detail target name: %+v %v", single, err)
+	}
 	var name string
 	if err := db.QueryRowContext(ctx, `SELECT name FROM workspaces WHERE id='integration-workspace'`).Scan(&name); err != nil || name != "Migration survivor" {
 		t.Fatalf("existing workspace lost during upgrade: %q, %v", name, err)

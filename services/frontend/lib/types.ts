@@ -204,6 +204,7 @@ export type Application = {
   targetHelmValuesYaml: string
   namespaceHelmValues: Record<string, { files: string[]; yaml: string }>
   clusterId: string
+  clusterName?: string
   namespaces: NamespaceBinding[]
   syncPolicy: "manual" | "auto-safe"
   pollSeconds: number

@@ -81,12 +81,16 @@ export function ApplicationCard({ app, canManage, onDeleted }: { app: WorkspaceA
       </header>
 
       <div className="mt-4 space-y-2">
-        <div className="flex flex-wrap items-center gap-2"><span className="text-xs text-muted-foreground">Sync</span><StatusBadge status={app.health} />{app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}{app.repositoryConfigurationId && <span className="text-xs text-muted-foreground">Managed by Git</span>}{app.configurationMissing && <span className="text-xs text-destructive">Definition missing</span>}</div>
+        <div className="flex flex-wrap items-center gap-2"><span className="text-xs text-muted-foreground">Sync</span><StatusBadge status={app.health} />{app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}{app.configurationMissing && <span className="text-xs text-destructive">Definition missing</span>}</div>
         <RuntimeHealth condition={app.healthCondition} />
         {app.statusIssues?.length > 0 && <p className="mt-2 text-xs leading-5 text-destructive" title={app.statusIssues.map((issue) => issue.summary).join("\n")}>{app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")} check failed · <Link href={`/applications/${app.id}`} className="underline underline-offset-2">Details</Link></p>}
       </div>
 
       <dl className="my-5 grid grid-cols-[70px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-2.5 text-xs">
+        <dt className="text-muted-foreground">Cluster</dt>
+        <dd className="truncate font-medium" title={`${app.clusterName || app.clusterId} (${app.clusterId})`}>{app.clusterName || app.clusterId}</dd>
+        <dt className="text-muted-foreground">Config</dt>
+        <dd className="truncate" title={app.configurationPath || "Configured in JustCD"}>{app.repositoryConfigurationId ? "Managed by Git" : "Managed in JustCD"}</dd>
         <dt className="text-muted-foreground">Path</dt>
         <dd className="truncate font-mono" title={app.manifestPath || "."}>
           {app.manifestPath || "."}
@@ -136,6 +140,7 @@ export function ApplicationCollection({
   const available = applications.filter((app) => !removedIds.includes(app.id))
   const filterFields: FilterField[] = [
     ...(workspaces ? [{ id: "workspace", label: "Workspace", type: "select" as const, options: workspaces.map((item) => ({ value: item.id, label: item.name })), operators: [{ value: "is", label: "is" }] }] : []),
+    { id: "cluster", label: "Cluster", type: "select", options: [...new Map(available.map((app) => [app.clusterId, { value: app.clusterId, label: app.clusterName || app.clusterId }])).values()].sort((left, right) => left.label.localeCompare(right.label)), operators: [{ value: "is", label: "is" }] },
     { id: "namespace", label: "Namespace", type: "select", options: [...new Set(available.flatMap((app) => app.namespaces.map((item) => item.namespace)))].sort().map((value) => ({ value, label: value })), operators: [{ value: "is", label: "is" }] },
     { id: "reconciliation", label: "Reconciliation", type: "select", options: [{ value: "paused", label: "Paused" }, { value: "active", label: "Active" }], operators: [{ value: "is", label: "is" }] },
     { id: "renderer", label: "Renderer", type: "select", options: [{ value: "yaml", label: "Plain YAML / JSON" }, { value: "helm", label: "Helm" }, { value: "kustomize", label: "Kustomize" }], operators: [{ value: "is", label: "is" }] },
@@ -169,13 +174,14 @@ export function ApplicationCollection({
           if (!value) return true
           switch (condition.field) {
             case "workspace": return app.workspaceId === rawValue
+            case "cluster": return app.clusterId === rawValue
             case "namespace": return app.namespaces.some((item) => item.namespace.toLowerCase() === value)
             case "reconciliation": return value === "paused" ? app.autoSyncPaused : !app.autoSyncPaused
             case "renderer": return app.renderer === value
             default: return true
           }
         }) &&
-        `${app.name} ${app.workspaceName ?? ""} ${app.namespaces.map((item) => item.namespace).join(" ")} ${app.revision} ${app.autoSyncPaused ? "reconciliation paused disabled" : "reconciliation active"}`
+        `${app.name} ${app.workspaceName ?? ""} ${app.clusterName ?? ""} ${app.clusterId} ${app.namespaces.map((item) => item.namespace).join(" ")} ${app.revision} ${app.autoSyncPaused ? "reconciliation paused disabled" : "reconciliation active"}`
           .toLowerCase()
           .includes(query.trim().toLowerCase())
       )
@@ -248,7 +254,7 @@ export function ApplicationCollection({
             />
             <Input
               aria-label="Search applications"
-              placeholder="Search applications, namespaces, revisions…"
+              placeholder="Search applications, clusters, namespaces, revisions…"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               className="h-9 bg-background pl-9"
@@ -305,7 +311,19 @@ export function ApplicationCollection({
                 id: "health",
                 title: "Health",
                 size: 150,
-                cell: (app) => <div className="space-y-2"><div className="flex flex-wrap gap-1.5"><StatusBadge status={app.health} /><StatusBadge status={app.healthCondition?.status ?? "Unknown"} />{app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}{app.repositoryConfigurationId && <span className="text-xs text-muted-foreground">Managed by Git</span>}{app.configurationMissing && <span className="text-xs text-destructive">Definition missing</span>}</div><p className="text-sm text-muted-foreground" title={app.healthCondition?.message}>{app.healthCondition?.reason ?? "Health not observed"} · {app.healthCondition?.lastTransitionTime ? new Date(app.healthCondition.lastTransitionTime).toLocaleString() : "Not observed yet"}</p>{app.statusIssues?.length > 0 && <span className="block text-xs text-destructive">{app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")} check failed</span>}</div>,
+                cell: (app) => <div className="space-y-2"><div className="flex flex-wrap gap-1.5"><StatusBadge status={app.health} /><StatusBadge status={app.healthCondition?.status ?? "Unknown"} />{app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}{app.configurationMissing && <span className="text-xs text-destructive">Definition missing</span>}</div><p className="text-sm text-muted-foreground" title={app.healthCondition?.message}>{app.healthCondition?.reason ?? "Health not observed"} · {app.healthCondition?.lastTransitionTime ? new Date(app.healthCondition.lastTransitionTime).toLocaleString() : "Not observed yet"}</p>{app.statusIssues?.length > 0 && <span className="block text-xs text-destructive">{app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")} check failed</span>}</div>,
+              },
+              {
+                id: "cluster",
+                title: "Cluster",
+                size: 160,
+                cell: (app) => <span className="block truncate text-xs font-medium" title={`${app.clusterName || app.clusterId} (${app.clusterId})`}>{app.clusterName || app.clusterId}</span>,
+              },
+              {
+                id: "configuration",
+                title: "Configuration",
+                size: 140,
+                cell: (app) => <span className="block truncate text-xs text-muted-foreground" title={app.configurationPath || "Configured in JustCD"}>{app.repositoryConfigurationId ? "Managed by Git" : "Managed in JustCD"}</span>,
               },
               {
                 id: "target",

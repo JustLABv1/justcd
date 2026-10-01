@@ -96,7 +96,7 @@ export function StatusBadge({ status }: { status: string }) {
       : normalized.includes("sync") || normalized.includes("pending") || normalized.includes("running") || normalized.includes("out of") || normalized.includes("progress") || normalized === "partial" || normalized === "suspended" || normalized.includes("paused")
         ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-300"
         : "border-border bg-muted/50 text-muted-foreground"
-  return <span className={`inline-flex w-fit shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-sm font-medium capitalize ${styles}`}><span className="size-1.5 shrink-0 rounded-full bg-current opacity-70" />{normalized}</span>
+  return <span className={`inline-flex w-fit shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-px text-xs leading-4 font-medium capitalize ${styles}`}><span className="size-1.5 shrink-0 rounded-full bg-current opacity-70" />{normalized}</span>
 }
 
 export function EmptyState({

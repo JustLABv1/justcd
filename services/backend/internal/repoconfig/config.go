@@ -40,8 +40,9 @@ type Definition struct {
 			KustomizeNamespaceOverride bool     `json:"kustomizeNamespaceOverride,omitempty"`
 		} `json:"source"`
 		Destination struct {
-			Cluster   string `json:"cluster"`
-			Namespace string `json:"namespace"`
+			CreateNamespaces bool   `json:"createNamespaces,omitempty"`
+			Cluster          string `json:"cluster"`
+			Namespace        string `json:"namespace"`
 		} `json:"destination"`
 		IgnoreResources []IgnoreResource `json:"ignoreResources,omitempty"`
 		SyncPolicy      string           `json:"syncPolicy,omitempty"`

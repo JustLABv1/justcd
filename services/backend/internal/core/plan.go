@@ -162,21 +162,22 @@ type RollbackTarget struct {
 }
 
 type Plan struct {
-	ApplicationID     string          `json:"applicationId"`
-	Decommission      bool            `json:"decommission,omitempty"`
-	Revision          string          `json:"revision"`
-	Bindings          []Binding       `json:"bindings"`
-	Changes           []Change        `json:"changes"`
-	Ignored           []Change        `json:"ignored,omitempty"`
-	Selection         PlanSelection   `json:"selection,omitempty"`
-	IgnoreRulesDigest string          `json:"ignoreRulesDigest,omitempty"`
-	RequiresApproval  bool            `json:"requiresApproval"`
-	ApprovalKind      string          `json:"approvalKind,omitempty"`
-	RequiredApprovals int             `json:"requiredApprovals,omitempty"`
-	ApproverRoles     []string        `json:"approverRoles,omitempty"`
-	ApproverUserIDs   []string        `json:"approverUserIds,omitempty"`
-	Rollback          *RollbackTarget `json:"rollback,omitempty"`
-	Digest            string          `json:"digest"`
+	NamespaceCreations []Identity      `json:"namespaceCreations,omitempty"`
+	ApplicationID      string          `json:"applicationId"`
+	Decommission       bool            `json:"decommission,omitempty"`
+	Revision           string          `json:"revision"`
+	Bindings           []Binding       `json:"bindings"`
+	Changes            []Change        `json:"changes"`
+	Ignored            []Change        `json:"ignored,omitempty"`
+	Selection          PlanSelection   `json:"selection,omitempty"`
+	IgnoreRulesDigest  string          `json:"ignoreRulesDigest,omitempty"`
+	RequiresApproval   bool            `json:"requiresApproval"`
+	ApprovalKind       string          `json:"approvalKind,omitempty"`
+	RequiredApprovals  int             `json:"requiredApprovals,omitempty"`
+	ApproverRoles      []string        `json:"approverRoles,omitempty"`
+	ApproverUserIDs    []string        `json:"approverUserIds,omitempty"`
+	Rollback           *RollbackTarget `json:"rollback,omitempty"`
+	Digest             string          `json:"digest"`
 }
 
 // BuildPlan is pure: callers must provide a complete, authorized live snapshot

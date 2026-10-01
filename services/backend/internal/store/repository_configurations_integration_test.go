@@ -8,6 +8,7 @@ import (
 	"github.com/justlab/justcd/services/backend/internal/core"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testRepositoryConfigurationSafety(t *testing.T, ctx context.Context, s *Store) {
@@ -20,7 +21,7 @@ func testRepositoryConfigurationSafety(t *testing.T, ctx context.Context, s *Sto
 	if err != nil {
 		t.Fatal(err)
 	}
-	app := Application{WorkspaceID: repository.WorkspaceID, Name: "git-managed", SourceID: repository.SourceID, Revision: repository.Revision, ManifestPath: "manifests", Renderer: "yaml", ClusterID: "integration-cluster", Namespaces: []NamespaceBinding{binding}, SyncPolicy: "manual", PollSeconds: 300, RetryPolicy: DefaultRetryPolicy(), ConfigurationPath: "manifests/justcd.yaml", ConfigurationHash: "first"}
+	app := Application{WorkspaceID: repository.WorkspaceID, Name: "git-managed", SourceID: repository.SourceID, Revision: repository.Revision, ManifestPath: "manifests", Renderer: "yaml", ClusterID: "integration-cluster", Namespaces: []NamespaceBinding{binding}, SyncPolicy: "manual", PollSeconds: 300, RetryPolicy: DefaultRetryPolicy(), ConfigurationPath: "manifests/justcd.yaml", ConfigurationHash: "first", CreateNamespaces: true}
 	if err := s.ApplyRepositoryApplications(ctx, repository, "commit-1", []Application{app}); err != nil {
 		t.Fatal(err)
 	}
@@ -34,10 +35,24 @@ func testRepositoryConfigurationSafety(t *testing.T, ctx context.Context, s *Sto
 			stored = candidate
 		}
 	}
-	if stored.ID == "" || stored.RepositoryConfigurationID != repository.ID || stored.ConfigurationCommit != "commit-1" || stored.ConfigurationPath != app.ConfigurationPath {
+	if !stored.CreateNamespaces || stored.ID == "" || stored.RepositoryConfigurationID != repository.ID || stored.ConfigurationCommit != "commit-1" || stored.ConfigurationPath != app.ConfigurationPath {
 		t.Fatalf("missing Git provenance: %+v", stored)
 	}
 	originalID := stored.ID
+	prerequisite := core.Identity{ClusterID: app.ClusterID, APIVersion: "v1", Kind: "Namespace", Name: "default", ClusterScoped: true}
+	review := PlanRecord{ID: NewID(), Plan: core.Plan{ApplicationID: stored.ID, Revision: "commit-1", NamespaceCreations: []core.Identity{prerequisite}}, CreatedBy: "integration-owner", ExpiresAt: time.Now().Add(time.Hour), Status: "current"}
+	if err := s.SavePlan(ctx, review); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := s.PlanByID(ctx, review.ID)
+	if err != nil || len(loaded.Plan.NamespaceCreations) != 1 || loaded.Plan.NamespaceCreations[0] != prerequisite {
+		t.Fatalf("namespace prerequisite lost: %+v %v", loaded, err)
+	}
+	listed, err := s.ListPlans(ctx, stored.ID, 20)
+	if err != nil || len(listed) != 1 || len(listed[0].Plan.NamespaceCreations) != 1 {
+		t.Fatalf("namespace prerequisite missing from history: %+v %v", listed, err)
+	}
+	app.CreateNamespaces = false
 	app.SyncPolicy = "auto-safe"
 	app.ConfigurationHash = "auto-safe"
 	if err := s.ApplyRepositoryApplications(ctx, repository, "policy", []Application{app}); err != nil {
@@ -48,7 +63,7 @@ func testRepositoryConfigurationSafety(t *testing.T, ctx context.Context, s *Sto
 		t.Fatal(err)
 	}
 	adopted, err := s.ApplicationByID(ctx, originalID)
-	if err != nil || adopted.SyncPolicy != "auto-safe" || !adopted.AutoSyncPaused {
+	if err != nil || adopted.CreateNamespaces || adopted.SyncPolicy != "auto-safe" || !adopted.AutoSyncPaused {
 		t.Fatalf("adoption changed policy or failed to pause: %+v %v", adopted, err)
 	}
 	// Repair policy drift even when the Git definition hash is unchanged.

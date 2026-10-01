@@ -1328,6 +1328,7 @@ func (policy RetryPolicy) Validate() error {
 }
 
 type Application struct {
+	CreateNamespaces               bool                               `json:"createNamespaces"`
 	RepositoryIgnoreRules          []core.IgnoreRule                  `json:"-"`
 	RepositoryIgnoreSelectors      []core.IgnoreSelector              `json:"-"`
 	HelmReleaseName                string                             `json:"helmReleaseName,omitempty"`
@@ -1462,14 +1463,14 @@ func createApplication(ctx context.Context, executor applicationExecutor, a Appl
 	if a.NamespaceHelmValues == nil {
 		namespaceValues = []byte(`{}`)
 	}
-	_, err = executor.ExecContext(ctx, `INSERT INTO applications(id,workspace_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,application_group_id,target_manifest_path,namespace_manifest_paths,target_helm_values_files,target_helm_values_yaml,namespace_helm_values,cluster_id,namespaces,sync_policy,poll_seconds,retry_enabled,retry_max_attempts,retry_initial_delay_seconds,retry_max_delay_seconds,retry_jitter_percent) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,''),$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`, a.ID, a.WorkspaceID, a.Name, a.SourceID, a.Revision, a.ManifestPath, a.Renderer, a.KustomizeHelmEnabled, a.KustomizeNamespaceOverride, valuesFiles, a.HelmValuesYAML, a.ApplicationGroupID, a.TargetManifestPath, namespaceManifestPaths, targetValuesFiles, a.TargetHelmValuesYAML, namespaceValues, a.ClusterID, namespaces, a.SyncPolicy, a.PollSeconds, a.RetryPolicy.Enabled, a.RetryPolicy.MaxAttempts, a.RetryPolicy.InitialDelaySeconds, a.RetryPolicy.MaxDelaySeconds, a.RetryPolicy.JitterPercent)
+	_, err = executor.ExecContext(ctx, `INSERT INTO applications(id,workspace_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,application_group_id,target_manifest_path,namespace_manifest_paths,target_helm_values_files,target_helm_values_yaml,namespace_helm_values,cluster_id,namespaces,sync_policy,poll_seconds,retry_enabled,retry_max_attempts,retry_initial_delay_seconds,retry_max_delay_seconds,retry_jitter_percent,create_namespaces) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,''),$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`, a.ID, a.WorkspaceID, a.Name, a.SourceID, a.Revision, a.ManifestPath, a.Renderer, a.KustomizeHelmEnabled, a.KustomizeNamespaceOverride, valuesFiles, a.HelmValuesYAML, a.ApplicationGroupID, a.TargetManifestPath, namespaceManifestPaths, targetValuesFiles, a.TargetHelmValuesYAML, namespaceValues, a.ClusterID, namespaces, a.SyncPolicy, a.PollSeconds, a.RetryPolicy.Enabled, a.RetryPolicy.MaxAttempts, a.RetryPolicy.InitialDelaySeconds, a.RetryPolicy.MaxDelaySeconds, a.RetryPolicy.JitterPercent, a.CreateNamespaces)
 	return err
 }
 
 func scanApplication(row interface{ Scan(...any) error }) (Application, error) {
 	var a Application
 	var namespaces, helmValuesFiles, namespaceManifestPaths, targetValuesFiles, namespaceValues, rawApprovalOverride, rawRollbackState, rawStatusIssues, rawHealthResources, rawHealthWarnings []byte
-	err := row.Scan(&a.ID, &a.WorkspaceID, &a.Name, &a.SourceID, &a.Revision, &a.ManifestPath, &a.Renderer, &a.KustomizeHelmEnabled, &a.KustomizeNamespaceOverride, &helmValuesFiles, &a.HelmValuesYAML, &a.ApplicationGroupID, &a.TargetManifestPath, &namespaceManifestPaths, &targetValuesFiles, &a.TargetHelmValuesYAML, &namespaceValues, &a.ClusterID, &namespaces, &a.SyncPolicy, &a.PollSeconds, &a.LastCheckedAt, &a.LastSyncedRevision, &a.Health, &rawStatusIssues, &a.Decommissioning, &rawApprovalOverride, &a.AutoSyncPaused, &rawRollbackState, &a.RollbackResumeRequiresRevision, &a.CreatedAt, &a.RetryPolicy.Enabled, &a.RetryPolicy.MaxAttempts, &a.RetryPolicy.InitialDelaySeconds, &a.RetryPolicy.MaxDelaySeconds, &a.RetryPolicy.JitterPercent, &a.RetryAttemptCount, &a.RetryNextAt, &a.RetryTerminalReason, &a.RetryLastErrorCode, &a.HealthCondition.Status, &a.HealthCondition.Reason, &a.HealthCondition.Message, &a.HealthCondition.LastTransitionTime, &a.HealthCondition.ObservedAt, &rawHealthResources, &rawHealthWarnings, &a.RepositoryConfigurationID, &a.ConfigurationPath, &a.ConfigurationCommit, &a.ConfigurationHash, &a.ConfigurationMissing, &a.HelmReleaseName)
+	err := row.Scan(&a.ID, &a.WorkspaceID, &a.Name, &a.SourceID, &a.Revision, &a.ManifestPath, &a.Renderer, &a.KustomizeHelmEnabled, &a.KustomizeNamespaceOverride, &helmValuesFiles, &a.HelmValuesYAML, &a.ApplicationGroupID, &a.TargetManifestPath, &namespaceManifestPaths, &targetValuesFiles, &a.TargetHelmValuesYAML, &namespaceValues, &a.ClusterID, &namespaces, &a.SyncPolicy, &a.PollSeconds, &a.LastCheckedAt, &a.LastSyncedRevision, &a.Health, &rawStatusIssues, &a.Decommissioning, &rawApprovalOverride, &a.AutoSyncPaused, &rawRollbackState, &a.RollbackResumeRequiresRevision, &a.CreatedAt, &a.RetryPolicy.Enabled, &a.RetryPolicy.MaxAttempts, &a.RetryPolicy.InitialDelaySeconds, &a.RetryPolicy.MaxDelaySeconds, &a.RetryPolicy.JitterPercent, &a.RetryAttemptCount, &a.RetryNextAt, &a.RetryTerminalReason, &a.RetryLastErrorCode, &a.HealthCondition.Status, &a.HealthCondition.Reason, &a.HealthCondition.Message, &a.HealthCondition.LastTransitionTime, &a.HealthCondition.ObservedAt, &rawHealthResources, &rawHealthWarnings, &a.RepositoryConfigurationID, &a.ConfigurationPath, &a.ConfigurationCommit, &a.ConfigurationHash, &a.ConfigurationMissing, &a.HelmReleaseName, &a.CreateNamespaces)
 	if err == nil {
 		err = json.Unmarshal(rawStatusIssues, &a.StatusIssues)
 	}
@@ -1534,7 +1535,7 @@ func scanApplication(row interface{ Scan(...any) error }) (Application, error) {
 	return a, err
 }
 
-const applicationColumns = `id,workspace_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,COALESCE(application_group_id,''),target_manifest_path,namespace_manifest_paths,target_helm_values_files,target_helm_values_yaml,namespace_helm_values,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,COALESCE(last_synced_revision,''),health,status_issues,decommissioning,approval_policy_override,auto_sync_paused,rollback_resume_state,rollback_resume_requires_revision,created_at,retry_enabled,retry_max_attempts,retry_initial_delay_seconds,retry_max_delay_seconds,retry_jitter_percent,retry_attempt_count,retry_next_at,retry_terminal_reason,retry_last_error_code,health_condition_status,health_condition_reason,health_condition_message,health_condition_last_transition_at,health_condition_observed_at,health_condition_resources,health_condition_warnings,COALESCE(repository_configuration_id,''),configuration_path,configuration_commit,configuration_hash,configuration_missing,helm_release_name`
+const applicationColumns = `id,workspace_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,COALESCE(application_group_id,''),target_manifest_path,namespace_manifest_paths,target_helm_values_files,target_helm_values_yaml,namespace_helm_values,cluster_id,namespaces,sync_policy,poll_seconds,last_checked_at,COALESCE(last_synced_revision,''),health,status_issues,decommissioning,approval_policy_override,auto_sync_paused,rollback_resume_state,rollback_resume_requires_revision,created_at,retry_enabled,retry_max_attempts,retry_initial_delay_seconds,retry_max_delay_seconds,retry_jitter_percent,retry_attempt_count,retry_next_at,retry_terminal_reason,retry_last_error_code,health_condition_status,health_condition_reason,health_condition_message,health_condition_last_transition_at,health_condition_observed_at,health_condition_resources,health_condition_warnings,COALESCE(repository_configuration_id,''),configuration_path,configuration_commit,configuration_hash,configuration_missing,helm_release_name,create_namespaces`
 
 func (s *Store) ApplicationByID(ctx context.Context, id string) (Application, error) {
 	return scanApplication(s.DB.QueryRowContext(ctx, `SELECT `+applicationColumns+` FROM applications WHERE id=$1`, id))
@@ -1631,7 +1632,7 @@ func updateApplication(ctx context.Context, tx *sql.Tx, app Application) error {
 			return errors.New("a deployment group can have only one application per cluster")
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE applications SET name=$2,source_id=$3,revision=$4,manifest_path=$5,renderer=$6,kustomize_helm_enabled=$7,kustomize_namespace_override=$8,helm_values_files=$9,helm_values_yaml=$10,target_manifest_path=$11,namespace_manifest_paths=$12,target_helm_values_files=$13,target_helm_values_yaml=$14,namespace_helm_values=$15,cluster_id=$16,namespaces=$17,sync_policy=$18,poll_seconds=$19,retry_enabled=$20,retry_max_attempts=$21,retry_initial_delay_seconds=$22,retry_max_delay_seconds=$23,retry_jitter_percent=$24,retry_attempt_count=0,retry_next_at=NULL,retry_terminal_reason='',retry_last_error_code='',last_checked_at=NULL,health='unknown',status_issues='[]'::jsonb,updated_at=NOW() WHERE id=$1`, app.ID, app.Name, app.SourceID, app.Revision, app.ManifestPath, app.Renderer, app.KustomizeHelmEnabled, app.KustomizeNamespaceOverride, valuesFiles, app.HelmValuesYAML, app.TargetManifestPath, namespaceManifestPaths, targetValuesFiles, app.TargetHelmValuesYAML, namespaceValues, app.ClusterID, namespaces, app.SyncPolicy, app.PollSeconds, app.RetryPolicy.Enabled, app.RetryPolicy.MaxAttempts, app.RetryPolicy.InitialDelaySeconds, app.RetryPolicy.MaxDelaySeconds, app.RetryPolicy.JitterPercent); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET name=$2,source_id=$3,revision=$4,manifest_path=$5,renderer=$6,kustomize_helm_enabled=$7,kustomize_namespace_override=$8,helm_values_files=$9,helm_values_yaml=$10,target_manifest_path=$11,namespace_manifest_paths=$12,target_helm_values_files=$13,target_helm_values_yaml=$14,namespace_helm_values=$15,cluster_id=$16,namespaces=$17,sync_policy=$18,poll_seconds=$19,retry_enabled=$20,retry_max_attempts=$21,retry_initial_delay_seconds=$22,retry_max_delay_seconds=$23,retry_jitter_percent=$24,create_namespaces=$25,retry_attempt_count=0,retry_next_at=NULL,retry_terminal_reason='',retry_last_error_code='',last_checked_at=NULL,health='unknown',status_issues='[]'::jsonb,updated_at=NOW() WHERE id=$1`, app.ID, app.Name, app.SourceID, app.Revision, app.ManifestPath, app.Renderer, app.KustomizeHelmEnabled, app.KustomizeNamespaceOverride, valuesFiles, app.HelmValuesYAML, app.TargetManifestPath, namespaceManifestPaths, targetValuesFiles, app.TargetHelmValuesYAML, namespaceValues, app.ClusterID, namespaces, app.SyncPolicy, app.PollSeconds, app.RetryPolicy.Enabled, app.RetryPolicy.MaxAttempts, app.RetryPolicy.InitialDelaySeconds, app.RetryPolicy.MaxDelaySeconds, app.RetryPolicy.JitterPercent, app.CreateNamespaces); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, app.ID); err != nil {
@@ -2348,6 +2349,10 @@ func (s *Store) ListRollbackTargets(ctx context.Context, applicationID string) (
 }
 
 func (s *Store) SavePlan(ctx context.Context, record PlanRecord) error {
+	namespaceCreations, err := json.Marshal(record.Plan.NamespaceCreations)
+	if err != nil {
+		return err
+	}
 	bindings, err := json.Marshal(record.Plan.Bindings)
 	if err != nil {
 		return err
@@ -2403,7 +2408,7 @@ func (s *Store) SavePlan(ctx context.Context, record PlanRecord) error {
 	if _, err = tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, record.Plan.ApplicationID); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO plans(id,application_id,revision,digest,bindings,changes,desired,created_by,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`, record.ID, record.Plan.ApplicationID, record.Plan.Revision, record.Plan.Digest, bindings, changes, desired, record.CreatedBy, record.ExpiresAt, record.Status, ignored, selection, record.Plan.IgnoreRulesDigest, record.Plan.Decommission, record.Plan.ApprovalKind, record.Plan.RequiredApprovals, approverRoles, approverUserIDs, rollbackTarget)
+	_, err = tx.ExecContext(ctx, `INSERT INTO plans(id,application_id,revision,digest,bindings,changes,desired,created_by,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target,namespace_creations) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`, record.ID, record.Plan.ApplicationID, record.Plan.Revision, record.Plan.Digest, bindings, changes, desired, record.CreatedBy, record.ExpiresAt, record.Status, ignored, selection, record.Plan.IgnoreRulesDigest, record.Plan.Decommission, record.Plan.ApprovalKind, record.Plan.RequiredApprovals, approverRoles, approverUserIDs, rollbackTarget, namespaceCreations)
 	if err != nil {
 		return err
 	}
@@ -2417,8 +2422,8 @@ func (s *Store) SavePlan(ctx context.Context, record PlanRecord) error {
 
 func (s *Store) PlanByID(ctx context.Context, id string) (PlanRecord, error) {
 	var out PlanRecord
-	var bindings, changes, desired, ignored, selection, approverRoles, approverUserIDs, rollbackTarget, triggerInfo []byte
-	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target,trigger_info FROM plans WHERE id=$1`, id).Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission, &out.Plan.ApprovalKind, &out.Plan.RequiredApprovals, &approverRoles, &approverUserIDs, &rollbackTarget, &triggerInfo)
+	var bindings, changes, desired, ignored, selection, approverRoles, approverUserIDs, rollbackTarget, triggerInfo, namespaceCreations []byte
+	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target,trigger_info,namespace_creations FROM plans WHERE id=$1`, id).Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission, &out.Plan.ApprovalKind, &out.Plan.RequiredApprovals, &approverRoles, &approverUserIDs, &rollbackTarget, &triggerInfo, &namespaceCreations)
 	if err != nil {
 		return PlanRecord{}, err
 	}
@@ -2427,6 +2432,9 @@ func (s *Store) PlanByID(ctx context.Context, id string) (PlanRecord, error) {
 		if err = json.Unmarshal(triggerInfo, out.Trigger); err != nil {
 			return PlanRecord{}, err
 		}
+	}
+	if err = json.Unmarshal(namespaceCreations, &out.Plan.NamespaceCreations); err != nil {
+		return PlanRecord{}, err
 	}
 	if err = json.Unmarshal(bindings, &out.Plan.Bindings); err != nil {
 		return PlanRecord{}, err
@@ -2470,7 +2478,7 @@ func (s *Store) ListPlans(ctx context.Context, applicationID string, limit int) 
 	if limit < 1 || limit > 100 {
 		limit = 20
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target,trigger_info FROM plans WHERE application_id=$1 ORDER BY created_at DESC LIMIT $2`, applicationID, limit)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target,trigger_info,namespace_creations FROM plans WHERE application_id=$1 ORDER BY created_at DESC LIMIT $2`, applicationID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -2478,8 +2486,8 @@ func (s *Store) ListPlans(ctx context.Context, applicationID string, limit int) 
 	items := make([]PlanRecord, 0)
 	for rows.Next() {
 		var out PlanRecord
-		var bindings, changes, desired, ignored, selection, approverRoles, approverUserIDs, rollbackTarget, triggerInfo []byte
-		if err := rows.Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission, &out.Plan.ApprovalKind, &out.Plan.RequiredApprovals, &approverRoles, &approverUserIDs, &rollbackTarget, &triggerInfo); err != nil {
+		var bindings, changes, desired, ignored, selection, approverRoles, approverUserIDs, rollbackTarget, triggerInfo, namespaceCreations []byte
+		if err := rows.Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission, &out.Plan.ApprovalKind, &out.Plan.RequiredApprovals, &approverRoles, &approverUserIDs, &rollbackTarget, &triggerInfo, &namespaceCreations); err != nil {
 			return nil, err
 		}
 		if len(triggerInfo) > 0 {
@@ -2487,6 +2495,9 @@ func (s *Store) ListPlans(ctx context.Context, applicationID string, limit int) 
 			if err := json.Unmarshal(triggerInfo, out.Trigger); err != nil {
 				return nil, err
 			}
+		}
+		if err := json.Unmarshal(namespaceCreations, &out.Plan.NamespaceCreations); err != nil {
+			return nil, err
 		}
 		if err := json.Unmarshal(bindings, &out.Plan.Bindings); err != nil {
 			return nil, err

@@ -139,3 +139,23 @@ func TestDiscoverThroughSymlinkedCheckoutRoot(t *testing.T) {
 		t.Fatalf("unexpected resolved path: %+v", definitions)
 	}
 }
+
+func TestDiscoverCreateNamespaces(t *testing.T) {
+	root := t.TempDir()
+	writeDefinition(t, root, "justcd.yaml", validDefinition)
+	before, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before[0].Spec.Destination.CreateNamespaces {
+		t.Fatal("must default to false")
+	}
+	writeDefinition(t, root, "justcd.yaml", strings.Replace(validDefinition, "namespace: shop", "namespace: shop\n    createNamespaces: true", 1))
+	after, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after[0].Spec.Destination.CreateNamespaces || before[0].Hash == after[0].Hash {
+		t.Fatal("option not tracked by semantic hash")
+	}
+}

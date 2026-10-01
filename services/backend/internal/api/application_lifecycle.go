@@ -243,6 +243,7 @@ func (s *Server) updateApplication(w http.ResponseWriter, r *http.Request) {
 		NamespaceManifestPaths     map[string]string                  `json:"namespaceManifestPaths"`
 		Renderer                   string                             `json:"renderer"`
 		KustomizeHelmEnabled       bool                               `json:"kustomizeHelmEnabled"`
+		CreateNamespaces           bool                               `json:"createNamespaces"`
 		KustomizeNamespaceOverride bool                               `json:"kustomizeNamespaceOverride"`
 		HelmValuesFiles            []string                           `json:"helmValuesFiles"`
 		HelmValuesYAML             string                             `json:"helmValuesYaml"`
@@ -346,6 +347,7 @@ func (s *Server) updateApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	app.CreateNamespaces = input.CreateNamespaces
 	app.Name, app.SourceID, app.Revision, app.ManifestPath, app.Renderer = input.Name, input.SourceID, input.Revision, input.ManifestPath, input.Renderer
 	app.TargetManifestPath, app.NamespaceManifestPaths = input.TargetManifestPath, input.NamespaceManifestPaths
 	app.KustomizeHelmEnabled, app.KustomizeNamespaceOverride, app.ClusterID, app.Namespaces = input.KustomizeHelmEnabled, input.KustomizeNamespaceOverride, input.ClusterID, bindings

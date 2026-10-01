@@ -437,6 +437,9 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 	if err := s.detectFieldTakeovers(ctx, input, &plan, desired); err != nil {
 		return core.Plan{}, nil, err
 	}
+	if err := addNamespaceCreations(ctx, input, &plan, desired); err != nil {
+		return core.Plan{}, nil, &planStageError{stage: "cluster", err: err}
+	}
 	policy, err := s.Store.EffectiveApprovalPolicy(ctx, app)
 	if err != nil {
 		return core.Plan{}, nil, err
@@ -993,6 +996,15 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 			for page := 0; page < 100; page++ {
 				list, err := resourceInterface.List(ctx, v1.ListOptions{LabelSelector: "justcd.io/application-id=" + input.Application.ID, Limit: 500, Continue: continueToken})
 				if err != nil {
+					if apierrors.IsNotFound(err) && input.Application.CreateNamespaces && namespace != "" {
+						provisioningClient, clientErr := namespaceProvisioningClient(input, namespace)
+						if clientErr == nil {
+							_, namespaceErr := provisioningClient.Dynamic.Resource(namespaceResource).Get(ctx, namespace, v1.GetOptions{})
+							if apierrors.IsNotFound(namespaceErr) {
+								break
+							}
+						}
+					}
 					return nil, nil, fmt.Errorf("cannot fully list owned %s resources: %w", identity.Kind, err)
 				}
 				for i := range list.Items {

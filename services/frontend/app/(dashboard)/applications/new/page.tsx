@@ -35,6 +35,7 @@ export default function NewApplicationPage() {
   const [targetManifestPath, setTargetManifestPath] = useState("")
   const [helmValuesFiles, setHelmValuesFiles] = useState("")
   const [helmValuesYaml, setHelmValuesYaml] = useState("")
+  const [createNamespaces, setCreateNamespaces] = useState(false)
   const [syncPolicy, setSyncPolicy] = useState("manual")
   const [pollSeconds, setPollSeconds] = useState("300")
   const [retryPolicy, setRetryPolicy] = useState({ enabled: true, maxAttempts: 5, initialDelaySeconds: 5, maxDelaySeconds: 300, jitterPercent: 20 })
@@ -103,7 +104,7 @@ export default function NewApplicationPage() {
         helmValuesFiles: renderer === "helm" ? helmValuesFiles.split("\n").map((line) => line.trim()).filter(Boolean) : [],
         helmValuesYaml: renderer === "helm" ? helmValuesYaml : "",
         namespaceHelmValues: renderer === "helm" ? Object.fromEntries(namespaces.map((namespace) => [namespace, namespaceHelmValues[namespace] ?? { files: [], yaml: "" }])) : {},
-        clusterId, namespaces, syncPolicy, pollSeconds: Number(pollSeconds), retryPolicy,
+        clusterId, namespaces, createNamespaces, syncPolicy, pollSeconds: Number(pollSeconds), retryPolicy,
       })
       toast.success("Application created.")
       router.push(`/applications/${app.id}`)
@@ -151,6 +152,7 @@ export default function NewApplicationPage() {
       </div>
       <div className="space-y-5">
         <Panel title="Reconciliation" description="Choose how often to check Git for changes."><div className="space-y-4 p-5">
+          <label className="flex items-start gap-3 rounded-lg border p-3 text-xs"><Checkbox checked={createNamespaces} onCheckedChange={(checked) => setCreateNamespaces(Boolean(checked))} /><span><span className="block font-medium">Create missing namespaces</span><span className="mt-1 block text-muted-foreground">Create selected target namespaces before deploying workloads. Requires namespace creation permissions and plan approval. Namespaces are retained when the app is removed.</span></span></label>
           <FormField label="Sync policy" htmlFor="policy"><FormSelect id="policy" value={syncPolicy} onValueChange={setSyncPolicy} items={[{ value: "manual", label: "Manual · review each sync" }, { value: "auto-safe", label: "Auto-safe · apply non-destructive changes" }]} /></FormField>
           <FormField label="Poll interval (seconds)" htmlFor="poll" hint="Auto-safe still pauses for every deletion and cluster-wide change."><Input id="poll" type="number" min={30} max={86400} value={pollSeconds} onChange={(event) => setPollSeconds(event.target.value)} /></FormField>
           <div className="space-y-3 border-t pt-4">

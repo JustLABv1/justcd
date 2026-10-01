@@ -39,6 +39,7 @@ spec:
   destination:
     cluster: production
     namespace: shop
+    createNamespaces: true
   syncPolicy: auto-safe
   pollSeconds: 300
 ```
@@ -218,3 +219,27 @@ before claiming it. The claim only updates ownership labels and inventory, then
 pauses automatic reconciliation. Refresh and review a new plan before syncing.
 Objects owned by an existing application, including another workspace's
 application, or carrying Kubernetes owner references remain blocked.
+
+## Creating target namespaces
+
+Set `spec.destination.createNamespaces: true` to let JustCD create a missing
+target namespace before applying workloads. This works with Kustomize, Helm,
+and plain YAML; a separate Namespace manifest is not required. The option is
+also available when creating or editing a manual application in JustCD and is
+`false` by default.
+
+The namespace must still have a workspace binding in JustCD. A binding authorizes
+the target but does not require the Kubernetes namespace to exist. JustCD uses
+the configured cluster-scope credential, or otherwise the resolved credential
+for that namespace (including a cluster-wide ServiceAccount token). The token
+needs `get` and `create` on `namespaces` plus the workload permissions. Planning
+performs a dry-run creation to validate RBAC and admission without creating the
+namespace. A missing namespace appears as a cluster-scoped Create change and
+requires the existing owner approval, including with `auto-safe` sync.
+
+Existing namespaces are left untouched. Automatically created namespaces are
+shared infrastructure, not application-owned resources, and are never pruned or
+deleted during app decommissioning. Explicit Namespace manifests remain under
+the normal GitOps ownership and deletion rules. Namespace creation is not atomic
+with deployment: if a workload fails, the new namespace remains for a retry.
+Certificate and connectivity failures are not bypassed by this option.

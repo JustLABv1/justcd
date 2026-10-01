@@ -180,6 +180,7 @@ export type RepositoryConfiguration = {
 }
 
 export type Application = {
+  createNamespaces: boolean
   helmReleaseName?: string
   repositoryConfigurationId?: string
   configurationPath?: string

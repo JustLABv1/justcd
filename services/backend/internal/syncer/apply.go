@@ -258,8 +258,36 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		operation.Progress.Current = nil
 		return s.Store.SetOperationProgress(ctx, operationID, operation.Progress)
 	}
+	for _, identity := range record.Plan.NamespaceCreations {
+		if !app.CreateNamespaces || record.Plan.Decommission || record.Plan.Rollback != nil || identity.ClusterID != app.ClusterID || identity.Kind != "Namespace" || identity.APIVersion != "v1" || !identity.ClusterScoped || identity.Namespace != "" {
+			return finishFailure(errors.New("invalid namespace prerequisite"), "failed")
+		}
+		client, err := namespaceProvisioningClient(input, identity.Name)
+		if err != nil {
+			return finishFailure(err, "failed")
+		}
+		if err := s.Store.RenewOperationLease(ctx, operationID, 90*time.Second); err != nil {
+			return finishFailure(err, "failed")
+		}
+		if err := beginResource(identity); err != nil {
+			return finishFailure(err, "failed")
+		}
+		if err := createNamespacePrerequisite(ctx, client.Dynamic.Resource(namespaceResource), identity.Name); err != nil {
+			return finishFailure(fmt.Errorf("create namespace %q: %w", identity.Name, err), "failed")
+		}
+		if err := completeResource(identity); err != nil {
+			return finishFailure(err, "failed")
+		}
+	}
 	resources := append([]core.Resource(nil), record.Desired...)
-	sort.Slice(resources, func(i, j int) bool { return resources[i].Identity.Key() < resources[j].Identity.Key() })
+	sort.Slice(resources, func(i, j int) bool {
+		left, right := resources[i].Identity, resources[j].Identity
+		leftNamespace, rightNamespace := left.APIVersion == "v1" && left.Kind == "Namespace", right.APIVersion == "v1" && right.Kind == "Namespace"
+		if leftNamespace != rightNamespace {
+			return leftNamespace
+		}
+		return left.Key() < right.Key()
+	})
 	for _, resource := range resources {
 		change, exists := changeFor(record.Plan.Changes, resource.Identity)
 		if !exists || change.Kind == core.Delete {

@@ -146,6 +146,7 @@ func (s *Server) listPlans(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.Store.ListPlans(r.Context(), app.ID, 20)
 	if err != nil {
+		s.Logger.ErrorContext(r.Context(), "could not load application plans", "applicationId", app.ID, "error", err)
 		writeStoreError(w, "could not load plans")
 		return
 	}

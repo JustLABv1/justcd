@@ -18,6 +18,7 @@ func (s *Server) applicationTopology(w http.ResponseWriter, r *http.Request) {
 	}
 	plans, err := s.Store.ListPlans(r.Context(), app.ID, 1)
 	if err != nil {
+		s.Logger.ErrorContext(r.Context(), "could not load plans for application topology", "applicationId", app.ID, "error", err)
 		writeStoreError(w, "could not load application plan")
 		return
 	}

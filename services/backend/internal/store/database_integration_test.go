@@ -135,11 +135,21 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 		t.Fatal(err)
 	}
 	s := &Store{DB: db}
+	if pending == 1 {
+		// Reproduce an installation whose ledger contains 032 but whose
+		// schema came from the earlier version without the plan column.
+		if _, err := db.ExecContext(ctx, `ALTER TABLE plans DROP COLUMN namespace_creations`); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := s.Migrate(ctx); err != nil {
 		t.Fatalf("upgrade migration: %v", err)
 	}
 	if err := s.Migrate(ctx); err != nil {
 		t.Fatalf("idempotent migration: %v", err)
+	}
+	if _, err := s.ListPlans(ctx, "integration-app", 20); err != nil {
+		t.Fatalf("list plans after schema repair: %v", err)
 	}
 
 	clusterApps, err := s.ListApplications(ctx, "integration-workspace")

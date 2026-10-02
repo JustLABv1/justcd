@@ -27,8 +27,17 @@ func main() {
 	}
 	kube, err := rest.InClusterConfig()
 	if err != nil {
-		slog.Error("agent must run inside its target Kubernetes cluster")
-		os.Exit(1)
+		if cfg.KubernetesServerURL == "" {
+			slog.Error("in-cluster Kubernetes configuration unavailable; configure kubernetesServerUrl and profile tokenFile")
+			os.Exit(1)
+		}
+		for _, profile := range cfg.Profiles {
+			if profile.TokenFile == "" {
+				slog.Error("each profile needs tokenFile when in-cluster Kubernetes credentials are unavailable")
+				os.Exit(1)
+			}
+		}
+		kube = &rest.Config{}
 	}
 	agent, err := clusteragent.New(cfg, kube)
 	if err != nil {

@@ -18,7 +18,7 @@ metadata:
   name: {{ $name }}
 data:
   config.json: |
-    {{ dict "kubernetesCAFile" (ternary "/etc/justcd-agent/kubernetes-ca/ca.crt" "" (ne .Values.kubernetes.caSecret "")) "serverUrl" .Values.serverUrl "enrollmentTokenFile" "/etc/justcd-agent/enrollment/enrollmentToken" "identityFile" "/var/lib/justcd-agent/identity.json" "serverCAFile" (ternary "/etc/justcd-agent/ca/ca.crt" "" (ne .Values.serverCASecret "")) "profiles" $profiles | toJson }}
+    {{ dict "clusterId" .Values.kubernetes.clusterId "kubernetesServerUrl" .Values.kubernetes.serverUrl "kubernetesCAFile" (ternary "/etc/justcd-agent/kubernetes-ca/ca.crt" "" (ne .Values.kubernetes.caSecret "")) "serverUrl" .Values.serverUrl "enrollmentTokenFile" "/etc/justcd-agent/enrollment/enrollmentToken" "identityFile" "/var/lib/justcd-agent/identity.json" "serverCAFile" (ternary "/etc/justcd-agent/ca/ca.crt" "" (ne .Values.serverCASecret "")) "profiles" $profiles | toJson }}
 ---
 {{- if .Values.serviceAccount.create }}
 apiVersion: v1

@@ -2,6 +2,7 @@ package agentchart
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/google/cel-go/cel"
 	"os/exec"
 	"sigs.k8s.io/yaml"
@@ -159,7 +160,7 @@ func TestChartRBACAndNamespaceGuards(t *testing.T) {
 }
 
 func TestCustomKubernetesCredentials(t *testing.T) {
-	data, err := exec.Command("helm", "template", "audit", "..", "--namespace", "justcd-agent", "--set", "serverUrl=https://justcd.invalid", "--set", "enrollmentSecret=enrollment", "--set", "profiles[0].workspaceIds[0]=workspace", "--set", "profiles[0].name=default", "--set", "kubernetes.caSecret=custom-ca", "--set", "kubernetes.tokenSecret=custom-token", "--set", "profiles[1].name=explicit", "--set", "profiles[1].workspaceIds[0]=workspace", "--set", "profiles[1].tokenFile=/custom/token").CombinedOutput()
+	data, err := exec.Command("helm", "template", "audit", "..", "--namespace", "justcd-agent", "--set", "serverUrl=https://justcd.invalid", "--set", "enrollmentSecret=enrollment", "--set", "profiles[0].workspaceIds[0]=workspace", "--set", "profiles[0].name=default", "--set", "kubernetes.clusterId=operator-cluster", "--set", "kubernetes.serverUrl=https://kube.invalid:6443", "--set", "kubernetes.caSecret=custom-ca", "--set", "kubernetes.tokenSecret=custom-token", "--set", "profiles[1].name=explicit", "--set", "profiles[1].workspaceIds[0]=workspace", "--set", "profiles[1].tokenFile=/custom/token").CombinedOutput()
 	if err != nil {
 		t.Fatalf("%v: %s", err, data)
 	}
@@ -175,9 +176,22 @@ func TestCustomKubernetesCredentials(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+		if obj["kind"] == "ClusterRole" {
+			for _, rule := range obj["rules"].([]any) {
+				if names, ok := rule.(map[string]any)["resourceNames"]; ok && strings.Contains(fmt.Sprint(names), "kube-system") {
+					t.Fatal("configured identity still grants kube-system access")
+				}
+			}
+		}
 		if obj["kind"] == "Deployment" {
 			deployment = obj
 		}
+	}
+	if config["clusterId"] != "operator-cluster" {
+		t.Fatalf("cluster identity config: %+v", config)
+	}
+	if config["kubernetesServerUrl"] != "https://kube.invalid:6443" {
+		t.Fatalf("endpoint config: %+v", config)
 	}
 	if config["kubernetesCAFile"] != "/etc/justcd-agent/kubernetes-ca/ca.crt" || config["serverCAFile"] != "" {
 		t.Fatalf("CA config: %+v", config)

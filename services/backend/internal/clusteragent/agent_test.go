@@ -97,9 +97,9 @@ func TestClusterIdentityUsesCustomCAAndProfileToken(t *testing.T) {
 	if err := os.WriteFile(tokenFile, []byte("custom-token"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{ServerURL: "https://justcd.invalid", EnrollmentTokenFile: dir + "/enrollment", IdentityFile: dir + "/identity", KubernetesCAFile: caFile, Profiles: []agentprotocol.Profile{{Name: "default", WorkspaceIDs: []string{"w"}, TokenFile: tokenFile}}}
+	cfg := Config{ServerURL: "https://justcd.invalid", EnrollmentTokenFile: dir + "/enrollment", IdentityFile: dir + "/identity", KubernetesCAFile: caFile, KubernetesServerURL: local.URL, Profiles: []agentprotocol.Profile{{Name: "default", WorkspaceIDs: []string{"w"}, TokenFile: tokenFile}}}
 	// The explicitly configured CA must replace inherited in-cluster CA data.
-	kube := &rest.Config{Host: local.URL, BearerToken: "pod-token", TLSClientConfig: rest.TLSClientConfig{CAData: []byte("invalid inherited CA")}}
+	kube := &rest.Config{Host: "https://unused.invalid", BearerToken: "pod-token", TLSClientConfig: rest.TLSClientConfig{CAData: []byte("invalid inherited CA")}}
 	a, err := New(cfg, kube)
 	if err != nil {
 		t.Fatal(err)
@@ -116,5 +116,67 @@ func TestClusterIdentityUsesCustomCAAndProfileToken(t *testing.T) {
 	}
 	if _, err = a.clusterUID(context.Background()); err == nil || !strings.Contains(err.Error(), "certificate") {
 		t.Fatalf("TLS failure cause missing: %v", err)
+	}
+}
+
+func TestRejectUnsafeKubernetesEndpoint(t *testing.T) {
+	for _, endpoint := range []string{"http://kube.invalid", "https://user:password@kube.invalid", "https://kube.invalid?token=secret", "https://kube.invalid#fragment"} {
+		_, err := New(Config{ServerURL: "https://justcd.invalid", KubernetesServerURL: endpoint, IdentityFile: "identity", EnrollmentTokenFile: "enrollment", Profiles: []agentprotocol.Profile{{Name: "default", WorkspaceIDs: []string{"w"}}}}, &rest.Config{})
+		if err == nil {
+			t.Errorf("unsafe endpoint accepted: %s", endpoint)
+		}
+	}
+}
+
+func TestConfiguredClusterIdentityEnrollsAndRestartsWithoutKubernetesAccess(t *testing.T) {
+	kube := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("configured cluster identity must not contact Kubernetes")
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer kube.Close()
+	enrollments := 0
+	central := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		enrollments++
+		if r.URL.Path != "/api/v1/agents/enroll" || r.Header.Get("Authorization") != "Bearer enrollment-token" {
+			t.Errorf("unexpected enrollment request: %s", r.URL.Path)
+		}
+		var enrollment agentprotocol.Enrollment
+		if err := json.NewDecoder(r.Body).Decode(&enrollment); err != nil {
+			t.Fatal(err)
+		}
+		if enrollment.ClusterUID != "operator-cluster" {
+			t.Errorf("identity: %q", enrollment.ClusterUID)
+		}
+		_ = json.NewEncoder(w).Encode(agentprotocol.Identity{Token: "identity-token", ClusterUID: enrollment.ClusterUID})
+	}))
+	defer central.Close()
+	dir := t.TempDir()
+	cfg := Config{ClusterID: "operator-cluster", ServerURL: central.URL, IdentityFile: dir + "/identity.json", EnrollmentTokenFile: dir + "/enrollment", Profiles: []agentprotocol.Profile{{Name: "default"}}}
+	if err := os.WriteFile(cfg.EnrollmentTokenFile, []byte("enrollment-token"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{Config: cfg, HTTP: central.Client(), KubernetesURL: kube.URL, Local: map[string]*http.Client{"default": kube.Client()}}
+	if err := a.initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	restarted := &Agent{Config: cfg}
+	if err := restarted.initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if enrollments != 1 {
+		t.Fatalf("enrollment count: %d", enrollments)
+	}
+	restarted.Config.ClusterID = "different-cluster"
+	if err := restarted.initialize(context.Background()); err == nil {
+		t.Fatal("changed configured identity accepted")
+	}
+}
+
+func TestRejectInvalidConfiguredClusterIdentity(t *testing.T) {
+	for _, id := range []string{" cluster", "cluster ", "\n", strings.Repeat("a", 129)} {
+		_, err := New(Config{ServerURL: "https://justcd.invalid", ClusterID: id, IdentityFile: "identity", EnrollmentTokenFile: "enrollment", Profiles: []agentprotocol.Profile{{Name: "default", WorkspaceIDs: []string{"w"}}}}, &rest.Config{})
+		if err == nil {
+			t.Error("invalid cluster identity accepted")
+		}
 	}
 }

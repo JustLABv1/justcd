@@ -9,6 +9,8 @@ serverCASecret: ""
 enrollmentSecret: ""
 # Optional existing Secrets for Kubernetes API access, separate from JustCD TLS.
 kubernetes:
+  clusterId: "" # Stable operator-assigned ID; skips kube-system identity lookup.
+  serverUrl: "" # Optional HTTPS KubeAPI endpoint; defaults to in-cluster discovery.
   caSecret: "" # Key: ca.crt
   tokenSecret: "" # Key: token; used by profiles without an explicit tokenFile
 profiles:

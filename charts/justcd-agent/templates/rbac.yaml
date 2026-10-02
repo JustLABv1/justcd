@@ -6,10 +6,12 @@ kind: ClusterRole
 metadata:
   name: {{ $name }}-identity
 rules:
+  {{- if not .Values.kubernetes.clusterId }}
   - apiGroups: [""]
     resources: [namespaces]
     resourceNames: [kube-system]
     verbs: [get]
+  {{- end }}
   - nonResourceURLs: ["/version", "/api", "/api/*", "/apis", "/apis/*", "/openapi/*"]
     verbs: [get]
   - apiGroups: [authorization.k8s.io]

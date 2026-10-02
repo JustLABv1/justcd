@@ -24,6 +24,8 @@ import (
 )
 
 type Config struct {
+	ClusterID           string                  `json:"clusterId,omitempty"`
+	KubernetesServerURL string                  `json:"kubernetesServerUrl,omitempty"`
 	ServerURL           string                  `json:"serverUrl"`
 	KubernetesCAFile    string                  `json:"kubernetesCAFile,omitempty"`
 	ServerCAFile        string                  `json:"serverCAFile,omitempty"`
@@ -47,6 +49,17 @@ func New(c Config, kube *rest.Config) (*Agent, error) {
 	}
 	if c.IdentityFile == "" || c.EnrollmentTokenFile == "" || len(c.Profiles) == 0 {
 		return nil, errors.New("identity file, enrollment token file, and local profiles are required")
+	}
+	if len(c.ClusterID) > 128 || strings.TrimSpace(c.ClusterID) != c.ClusterID {
+		return nil, errors.New("agent clusterId must be at most 128 bytes with no surrounding whitespace")
+	}
+	if c.KubernetesServerURL != "" {
+		u, err := url.Parse(c.KubernetesServerURL)
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return nil, errors.New("agent kubernetesServerUrl must be an HTTPS URL without credentials, query, or fragment")
+		}
+		kube = rest.CopyConfig(kube)
+		kube.Host = strings.TrimRight(c.KubernetesServerURL, "/")
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
@@ -176,7 +189,7 @@ func (a *Agent) initialize(ctx context.Context) error {
 			return err
 		}
 		if uid != a.identity.ClusterUID {
-			return errors.New("stored agent identity belongs to a different physical cluster")
+			return errors.New("stored agent identity does not match the configured or discovered cluster identity")
 		}
 		return nil
 	}
@@ -186,6 +199,9 @@ func (a *Agent) initialize(ctx context.Context) error {
 	return a.enroll(ctx)
 }
 func (a *Agent) clusterUID(ctx context.Context) (string, error) {
+	if a.Config.ClusterID != "" {
+		return a.Config.ClusterID, nil
+	}
 	p := a.Config.Profiles[0]
 	req, err := http.NewRequestWithContext(ctx, "GET", a.KubernetesURL+"/api/v1/namespaces/kube-system", nil)
 	if err != nil {

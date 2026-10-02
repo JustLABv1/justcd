@@ -58,7 +58,7 @@ without a separate approval mechanism.
    namespaces, so review existing workloads before upgrading.
    The chart creates namespace-scoped workload permissions, API discovery and
    access-review permissions, and permission to read the `kube-system` namespace
-   UID to identify the physical cluster. Customize `rbac.rules` for your workload
+   UID to identify the physical cluster unless `kubernetes.clusterId` is configured. Customize `rbac.rules` for your workload
    kinds. With `rbac.create: false`, provide equivalent RBAC yourself.
 
 5. Install the chart:
@@ -119,9 +119,9 @@ central reported metadata is stale. Keep the persistent identity file private.
 
 ## Identity, tasks, and disconnects
 
-Enrollment is bound to one JustCD cluster connection and the immutable
-`kube-system` UID. Re-enrollment cannot silently connect a different physical
-cluster. The enrollment token is consumed atomically; central storage keeps only
+Enrollment is bound to one JustCD cluster connection and either the immutable
+`kube-system` UID or an operator-assigned `kubernetes.clusterId`. Re-enrollment
+cannot change that identity binding. The enrollment token is consumed atomically; central storage keeps only
 identity token hashes. Agent identities expire in 30 days and renew automatically
 with seven days remaining. A five-minute previous-token grace window allows a
 lost renewal response to recover. Update the enrollment Secret with a fresh token to re-enroll an installation with an existing identity PVC; the agent exchanges it when its old identity is rejected. Revocation blocks new work immediately;
@@ -188,7 +188,8 @@ Set **Cluster-scope profile** to `cluster-admin` in JustCD. The token's service
 account must have the intended Kubernetes RBAC permissions. The chart's
 `rbac.clusterWide` configures its own service account; it does not change the
 permissions of a token supplied by Secret. The first configured profile is used for enrollment cluster identification; its
-token must also be allowed to get the `kube-system` namespace. Profiles without
+token must also be allowed to get the `kube-system` namespace unless
+`kubernetes.clusterId` is configured. Profiles without
 `tokenFile` use the Pod service account unless `kubernetes.tokenSecret` is set.
 Secret volumes update in place; do not mount the token using `subPath` if it needs
 to rotate. A projected service-account token is also supported via `extraVolumes`
@@ -204,6 +205,8 @@ namespace: the CA Secret needs a `ca.crt` key and the token Secret a `token` key
 serverUrl: https://justcd.example.com
 enrollmentSecret: justcd-agent-enrollment
 kubernetes:
+  clusterId: production-cluster-01
+  serverUrl: https://kube-api.example.com:6443
   caSecret: my-kubernetes-ca
   tokenSecret: my-kubernetes-token
 rbac:
@@ -215,11 +218,24 @@ profiles:
     clusterScope: true
 ```
 
-This uses the supplied token for startup cluster identification and all requests
-in the default profile. An explicit profile `tokenFile` overrides the shared token.
+`kubernetes.serverUrl` overrides the endpoint discovered from the Pod environment.
+Omit it to use the in-cluster endpoint. The configured endpoint must use HTTPS
+and its certificate must match the endpoint hostname.
+
+With `kubernetes.clusterId` set, startup and enrollment make no Kubernetes
+identity lookup and need no access to `kube-system`. Choose a unique, stable ID
+for each cluster (at most 128 bytes) and retain it across upgrades. This ID is
+operator-assigned: it cannot detect a different physical cluster if you reuse the
+same ID. Without this setting, the agent still reads the `kube-system` namespace UID.
+
+An existing enrolled installation must use its previously stored cluster UID as
+`clusterId` to preserve its identity binding. A different ID requires a new JustCD
+cluster connection and a new agent identity volume; re-enrollment alone does not
+change the binding.
+
+This uses the supplied token for all requests in the default profile. An explicit profile `tokenFile` overrides the shared token.
 Set **Cluster-scope profile** to `default` in JustCD. The existing token's RBAC must
-allow namespace creation and management of the intended resources, including
-`get` on the `kube-system` namespace. The chart does not grant this token additional
+allow namespace creation and management of the intended resources. The chart does not grant this token additional
 permissions. Kubernetes CA trust is applied to every profile, with TLS verification
 remaining enabled. Secret mounts support file rotation without `subPath`.
 

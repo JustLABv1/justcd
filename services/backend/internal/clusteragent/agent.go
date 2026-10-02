@@ -262,10 +262,12 @@ func (a *Agent) Execute(ctx context.Context, task agentprotocol.Request) agentpr
 	}
 	if profile == nil {
 		result.Error = "local agent profile does not exist"
+		slog.Warn("local agent profile denied request", "reason", result.Error, "profile", task.Profile, "workspace", task.WorkspaceID, "namespace", task.Namespace, "clusterScope", task.ClusterScope)
 		return result
 	}
 	if err := agentprotocol.Validate(task, *profile); err != nil {
 		result.Error = err.Error()
+		slog.Warn("local agent profile denied request", "reason", result.Error, "profile", task.Profile, "workspace", task.WorkspaceID, "namespace", task.Namespace, "clusterScope", task.ClusterScope)
 		return result
 	}
 	ctx, cancel := context.WithDeadline(ctx, task.Deadline)

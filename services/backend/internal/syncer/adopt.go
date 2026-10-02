@@ -129,8 +129,11 @@ func (s *Service) adoptValidatedConflict(ctx context.Context, input planInput, a
 		resourceClient = client.Dynamic.Resource(mapping.Resource).Namespace(conflict.Identity.Namespace)
 	}
 	object, err := resourceClient.Get(ctx, conflict.Identity.Name, metav1.GetOptions{})
-	if err != nil || string(object.GetUID()) != expected.UID || object.GetResourceVersion() != expected.ResourceVersion {
-		return core.Resource{}, ErrAdoptionStale
+	if err != nil {
+		return core.Resource{}, &resourceAccessError{identity: conflict.Identity, action: "get", err: err}
+	}
+	if string(object.GetUID()) != expected.UID || object.GetResourceVersion() != expected.ResourceVersion {
+		return core.Resource{}, fmt.Errorf("%w: %s %s/%s changed in Kubernetes", ErrAdoptionStale, conflict.Identity.Kind, conflict.Identity.Namespace, conflict.Identity.Name)
 	}
 	owner := object.GetLabels()["justcd.io/application-id"]
 	if owner != expected.Owner {
@@ -179,8 +182,18 @@ func (s *Service) adoptValidatedConflict(ctx context.Context, input planInput, a
 }
 
 func validateAdoptionConflict(fresh, expected *OwnershipConflict, applicationID string) error {
-	if fresh == nil || expected == nil || fresh.Identity.Key() != expected.Identity.Key() || fresh.UID != expected.UID || fresh.ResourceVersion != expected.ResourceVersion || fresh.DesiredFingerprint != expected.DesiredFingerprint {
-		return ErrAdoptionStale
+	if fresh == nil || expected == nil || fresh.Identity.Key() != expected.Identity.Key() {
+		return fmt.Errorf("%w: the selected resource is no longer in the conflict list", ErrAdoptionStale)
+	}
+	target := fresh.Identity.Kind + " " + fresh.Identity.Namespace + "/" + fresh.Identity.Name
+	if fresh.UID != expected.UID {
+		return fmt.Errorf("%w: %s was replaced in Kubernetes", ErrAdoptionStale, target)
+	}
+	if fresh.ResourceVersion != expected.ResourceVersion {
+		return fmt.Errorf("%w: %s changed in Kubernetes (resource version %s -> %s)", ErrAdoptionStale, target, expected.ResourceVersion, fresh.ResourceVersion)
+	}
+	if fresh.DesiredFingerprint != expected.DesiredFingerprint {
+		return fmt.Errorf("%w: the rendered Git manifest for %s changed", ErrAdoptionStale, target)
 	}
 	if fresh.Owner != "" && fresh.Owner != applicationID && !fresh.OwnerMissing {
 		return fmt.Errorf("%w: this object is labelled for another JustCD application", ErrAdoptionUnsafe)

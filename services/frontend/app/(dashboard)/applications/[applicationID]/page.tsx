@@ -302,6 +302,15 @@ export default function ApplicationDetailPage() {
       const next = await api<{ conflict: OwnershipConflict | null; conflicts: OwnershipConflict[] }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ownership-conflict`).catch(() => null)
       if (next) setConflictReview(next.conflicts ?? (next.conflict ? [next.conflict] : []))
       toast.success("Resource claimed without changing its workload. Auto-sync is paused; create and review a fresh plan before syncing.")
+    } catch (cause) {
+      if (cause instanceof APIError && cause.status === 409) {
+        const next = await api<{ conflict: OwnershipConflict | null; conflicts: OwnershipConflict[] }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ownership-conflict`).catch(() => null)
+        if (next) {
+          setConflictReview(next.conflicts ?? (next.conflict ? [next.conflict] : []))
+          setSelectedConflictKeys([])
+        }
+      }
+      throw cause
     } finally { setBusy(false); setPendingAction("") }
   }
 
@@ -322,6 +331,15 @@ export default function ApplicationDetailPage() {
       if (next) setConflictReview(next.conflicts ?? (next.conflict ? [next.conflict] : []))
       if (result.failed) toast.error(`${result.claimed} claimed; ${result.failed} failed. Refresh the conflict list and retry the remaining resources.`)
       else toast.success(`${result.claimed} resources claimed without changing workloads. Auto-sync is paused; review a fresh plan before syncing.`)
+    } catch (cause) {
+      if (cause instanceof APIError && cause.status === 409) {
+        const next = await api<{ conflict: OwnershipConflict | null; conflicts: OwnershipConflict[] }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ownership-conflict`).catch(() => null)
+        if (next) {
+          setConflictReview(next.conflicts ?? (next.conflict ? [next.conflict] : []))
+          setSelectedConflictKeys([])
+        }
+      }
+      throw cause
     } finally { setBusy(false); setPendingAction("") }
   }
 

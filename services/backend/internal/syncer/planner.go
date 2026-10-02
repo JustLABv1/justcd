@@ -41,6 +41,15 @@ func (e *planStageError) Unwrap() error      { return e.err }
 func (e *planStageError) ErrorStage() string { return e.stage }
 
 func statusIssue(stage string, err error, at time.Time) store.ApplicationStatusIssue {
+	var conflict *OwnershipConflict
+	if errors.As(err, &conflict) {
+		return store.ApplicationStatusIssue{
+			Source: "cluster", Code: "kubernetes.ownership_conflict",
+			Summary:     "Existing Kubernetes resources require review before this application can adopt them.",
+			Remediation: "Review the existing resources and explicitly adopt the intended resources, then refresh the plan.",
+			Resource:    &conflict.Identity, Action: "adopt", ObservedAt: at,
+		}
+	}
 	summary := "Application check failed. Review the plan error for details."
 	switch stage {
 	case "git":

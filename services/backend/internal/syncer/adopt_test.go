@@ -2,6 +2,7 @@ package syncer
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/justlab/justcd/services/backend/internal/core"
@@ -110,5 +111,26 @@ func TestAdoptionAllowsDeletedApplicationOwner(t *testing.T) {
 	fresh.HasOwnerReferences = true
 	if err := validateAdoptionConflict(&fresh, &expected, "new-app"); !errors.Is(err, ErrAdoptionUnsafe) {
 		t.Fatalf("dependent object accepted: %v", err)
+	}
+}
+
+func TestAdoptionStaleExplainsWhichReviewChanged(t *testing.T) {
+	base := OwnershipConflict{Identity: core.Identity{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "team", Name: "web"}, UID: "uid", ResourceVersion: "27", DesiredFingerprint: "git"}
+	for _, tc := range []struct {
+		name, detail string
+		mutate       func(*OwnershipConflict)
+	}{
+		{"replacement", "was replaced", func(c *OwnershipConflict) { c.UID = "replacement" }},
+		{"live update", "resource version 27 -> 28", func(c *OwnershipConflict) { c.ResourceVersion = "28" }},
+		{"manifest update", "rendered Git manifest", func(c *OwnershipConflict) { c.DesiredFingerprint = "new-git" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fresh := base
+			tc.mutate(&fresh)
+			err := validateAdoptionConflict(&fresh, &base, "app")
+			if !errors.Is(err, ErrAdoptionStale) || !strings.Contains(err.Error(), tc.detail) || !strings.Contains(err.Error(), "Deployment team/web") {
+				t.Fatalf("missing review diagnostics: %v", err)
+			}
+		})
 	}
 }

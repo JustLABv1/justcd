@@ -25,6 +25,7 @@ import (
 
 type Config struct {
 	ServerURL           string                  `json:"serverUrl"`
+	KubernetesCAFile    string                  `json:"kubernetesCAFile,omitempty"`
 	ServerCAFile        string                  `json:"serverCAFile,omitempty"`
 	EnrollmentTokenFile string                  `json:"enrollmentTokenFile"`
 	IdentityFile        string                  `json:"identityFile"`
@@ -72,6 +73,10 @@ func New(c Config, kube *rest.Config) (*Agent, error) {
 			return nil, errors.New("duplicate local profile")
 		}
 		cfg := rest.CopyConfig(kube)
+		if c.KubernetesCAFile != "" {
+			cfg.TLSClientConfig.CAData = nil
+			cfg.TLSClientConfig.CAFile = c.KubernetesCAFile
+		}
 		if p.TokenFile != "" {
 			cfg.BearerToken = ""
 			cfg.BearerTokenFile = p.TokenFile
@@ -188,11 +193,11 @@ func (a *Agent) clusterUID(ctx context.Context) (string, error) {
 	}
 	res, err := a.Local[p.Name].Do(req)
 	if err != nil {
-		return "", errors.New("could not read target cluster identity")
+		return "", fmt.Errorf("could not read target cluster identity: %w", err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
-		return "", errors.New("agent needs get permission for the kube-system namespace")
+		return "", fmt.Errorf("could not read target cluster identity: Kubernetes returned HTTP %d (profile %q needs get permission for the kube-system namespace)", res.StatusCode, p.Name)
 	}
 	var ns struct {
 		Metadata struct {

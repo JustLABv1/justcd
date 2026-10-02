@@ -6,6 +6,9 @@
 {{- $profiles := list -}}
 {{- range .Values.profiles -}}
 {{- $profile := deepCopy . -}}
+{{- if and $.Values.kubernetes.tokenSecret (not .tokenFile) -}}
+{{- $_ := set $profile "tokenFile" "/etc/justcd-agent/kubernetes-token/token" -}}
+{{- end -}}
 {{- $_ := set $profile "deniedNamespaces" (concat (default (list) .deniedNamespaces) (list $.Release.Namespace "kube-system" "kube-public" "kube-node-lease") | uniq) -}}
 {{- $profiles = append $profiles $profile -}}
 {{- end -}}
@@ -15,7 +18,7 @@ metadata:
   name: {{ $name }}
 data:
   config.json: |
-    {{ dict "serverUrl" .Values.serverUrl "enrollmentTokenFile" "/etc/justcd-agent/enrollment/enrollmentToken" "identityFile" "/var/lib/justcd-agent/identity.json" "serverCAFile" (ternary "/etc/justcd-agent/ca/ca.crt" "" (ne .Values.serverCASecret "")) "profiles" $profiles | toJson }}
+    {{ dict "kubernetesCAFile" (ternary "/etc/justcd-agent/kubernetes-ca/ca.crt" "" (ne .Values.kubernetes.caSecret "")) "serverUrl" .Values.serverUrl "enrollmentTokenFile" "/etc/justcd-agent/enrollment/enrollmentToken" "identityFile" "/var/lib/justcd-agent/identity.json" "serverCAFile" (ternary "/etc/justcd-agent/ca/ca.crt" "" (ne .Values.serverCASecret "")) "profiles" $profiles | toJson }}
 ---
 {{- if .Values.serviceAccount.create }}
 apiVersion: v1
@@ -55,7 +58,7 @@ spec:
       labels:
         app.kubernetes.io/name: {{ $name }}
       annotations:
-        checksum/config: {{ dict "profiles" $profiles "serverUrl" .Values.serverUrl "serverCASecret" .Values.serverCASecret "enrollmentSecret" .Values.enrollmentSecret | toJson | sha256sum | quote }}
+        checksum/config: {{ dict "kubernetes" .Values.kubernetes "profiles" $profiles "serverUrl" .Values.serverUrl "serverCASecret" .Values.serverCASecret "enrollmentSecret" .Values.enrollmentSecret | toJson | sha256sum | quote }}
     spec:
       serviceAccountName: {{ $sa }}
       {{- with .Values.imagePullSecrets }}
@@ -94,6 +97,16 @@ spec:
               mountPath: /etc/justcd-agent/ca
               readOnly: true
             {{- end }}
+            {{- if .Values.kubernetes.caSecret }}
+            - name: kubernetes-ca
+              mountPath: /etc/justcd-agent/kubernetes-ca
+              readOnly: true
+            {{- end }}
+            {{- if .Values.kubernetes.tokenSecret }}
+            - name: kubernetes-token
+              mountPath: /etc/justcd-agent/kubernetes-token
+              readOnly: true
+            {{- end }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -113,6 +126,22 @@ spec:
             secretName: {{ .Values.serverCASecret }}
         {{- end }}
 
+        {{- if .Values.kubernetes.caSecret }}
+        - name: kubernetes-ca
+          secret:
+            secretName: {{ .Values.kubernetes.caSecret }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
+        {{- if .Values.kubernetes.tokenSecret }}
+        - name: kubernetes-token
+          secret:
+            secretName: {{ .Values.kubernetes.tokenSecret }}
+            items:
+              - key: token
+                path: token
+        {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

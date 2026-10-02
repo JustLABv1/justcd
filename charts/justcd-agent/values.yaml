@@ -7,6 +7,10 @@ serverUrl: ""
 serverCASecret: ""
 # Existing Secret containing the one-use enrollmentToken. Never put it in values.
 enrollmentSecret: ""
+# Optional existing Secrets for Kubernetes API access, separate from JustCD TLS.
+kubernetes:
+  caSecret: "" # Key: ca.crt
+  tokenSecret: "" # Key: token; used by profiles without an explicit tokenFile
 profiles:
   - name: default
     workspaceIds: []

@@ -187,11 +187,45 @@ kubectl -n justcd-agent create secret generic justcd-agent-kubernetes-token \
 Set **Cluster-scope profile** to `cluster-admin` in JustCD. The token's service
 account must have the intended Kubernetes RBAC permissions. The chart's
 `rbac.clusterWide` configures its own service account; it does not change the
-permissions of a token supplied by Secret. The default service account is still
-used for enrollment cluster identification and profiles without `tokenFile`.
+permissions of a token supplied by Secret. The first configured profile is used for enrollment cluster identification; its
+token must also be allowed to get the `kube-system` namespace. Profiles without
+`tokenFile` use the Pod service account unless `kubernetes.tokenSecret` is set.
 Secret volumes update in place; do not mount the token using `subPath` if it needs
 to rotate. A projected service-account token is also supported via `extraVolumes`
 when the profile uses the Pod's service account.
+
+## Custom Kubernetes CA and token for all application namespaces
+
+Set the Kubernetes CA and token independently of `serverCASecret`, which trusts
+only the JustCD HTTPS server. Both existing Secrets must be in the Helm release
+namespace: the CA Secret needs a `ca.crt` key and the token Secret a `token` key.
+
+```yaml
+serverUrl: https://justcd.example.com
+enrollmentSecret: justcd-agent-enrollment
+kubernetes:
+  caSecret: my-kubernetes-ca
+  tokenSecret: my-kubernetes-token
+rbac:
+  create: false
+profiles:
+  - name: default
+    workspaceIds: [YOUR_JUSTCD_WORKSPACE_ID]
+    namespaces: ["*"]
+    clusterScope: true
+```
+
+This uses the supplied token for startup cluster identification and all requests
+in the default profile. An explicit profile `tokenFile` overrides the shared token.
+Set **Cluster-scope profile** to `default` in JustCD. The existing token's RBAC must
+allow namespace creation and management of the intended resources, including
+`get` on the `kube-system` namespace. The chart does not grant this token additional
+permissions. Kubernetes CA trust is applied to every profile, with TLS verification
+remaining enabled. Secret mounts support file rotation without `subPath`.
+
+The chart still protects its own namespace and Kubernetes system namespaces.
+Its workload admission policy still requires restricted/latest Pod Security labels
+in application namespaces; see the policy configuration above.
 
 ## Security contexts
 

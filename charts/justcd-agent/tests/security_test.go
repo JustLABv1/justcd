@@ -157,3 +157,58 @@ func TestChartRBACAndNamespaceGuards(t *testing.T) {
 		t.Fatalf("installation namespace accepted: %s", data)
 	}
 }
+
+func TestCustomKubernetesCredentials(t *testing.T) {
+	data, err := exec.Command("helm", "template", "audit", "..", "--namespace", "justcd-agent", "--set", "serverUrl=https://justcd.invalid", "--set", "enrollmentSecret=enrollment", "--set", "profiles[0].workspaceIds[0]=workspace", "--set", "profiles[0].name=default", "--set", "kubernetes.caSecret=custom-ca", "--set", "kubernetes.tokenSecret=custom-token", "--set", "profiles[1].name=explicit", "--set", "profiles[1].workspaceIds[0]=workspace", "--set", "profiles[1].tokenFile=/custom/token").CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v: %s", err, data)
+	}
+	var config map[string]any
+	var deployment map[string]any
+	for _, doc := range strings.Split(string(data), "\n---") {
+		var obj map[string]any
+		if err := yaml.Unmarshal([]byte(doc), &obj); err != nil {
+			t.Fatal(err)
+		}
+		if obj["kind"] == "ConfigMap" {
+			if err := json.Unmarshal([]byte(obj["data"].(map[string]any)["config.json"].(string)), &config); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if obj["kind"] == "Deployment" {
+			deployment = obj
+		}
+	}
+	if config["kubernetesCAFile"] != "/etc/justcd-agent/kubernetes-ca/ca.crt" || config["serverCAFile"] != "" {
+		t.Fatalf("CA config: %+v", config)
+	}
+	profiles := config["profiles"].([]any)
+	if profiles[0].(map[string]any)["tokenFile"] != "/etc/justcd-agent/kubernetes-token/token" || profiles[1].(map[string]any)["tokenFile"] != "/custom/token" {
+		t.Fatalf("token profiles: %+v", profiles)
+	}
+	spec := deployment["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+	secrets := map[string]string{}
+	for _, v := range spec["volumes"].([]any) {
+		volume := v.(map[string]any)
+		if secret, ok := volume["secret"].(map[string]any); ok {
+			secrets[volume["name"].(string)] = secret["secretName"].(string)
+		}
+	}
+	if secrets["kubernetes-ca"] != "custom-ca" || secrets["kubernetes-token"] != "custom-token" {
+		t.Fatalf("secret mounts: %+v", secrets)
+	}
+	mounts := spec["containers"].([]any)[0].(map[string]any)["volumeMounts"].([]any)
+	found := 0
+	for _, m := range mounts {
+		mount := m.(map[string]any)
+		if mount["name"] == "kubernetes-ca" || mount["name"] == "kubernetes-token" {
+			found++
+			if mount["readOnly"] != true || mount["subPath"] != nil {
+				t.Fatalf("credential mount: %+v", mount)
+			}
+		}
+	}
+	if found != 2 {
+		t.Fatalf("credential mount count: %d", found)
+	}
+}

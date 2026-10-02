@@ -10,6 +10,7 @@ import {
   CollectionSkeleton,
   LoadError,
 } from "@/components/workspace-ui"
+import { useClusterStatuses } from "@/hooks/use-cluster-statuses"
 import { useWorkspace } from "@/hooks/use-workspace"
 import { useWorkspaceSelection } from "@/hooks/workspace-selection"
 
@@ -26,6 +27,7 @@ function ApplicationsContent() {
     includeAllApplications: true,
   })
   const { workspaceId } = useWorkspaceSelection()
+  const clusterStatuses = useClusterStatuses(workspaces.map((workspace) => workspace.id))
   const searchParams = useSearchParams()
   const initialFilter = ["attention", "synced", "other", "paused"].includes(
     searchParams.get("status") ?? ""
@@ -57,6 +59,7 @@ function ApplicationsContent() {
           initialFilter={initialFilter}
           applications={applications}
           workspaces={workspaces}
+          clusterStatuses={clusterStatuses}
         />
       )}
     </>

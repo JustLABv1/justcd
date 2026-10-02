@@ -42,6 +42,20 @@ without a separate approval mechanism.
    ```
 
    The target namespace `dev` must exist for the chart's namespace RoleBindings.
+   Kubernetes 1.30 or newer is required. Before deploying workloads, enable Pod
+   Security Admission in each target namespace:
+
+   ```sh
+   kubectl label namespace dev \
+     pod-security.kubernetes.io/enforce=restricted \
+     pod-security.kubernetes.io/enforce-version=latest --overwrite
+   ```
+
+   The chart's admission policy rejects Pods in managed namespaces without these
+   labels. Ensure Pod Security Admission is enabled and has no exemption for your
+   workload users/namespaces. Existing Pods are not retroactively remediated.
+   The policy also affects controller-created Pods and other clients in these
+   namespaces, so review existing workloads before upgrading.
    The chart creates namespace-scoped workload permissions, API discovery and
    access-review permissions, and permission to read the `kube-system` namespace
    UID to identify the physical cluster. Customize `rbac.rules` for your workload
@@ -205,3 +219,59 @@ tasks with no confirmed result are shown as unknown outcome. Heartbeat online
 status indicates connectivity to JustCD, not successful Kubernetes access.
 The overview lists one identity per connection; multiple replicas and HA remain
 unsupported.
+
+## Security defaults and upgrades
+
+Chart 0.2 replaces wildcard RBAC with explicit common workload resources. It does
+not grant RBAC management, ServiceAccount mutation, node access, admission-policy
+management or arbitrary custom resources. Add only the resources your reviewed
+workloads require to `rbac.rules`; namespace creation for previews now needs an
+explicit namespace rule as well as `clusterWide: true` and a cluster-scope profile.
+A token mounted through `tokenFile` retains its external Kubernetes permissions:
+operator-managed credentials must follow the same least-privilege requirements.
+
+Install the agent in a dedicated namespace. The generated local profiles protect
+that namespace and Kubernetes system namespaces through `deniedNamespaces`, even
+for cluster-scope requests. Cross-namespace collections of common namespaced
+resources (including Secrets) are also blocked to prevent reading protected
+namespace contents through a cluster-wide list. Other locally supplied profiles can also configure
+this denylist. A cluster-wide chart policy applies to non-system namespaces outside
+its own installation namespace; namespace-scoped policy uses configured exact
+names and `preview-*` prefixes.
+
+`workloadPolicy.enabled` defaults to true. Its ValidatingAdmissionPolicy requires
+restricted/latest Pod Security labels, permits only `default` as a workload
+ServiceAccount, and denies Secret references unless listed in
+`workloadPolicy.allowedSecrets`. This includes regular/init container environment
+references and direct/projected Secret volumes. Extend
+`workloadPolicy.allowedServiceAccounts` deliberately, ensuring each account has
+minimal permissions. Review the default ServiceAccount's RBAC too. Keep the agent's
+enrollment, credential Secrets and identity PVC outside workload namespaces.
+PVC and ServiceAccount access remain Kubernetes trust boundaries; admission rules
+cannot make an intentionally privileged credential safe.
+
+Example explicit application permissions:
+
+```yaml
+workloadPolicy:
+  enabled: true
+  allowedServiceAccounts: [default, application-reader]
+  allowedSecrets: [application-database]
+```
+
+A cluster administrator may disable the bundled policy only when equivalent
+admission enforcement is provided separately. The chart never grants permission
+to remove its policy to the agent. Pod Security enforcement and Secret/ServiceAccount
+allowlists intentionally reject some previously accepted workloads on upgrade.
+See [Kubernetes ValidatingAdmissionPolicy](https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/)
+and [Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/).
+
+Agent token rotation preserves the original five-minute old-token grace deadline.
+Task claims recheck token validity and revocation under a database row lock; tasks
+already claimed before revocation may still finish. Each backend process permits
+one active poll per cluster and 120 poll starts/minute, with one-second database
+poll intervals. Enrollment is limited to ten attempts/minute per direct peer IP.
+Rate/concurrency limits are process-local; deployments with multiple replicas
+should additionally enforce shared ingress limits. Password-login throttling uses
+normalized account names rather than the frontend proxy's shared address; it still
+limits targeted attempts against one account to eight per fifteen minutes.

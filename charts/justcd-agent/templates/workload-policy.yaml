@@ -1,0 +1,52 @@
+{{- if .Values.workloadPolicy.enabled }}
+{{- $name := printf "%s-justcd-agent-workloads" .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- $namespaces := list }}
+{{- range .Values.profiles }}{{- range .namespaces }}
+{{- if or (eq . $.Release.Namespace) (and (hasSuffix "-*" .) (hasPrefix (trimSuffix "*" .) $.Release.Namespace)) }}
+{{- fail "Agent installation namespace must not be authorized for workload deployment" }}
+{{- end }}
+{{- $namespaces = append $namespaces . }}
+{{- end }}{{- end }}
+{{- $matches := list }}
+{{- range $namespaces | uniq }}
+{{- if hasSuffix "-*" . }}
+{{- $matches = append $matches (printf "request.namespace.startsWith(%s)" (trimSuffix "*" . | toJson)) }}
+{{- else }}
+{{- $matches = append $matches (printf "request.namespace == %s" (. | toJson)) }}
+{{- end }}{{- end }}
+{{- if .Values.rbac.clusterWide }}{{- $matches = list (printf "request.namespace != %s && !(request.namespace in ['kube-system', 'kube-public', 'kube-node-lease'])" (.Release.Namespace | toJson)) }}{{- end }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $name }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  matchConditions:
+    - name: managed-namespace
+      expression: {{ default "false" (join " || " $matches) | quote }}
+  validations:
+    - expression: 'namespaceObject.metadata.labels["pod-security.kubernetes.io/enforce"] == "restricted" && namespaceObject.metadata.labels["pod-security.kubernetes.io/enforce-version"] == "latest"'
+      message: 'Managed namespaces must enforce Pod Security restricted with enforce-version=latest.'
+    - expression: {{ printf "(!has(object.spec.serviceAccountName) || object.spec.serviceAccountName == '' ? 'default' : object.spec.serviceAccountName) in %s" (.Values.workloadPolicy.allowedServiceAccounts | toJson) | quote }}
+      message: 'Workload ServiceAccount is not explicitly authorized.'
+    - expression: {{ printf "!has(object.spec.volumes) || object.spec.volumes.all(v, (!has(v.secret) || v.secret.secretName in %s) && (!has(v.projected) || v.projected.sources.all(s, !has(s.secret) || s.secret.name in %s)))" (.Values.workloadPolicy.allowedSecrets | toJson) (.Values.workloadPolicy.allowedSecrets | toJson) | quote }}
+      message: 'Workload Secret volume is not explicitly authorized.'
+    - expression: {{ printf "object.spec.containers.all(c, (!has(c.envFrom) || c.envFrom.all(e, !has(e.secretRef) || e.secretRef.name in %s)) && (!has(c.env) || c.env.all(e, !has(e.valueFrom) || !has(e.valueFrom.secretKeyRef) || e.valueFrom.secretKeyRef.name in %s)))" (.Values.workloadPolicy.allowedSecrets | toJson) (.Values.workloadPolicy.allowedSecrets | toJson) | quote }}
+      message: 'Workload Secret environment reference is not explicitly authorized.'
+    - expression: {{ printf "!has(object.spec.initContainers) || object.spec.initContainers.all(c, (!has(c.envFrom) || c.envFrom.all(e, !has(e.secretRef) || e.secretRef.name in %s)) && (!has(c.env) || c.env.all(e, !has(e.valueFrom) || !has(e.valueFrom.secretKeyRef) || e.valueFrom.secretKeyRef.name in %s)))" (.Values.workloadPolicy.allowedSecrets | toJson) (.Values.workloadPolicy.allowedSecrets | toJson) | quote }}
+      message: 'Init container Secret environment reference is not explicitly authorized.'
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $name }}
+spec:
+  policyName: {{ $name }}
+  validationActions: [Deny]
+{{- end }}

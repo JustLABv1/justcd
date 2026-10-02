@@ -37,6 +37,9 @@ type Server struct {
 	dummyHash     string
 	loginMu       sync.Mutex
 	loginTries    map[string][]time.Time
+	agentMu       sync.Mutex
+	agentPolls    map[string]bool
+	agentRequests map[string][]time.Time
 	Mux           *http.ServeMux
 }
 

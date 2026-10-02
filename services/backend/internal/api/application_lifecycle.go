@@ -75,8 +75,8 @@ func (s *Server) retryApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "application already has an active operation")
 		return
 	}
-	if err := s.Store.ResetApplicationRetry(r.Context(), app.ID); err != nil {
-		writeStoreError(w, "could not reset reconciliation retry state")
+	if err := s.Store.ResumeFailedReconciliation(r.Context(), app.ID); err != nil {
+		writeError(w, http.StatusConflict, "could not resume reconciliation; check active operations, rollback, branch test, or Git configuration")
 		return
 	}
 	record, err := s.Syncer.BuildPlan(r.Context(), app.ID, currentUser(r).ID)
@@ -107,10 +107,6 @@ func (s *Server) retryApplication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if record.Plan.RequiresApproval {
-		if app.SyncPolicy == "auto-safe" {
-			_ = s.Store.RecordApplicationRetry(r.Context(), app.ID, 0, "plan.approval_required", nil, "approval_required")
-			_ = s.Store.PauseAutoSync(r.Context(), app.ID)
-		}
 		writeJSON(w, http.StatusAccepted, map[string]any{"status": "review_required", "plan": toPlanView(record)})
 		return
 	}

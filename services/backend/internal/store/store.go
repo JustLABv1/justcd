@@ -1922,7 +1922,7 @@ func (s *Store) DueApplications(ctx context.Context, limit int) ([]Application, 
 		WHERE NOT a.decommissioning
 		  AND NOT a.auto_sync_paused
 		  AND NOT a.configuration_missing
-		  AND a.retry_terminal_reason=''
+		  AND a.retry_terminal_reason IN ('','plan_check_failed')
 		  AND (
 		    (a.retry_next_at IS NOT NULL AND a.retry_next_at<=NOW())
 		    OR (a.retry_next_at IS NULL AND (a.last_checked_at IS NULL OR a.last_checked_at<=NOW()-(a.poll_seconds * INTERVAL '1 second')))
@@ -2083,6 +2083,22 @@ func (s *Store) PauseAutoSync(ctx context.Context, id string) error {
 func (s *Store) RecordApplicationRetry(ctx context.Context, id string, attempt int, errorCode string, nextRetryAt *time.Time, terminalReason string) error {
 	_, err := s.DB.ExecContext(ctx, `UPDATE applications SET retry_attempt_count=$2,retry_last_error_code=$3,retry_next_at=$4,retry_terminal_reason=$5,health='degraded',last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, id, attempt, errorCode, nextRetryAt, terminalReason)
 	return err
+}
+
+// ResumeFailedReconciliation is an explicit retry, not a rollback/branch resume.
+func (s *Store) ResumeFailedReconciliation(ctx context.Context, id string) error {
+	result, err := s.DB.ExecContext(ctx, `UPDATE applications SET auto_sync_paused=FALSE,retry_attempt_count=0,retry_next_at=NULL,retry_terminal_reason='',retry_last_error_code='',updated_at=NOW() WHERE id=$1 AND NOT decommissioning AND NOT configuration_missing AND rollback_resume_state IS NULL AND NOT rollback_resume_requires_revision AND branch_test IS NULL AND NOT EXISTS (SELECT 1 FROM operations WHERE application_id=$1 AND status IN ('queued','running')) AND NOT EXISTS (SELECT 1 FROM operation_leases WHERE application_id=$1 AND expires_at>NOW())`, id)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return errors.New("application cannot resume reconciliation; check active operations, rollback, branch test, or Git configuration")
+	}
+	return nil
 }
 
 func (s *Store) ResetApplicationRetry(ctx context.Context, id string) error {
@@ -3099,11 +3115,15 @@ func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actor
 	// have loaded the application before the user paused it.
 	if actorID == "justcd-system" {
 		var paused, configurationMissing bool
-		if err := tx.QueryRowContext(ctx, `SELECT auto_sync_paused,configuration_missing FROM applications WHERE id=$1`, applicationID).Scan(&paused, &configurationMissing); err != nil {
+		var syncPolicy string
+		if err := tx.QueryRowContext(ctx, `SELECT auto_sync_paused,configuration_missing,sync_policy FROM applications WHERE id=$1`, applicationID).Scan(&paused, &configurationMissing, &syncPolicy); err != nil {
 			return Operation{}, err
 		}
 		if paused || configurationMissing {
 			return Operation{}, errors.New("automatic reconciliation is paused or the Git definition is missing")
+		}
+		if syncPolicy != "auto-safe" {
+			return Operation{}, errors.New("automatic reconciliation is no longer enabled")
 		}
 	}
 	attemptCount := priorAttemptCount + 1

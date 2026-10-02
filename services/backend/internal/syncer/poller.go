@@ -18,11 +18,13 @@ const systemActorID = "justcd-system"
 
 // RunPoller checks drift for every application and performs auto-safe
 // reconciliation outside the Kubernetes cluster. Destructive or cluster-scoped
-// plans are recorded for review but never applied.
+// plans are recorded for review; the approval endpoint queues them after
+// the final required approval.
 func (s *Service) RunPoller(ctx context.Context, logger *slog.Logger) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	logger.InfoContext(ctx, "JustCD application poller started", "interval", 15*time.Second)
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -45,7 +47,10 @@ func (s *Service) reconcileDue(ctx context.Context, logger *slog.Logger) {
 		if ctx.Err() != nil {
 			return
 		}
+		started := time.Now()
+		logger.InfoContext(ctx, "JustCD application check started", "applicationId", app.ID, "application", app.Name, "syncPolicy", app.SyncPolicy)
 		s.reconcileApplication(ctx, logger, app)
+		logger.InfoContext(ctx, "JustCD application check finished", "applicationId", app.ID, "duration", time.Since(started))
 	}
 }
 
@@ -74,14 +79,22 @@ func (s *Service) reconcileApplication(parent context.Context, logger *slog.Logg
 		if app.RetryNextAt != nil && decision.NextRetryAt == nil && decision.TerminalReason == "" {
 			decision.TerminalReason = "retry_requires_review"
 		}
+		// Planning is read-only. Exhausted/disabled write retries must not stop
+		// observing Git and Kubernetes at the normal polling interval.
+		if decision.NextRetryAt == nil {
+			decision.TerminalReason = "plan_check_failed"
+		}
 		if err := s.Store.RecordApplicationRetry(ctx, app.ID, decision.AttemptCount, decision.ErrorCode, decision.NextRetryAt, decision.TerminalReason); err != nil {
 			logger.ErrorContext(ctx, "could not persist JustCD reconciliation retry state", "applicationId", app.ID, "error", err)
 		}
-		if decision.NextRetryAt == nil && app.SyncPolicy == "auto-safe" {
-			_ = s.Store.PauseAutoSync(ctx, app.ID)
-		}
 		_ = s.Store.Audit(ctx, systemActorID, "auto_sync.plan_failed", "application", app.ID, map[string]any{"message": "automatic drift check failed; see server logs", "attempt": decision.AttemptCount, "errorCode": decision.ErrorCode, "nextRetryAt": decision.NextRetryAt, "terminalReason": decision.TerminalReason})
 		return
+	}
+	if app.RetryTerminalReason == "plan_check_failed" || app.RetryNextAt != nil {
+		if err := s.Store.ResetApplicationRetry(ctx, app.ID); err != nil {
+			logger.ErrorContext(ctx, "could not clear recovered plan check", "applicationId", app.ID, "error", err)
+			return
+		}
 	}
 	span.SetAttributes(attribute.String("plan.id", record.ID), attribute.Int("plan.change_count", len(record.Plan.Changes)))
 	result := "drift"
@@ -119,10 +132,7 @@ func (s *Service) reconcileApplication(parent context.Context, logger *slog.Logg
 		return
 	}
 	if record.Plan.RequiresApproval {
-		if app.RetryNextAt != nil {
-			_ = s.Store.RecordApplicationRetry(ctx, app.ID, app.RetryAttemptCount, "plan.approval_required", nil, "approval_required")
-			_ = s.Store.PauseAutoSync(ctx, app.ID)
-		}
+		logger.InfoContext(ctx, "automatic JustCD sync requires approval", "applicationId", app.ID, "planId", record.ID, "changes", len(record.Plan.Changes))
 		return
 	}
 	if _, err := s.Apply(ctx, record.ID, systemActorID, ""); err != nil {

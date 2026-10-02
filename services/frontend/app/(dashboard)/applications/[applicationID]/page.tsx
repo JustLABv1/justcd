@@ -228,9 +228,12 @@ export default function ApplicationDetailPage() {
   }, [activePlanId, activePlanRequiresApproval])
 
   useEffect(() => {
-    if (!busy && !hasPendingOperation) return
+    let active = true
+    let refreshing = false
     let healthRefreshStarted = false
     const timer = window.setInterval(() => {
+      if (refreshing || document.visibilityState === "hidden") return
+      refreshing = true
       void Promise.all([
         api<ListResponse<Operation>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/operations`),
         api<ListResponse<ManagedResource>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/resources`),
@@ -238,12 +241,17 @@ export default function ApplicationDetailPage() {
         api<ListResponse<RollbackTarget>>(`/api/v1/applications/${encodeURIComponent(applicationID)}/rollback-targets`).catch(() => ({ items: [] as RollbackTarget[] })),
         api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`),
       ]).then(([nextOperations, nextResources, nextPlans, nextRollbackTargets, nextApplication]) => {
+        if (!active) return
         setOperations(nextOperations.items)
         setResources(nextResources.items)
         setPlans(nextPlans.items)
         setRollbackTargets(nextRollbackTargets.items)
         setApplication(nextApplication)
-        setActivePlan(current => current ? nextPlans.items.find((plan) => plan.id === current.id) ?? nextPlans.items[0] ?? null : nextPlans.items[0] ?? null)
+        setActivePlan(current => {
+          const selected = nextPlans.items.find((plan) => plan.id === current?.id)
+          return selected && (selected.status === "current" || current?.status !== "current")
+            ? selected : nextPlans.items[0] ?? null
+        })
         const operationStillRunning = nextOperations.items.some((operation) => operation.status === "queued" || operation.status === "running")
         if (hasPendingOperation && !operationStillRunning && !healthRefreshStarted) {
           healthRefreshStarted = true
@@ -258,9 +266,9 @@ export default function ApplicationDetailPage() {
             setHealthHistory(history.items)
           }).catch(() => {})
         }
-      }).catch(() => {})
-    }, 1500)
-    return () => window.clearInterval(timer)
+      }).catch(() => {}).finally(() => { refreshing = false })
+    }, busy || hasPendingOperation ? 1500 : 5000)
+    return () => { active = false; window.clearInterval(timer) }
   }, [applicationID, busy, hasPendingOperation])
 
   async function createPlan() {
@@ -541,11 +549,19 @@ export default function ApplicationDetailPage() {
     if (!activePlan || selectionDirty) return
     setBusy(true); setPendingAction("approve-plan"); setError(null)
     try {
-      await apiPost<{ id: string; expiresAt: string }>(`/api/v1/plans/${encodeURIComponent(activePlan.id)}/approvals`, { comment: approvalComment.trim(), planDigest: activePlan.plan.digest })
+      const result = await apiPost<{ id: string; expiresAt: string; operation?: Operation; autoApplyError?: string }>(`/api/v1/plans/${encodeURIComponent(activePlan.id)}/approvals`, { comment: approvalComment.trim(), planDigest: activePlan.plan.digest })
+      setApprovalComment("")
+      if (result.operation) {
+        setApprovalSummary(null)
+        toast.success("Final approval recorded. Automatic sync queued for the reviewed plan.")
+        await loadData()
+        await refreshSummary()
+        return
+      }
       const summary = await api<PlanApprovalSummary>(`/api/v1/plans/${encodeURIComponent(activePlan.id)}/approvals`)
       setApprovalSummary(summary)
-      setApprovalComment("")
-      toast.success(`Approval recorded: ${summary.approvedApprovals} of ${summary.requiredApprovals} required.`)
+      if (result.autoApplyError) toast.warning(result.autoApplyError)
+      else toast.success(`Approval recorded: ${summary.approvedApprovals} of ${summary.requiredApprovals} required.`)
     } catch (cause) { if (!acceptRefreshedPlan(cause)) toast.error(errorMessage(cause), cause) } finally { setBusy(false); setPendingAction("") }
   }
 
@@ -712,6 +728,7 @@ export default function ApplicationDetailPage() {
             onResetSelection={() => { setSelectionResources(activePlan?.plan.selection?.resources ?? []); setSelectionFields(activePlan?.plan.selection?.fields ?? []) }} onSaveSelection={() => void savePlanSelection()}
             ignoreRules={ignoreRules} ignoreReasons={ignoreReasons} onIgnoreReasonChange={(key, reason) => setIgnoreReasons((current) => ({ ...current, [key]: reason }))} onSaveIgnore={(identity, path, reason) => void saveIgnoreRule(identity, path, reason)} onRemoveRule={removeIgnoreRule}
             requiredApprovals={requiredApprovals} approvedApprovals={approvedApprovals} approvalsComplete={approvalsComplete} approverRoles={displayedApproverRoles} approverMembers={displayedApproverMembers} approvalSummary={currentApprovalSummary}
+            autoApplyAfterApproval={application.syncPolicy === "auto-safe" && !application.autoSyncPaused && !application.decommissioning && !activePlan?.plan.rollback && !activePlan?.plan.decommission}
             approvalComment={approvalComment} onApprovalCommentChange={setApprovalComment} onApprove={approvePlan} onApply={() => void applyPlan()} onCreatePlan={() => void createPlan()} />
         </Tabs.Panel>
 

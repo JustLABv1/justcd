@@ -54,8 +54,14 @@ export function useWorkspace({ includeAllApplications = false }: { includeAllApp
         if (!controller.signal.aborted) setLoading(false)
       }
     }
+    let refreshing = false
     void load()
-    return () => controller.abort()
+    const timer = window.setInterval(() => {
+      if (refreshing || document.visibilityState === "hidden") return
+      refreshing = true
+      void load().finally(() => { refreshing = false })
+    }, 5000)
+    return () => { controller.abort(); window.clearInterval(timer) }
   }, [version, workspaceId, includeAllApplications])
   return { workspaces, applications, loading, error, refresh }
 }

@@ -282,13 +282,67 @@ func (s *Server) approvePlan(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, "could not save approval")
 		return
 	}
+	// Reload after saving: concurrent approvers may have completed the threshold.
+	activeApprovals, err = s.Store.ListPlanApprovals(r.Context(), record.ID, record.Plan.Digest)
+	if err != nil {
+		writeStoreError(w, "approval recorded, but could not reload plan approvals")
+		return
+	}
+	approvedActors = make(map[string]bool, len(activeApprovals))
+	approvalIDs := make([]string, 0, len(activeApprovals))
+	for _, existing := range activeApprovals {
+		approver, userErr := s.Store.UserByID(r.Context(), existing.Approval.ActorID)
+		approverRole := ""
+		if userErr == nil {
+			approverRole, userErr = s.Store.WorkspaceRole(r.Context(), approver, app.WorkspaceID)
+		}
+		if userErr == nil && approverRole != "" && core.ApprovalRoleAllows(record.Plan, approverRole, existing.Approval.ActorID) && !approvedActors[existing.Approval.ActorID] {
+			approvedActors[existing.Approval.ActorID] = true
+			approvalIDs = append(approvalIDs, existing.ID)
+		}
+	}
 	approvalState := "pending"
-	if len(approvedActors)+1 >= required {
+	if len(approvedActors) >= required {
 		approvalState = "threshold_met"
 	}
 	s.Metrics.RecordApproval(approvalState)
 	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "plan.approved", "application", app.ID, map[string]any{"planId": record.ID, "approvalId": approvalID, "digest": record.Plan.Digest, "kind": record.Plan.ApprovalKind, "deletions": len(deletes), "privilegedChanges": len(privileged), "comment": input.Comment})
-	writeJSON(w, http.StatusCreated, map[string]any{"id": approvalID, "planId": record.ID, "planDigest": record.Plan.Digest, "expiresAt": expires, "requiredApprovals": required, "approvedApprovals": len(approvedActors) + 1, "comment": input.Comment})
+	response := map[string]any{"id": approvalID, "planId": record.ID, "planDigest": record.Plan.Digest, "expiresAt": expires, "requiredApprovals": required, "approvedApprovals": len(approvedActors), "comment": input.Comment}
+	if shouldAutoApplyApprovedPlan(app, record.Plan, len(approvedActors)) {
+		operation, queueErr := s.queueApprovedAutoSync(r, app, record, approvalIDs)
+		if queueErr != nil {
+			var stale *syncer.StalePlanError
+			if errors.As(queueErr, &stale) {
+				writeClassifiedError(w, http.StatusConflict, "plan changed after approval; review the refreshed plan", apiErrorMetadata{code: "plan.stale", category: "plan", remediation: "Review and approve the refreshed plan before syncing."}, map[string]any{"plan": toPlanView(stale.Fresh)})
+				return
+			}
+			s.Logger.WarnContext(r.Context(), "approved automatic sync could not be queued", "applicationId", app.ID, "planId", record.ID, "error", queueErr)
+			response["autoApplyError"] = "Approval recorded, but automatic sync could not be queued. Refresh the plan and operation state before retrying Apply."
+		} else {
+			response["operation"] = operation
+			s.Logger.InfoContext(r.Context(), "approved automatic sync queued", "applicationId", app.ID, "planId", record.ID, "operationId", operation.ID)
+		}
+	}
+	writeJSON(w, http.StatusCreated, response)
+}
+
+// Approval authorizes this exact snapshot; auto-safe configuration authorizes
+// the system to queue it once all required approvals have been recorded.
+func shouldAutoApplyApprovedPlan(app store.Application, plan core.Plan, approved int) bool {
+	return app.SyncPolicy == "auto-safe" && !app.AutoSyncPaused && !app.Decommissioning && !app.ConfigurationMissing && plan.Rollback == nil && !plan.Decommission && core.RequiredApprovalCount(plan) > 0 && approved >= core.RequiredApprovalCount(plan)
+}
+
+func (s *Server) queueApprovedAutoSync(r *http.Request, app store.Application, record store.PlanRecord, approvalIDs []string) (store.Operation, error) {
+	previewReview, previewConnection, err := s.Store.ReviewByPreviewApplication(r.Context(), app.ID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return store.Operation{}, err
+	}
+	if err == nil {
+		if err := s.validatePRDeployment(r.Context(), previewConnection, previewReview, app, record); err != nil {
+			return store.Operation{}, err
+		}
+	}
+	return s.Syncer.ApplyWithApprovals(r.Context(), record.ID, "justcd-system", approvalIDs)
 }
 
 func (s *Server) listPlanApprovals(w http.ResponseWriter, r *http.Request) {
@@ -364,7 +418,10 @@ func (s *Server) applyPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if previewErr == nil && !record.Plan.Decommission {
-		if err := s.validatePRDeployment(r.Context(), previewConnection, previewReview, app, record); err != nil { writeError(w, http.StatusConflict, err.Error()); return }
+		if err := s.validatePRDeployment(r.Context(), previewConnection, previewReview, app, record); err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 	}
 	if record.Plan.Decommission && !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return

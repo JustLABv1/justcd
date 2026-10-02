@@ -92,7 +92,7 @@ function DiffCard({ change, canSelect, canManageIgnores, excluded, excludedPaths
   </article>
 }
 
-export function ChangesTab({ plans, activePlan, onSelectPlan, plansLoading, plansError, retryingPlans, onRetryPlans, decommissioning, canDeploy, canApprove, busy, hasPendingOperation, pendingAction, hasOwnershipConflict, reviewResource, onReviewResourceChange, selectionResources, selectionFields, selectionDirty, onToggleResource, onToggleField, onResetSelection, onSaveSelection, ignoreRules, ignoreReasons, onIgnoreReasonChange, onSaveIgnore, onRemoveRule, requiredApprovals, approvedApprovals, approvalsComplete, approverRoles, approverMembers, approvalSummary, approvalComment, onApprovalCommentChange, onApprove, onApply, onCreatePlan }: {
+export function ChangesTab({ plans, activePlan, onSelectPlan, plansLoading, plansError, retryingPlans, onRetryPlans, decommissioning, canDeploy, canApprove, busy, hasPendingOperation, pendingAction, hasOwnershipConflict, reviewResource, onReviewResourceChange, selectionResources, selectionFields, selectionDirty, onToggleResource, onToggleField, onResetSelection, onSaveSelection, ignoreRules, ignoreReasons, onIgnoreReasonChange, onSaveIgnore, onRemoveRule, requiredApprovals, approvedApprovals, approvalsComplete, approverRoles, approverMembers, approvalSummary, autoApplyAfterApproval = false, approvalComment, onApprovalCommentChange, onApprove, onApply, onCreatePlan }: {
   plans: PlanRecord[]
   activePlan: PlanRecord | null
   onSelectPlan: (id: string) => void
@@ -127,6 +127,7 @@ export function ChangesTab({ plans, activePlan, onSelectPlan, plansLoading, plan
   approverRoles: string[]
   approverMembers: { id: string; label: string }[]
   approvalSummary: PlanApprovalSummary | null
+  autoApplyAfterApproval?: boolean
   approvalComment: string
   onApprovalCommentChange: (comment: string) => void
   onApprove: () => Promise<void>
@@ -138,6 +139,16 @@ export function ChangesTab({ plans, activePlan, onSelectPlan, plansLoading, plan
   const title = activePlan?.plan.rollback ? "Rollback plan & diff" : activePlan?.plan.decommission ? "Deletion plan & diff" : "Plan & diff"
   const description = activePlan?.plan.rollback ? "A rollback is a new reviewed plan that restores a recorded deployment or Git revision." : activePlan?.plan.decommission ? "Every managed resource below will be checked again before it is deleted." : "A reviewed plan is a snapshot of the desired Git commit and live cluster state."
   const blocked = busy || hasPendingOperation
+  const applyBlockedReason = busy ? "Wait for the current action to finish."
+    : hasPendingOperation ? "Wait for the queued or running operation to finish."
+    : hasOwnershipConflict ? "Review and resolve existing resource ownership conflicts before applying."
+    : selectionDirty ? "Save or reset your changed resource selection before applying."
+    : !canDeploy ? "A workspace owner or deployer must apply this plan."
+    : ((activePlan?.plan.decommission || activePlan?.plan.rollback) && !canApprove) ? "A workspace owner must apply this deletion or rollback plan."
+    : activePlan && activePlan.status !== "current" ? "Refresh the plan before applying; this plan is no longer current."
+    : activePlan && !activePlan.plan.rollback && activePlan.plan.changes.length === 0 ? "There are no changes to apply."
+    : activePlan?.plan.requiresApproval && !approvalsComplete ? `${Math.max(0, requiredApprovals - approvedApprovals)} more eligible approval(s) required before applying.`
+    : null
 
   return <Panel title={title} description={description} action={plans.length > 0 && <FormSelect ariaLabel="Select plan" value={activePlan?.id ?? ""} onValueChange={onSelectPlan} className="h-8 max-w-[220px]" items={plans.map((plan) => ({ value: plan.id, label: `${new Date(plan.createdAt).toLocaleString()} · ${plan.plan.rollback ? "rollback · " : plan.plan.decommission ? "deletion · " : ""}${plan.status}` }))} />}>
     {plansLoading ? <PlanLoading label="Loading plans and differences" />
@@ -163,12 +174,13 @@ export function ChangesTab({ plans, activePlan, onSelectPlan, plansLoading, plan
           {activePlan.status === "current" && <div className="sticky bottom-[max(0.75rem,var(--toast-clearance,0px))] z-20 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card/95 px-3 py-2.5 shadow-sm backdrop-blur">
             <p className="text-sm font-medium">{activePlan.plan.changes.length} changes · {counts?.delete ?? 0} deletions{activePlan.plan.requiresApproval ? ` · ${approvedApprovals}/${requiredApprovals} approvals` : ""}</p>
             <div className="flex flex-wrap items-center justify-end gap-2">
-              {activePlan.plan.requiresApproval && <ConfirmDisclosure trigger={approvalSummary?.currentUserApproved ? <><HugeiconsIcon icon={Tick02Icon} strokeWidth={2} aria-hidden="true" />Approval recorded</> : approvalsComplete ? "Approvals complete" : "Add approval"} triggerVariant="outline" confirmVariant="default" title="Approve this exact plan?" description={`${requiredApprovals} distinct eligible workspace members must approve this exact plan before it can be applied.`} confirmLabel="Approve plan" onConfirm={onApprove} disabled={blocked || hasOwnershipConflict || selectionDirty || !approvalSummary?.canApprove || activePlan.status !== "current"}>
+              {activePlan.plan.requiresApproval && <ConfirmDisclosure trigger={approvalSummary?.currentUserApproved ? <><HugeiconsIcon icon={Tick02Icon} strokeWidth={2} aria-hidden="true" />Approval recorded</> : approvalsComplete ? "Approvals complete" : "Add approval"} triggerVariant="outline" confirmVariant="default" title="Approve this exact plan?" description={`${requiredApprovals} distinct eligible workspace members must approve this exact plan before it can be applied.${autoApplyAfterApproval ? " The final approval queues this exact plan automatically after rechecking it." : " Applying is a separate action after approval."}`} confirmLabel={autoApplyAfterApproval && approvedApprovals + 1 >= requiredApprovals ? "Approve and sync" : "Approve plan"} onConfirm={onApprove} disabled={blocked || hasOwnershipConflict || selectionDirty || !approvalSummary?.canApprove || activePlan.status !== "current"}>
                 <div className="space-y-3"><Input aria-label="Approval comment" value={approvalComment} maxLength={1000} onChange={(event) => onApprovalCommentChange(event.target.value)} placeholder="Comment (optional)" /><ul className="max-h-36 space-y-1 overflow-y-auto text-sm text-muted-foreground">{activePlan.plan.changes.filter((change) => change.kind === "delete" || change.takeover).map((change) => <li key={diffId(change.identity)}>{change.takeover ? "Take over" : "Delete"} {change.identity.kind} {change.identity.namespace}/{change.identity.name}</li>)}</ul></div>
               </ConfirmDisclosure>}
-              <Button loading={pendingAction === "apply-plan"} loadingText={activePlan.plan.rollback ? "Starting rollback…" : "Starting sync…"} onClick={onApply} disabled={blocked || hasOwnershipConflict || selectionDirty || !canDeploy || (activePlan.plan.decommission && !canApprove) || (activePlan.plan.rollback && !canApprove) || activePlan.status !== "current" || (!activePlan.plan.rollback && activePlan.plan.changes.length === 0) || (activePlan.plan.requiresApproval && !approvalsComplete)}>{activePlan.plan.rollback ? "Apply approved rollback" : activePlan.plan.decommission ? "Delete approved resources" : activePlan.plan.requiresApproval ? "Apply approved plan" : "Sync application"}</Button>
+              <Button loading={pendingAction === "apply-plan"} loadingText={activePlan.plan.rollback ? "Starting rollback…" : "Starting sync…"} onClick={onApply} disabled={applyBlockedReason !== null} aria-describedby={applyBlockedReason ? "plan-apply-blocked-reason" : undefined}>{activePlan.plan.rollback ? "Apply approved rollback" : activePlan.plan.decommission ? "Delete approved resources" : activePlan.plan.requiresApproval ? "Apply approved plan" : "Sync application"}</Button>
             </div>
           </div>}
+          {activePlan.status === "current" && applyBlockedReason && <p id="plan-apply-blocked-reason" role="status" className="mt-2 text-right text-sm text-muted-foreground">{applyBlockedReason}</p>}
           {activePlan.status === "current" && !approvalSummary?.canApprove && activePlan.plan.requiresApproval && !approvalsComplete && <p className="mt-2 text-right text-sm text-muted-foreground">Approvals can be added by workspace members eligible under this plan&apos;s approval rule.</p>}
         </>}
       </div>}

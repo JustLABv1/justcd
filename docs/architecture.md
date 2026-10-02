@@ -101,7 +101,14 @@ approvals, inventory, and operation history.
 
 Background polling checks every application's drift at its configured
 interval. `auto-safe` may apply only non-destructive, namespace-scoped creates
-and updates. Deletions and cluster-scoped changes stop for a workspace owner.
+and updates. Changes requiring approval stop until the configured approval
+threshold is met. For active auto-sync applications, the final approval queues
+that exact reviewed plan after rechecking its digest and approval validity.
+Manual applications, rollback, and application deletion still require Apply.
+The application list and detail page observe background updates without manual
+plan refresh. Failed read-only planning checks continue at the polling interval;
+failed writes retain their review/retry safeguards. An explicit Retry now resumes
+failed reconciliation, and plans needing approval remain eligible for auto-sync.
 Webhooks, retries/backoff controls, fine-grained status conditions, and
 permission self-tests during binding creation remain follow-up work.
 

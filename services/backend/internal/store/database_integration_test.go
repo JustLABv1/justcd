@@ -274,6 +274,22 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 	if err != nil || len(apps) != 1 {
 		t.Fatalf("Git push should make the application due: %+v, %v", apps, err)
 	}
+	// Read-only planning failures stay schedulable, but failed writes do not.
+	for _, tc := range []struct {
+		reason string
+		want   int
+	}{
+		{"plan_check_failed", 1}, {"kubernetes_failure_requires_review", 0},
+		{"interrupted_requires_review", 0}, {"", 1},
+	} {
+		if _, err := db.ExecContext(ctx, `UPDATE applications SET retry_terminal_reason=$1 WHERE id='integration-app'`, tc.reason); err != nil {
+			t.Fatal(err)
+		}
+		due, err := s.DueApplications(ctx, 25)
+		if err != nil || len(due) != tc.want {
+			t.Fatalf("due after %q: got %d want %d: %v", tc.reason, len(due), tc.want, err)
+		}
+	}
 	connection := SourceControlConnection{ID: "integration-pr-connection", WorkspaceID: "integration-workspace", ApplicationID: "integration-app", Provider: "github", APIURL: "https://api.github.com", Repository: "example/app", StatusTokenCipher: []byte{2}}
 	if err := s.SaveSourceControlConnection(ctx, connection); err != nil {
 		t.Fatal(err)

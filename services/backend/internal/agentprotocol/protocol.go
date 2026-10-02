@@ -157,7 +157,7 @@ func contains(v []string, s string) bool {
 }
 func namespaceAllowed(v []string, s string) bool {
 	for _, x := range v {
-		if x == s || (strings.HasSuffix(x, "-*") && strings.HasPrefix(s, strings.TrimSuffix(x, "*"))) {
+		if x == "*" || x == s || (strings.HasSuffix(x, "-*") && strings.HasPrefix(s, strings.TrimSuffix(x, "*"))) {
 			return true
 		}
 	}

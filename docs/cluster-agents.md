@@ -95,7 +95,8 @@ explicit workspace IDs. When sharing a cluster, add the receiving workspace ID
 locally as well as accepting the cluster share in JustCD.
 
 The connection's namespace profile defaults to `default`. Its namespace list
-accepts exact names and trailing patterns such as `preview-*`. The local profile
+accepts exact names, trailing patterns such as `preview-*`, and `*` for all
+non-protected namespaces. The local profile
 and Kubernetes RBAC must both permit a request. Namespaced profiles cannot create
 or delete namespaces, read resources across all namespaces, or access pod exec,
 logs, attach, port forwarding, API proxy endpoints, or watches.

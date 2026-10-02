@@ -58,3 +58,31 @@ func TestProtectedNamespaceOverridesClusterScope(t *testing.T) {
 		}
 	}
 }
+
+func TestWildcardNamespacesAllowConnectionChecksAndKeepBoundaries(t *testing.T) {
+	p := Profile{Name: "default", WorkspaceIDs: []string{"w"}, Namespaces: []string{"*"}, ClusterScope: true, DeniedNamespaces: []string{"agent", "kube-system"}}
+	for _, tc := range []struct {
+		name, uri, workspace, namespace string
+		clusterScope, allowed           bool
+	}{
+		{"discovery", "/apis/apps/v1", "w", "grafana-dev", false, true},
+		{"permission review", "/apis/authorization.k8s.io/v1/selfsubjectaccessreviews", "w", "grafana-dev", false, true},
+		{"application resources", "/api/v1/namespaces/grafana-dev/pods", "w", "grafana-dev", false, true},
+		{"other workspace", "/api/v1/namespaces/grafana-dev/pods", "other", "grafana-dev", false, false},
+		{"scope mismatch", "/api/v1/namespaces/prod/pods", "w", "grafana-dev", false, false},
+		{"protected namespace", "/api/v1/namespaces/kube-system/pods", "w", "kube-system", false, false},
+		{"protected cluster request", "/api/v1/namespaces/agent/secrets", "w", "agent", true, false},
+		{"cross namespace secrets", "/api/v1/secrets", "w", "", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			method := "GET"
+			if tc.name == "permission review" {
+				method = "POST"
+			}
+			err := Validate(Request{Profile: "default", WorkspaceID: tc.workspace, Namespace: tc.namespace, ClusterScope: tc.clusterScope, Method: method, URI: tc.uri, Deadline: time.Now().Add(time.Minute)}, p)
+			if (err == nil) != tc.allowed {
+				t.Fatalf("allowed=%v: %v", tc.allowed, err)
+			}
+		})
+	}
+}

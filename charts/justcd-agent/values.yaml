@@ -22,8 +22,17 @@ rbac:
   # cluster-scoped workloads. The API's local profile checks still apply.
   clusterWide: false
   rules:
-    - apiGroups: ["*"]
-      resources: ["*"]
+    - apiGroups: [""]
+      resources: ["pods", "services", "configmaps", "secrets", "persistentvolumeclaims"]
+      verbs: ["get", "list", "create", "update", "patch", "delete"]
+    - apiGroups: ["apps"]
+      resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+      verbs: ["get", "list", "create", "update", "patch", "delete"]
+    - apiGroups: ["batch"]
+      resources: ["jobs", "cronjobs"]
+      verbs: ["get", "list", "create", "update", "patch", "delete"]
+    - apiGroups: ["networking.k8s.io"]
+      resources: ["ingresses", "networkpolicies"]
       verbs: ["get", "list", "create", "update", "patch", "delete"]
 serviceAccount:
   create: true
@@ -56,3 +65,11 @@ securityContext:
   allowPrivilegeEscalation: false
   capabilities:
     drop: [ALL]
+
+# Kubernetes >=1.30. Protects Pods in locally authorized namespaces, including
+# controller-created Pods. Namespaces must enforce Pod Security restricted/latest.
+workloadPolicy:
+  enabled: true
+  allowedServiceAccounts: ["default"]
+  # Explicitly authorize existing Secret references, never the agent identity Secret.
+  allowedSecrets: []

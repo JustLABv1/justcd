@@ -111,11 +111,34 @@ func (s *Store) QueueAgentTask(ctx context.Context, id, clusterID string, cipher
 	}
 	return tx.Commit()
 }
-func (s *Store) ClaimAgentTask(ctx context.Context, clusterID, lease string) (string, []byte, error) {
+
+// ClaimAgentTask serializes task delivery with revocation and token rotation.
+// tokenHash is supplied by HTTP callers; internal callers still check agent state.
+func (s *Store) ClaimAgentTask(ctx context.Context, clusterID, lease string, tokenHashes ...[]byte) (string, []byte, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	defer tx.Rollback()
+	var agentID string
+	var hash []byte
+	if len(tokenHashes) > 0 {
+		hash = tokenHashes[0]
+	}
+	err = tx.QueryRowContext(ctx, `SELECT cluster_id FROM cluster_agents WHERE cluster_id=$1 AND NOT revoked AND token_expires_at>NOW() AND ($2::bytea IS NULL OR token_hash=$2 OR (previous_token_hash=$2 AND previous_token_expires_at>NOW())) FOR UPDATE`, clusterID, hash).Scan(&agentID)
+	if err != nil {
+		return "", nil, err
+	}
 	var id string
 	var cipher []byte
-	err := s.DB.QueryRowContext(ctx, `WITH next AS(SELECT id FROM cluster_agent_tasks WHERE cluster_id=$1 AND state='queued' AND deadline>NOW() ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED), claimed AS (UPDATE cluster_agent_tasks SET state='claimed',lease=$2 WHERE id=(SELECT id FROM next) RETURNING id,request_cipher), activity AS (UPDATE cluster_agent_activity SET state='running',started_at=NOW() WHERE id IN (SELECT id FROM claimed)) SELECT id,request_cipher FROM claimed`, clusterID, lease).Scan(&id, &cipher)
-	return id, cipher, err
+	err = tx.QueryRowContext(ctx, `WITH next AS(SELECT id FROM cluster_agent_tasks WHERE cluster_id=$1 AND state='queued' AND deadline>NOW() ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED), claimed AS (UPDATE cluster_agent_tasks SET state='claimed',lease=$2 WHERE id=(SELECT id FROM next) RETURNING id,request_cipher), activity AS (UPDATE cluster_agent_activity SET state='running',started_at=NOW() WHERE id IN (SELECT id FROM claimed)) SELECT id,request_cipher FROM claimed`, clusterID, lease).Scan(&id, &cipher)
+	if err != nil {
+		return "", nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return "", nil, err
+	}
+	return id, cipher, nil
 }
 func (s *Store) CompleteAgentTask(ctx context.Context, clusterID, id, lease string, cipher []byte, results ...agentprotocol.Result) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
@@ -149,7 +172,7 @@ func (s *Store) DeleteAgentTask(ctx context.Context, id string) {
 }
 
 func (s *Store) RenewClusterAgent(ctx context.Context, id string, oldHash, newHash []byte) error {
-	result, err := s.DB.ExecContext(ctx, `UPDATE cluster_agents SET previous_token_hash=CASE WHEN token_hash=$2 THEN token_hash ELSE previous_token_hash END,previous_token_expires_at=NOW()+INTERVAL '5 minutes',token_hash=$3,token_expires_at=NOW()+INTERVAL '30 days' WHERE cluster_id=$1 AND (token_hash=$2 OR (previous_token_hash=$2 AND previous_token_expires_at>NOW())) AND token_expires_at>NOW() AND NOT revoked`, id, oldHash, newHash)
+	result, err := s.DB.ExecContext(ctx, `UPDATE cluster_agents SET previous_token_hash=CASE WHEN token_hash=$2 THEN token_hash ELSE previous_token_hash END,previous_token_expires_at=CASE WHEN token_hash=$2 THEN NOW()+INTERVAL '5 minutes' ELSE previous_token_expires_at END,token_hash=$3,token_expires_at=NOW()+INTERVAL '30 days' WHERE cluster_id=$1 AND (token_hash=$2 OR (previous_token_hash=$2 AND previous_token_expires_at>NOW())) AND token_expires_at>NOW() AND NOT revoked`, id, oldHash, newHash)
 	if err != nil {
 		return err
 	}

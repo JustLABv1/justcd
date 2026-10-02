@@ -65,14 +65,6 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	ip, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		ip = r.RemoteAddr
-	}
-	if !s.allowLogin(ip) {
-		writeError(w, http.StatusTooManyRequests, "too many login attempts; try again later")
-		return
-	}
 	var input struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -81,41 +73,67 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	user, passwordHash, err := s.Store.UserByEmail(r.Context(), strings.TrimSpace(input.Email))
+	// Account limits avoid locking every user behind the shared frontend proxy.
+	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
+	if len(input.Email) > 320 || input.Email == "" {
+		writeError(w, http.StatusBadRequest, "a valid email is required")
+		return
+	}
+	user, passwordHash, err := s.Store.UserByEmail(r.Context(), input.Email)
+	key := "account:" + input.Email
 	if err != nil {
+		// Unknown account names share one bucket, so arbitrary names cannot exhaust
+		// the limiter map or block known users behind the frontend proxy.
+		key = "unknown-account"
 		passwordHash = s.dummyHash
+	}
+	if !s.allowLogin(key) {
+		writeError(w, http.StatusTooManyRequests, "too many login attempts; try again later")
+		return
 	}
 	valid := security.VerifyPassword(passwordHash, input.Password)
 	if err != nil || !valid {
 		writeError(w, http.StatusUnauthorized, "email or password is incorrect")
 		return
 	}
-	s.clearLogin(ip)
+	s.clearLogin(key)
 	s.createSession(w, r, user)
 }
 
-func (s *Server) allowLogin(ip string) bool {
+func (s *Server) allowLogin(key string) bool {
 	s.loginMu.Lock()
 	defer s.loginMu.Unlock()
 	now := time.Now()
 	cutoff := now.Add(-15 * time.Minute)
-	tries := s.loginTries[ip][:0]
-	for _, attempt := range s.loginTries[ip] {
+	if s.loginTries == nil {
+		s.loginTries = map[string][]time.Time{}
+	}
+	// Prune expired keys and cap memory used by attacker-selected account names.
+	for key, attempts := range s.loginTries {
+		if len(attempts) == 0 || !attempts[len(attempts)-1].After(cutoff) {
+			delete(s.loginTries, key)
+		}
+	}
+	if len(s.loginTries) >= 10000 && s.loginTries[key] == nil {
+		return false
+	}
+	tries := s.loginTries[key][:0]
+	for _, attempt := range s.loginTries[key] {
 		if attempt.After(cutoff) {
 			tries = append(tries, attempt)
 		}
 	}
 	if len(tries) >= 8 {
-		s.loginTries[ip] = tries
+		s.loginTries[key] = tries
 		return false
 	}
-	s.loginTries[ip] = append(tries, now)
+	s.loginTries[key] = append(tries, now)
 	return true
 }
 
-func (s *Server) clearLogin(ip string) {
+func (s *Server) clearLogin(key string) {
 	s.loginMu.Lock()
-	delete(s.loginTries, ip)
+	delete(s.loginTries, key)
 	s.loginMu.Unlock()
 }
 

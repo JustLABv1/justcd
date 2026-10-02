@@ -46,3 +46,15 @@ func TestLocalScopeBoundary(t *testing.T) {
 		t.Fatal("expired task accepted")
 	}
 }
+
+func TestProtectedNamespaceOverridesClusterScope(t *testing.T) {
+	p := Profile{Name: "admin", WorkspaceIDs: []string{"w"}, ClusterScope: true, DeniedNamespaces: []string{"agent", "kube-system"}}
+	for _, uri := range []string{"/api/v1/namespaces/agent/secrets/x", "/api/v1/namespaces/kube-system/pods/x", "/api/v1/namespaces/agent", "/api/v1/secrets"} {
+		for _, method := range []string{"GET", "PATCH"} {
+			r := Request{Profile: "admin", WorkspaceID: "w", ClusterScope: true, Method: method, URI: uri, Deadline: time.Now().Add(time.Minute)}
+			if Validate(r, p) == nil {
+				t.Fatalf("protected namespace accepted: %s %s", method, uri)
+			}
+		}
+	}
+}

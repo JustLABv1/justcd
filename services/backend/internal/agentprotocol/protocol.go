@@ -13,11 +13,12 @@ const Version = 1
 const MaxBody = 8 << 20
 
 type Profile struct {
-	Name         string   `json:"name"`
-	WorkspaceIDs []string `json:"workspaceIds"`
-	Namespaces   []string `json:"namespaces"`
-	ClusterScope bool     `json:"clusterScope"`
-	TokenFile    string   `json:"tokenFile,omitempty"`
+	Name             string   `json:"name"`
+	WorkspaceIDs     []string `json:"workspaceIds"`
+	Namespaces       []string `json:"namespaces"`
+	ClusterScope     bool     `json:"clusterScope"`
+	TokenFile        string   `json:"tokenFile,omitempty"`
+	DeniedNamespaces []string `json:"deniedNamespaces,omitempty"`
 }
 type Identity struct {
 	ClusterUID string    `json:"clusterUid"`
@@ -122,6 +123,17 @@ func Validate(r Request, p Profile) error {
 		if r.Method != "GET" && !(r.ClusterScope && p.ClusterScope) {
 			return errors.New("namespace mutations require a local cluster-scope profile")
 		}
+	}
+	// A cluster-wide collection can otherwise disclose resources from protected
+	// namespaces (especially the enrollment/profile credential Secrets).
+	if namespace == "" && len(tail) > 0 && len(p.DeniedNamespaces) > 0 {
+		switch tail[0] {
+		case "secrets", "configmaps", "pods", "services", "serviceaccounts", "persistentvolumeclaims", "deployments", "statefulsets", "daemonsets", "replicasets", "jobs", "cronjobs", "roles", "rolebindings", "ingresses", "networkpolicies":
+			return errors.New("cross-namespace collections are disabled when protected namespaces are configured")
+		}
+	}
+	if namespace != "" && namespaceAllowed(p.DeniedNamespaces, namespace) {
+		return errors.New("namespace is protected by the local agent profile")
 	}
 	if len(tail) < 1 || len(tail) > 2 {
 		return errors.New("Kubernetes subresources are not supported by the agent")

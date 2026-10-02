@@ -3,13 +3,19 @@
 {{- if not (hasPrefix "https://" .Values.serverUrl) }}{{ fail "serverUrl must use HTTPS" }}{{ end -}}
 {{- if not .Values.enrollmentSecret }}{{ fail "enrollmentSecret is required" }}{{ end -}}
 {{- range .Values.profiles }}{{ if not .name }}{{ fail "each profile needs a name" }}{{ end }}{{ if not .workspaceIds }}{{ fail "each profile needs explicit workspaceIds" }}{{ end }}{{ end -}}
+{{- $profiles := list -}}
+{{- range .Values.profiles -}}
+{{- $profile := deepCopy . -}}
+{{- $_ := set $profile "deniedNamespaces" (concat (default (list) .deniedNamespaces) (list $.Release.Namespace "kube-system" "kube-public" "kube-node-lease") | uniq) -}}
+{{- $profiles = append $profiles $profile -}}
+{{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ $name }}
 data:
   config.json: |
-    {{ dict "serverUrl" .Values.serverUrl "enrollmentTokenFile" "/etc/justcd-agent/enrollment/enrollmentToken" "identityFile" "/var/lib/justcd-agent/identity.json" "serverCAFile" (ternary "/etc/justcd-agent/ca/ca.crt" "" (ne .Values.serverCASecret "")) "profiles" .Values.profiles | toJson }}
+    {{ dict "serverUrl" .Values.serverUrl "enrollmentTokenFile" "/etc/justcd-agent/enrollment/enrollmentToken" "identityFile" "/var/lib/justcd-agent/identity.json" "serverCAFile" (ternary "/etc/justcd-agent/ca/ca.crt" "" (ne .Values.serverCASecret "")) "profiles" $profiles | toJson }}
 ---
 {{- if .Values.serviceAccount.create }}
 apiVersion: v1
@@ -49,7 +55,7 @@ spec:
       labels:
         app.kubernetes.io/name: {{ $name }}
       annotations:
-        checksum/config: {{ dict "profiles" .Values.profiles "serverUrl" .Values.serverUrl "serverCASecret" .Values.serverCASecret "enrollmentSecret" .Values.enrollmentSecret | toJson | sha256sum | quote }}
+        checksum/config: {{ dict "profiles" $profiles "serverUrl" .Values.serverUrl "serverCASecret" .Values.serverCASecret "enrollmentSecret" .Values.enrollmentSecret | toJson | sha256sum | quote }}
     spec:
       serviceAccountName: {{ $sa }}
       {{- with .Values.imagePullSecrets }}

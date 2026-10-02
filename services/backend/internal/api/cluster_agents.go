@@ -109,6 +109,11 @@ func (s *Server) revokeClusterAgent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]string{"status": "ok"})
 }
 func (s *Server) agentEnroll(w http.ResponseWriter, r *http.Request) {
+	if !s.allowAgentRequest("enroll:"+remoteHost(r), 10, time.Minute) {
+		w.Header().Set("Retry-After", "60")
+		writeError(w, 429, "too many enrollment attempts")
+		return
+	}
 	var e agentprotocol.Enrollment
 	if err := decodeJSON(w, r, &e); err != nil {
 		writeError(w, 400, "invalid enrollment payload")
@@ -168,6 +173,12 @@ func (s *Server) agentTasks(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.beginAgentPoll(id) {
+		w.Header().Set("Retry-After", "1")
+		writeError(w, 429, "agent poll already active or rate limit exceeded")
+		return
+	}
+	defer s.endAgentPoll(id)
 	lease, _, err := security.RandomToken(32)
 	if err != nil {
 		writeStoreError(w, "could not issue lease")
@@ -175,13 +186,13 @@ func (s *Server) agentTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	deadline := time.NewTimer(20 * time.Second)
 	defer deadline.Stop()
-	ticker := time.NewTicker(250 * time.Millisecond)
+	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
 		if _, ok = s.authenticatedAgent(w, r); !ok {
 			return
 		}
-		taskID, cipher, err := s.Store.ClaimAgentTask(r.Context(), id, lease)
+		taskID, cipher, err := s.Store.ClaimAgentTask(r.Context(), id, lease, security.HashToken(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")))
 		if err == nil {
 			plain, err := security.Decrypt(s.EncryptionKey, cipher, "agent-task:"+taskID+":request")
 			if err != nil {

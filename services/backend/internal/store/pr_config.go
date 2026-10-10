@@ -13,11 +13,12 @@ var prPreviewDNSName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,39}[a-z0-9]$`)
 var prNamespaceName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
 type RepositoryPRConfig struct {
-	Enabled        bool           `json:"enabled"`
-	Provider       string         `json:"provider,omitempty"`
-	APIURL         string         `json:"apiUrl,omitempty"`
-	CredentialID   string         `json:"credentialId"`
-	PreviewProfile PreviewProfile `json:"previewProfile,omitempty"`
+	PipelineStatusReporting bool           `json:"pipelineStatusReporting"`
+	Enabled                 bool           `json:"enabled"`
+	Provider                string         `json:"provider,omitempty"`
+	APIURL                  string         `json:"apiUrl,omitempty"`
+	CredentialID            string         `json:"credentialId"`
+	PreviewProfile          PreviewProfile `json:"previewProfile,omitempty"`
 }
 
 func ValidatePreviewProfile(profile *PreviewProfile, app Application) error {

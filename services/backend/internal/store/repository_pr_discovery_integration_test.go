@@ -57,6 +57,17 @@ func testRepositoryPRDiscovery(t *testing.T, ctx context.Context, s *Store) {
 	if err := s.SaveRepositoryPRSettings(ctx, repo.ID, RepositoryPRSettings{}); err == nil {
 		t.Fatal("active policy changed")
 	}
+	// Reporting can be changed without closing active previews.
+	for _, enabled := range []bool{true, false} {
+		policy.PipelineStatusReporting = enabled
+		if err := s.SaveRepositoryPRSettings(ctx, repo.ID, policy); err != nil {
+			t.Fatal(err)
+		}
+		updated, err := s.SourceControlConnectionByID(ctx, connection.ID)
+		if err != nil || updated.PipelineStatusReporting != enabled {
+			t.Fatalf("active preview reporting not updated: %+v, %v", updated, err)
+		}
+	}
 	// A delayed provider event can update the placeholder; the app pointer survives.
 	_, err = s.RecordReviewEvent(ctx, connection.ID, "first-provider-event", PullRequestReview{ID: NewID(), Number: 42, HeadSHA: app.Revision, EventAt: time.Now(), HeadBranch: "feature"})
 	if err != nil {

@@ -16,13 +16,14 @@ type PRDestination struct {
 	Namespace string `json:"namespace"`
 }
 type RepositoryPRSettings struct {
-	Enabled      bool            `json:"enabled"`
-	Provider     string          `json:"provider,omitempty"`
-	APIURL       string          `json:"apiUrl,omitempty"`
-	CredentialID string          `json:"credentialId"`
-	Mode         string          `json:"mode"`
-	Destinations []PRDestination `json:"destinations"`
-	Profile      PreviewProfile  `json:"profile"`
+	PipelineStatusReporting bool            `json:"pipelineStatusReporting"`
+	Enabled                 bool            `json:"enabled"`
+	Provider                string          `json:"provider,omitempty"`
+	APIURL                  string          `json:"apiUrl,omitempty"`
+	CredentialID            string          `json:"credentialId"`
+	Mode                    string          `json:"mode"`
+	Destinations            []PRDestination `json:"destinations"`
+	Profile                 PreviewProfile  `json:"profile"`
 }
 type RepositoryPRApplication struct {
 	ID                string          `json:"id"`
@@ -135,7 +136,9 @@ func (s *Store) SaveRepositoryPRSettings(ctx context.Context, id string, p Repos
 	if err != nil {
 		return err
 	}
-	old, _ := json.Marshal(repo.PRSettings)
+	oldPolicy := repo.PRSettings
+	oldPolicy.PipelineStatusReporting = p.PipelineStatusReporting
+	old, _ := json.Marshal(oldPolicy)
 	raw, _ := json.Marshal(p)
 	var active bool
 	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM repository_pr_applications WHERE repository_id=$1 AND application_id IS NOT NULL AND phase<>'promoted')`, id).Scan(&active); err != nil {
@@ -169,6 +172,15 @@ func (s *Store) SaveRepositoryPRSettings(ctx context.Context, id string, p Repos
 	_, err = tx.ExecContext(ctx, `UPDATE repository_configurations SET pr_settings=$2,pr_error='' WHERE id=$1`, id, raw)
 	if err != nil {
 		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE source_control_connections c SET pipeline_status_reporting=$2,updated_at=NOW() FROM repository_pr_applications p WHERE c.repository_pr_id=p.id AND p.repository_id=$1`, id, p.PipelineStatusReporting)
+	if err != nil {
+		return err
+	}
+	if repo.PRSettings.PipelineStatusReporting != p.PipelineStatusReporting {
+		if _, err := tx.ExecContext(ctx, `UPDATE pull_request_reviews r SET reported_phase='' FROM source_control_connections c JOIN repository_pr_applications p ON c.repository_pr_id=p.id WHERE r.connection_id=c.id AND p.repository_id=$1`, id); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -239,7 +251,7 @@ func (s *Store) UpsertRepositoryPRApplication(ctx context.Context, repo Reposito
 			return v, err
 		}
 		profile, _ := json.Marshal(c.PreviewProfile)
-		_, err = tx.ExecContext(ctx, `INSERT INTO source_control_connections(id,workspace_id,application_id,provider,api_url,repository,status_token_cipher,status_credential_id,preview_profile,managed_by_git,repository_pr_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE,$10)`, c.ID, app.WorkspaceID, app.ID, c.Provider, c.APIURL, c.Repository, []byte{}, c.StatusCredentialID, profile, v.ID)
+		_, err = tx.ExecContext(ctx, `INSERT INTO source_control_connections(id,workspace_id,application_id,provider,api_url,repository,status_token_cipher,status_credential_id,preview_profile,managed_by_git,repository_pr_id,pipeline_status_reporting) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE,$10,$11)`, c.ID, app.WorkspaceID, app.ID, c.Provider, c.APIURL, c.Repository, []byte{}, c.StatusCredentialID, profile, v.ID, c.PipelineStatusReporting)
 		if err != nil {
 			return v, err
 		}

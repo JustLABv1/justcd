@@ -298,6 +298,21 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 	if err != nil || !storedConnection.Enabled {
 		t.Fatalf("migrated connection should default to enabled: %+v, %v", storedConnection, err)
 	}
+	if storedConnection.PipelineStatusReporting {
+		t.Fatal("existing and new connections must default to comments only")
+	}
+	connection.PipelineStatusReporting = true
+	if err := s.SaveSourceControlConnection(ctx, connection); err != nil {
+		t.Fatal(err)
+	}
+	storedConnection, err = s.SourceControlConnectionByApplication(ctx, connection.ApplicationID)
+	if err != nil || !storedConnection.PipelineStatusReporting {
+		t.Fatalf("status opt-in was not persisted: %+v, %v", storedConnection, err)
+	}
+	connection.PipelineStatusReporting = false
+	if err := s.SaveSourceControlConnection(ctx, connection); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO pull_request_reviews(id,connection_id,number,head_sha,source_url,event_at) VALUES('integration-review','integration-pr-connection',1,$1,'https://example.invalid/review/1',NOW())`, strings.Repeat("a", 40)); err != nil {
 		t.Fatal(err)
 	}

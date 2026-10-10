@@ -30,28 +30,29 @@ type PreviewProfile struct {
 }
 
 type SourceControlConnection struct {
-	RepositoryPRID      *string        `json:"repositoryPrId,omitempty"`
-	ManagedByGit        bool           `json:"managedByGit"`
-	StatusCredentialID  *string        `json:"statusCredentialId,omitempty"`
-	ID                  string         `json:"id"`
-	Enabled             bool           `json:"enabled"`
-	WorkspaceID         string         `json:"workspaceId"`
-	ApplicationID       string         `json:"applicationId"`
-	Provider            string         `json:"provider"`
-	APIURL              string         `json:"apiUrl"`
-	Repository          string         `json:"repository"`
-	WebhookSecretCipher []byte         `json:"-"`
-	StatusTokenCipher   []byte         `json:"-"`
-	PreviewProfile      PreviewProfile `json:"previewProfile"`
-	CreatedAt           time.Time      `json:"createdAt"`
+	PipelineStatusReporting bool           `json:"pipelineStatusReporting"`
+	RepositoryPRID          *string        `json:"repositoryPrId,omitempty"`
+	ManagedByGit            bool           `json:"managedByGit"`
+	StatusCredentialID      *string        `json:"statusCredentialId,omitempty"`
+	ID                      string         `json:"id"`
+	Enabled                 bool           `json:"enabled"`
+	WorkspaceID             string         `json:"workspaceId"`
+	ApplicationID           string         `json:"applicationId"`
+	Provider                string         `json:"provider"`
+	APIURL                  string         `json:"apiUrl"`
+	Repository              string         `json:"repository"`
+	WebhookSecretCipher     []byte         `json:"-"`
+	StatusTokenCipher       []byte         `json:"-"`
+	PreviewProfile          PreviewProfile `json:"previewProfile"`
+	CreatedAt               time.Time      `json:"createdAt"`
 }
 
-const connectionColumns = `id,enabled,workspace_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile,created_at,status_credential_id,managed_by_git,repository_pr_id`
+const connectionColumns = `id,enabled,workspace_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile,created_at,status_credential_id,managed_by_git,repository_pr_id,pipeline_status_reporting`
 
 func scanSourceControlConnection(row interface{ Scan(...any) error }) (SourceControlConnection, error) {
 	var c SourceControlConnection
 	var profile []byte
-	err := row.Scan(&c.ID, &c.Enabled, &c.WorkspaceID, &c.ApplicationID, &c.Provider, &c.APIURL, &c.Repository, &c.WebhookSecretCipher, &c.StatusTokenCipher, &profile, &c.CreatedAt, &c.StatusCredentialID, &c.ManagedByGit, &c.RepositoryPRID)
+	err := row.Scan(&c.ID, &c.Enabled, &c.WorkspaceID, &c.ApplicationID, &c.Provider, &c.APIURL, &c.Repository, &c.WebhookSecretCipher, &c.StatusTokenCipher, &profile, &c.CreatedAt, &c.StatusCredentialID, &c.ManagedByGit, &c.RepositoryPRID, &c.PipelineStatusReporting)
 	if err == nil {
 		err = json.Unmarshal(profile, &c.PreviewProfile)
 	}
@@ -84,14 +85,19 @@ func (s *Store) SaveSourceControlConnection(ctx context.Context, c SourceControl
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO source_control_connections(id,workspace_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile,status_credential_id)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)
+	_, err = tx.ExecContext(ctx, `INSERT INTO source_control_connections(id,workspace_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile,status_credential_id,pipeline_status_reporting)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11)
 		ON CONFLICT(application_id) DO UPDATE SET provider=EXCLUDED.provider,api_url=EXCLUDED.api_url,repository=EXCLUDED.repository,
 		webhook_secret_cipher=EXCLUDED.webhook_secret_cipher,status_token_cipher=EXCLUDED.status_token_cipher,
-		preview_profile=EXCLUDED.preview_profile,status_credential_id=EXCLUDED.status_credential_id,updated_at=NOW()`,
-		c.ID, c.WorkspaceID, c.ApplicationID, c.Provider, c.APIURL, c.Repository, c.WebhookSecretCipher, c.StatusTokenCipher, string(profile), c.StatusCredentialID)
+		preview_profile=EXCLUDED.preview_profile,status_credential_id=EXCLUDED.status_credential_id,pipeline_status_reporting=EXCLUDED.pipeline_status_reporting,updated_at=NOW()`,
+		c.ID, c.WorkspaceID, c.ApplicationID, c.Provider, c.APIURL, c.Repository, c.WebhookSecretCipher, c.StatusTokenCipher, string(profile), c.StatusCredentialID, c.PipelineStatusReporting)
 	if err != nil {
 		return err
+	}
+	if previous.ID != "" && previous.PipelineStatusReporting != c.PipelineStatusReporting {
+		if _, err := tx.ExecContext(ctx, `UPDATE pull_request_reviews SET reported_phase='' WHERE connection_id=$1`, previous.ID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

@@ -31,6 +31,7 @@ func (s *Server) processRepositoryPRReview(ctx context.Context, c store.SourceCo
 	if err != nil {
 		return err
 	}
+	c.PipelineStatusReporting = repo.PRSettings.PipelineStatusReporting
 	token, err := s.sourceControlToken(ctx, c)
 	if err != nil {
 		_ = s.Store.SetReviewWorkerError(ctx, review.ID, err.Error())

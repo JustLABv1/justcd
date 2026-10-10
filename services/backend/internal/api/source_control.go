@@ -18,13 +18,14 @@ import (
 )
 
 type sourceControlInput struct {
-	StatusCredentialID string               `json:"statusCredentialId"`
-	Provider           string               `json:"provider"`
-	APIURL             string               `json:"apiUrl"`
-	Repository         string               `json:"repository,omitempty"`
-	WebhookSecret      string               `json:"webhookSecret"`
-	StatusToken        string               `json:"statusToken"`
-	PreviewProfile     store.PreviewProfile `json:"previewProfile"`
+	PipelineStatusReporting bool                 `json:"pipelineStatusReporting"`
+	StatusCredentialID      string               `json:"statusCredentialId"`
+	Provider                string               `json:"provider"`
+	APIURL                  string               `json:"apiUrl"`
+	Repository              string               `json:"repository,omitempty"`
+	WebhookSecret           string               `json:"webhookSecret"`
+	StatusToken             string               `json:"statusToken"`
+	PreviewProfile          store.PreviewProfile `json:"previewProfile"`
 }
 
 func validateSourceControlInput(input *sourceControlInput, source store.GitSource, app store.Application, previous *store.SourceControlConnection) error {
@@ -130,7 +131,7 @@ func (s *Server) putSourceControl(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	enabled := previous == nil || previous.Enabled
-	c := store.SourceControlConnection{ID: id, Enabled: enabled, WorkspaceID: app.WorkspaceID, ApplicationID: app.ID, Provider: input.Provider, APIURL: input.APIURL, Repository: input.Repository, WebhookSecretCipher: webhookCipher, StatusTokenCipher: statusCipher, StatusCredentialID: statusCredentialID, PreviewProfile: input.PreviewProfile}
+	c := store.SourceControlConnection{PipelineStatusReporting: input.PipelineStatusReporting, ID: id, Enabled: enabled, WorkspaceID: app.WorkspaceID, ApplicationID: app.ID, Provider: input.Provider, APIURL: input.APIURL, Repository: input.Repository, WebhookSecretCipher: webhookCipher, StatusTokenCipher: statusCipher, StatusCredentialID: statusCredentialID, PreviewProfile: input.PreviewProfile}
 	if err := s.Store.SaveSourceControlConnection(r.Context(), c); err != nil {
 		if errors.Is(err, store.ErrGitManagedPR) {
 			writeError(w, http.StatusConflict, err.Error())

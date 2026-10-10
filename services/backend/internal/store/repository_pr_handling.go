@@ -67,13 +67,18 @@ func reconcileRepositoryPR(ctx context.Context, tx *sql.Tx, app Application) err
 	if !exists {
 		id = NewID()
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO source_control_connections(id,workspace_id,application_id,provider,api_url,repository,status_token_cipher,status_credential_id,preview_profile,enabled,managed_by_git)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,TRUE)
- ON CONFLICT(application_id) DO UPDATE SET provider=EXCLUDED.provider,api_url=EXCLUDED.api_url,repository=EXCLUDED.repository,status_credential_id=EXCLUDED.status_credential_id,status_token_cipher=EXCLUDED.status_token_cipher,preview_profile=EXCLUDED.preview_profile,enabled=EXCLUDED.enabled,managed_by_git=TRUE,updated_at=NOW()`, id, app.WorkspaceID, app.ID, details.Provider, details.APIURL, details.Repository, []byte{}, credentialID, string(profile), config.Enabled)
+	_, err = tx.ExecContext(ctx, `INSERT INTO source_control_connections(id,workspace_id,application_id,provider,api_url,repository,status_token_cipher,status_credential_id,preview_profile,enabled,managed_by_git,pipeline_status_reporting)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,TRUE,$11)
+ ON CONFLICT(application_id) DO UPDATE SET provider=EXCLUDED.provider,api_url=EXCLUDED.api_url,repository=EXCLUDED.repository,status_credential_id=EXCLUDED.status_credential_id,status_token_cipher=EXCLUDED.status_token_cipher,preview_profile=EXCLUDED.preview_profile,enabled=EXCLUDED.enabled,managed_by_git=TRUE,pipeline_status_reporting=EXCLUDED.pipeline_status_reporting,updated_at=NOW()`, id, app.WorkspaceID, app.ID, details.Provider, details.APIURL, details.Repository, []byte{}, credentialID, string(profile), config.Enabled, config.PipelineStatusReporting)
 	if err != nil {
 		return fmt.Errorf("PR handling: %w", err)
 	}
 	if exists {
+		if old.PipelineStatusReporting != config.PipelineStatusReporting {
+			if _, err := tx.ExecContext(ctx, `UPDATE pull_request_reviews SET reported_phase='' WHERE connection_id=$1`, id); err != nil {
+				return err
+			}
+		}
 		oldProfile, _ := json.Marshal(old.PreviewProfile)
 		if old.Enabled != config.Enabled || old.Provider != details.Provider || old.APIURL != details.APIURL || old.Repository != details.Repository || string(oldProfile) != string(profile) {
 			if _, err := tx.ExecContext(ctx, `UPDATE pull_request_reviews SET phase='pending',processed_sha='',reported_phase='',updated_at=NOW() WHERE connection_id=$1 AND NOT closed AND preview_application_id IS NULL`, id); err != nil {

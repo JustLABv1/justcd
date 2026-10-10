@@ -142,9 +142,15 @@ such as `https://gitlab.example.com/api/v4`. JustCD polls open PRs/MRs when
 reporting is enabled and checks previously tracked reviews for closure every
 two minutes. Choose an existing Git HTTPS credential or a separate API token.
 Git fetches keep using the Git source credential. The API token reads PRs/MRs
-and comments and writes plan comments and commit statuses.
+and comments and writes review comments. Commit statuses are disabled by default
+for both new and existing connections. Enable **Report commit statuses** explicitly
+in application PR settings or repository PR discovery settings when desired. On
+GitLab this adds an external job to a pipeline for the commit; pending or failed
+JustCD statuses can block merges. Turning this off stops future status updates;
+it does not remove statuses already attached to GitLab pipelines.
 For GitHub, use a fine-grained token for the repository with **Pull requests:
-read and write** and **Commit statuses: read and write**. For GitLab, use a project or
+read and write**; add **Commit statuses: read and write** only if status reporting
+is enabled. For GitLab, use a project or
 personal access token with the `api` scope and access to the project. A webhook
 is optional for faster PR updates: set a secret in JustCD, then copy the
 displayed URL and the same secret into the repository webhook settings and
@@ -199,7 +205,7 @@ records the reported SHA and the commit actually resolved when planning.
 Each PR or MR is checked against the provider's current head and rendered from
 its `head` Git ref. JustCD verifies that the rendered commit equals the head
 SHA reported by the provider. Without a preview profile, the resulting plan is
-stored for review only and cannot be applied to production. A commit status on
+stored for review only and cannot be applied to production. A review comment on
 the PR or MR links to the plan in JustCD.
 
 PR deployment can be review-only, isolated per PR, or use the existing application

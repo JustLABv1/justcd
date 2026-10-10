@@ -532,25 +532,44 @@ func (s *Server) reportReview(ctx context.Context, connection store.SourceContro
 		state, description = "failed", "JustCD could not prepare a healthy preview"
 	}
 	target := s.Config.FrontendURL + "/applications/" + connection.ApplicationID + "/pull-requests#review-" + strconv.Itoa(review.Number)
-	if err := (scm.Client{}).Report(ctx, connection.Provider, connection.APIURL, connection.Repository, token, review.HeadSHA, state, description, target, connection.ApplicationID); err != nil {
+	if err := reportReviewCommitStatus(ctx, scm.Client{}, connection, review, token, state, description, target); err != nil {
 		_ = s.Store.SetReviewReportError(ctx, review.ID, "could not update provider commit status: "+err.Error())
 		return err
 	}
-	if len(review.Plan) > 0 {
-		var view planView
-		if err := json.Unmarshal(review.Plan, &view); err != nil {
+	reportKey, body, err := reviewComment(review, description, target)
+	if err != nil {
+		return err
+	}
+	if reportKey != review.ReportedPlanID {
+		if err := (scm.Client{}).PostComment(ctx, connection.Provider, connection.APIURL, connection.Repository, token, review.Number, body); err != nil {
+			_ = s.Store.SetReviewReportError(ctx, review.ID, "could not post PR comment: "+err.Error())
 			return err
 		}
-		reportKey := view.ID + ":" + view.Plan.Digest
-		if reportKey != review.ReportedPlanID {
-			if err := (scm.Client{}).PostComment(ctx, connection.Provider, connection.APIURL, connection.Repository, token, review.Number, prPlanComment(review, view, target)); err != nil {
-				_ = s.Store.SetReviewReportError(ctx, review.ID, "could not post PR plan comment: "+err.Error())
-				return err
-			}
-			if _, err := s.Store.DB.ExecContext(ctx, `UPDATE pull_request_reviews SET reported_plan_id=$2 WHERE id=$1`, review.ID, reportKey); err != nil {
-				return err
-			}
+		if _, err := s.Store.DB.ExecContext(ctx, `UPDATE pull_request_reviews SET reported_plan_id=$2 WHERE id=$1`, review.ID, reportKey); err != nil {
+			return err
 		}
 	}
 	return s.Store.MarkReviewReported(ctx, review.ID, review.Phase)
+}
+
+// Commit statuses affect CI pipelines and merge gates, so require explicit consent.
+func reportReviewCommitStatus(ctx context.Context, client scm.Client, connection store.SourceControlConnection, review store.PullRequestReview, token, state, description, target string) error {
+	if !connection.PipelineStatusReporting {
+		return nil
+	}
+	return client.Report(ctx, connection.Provider, connection.APIURL, connection.Repository, token, review.HeadSHA, state, description, target, connection.ApplicationID)
+}
+
+func reviewComment(review store.PullRequestReview, description, target string) (string, string, error) {
+	key := review.HeadSHA + ":" + review.Phase
+	body := "### JustCD review\n\n" + description + "\n\nCommit: `" + review.HeadSHA + "`\n\n[Open review in JustCD](" + target + ")\n"
+	if len(review.Plan) > 0 {
+		var view planView
+		if err := json.Unmarshal(review.Plan, &view); err != nil {
+			return "", "", err
+		}
+		key += ":" + view.ID + ":" + view.Plan.Digest
+		body += "\n" + prPlanComment(review, view, target)
+	}
+	return key, body, nil
 }

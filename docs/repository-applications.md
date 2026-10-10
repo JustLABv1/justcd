@@ -257,8 +257,12 @@ Use `spec.pullRequests` to manage PR reporting and deployments alongside the
 application. The repository comes from the application's Git source. Reference
 an existing JustCD **Git HTTPS credential by ID**; never commit API tokens.
 That credential needs provider API access for reading PRs and comments and
-writing plan comments and commit statuses. Git fetches continue to use the Git
-source credential. Reporting uses polling; existing webhook configuration is
+writing review comments. Commit statuses are disabled by default. Set
+`pipelineStatusReporting: true` under `spec.pullRequests` only when JustCD should
+affect commit checks. On GitLab, statuses add external jobs to pipelines for the
+commit; a JustCD failure can fail that pipeline and block merging. Existing
+connections also default to comments only after upgrading. Git fetches continue
+to use the Git source credential. Reporting uses polling; existing webhook configuration is
 preserved.
 
 Review-only example (add this block under `spec`):
@@ -266,6 +270,7 @@ Review-only example (add this block under `spec`):
 ```yaml
 pullRequests:
   enabled: true
+  pipelineStatusReporting: false # Opt in only to make JustCD affect commit checks.
   credentialId: existing-https-credential-id
   # Required for a custom GitLab host; omitted for github.com or gitlab.com:
   provider: gitlab
@@ -281,6 +286,7 @@ For isolated deployments, including draft PRs:
 ```yaml
 pullRequests:
   enabled: true
+  pipelineStatusReporting: false # Opt in only to make JustCD affect commit checks.
   credentialId: existing-https-credential-id
   previewProfile:
     enabled: true

@@ -169,6 +169,7 @@ export type WorkspaceConnectionShare = {
 }
 
 export type RepositoryPRSettings = {
+  pipelineStatusReporting?: boolean
   enabled: boolean
   provider?: string
   apiUrl?: string

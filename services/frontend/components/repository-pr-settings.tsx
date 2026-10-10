@@ -25,6 +25,7 @@ import type {
 
 const defaults: RepositoryPRSettings = {
   enabled: false,
+  pipelineStatusReporting: false,
   credentialId: "",
   mode: "review-only",
   destinations: [],
@@ -371,7 +372,7 @@ function SettingsDialogContent({
                   <FormField
                     label="Provider API credential"
                     htmlFor="repo-pr-credential"
-                    hint="HTTPS token with pull request read, comment read/write and commit status write access."
+                    hint="HTTPS token with pull request read and comment read/write access. Commit status write access is needed only when commit statuses are enabled."
                   >
                     <FormSelect
                       id="repo-pr-credential"
@@ -386,6 +387,13 @@ function SettingsDialogContent({
                       }))}
                     />
                   </FormField>
+                  <SwitchField
+                    id="repo-pr-pipeline-status-reporting"
+                    label="Report commit statuses"
+                    description="Off by default; JustCD reports through PR/MR comments. Enabling this can block merges. GitLab adds an external job to a pipeline for the commit, and JustCD failures can fail that pipeline."
+                    checked={settings.pipelineStatusReporting ?? false}
+                    onCheckedChange={(pipelineStatusReporting) => setSettings((s) => ({ ...s, pipelineStatusReporting }))}
+                  />
                   <FormField label="Deployment" htmlFor="repo-pr-mode">
                     <FormSelect
                       id="repo-pr-mode"

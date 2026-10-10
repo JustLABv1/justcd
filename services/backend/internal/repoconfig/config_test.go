@@ -220,3 +220,17 @@ func TestPullRequestPreviewPathsRelativeToDefinition(t *testing.T) {
 		t.Fatal("preview path not resolved relative to definition")
 	}
 }
+
+func TestPullRequestCommitStatusesDefaultOffAndExplicitOptIn(t *testing.T) {
+	for _, value := range []string{"", "    pipelineStatusReporting: false\n", "    pipelineStatusReporting: true\n"} {
+		root := t.TempDir()
+		writeDefinition(t, root, "justcd.yaml", validDefinition+"  pullRequests:\n    enabled: true\n    credentialId: git-token\n"+value)
+		definitions, err := Discover(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := definitions[0].Spec.PullRequests.PipelineStatusReporting; got != strings.Contains(value, "true") {
+			t.Fatalf("unexpected status reporting for %q: %v", value, got)
+		}
+	}
+}

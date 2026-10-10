@@ -366,7 +366,7 @@ paths:
         '200': { description: Inferred source details, nullable connection, preview profile, webhook URL, and webhookConfigured flag }
     put:
       summary: Configure PR reporting for the application's existing Git source (workspace owner)
-      description: Provider and repository are derived from the Git source; saving an unknown host as GitLab confirms the provider. An API token is required to poll PRs/MRs every two minutes and report commit statuses. A webhook secret is optional for faster updates. Empty secret fields preserve existing encrypted values on update. A preview profile is optional and disabled by default. Saving preserves the enabled state.
+      description: Provider and repository are derived from the Git source; saving an unknown host as GitLab confirms the provider. An API token is required to poll PRs/MRs every two minutes and post review comments. Commit statuses require explicit pipelineStatusReporting=true (default false); GitLab can attach external jobs to existing pipelines and failures can block merges. A webhook secret is optional for faster updates. Empty secret fields preserve existing encrypted values on update. A preview profile is optional and disabled by default. Saving preserves the enabled state.
       responses:
         '200': { description: Connection saved }
         '400': { description: Provider, repository, credential, or preview profile is invalid }

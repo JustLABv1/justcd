@@ -22,7 +22,7 @@ func (s *Server) repositoryPRConnection(ctx context.Context, repo store.Reposito
 		return store.SourceControlConnection{}, err
 	}
 	d, err := scm.Details(source.RepositoryURL, repo.PRSettings.Provider, repo.PRSettings.APIURL)
-	return store.SourceControlConnection{Provider: d.Provider, APIURL: d.APIURL, Repository: d.Repository, WorkspaceID: repo.WorkspaceID, StatusCredentialID: &repo.PRSettings.CredentialID, Enabled: true, ManagedByGit: true}, err
+	return store.SourceControlConnection{PipelineStatusReporting: repo.PRSettings.PipelineStatusReporting, Provider: d.Provider, APIURL: d.APIURL, Repository: d.Repository, WorkspaceID: repo.WorkspaceID, StatusCredentialID: &repo.PRSettings.CredentialID, Enabled: true, ManagedByGit: true}, err
 }
 func (s *Server) listRepositoryPRApplications(w http.ResponseWriter, r *http.Request) {
 	repo, err := s.Store.RepositoryConfigurationByID(r.Context(), r.PathValue("repositoryID"))

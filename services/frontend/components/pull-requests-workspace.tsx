@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
 import { ErrorNotice } from "@/components/workspace-ui"
-import { CheckboxCard, EmptyState, FormField, PageHeading, Panel, StatusBadge } from "@/components/ui-kit"
+import { CheckboxCard, EmptyState, FormField, PageHeading, Panel, StatusBadge, SwitchField } from "@/components/ui-kit"
 import { APIError, api } from "@/lib/api"
 import type { Application, ListResponse, PlanRecord, Workspace, WorkspaceMember, User } from "@/lib/types"
 
@@ -38,7 +38,7 @@ type PreviewProfile = {
   quotaMemory: string
 }
 
-type Connection = { repositoryPrId?: string; managedByGit?: boolean; id: string; enabled: boolean; provider: "github" | "gitlab"; apiUrl: string; repository: string; previewProfile: PreviewProfile; statusCredentialId?: string }
+type Connection = { pipelineStatusReporting: boolean; repositoryPrId?: string; managedByGit?: boolean; id: string; enabled: boolean; provider: "github" | "gitlab"; apiUrl: string; repository: string; previewProfile: PreviewProfile; statusCredentialId?: string }
 type SourceDetails = { repositoryUrl: string; provider: "github" | "gitlab"; apiUrl: string; repository: string; selfHosted: boolean }
 type ConnectionResponse = { source: SourceDetails; connection: Connection | null; webhookUrl: string; webhookConfigured?: boolean }
 type Review = { scopeNote?: string; id: string; number: number; headSha: string; sourceUrl: string; phase: string; error?: string; reportError?: string; plan?: PlanRecord; previewApplicationId?: string; expiresAt?: string; updatedAt: string; headBranch?: string; adoptedBranchPreview?: boolean; sharedEnvironment?: boolean; branchPreviews?: Application[] }
@@ -64,6 +64,7 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
   const [credentials, setCredentials] = useState<{ id: string; name: string; kind: string }[]>([])
   const [approvalActors, setApprovalActors] = useState<{ key: string; providerId: string; userId: string }[]>([])
   const [members, setMembers] = useState<WorkspaceMember[]>([])
+  const [pipelineStatusReporting, setPipelineStatusReporting] = useState(false)
   const [profile, setProfile] = useState<PreviewProfile>(defaultProfile)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -109,6 +110,7 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
     setWebhookUrl(result.webhookUrl)
     setWebhookConfigured(result.webhookConfigured ?? Boolean(result.connection && result.webhookUrl))
     setApiUrl(result.connection?.apiUrl ?? result.source.apiUrl)
+    setPipelineStatusReporting(result.connection?.pipelineStatusReporting ?? false)
     setProfile({ ...defaultProfile, ...result.connection?.previewProfile })
     setStatusCredentialId(result.connection?.statusCredentialId ?? "")
     setApprovalActors(Object.entries(result.connection?.previewProfile.approvalActors ?? {}).map(([providerId, userId]) => ({ key: crypto.randomUUID(), providerId, userId })))
@@ -155,7 +157,7 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
         actors[providerID] = row.userId
       }
       const result = await api<ConnectionResponse>(`/api/v1/applications/${encodeURIComponent(applicationID)}/source-control`, {
-        method: "PUT", body: JSON.stringify({ provider: source?.selfHosted ? "gitlab" : "", apiUrl: source?.selfHosted ? apiUrl : "", webhookSecret, statusToken: statusCredentialId ? "" : statusToken, statusCredentialId, previewProfile: { ...profile, approvalActors: actors } }),
+        method: "PUT", body: JSON.stringify({ pipelineStatusReporting, provider: source?.selfHosted ? "gitlab" : "", apiUrl: source?.selfHosted ? apiUrl : "", webhookSecret, statusToken: statusCredentialId ? "" : statusToken, statusCredentialId, previewProfile: { ...profile, approvalActors: actors } }),
       })
       setSource(result.source)
       setConnection(result.connection)
@@ -215,8 +217,9 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
             <div className="md:col-span-2"><FormField label="GitLab API URL" htmlFor="api-url" hint="Use the HTTPS API URL for this host, including any installation subpath and /api/v4."><Input id="api-url" required type="url" value={apiUrl} onChange={(event) => setApiUrl(event.target.value)} /></FormField></div>
           </>}
 
-          <div className="md:col-span-2"><FormField label="Provider API credential" htmlFor="provider-credential" hint="HTTPS token with PR read, comment read/write and commit status write access."><FormSelect id="provider-credential" value={statusCredentialId} onValueChange={setStatusCredentialId} emptyOption="Separate API token" items={credentials.map(credential => ({ value: credential.id, label: credential.name }))} /></FormField></div>
-          {!statusCredentialId && <div className="md:col-span-2"><FormField label={source?.provider === "github" ? "GitHub API token" : "GitLab API token"} htmlFor="status-token" hint={`Minimum 16 characters. Needs PR/MR read, comments read/write and commit status write access.${connection ? " Leave blank to keep the saved value." : ""}`}><Input id="status-token" type="password" minLength={16} required={!connection || Boolean(connection.statusCredentialId)} value={statusToken} onChange={(event) => setStatusToken(event.target.value)} autoComplete="new-password" /></FormField></div>}
+          <div className="md:col-span-2"><FormField label="Provider API credential" htmlFor="provider-credential" hint="HTTPS token with PR read and comment read/write access. Commit status write access is needed only when commit statuses are enabled."><FormSelect id="provider-credential" value={statusCredentialId} onValueChange={setStatusCredentialId} emptyOption="Separate API token" items={credentials.map(credential => ({ value: credential.id, label: credential.name }))} /></FormField></div>
+          {!statusCredentialId && <div className="md:col-span-2"><FormField label={source?.provider === "github" ? "GitHub API token" : "GitLab API token"} htmlFor="status-token" hint={`Minimum 16 characters. Needs PR/MR read and comments read/write access; commit status write access only when enabled.${connection ? " Leave blank to keep the saved value." : ""}`}><Input id="status-token" type="password" minLength={16} required={!connection || Boolean(connection.statusCredentialId)} value={statusToken} onChange={(event) => setStatusToken(event.target.value)} autoComplete="new-password" /></FormField></div>}
+          <div className="md:col-span-2"><SwitchField id="pipeline-status-reporting" label="Report commit statuses" description="Off by default; JustCD reports through PR/MR comments. Enabling this can block merges. GitLab adds an external job to a pipeline for the commit, and JustCD failures can fail that pipeline." checked={pipelineStatusReporting} disabled={saving} onCheckedChange={setPipelineStatusReporting} /></div>
           <Disclosure className="md:col-span-2 rounded-lg border p-3" summary="PR comment approvals"><div className="grid gap-4">          <div className="space-y-3">
             <p className="text-sm text-muted-foreground">Link provider accounts to workspace members. Their current permissions and the plan’s approval policy apply.</p>
             {members.length === 0 && <p className="text-sm text-muted-foreground">Add workspace members to make users available here.</p>}
@@ -260,8 +263,8 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
       </Panel>
       </> : <>
       {connection ? <>
-      <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground"><Badge variant={connection.enabled ? "success-light" : "destructive-light"} radius="full">{connection.enabled ? "Reporting enabled" : "Reporting disabled"}</Badge><span className="font-medium text-foreground">{connection.repository}</span><span aria-hidden="true">·</span><span>{connection.provider === "github" ? "GitHub" : "GitLab"}</span><span aria-hidden="true">·</span><span>{connection.previewProfile.enabled ? connection.previewProfile.deploymentMode === "existing" ? "Shared environment deployments" : "Isolated previews enabled" : "Review-only plans"}</span>{canEdit && !connection.managedByGit && <label className="ml-auto flex items-center gap-2 text-sm font-medium text-foreground">PR reporting<Switch checked={connection.enabled} disabled={changingState} onCheckedChange={(checked) => void setReportingEnabled(checked)} aria-label={`PR reporting for ${application?.name ?? "this application"}`} /></label>}</div>
-      <Panel title="Recent pull requests" description="Each PR/MR status links back to its plan and preview details.">
+      <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground"><Badge variant={connection.enabled ? "success-light" : "destructive-light"} radius="full">{connection.enabled ? "Reporting enabled" : "Reporting disabled"}</Badge><span className="font-medium text-foreground">{connection.repository}</span><span aria-hidden="true">·</span><span>{connection.provider === "github" ? "GitHub" : "GitLab"}</span><Badge variant="secondary">{connection.pipelineStatusReporting ? "Commit statuses enabled" : "Comments only"}</Badge><span aria-hidden="true">·</span><span>{connection.previewProfile.enabled ? connection.previewProfile.deploymentMode === "existing" ? "Shared environment deployments" : "Isolated previews enabled" : "Review-only plans"}</span>{canEdit && !connection.managedByGit && <label className="ml-auto flex items-center gap-2 text-sm font-medium text-foreground">PR reporting<Switch checked={connection.enabled} disabled={changingState} onCheckedChange={(checked) => void setReportingEnabled(checked)} aria-label={`PR reporting for ${application?.name ?? "this application"}`} /></label>}</div>
+      <Panel title="Recent pull requests" description="Each PR/MR review links back to its plan and preview details.">
         <div className="divide-y">{reviews.length===0 ? <EmptyState title="No pull requests found yet" description="Open pull requests will appear after the next provider check, usually within two minutes." /> : reviews.map((review)=><div key={review.id} id={`review-${review.number}`} className="space-y-2 p-5">
           <div className="flex flex-wrap items-center gap-3"><a href={review.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium text-primary hover:underline">PR/MR #{review.number}<HugeiconsIcon icon={ArrowUpRight01Icon} strokeWidth={1.8} className="size-3.5" aria-hidden="true" /></a><StatusBadge status={review.phase} /><code className="text-xs text-muted-foreground">{review.headSha.slice(0,12)}</code>{review.previewApplicationId && <Link href={`/applications/${review.previewApplicationId}`} className="text-xs text-primary hover:underline">Preview application</Link>}</div>
           {review.phase === "adoption_available" && <div className="space-y-3 rounded-lg border bg-muted/20 p-4"><p className="text-sm">An isolated branch preview already exists for {review.headBranch}. Reuse it to keep its resources and avoid creating another environment.</p><div className="flex flex-wrap gap-2">{(canConfigure ?? ownerAccess) && <>{review.branchPreviews?.map(preview => <ConfirmDisclosure key={preview.id} trigger={`Reuse ${preview.name}`} triggerVariant="outline" confirmVariant="default" title="Transfer this preview to the PR?" description="Existing resources remain. JustCD validates the preview against the PR profile and creates a fresh plan. Future commits and reviewed resource cleanup follow the PR; the namespace and untracked resources remain." confirmLabel="Reuse preview" onConfirm={async () => { await api(`/api/v1/applications/${encodeURIComponent(applicationID)}/pull-requests/${review.id}/branch-preview`, { method: "POST", body: JSON.stringify({ applicationId: preview.id }) }); await load() }} />)}<Button size="sm" variant="outline" onClick={() => { void api(`/api/v1/applications/${encodeURIComponent(applicationID)}/pull-requests/${review.id}/branch-preview`, { method: "POST", body: JSON.stringify({ applicationId: "" }) }).then(load).catch(setError) }}>Create a separate PR preview</Button></>}</div></div>}

@@ -135,6 +135,8 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		actorID = *operation.ActorID
 	}
 	finishFailure := func(cause error, planStatus string) (store.Operation, error) {
+		finishCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 		message := safeApplyFailure(cause, operation.Progress, operation.Type)
 		automatic := !app.AutoSyncPaused && operation.Type == "sync" && !record.Plan.Decommission && record.Plan.Rollback == nil
 		decision := DecideRetry(ctx, app.RetryPolicy, operation.AttemptCount, cause, time.Now().UTC(), retryJitterSample(), automatic)
@@ -153,20 +155,20 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		if decision.NextRetryAt != nil {
 			message += " A fresh plan will be built automatically after the retry backoff."
 		}
-		if err := s.Store.FinishOperationWithRetry(context.Background(), operationID, app.ID, message, decision.AttemptCount, decision.ErrorCode, decision.NextRetryAt, decision.TerminalReason); err != nil {
-			_ = s.Store.FinishOperation(context.Background(), operationID, "failed", message)
+		if err := s.Store.FinishOperationWithRetry(finishCtx, operationID, app.ID, message, decision.AttemptCount, decision.ErrorCode, decision.NextRetryAt, decision.TerminalReason); err != nil {
+			_ = s.Store.FinishOperation(finishCtx, operationID, "failed", message)
 		}
 		if planStatus != "" {
-			_ = s.Store.SetPlanStatus(context.Background(), planID, planStatus)
+			_ = s.Store.SetPlanStatus(finishCtx, planID, planStatus)
 		}
 		if decision.NextRetryAt == nil && (app.SyncPolicy == "auto-safe" || operation.Type == "rollback") {
-			_ = s.Store.PauseAutoSync(context.Background(), app.ID)
+			_ = s.Store.PauseAutoSync(finishCtx, app.ID)
 		}
 		action := "sync.failed"
 		if record.Plan.Rollback != nil {
 			action = "rollback.failed"
 		}
-		_ = s.Store.Audit(context.Background(), actorID, action, "application", app.ID, map[string]any{"operationId": operationID, "planId": planID, "message": message, "attemptCount": decision.AttemptCount, "errorCode": decision.ErrorCode, "nextRetryAt": decision.NextRetryAt, "terminalReason": decision.TerminalReason, "completed": len(operation.Progress.Completed), "total": operation.Progress.Total, "rollbackCheckpointId": operation.RollbackCheckpointID})
+		_ = s.Store.Audit(finishCtx, actorID, action, "application", app.ID, map[string]any{"operationId": operationID, "planId": planID, "message": message, "attemptCount": decision.AttemptCount, "errorCode": decision.ErrorCode, "nextRetryAt": decision.NextRetryAt, "terminalReason": decision.TerminalReason, "completed": len(operation.Progress.Completed), "total": operation.Progress.Total, "rollbackCheckpointId": operation.RollbackCheckpointID})
 		operation.Status, operation.Message = "failed", message
 		operation.AttemptCount = decision.AttemptCount
 		operation.ErrorCode = decision.ErrorCode

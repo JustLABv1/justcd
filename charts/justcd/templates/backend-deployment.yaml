@@ -32,7 +32,7 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      terminationGracePeriodSeconds: 30
+      terminationGracePeriodSeconds: {{ .Values.backend.terminationGracePeriodSeconds }}
       {{- with .Values.backend.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -110,6 +110,8 @@ spec:
               value: {{ .Values.cookieSecure | quote }}
             - name: JUSTCD_SESSION_LIFETIME
               value: {{ .Values.sessionLifetime | quote }}
+            - name: JUSTCD_SHUTDOWN_GRACE_PERIOD
+              value: {{ .Values.backend.shutdownGracePeriod | quote }}
             - name: JUSTCD_METRICS_ENABLED
               value: {{ .Values.backend.observability.metrics.enabled | quote }}
             - name: JUSTCD_OTEL_ENABLED

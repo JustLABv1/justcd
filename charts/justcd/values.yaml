@@ -46,6 +46,10 @@ frontend:
       memory: 512Mi
 
 backend:
+  # Time allowed for in-flight work to finish before cancellation.
+  shutdownGracePeriod: 30s
+  # Includes time for cancellation cleanup and telemetry flushing.
+  terminationGracePeriodSeconds: 60
   # Set runAsUser/runAsGroup to null to let OpenShift SCC assign IDs.
   podSecurityContext:
     runAsNonRoot: true

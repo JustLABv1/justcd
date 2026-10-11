@@ -324,6 +324,12 @@ schema that a newer image has already migrated. The integration suite verifies
 forward upgrades; disaster recovery depends on a tested backup and restore
 procedure for your deployment.
 
+Backend shutdown stops new queue acquisition and allows in-flight operations to
+finish for `JUSTCD_SHUTDOWN_GRACE_PERIOD` (default `30s`, supported range `1s`
+through `10m`). After that period execution is cancelled, and workers finish
+cleanup before the database closes. See the [Helm shutdown and recovery guide](charts/justcd/README.md#worker-shutdown-and-recovery)
+for pod termination settings and interrupted-operation recovery.
+
 The backend API is documented at `/api/v1/openapi.yaml` and health checks are
 available at `/api/v1/health`.
 

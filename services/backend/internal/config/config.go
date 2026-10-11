@@ -17,6 +17,7 @@ type Config struct {
 	PublicURL           string
 	SessionCookieSecure bool
 	SessionLifetime     time.Duration
+	ShutdownGracePeriod time.Duration
 	FrontendURL         string
 	Observability       Observability
 }
@@ -52,6 +53,10 @@ func Load() (Config, error) {
 		return Config{}, errors.New("JUSTCD_SESSION_LIFETIME must be between one minute and seven days")
 	}
 	cfg.SessionLifetime = lifetime
+	cfg.ShutdownGracePeriod, err = time.ParseDuration(value("JUSTCD_SHUTDOWN_GRACE_PERIOD", "30s"))
+	if err != nil || cfg.ShutdownGracePeriod < time.Second || cfg.ShutdownGracePeriod > 10*time.Minute {
+		return Config{}, errors.New("JUSTCD_SHUTDOWN_GRACE_PERIOD must be between one second and ten minutes")
+	}
 	cfg.Observability.MetricsEnabled, err = boolValue("JUSTCD_METRICS_ENABLED", false)
 	if err != nil {
 		return Config{}, err

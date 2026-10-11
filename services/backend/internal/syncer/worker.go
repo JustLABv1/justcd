@@ -18,6 +18,14 @@ const operationWorkerCount = 20
 // RunOperationWorker drains the durable queue with a bounded worker pool. The
 // database applies the per-cluster concurrency and rate limits when claiming.
 func (s *Service) RunOperationWorker(ctx context.Context, logger *slog.Logger) {
+	s.RunOperationWorkerWithDrain(ctx, ctx, logger)
+}
+
+// RunOperationWorkerWithDrain stops acquisition when acquireCtx is cancelled,
+// but keeps executing claimed operations and renewing their leases until they
+// finish or executionCtx is cancelled. It waits for all operation goroutines.
+func (s *Service) RunOperationWorkerWithDrain(acquireCtx, executionCtx context.Context, logger *slog.Logger) {
+	ctx := acquireCtx
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -36,7 +44,7 @@ func (s *Service) RunOperationWorker(ctx context.Context, logger *slog.Logger) {
 		go func() {
 			defer workers.Done()
 			for job := range jobs {
-				s.executeOperationJob(ctx, job, logger)
+				s.executeOperationJob(executionCtx, job, logger)
 				available <- struct{}{}
 			}
 		}()
@@ -64,6 +72,9 @@ func (s *Service) RunOperationWorker(ctx context.Context, logger *slog.Logger) {
 		case <-queueTicker.C:
 		dispatch:
 			for {
+				if ctx.Err() != nil {
+					return
+				}
 				select {
 				case <-available:
 				default:
@@ -82,9 +93,11 @@ func (s *Service) RunOperationWorker(ctx context.Context, logger *slog.Logger) {
 					break dispatch
 				}
 				logger.Info("starting queued JustCD operation", "operationId", operation.ID, "applicationId", operation.ApplicationID, "operationType", operation.Type)
+				// A claim committed just before shutdown belongs to this worker.
+				// Hand it to an available executor during drain rather than abandon it.
 				select {
 				case jobs <- operationJob{operation: operation}:
-				case <-ctx.Done():
+				case <-executionCtx.Done():
 					available <- struct{}{}
 					s.markClaimedOperationInterrupted(operation, logger)
 					return
@@ -149,6 +162,8 @@ func (s *Service) executeOperationJob(ctx context.Context, job operationJob, log
 }
 
 func (s *Service) markClaimedOperationInterrupted(operation store.Operation, logger *slog.Logger) {
+	finishCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	message := "Sync interrupted before a result was recorded. Review cluster state and build a fresh plan before retrying."
 	if operation.Type == "rollback" {
 		message = "Rollback interrupted before a result was recorded. It will not resume automatically; review cluster state and any available checkpoint."
@@ -157,16 +172,16 @@ func (s *Service) markClaimedOperationInterrupted(operation store.Operation, log
 	if attempt < 1 {
 		attempt = 1
 	}
-	if err := s.Store.FinishOperationWithRetry(context.Background(), operation.ID, operation.ApplicationID, message, attempt, "operation.interrupted", nil, "interrupted_requires_review"); err != nil {
+	if err := s.Store.FinishOperationWithRetry(finishCtx, operation.ID, operation.ApplicationID, message, attempt, "operation.interrupted", nil, "interrupted_requires_review"); err != nil {
 		logger.Error("could not persist interrupted JustCD operation", "operationId", operation.ID, "error", err)
 	}
 	if operation.PlanID != nil {
-		_ = s.Store.SetPlanStatus(context.Background(), *operation.PlanID, "failed")
+		_ = s.Store.SetPlanStatus(finishCtx, *operation.PlanID, "failed")
 	}
-	_ = s.Store.PauseAutoSync(context.Background(), operation.ApplicationID)
+	_ = s.Store.PauseAutoSync(finishCtx, operation.ApplicationID)
 	actorID := ""
 	if operation.ActorID != nil {
 		actorID = *operation.ActorID
 	}
-	_ = s.Store.Audit(context.Background(), actorID, operation.Type+".failed", "application", operation.ApplicationID, map[string]any{"operationId": operation.ID, "planId": operation.PlanID, "message": message, "attemptCount": attempt, "errorCode": "operation.interrupted", "terminalReason": "interrupted_requires_review", "interrupted": true})
+	_ = s.Store.Audit(finishCtx, actorID, operation.Type+".failed", "application", operation.ApplicationID, map[string]any{"operationId": operation.ID, "planId": operation.PlanID, "message": message, "attemptCount": attempt, "errorCode": "operation.interrupted", "terminalReason": "interrupted_requires_review", "interrupted": true})
 }

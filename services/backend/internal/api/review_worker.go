@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/justlab/justcd/services/backend/internal/apphealth"
@@ -23,14 +24,23 @@ func (s *Server) RunReviewWorker(ctx context.Context, logger *slog.Logger) {
 	defer ticker.Stop()
 	pollTicker := time.NewTicker(2 * time.Minute)
 	defer pollTicker.Stop()
+	var polls sync.WaitGroup
+	defer polls.Wait()
+	startPoll := func() {
+		polls.Add(1)
+		go func() {
+			defer polls.Done()
+			s.pollPullRequests(ctx, logger)
+		}()
+	}
 	// Discover open PRs immediately after startup, then refresh every two minutes.
-	go s.pollPullRequests(ctx, logger)
+	startPoll()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-pollTicker.C:
-			go s.pollPullRequests(ctx, logger)
+			startPoll()
 		case <-ticker.C:
 			items, err := s.Store.DueReviews(ctx, 10)
 			if err != nil {

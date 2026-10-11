@@ -361,6 +361,7 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 		t.Fatalf("deleted connection should remove review history: count=%d err=%v", reviewCount, err)
 	}
 	testSyncPauseSafety(t, ctx, s)
+	testWorkerClaimConcurrency(t, ctx, s)
 	testRepositoryConfigurationSafety(t, ctx, s)
 	testConnectionDeletionSafety(t, ctx, s)
 }

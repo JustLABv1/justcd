@@ -93,6 +93,33 @@ not install PostgreSQL or create credentials for target clusters. Set
 `/healthz` for Kubernetes probes; the backend's endpoint reports process
 availability after startup, not the health of every external connection.
 
+### Worker shutdown and recovery
+
+On SIGTERM or SIGINT the backend stops acquiring queued operations and stops
+its planning, repository, and PR polling loops. Already claimed operations
+continue executing and renewing their database leases during
+`backend.shutdownGracePeriod` (default `30s`, exposed as
+`JUSTCD_SHUTDOWN_GRACE_PERIOD`). Active HTTP requests can also finish during
+this period. New requests receive HTTP 503 while the backend drains.
+
+When the drain period expires, in-flight execution and requests are cancelled.
+The process waits for worker and request cleanup before closing PostgreSQL;
+operation failure recording has a five-second timeout. Telemetry flushing may
+take another ten seconds. Set `backend.terminationGracePeriodSeconds` (default
+`60`) at least twenty seconds longer than the drain period, and increase both
+settings for deployments that need more time to finish operations.
+
+Shutdown cancellation does not undo Kubernetes changes. Interrupted mutations
+require inspection of cluster state and a fresh reviewed plan; they are not
+automatically replayed. A hard kill can leave an operation running until its
+90-second lease expires and the recovery sweep marks it interrupted. The sweep
+runs every 30 seconds. Keep PostgreSQL available during draining and recovery.
+
+The supported Helm topology remains one backend replica with external
+PostgreSQL and a Recreate rollout. Database leases serialize application work,
+but multiple backend replicas are not yet a supported deployment topology;
+crash-checkpoint coverage and migration coordination still need verification.
+
 ## Metrics and traces
 
 Prometheus metrics and OpenTelemetry tracing are disabled by default. Enable

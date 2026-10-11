@@ -11,6 +11,9 @@ audited sync operations, and explicit owner approval for deletion and
 cluster-scoped changes. `auto-safe` checks drift in the background and applies
 only namespaced creates/updates. It never prunes automatically.
 
+The [read-only MCP endpoint](docs/mcp.md) exposes authorized deployment metadata
+for assistants such as JustAI.
+
 ## Local development
 
 You need Go 1.27+, Node.js, pnpm, PostgreSQL, and `git`. Install `helm` and

@@ -8,6 +8,25 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /mcp:
+    post:
+      summary: Read-only MCP deployment metadata (Streamable HTTP)
+      description: Stateless JSON-RPC transport using the official MCP SDK. Requires session and CSRF cookies plus X-CSRF-Token on every request, including discovery. Tools expose workspace-scoped summaries only; no manifests, credential values or mutations. See docs/mcp.md for client setup, schemas and limits.
+      parameters:
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+        - { name: MCP-Protocol-Version, in: header, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200': { description: MCP JSON-RPC result or protocol/tool error }
+        '202': { description: MCP notification accepted }
+        '400': { description: Malformed request or unsupported protocol version }
+        '401': { description: Login session required }
+        '403': { description: CSRF validation or Host/Origin validation failed }
+        '413': { description: Request exceeds 64 KiB }
   /repository-configurations:
     get:
       summary: List application discovery connections (workspace viewer)

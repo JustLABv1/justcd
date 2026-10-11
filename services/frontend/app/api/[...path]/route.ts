@@ -16,6 +16,15 @@ async function proxy(
     if (value) headers.set(name, value)
   }
 
+  // MCP is authenticated with the same session and CSRF headers. Preserve its
+  // protocol negotiation and the browser boundary checked by the backend.
+  if (path.join("/") === "v1/mcp") {
+    for (const name of ["mcp-protocol-version", "origin", "sec-fetch-site", "host"]) {
+      const value = request.headers.get(name)
+      if (value) headers.set(name, value)
+    }
+  }
+
   // Agent enrollment/polling uses a cluster-bound bearer identity, not a browser
   // session. Forward it only to the agent protocol endpoints.
   if (path[0] === "v1" && path[1] === "agents") {

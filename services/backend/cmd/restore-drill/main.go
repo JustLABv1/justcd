@@ -63,6 +63,12 @@ func run() error {
 			`INSERT INTO plans(id,application_id,revision,digest,changes,desired,created_by,expires_at,status) VALUES('dr-pending-plan','dr-app','dr-revision','pending-digest','[]','[]','dr-user',NOW()+INTERVAL '1 hour','current')`,
 			`INSERT INTO operations(id,application_id,plan_id,actor_id,status,progress) VALUES('dr-queued','dr-app','dr-pending-plan','dr-user','queued','{"phase":"queued","total":2,"completed":[]}'),('dr-running','dr-app','dr-pending-plan','dr-user','running','{"phase":"apply","total":2,"completed":[{"apiVersion":"v1","kind":"ConfigMap","namespace":"justcd-target","name":"first"}]}')`,
 			`INSERT INTO operation_leases(application_id,operation_id,expires_at) VALUES('dr-app','dr-running',NOW()+INTERVAL '1 hour')`,
+			`INSERT INTO repository_configurations(id,workspace_id,source_id,revision,enabled,pr_settings) VALUES('dr-repository','dr-workspace','dr-source','main',TRUE,'{"enabled":true,"profile":{"enabled":true}}')`,
+			`INSERT INTO source_control_connections(id,workspace_id,application_id,provider,api_url,repository,status_token_cipher,preview_profile,enabled) VALUES('dr-connection','dr-workspace','dr-app','github','https://api.example.invalid','synthetic/repository','\x'::bytea,'{"enabled":true}',TRUE)`,
+			`INSERT INTO applications(id,workspace_id,name,source_id,revision,manifest_path,renderer,cluster_id,sync_policy,auto_sync_paused) VALUES('dr-null-profile-app','dr-workspace','Null profile','dr-source','dr-revision','manifests','yaml','dr-cluster','manual',TRUE)`,
+			`INSERT INTO repository_configurations(id,workspace_id,source_id,revision,enabled,pr_settings) VALUES('dr-null-repository','dr-workspace','dr-source','null-profile',TRUE,'null')`,
+			`INSERT INTO source_control_connections(id,workspace_id,application_id,provider,api_url,repository,status_token_cipher,preview_profile,enabled) VALUES('dr-null-connection','dr-workspace','dr-null-profile-app','github','https://api.example.invalid','synthetic/repository','\x'::bytea,'null',TRUE)`,
+			`INSERT INTO pull_request_reviews(id,connection_id,number,head_sha,source_url,phase,event_at,expires_at) VALUES('dr-review','dr-connection',1,'dr-sha','https://example.invalid/pr/1','cleanup_pending',NOW(),NOW()-INTERVAL '1 hour')`,
 			`INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES('dr-user','drill.completed','operation','dr-operation','{"synthetic":true}')`,
 		}
 		for _, query := range queries {
@@ -83,7 +89,7 @@ func run() error {
 		if err := tx.Commit(); err != nil {
 			return err
 		}
-	} else if os.Args[1] != "verify" && os.Args[1] != "wrong-key" {
+	} else if os.Args[1] != "verify" && os.Args[1] != "wrong-key" && os.Args[1] != "quarantined" {
 		return fmt.Errorf("unknown mode")
 	}
 	for _, kind := range []string{"git-https", "kubernetes-token"} {
@@ -110,6 +116,43 @@ func run() error {
 		fmt.Println("Incorrect key rejected for both credential kinds")
 		return nil
 	}
+	if os.Args[1] == "quarantined" {
+		repos, err := db.ListRepositoryConfigurations(ctx, "", true)
+		if err != nil {
+			return err
+		}
+		if len(repos) != 0 {
+			return fmt.Errorf("repository discovery remains active")
+		}
+		prRepos, err := db.EnabledPRRepositories(ctx)
+		if err != nil {
+			return err
+		}
+		if len(prRepos) != 0 {
+			return fmt.Errorf("repository PR discovery remains active")
+		}
+		connections, err := db.EnabledSourceControlConnections(ctx)
+		if err != nil {
+			return err
+		}
+		if len(connections) != 0 {
+			return fmt.Errorf("source control polling remains active")
+		}
+		reviews, err := db.DueReviews(ctx, 10)
+		if err != nil {
+			return err
+		}
+		if len(reviews) != 0 {
+			return fmt.Errorf("PR review/cleanup remains active")
+		}
+		var prior bool
+		if err := db.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM audit_events WHERE action='disaster_recovery.quarantined' AND details->'priorAutomation'->'repositories' @> '[{"id":"dr-repository","enabled":true,"prEnabled":true,"previewEnabled":true}]'::jsonb AND details->'priorAutomation'->'sourceControlConnections' @> '[{"id":"dr-connection","enabled":true,"previewEnabled":true}]'::jsonb)`).Scan(&prior); err != nil {
+			return err
+		}
+		if !prior {
+			return fmt.Errorf("prior automation switches not recorded")
+		}
+	}
 	// Hash exact persisted rows, including ciphertext, timestamps, IDs, plan payload,
 	// operation progress, and audit details. Compare before/after dump and restore.
 	plan, err := db.PlanByID(ctx, "dr-plan")
@@ -134,7 +177,7 @@ func run() error {
 		return fmt.Errorf("partial progress differs")
 	}
 	var content string
-	if err := db.DB.QueryRowContext(ctx, `SELECT jsonb_build_object('credentials',(SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM credentials c),'plans',(SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM plans p),'operations',(SELECT jsonb_agg(to_jsonb(o) ORDER BY id) FROM operations o),'audit',(SELECT jsonb_agg(to_jsonb(a) ORDER BY id) FROM audit_events a))::text`).Scan(&content); err != nil {
+	if err := db.DB.QueryRowContext(ctx, `SELECT jsonb_build_object('credentials',(SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM credentials c),'plans',(SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM plans p),'operations',(SELECT jsonb_agg(to_jsonb(o) ORDER BY id) FROM operations o),'repositories',(SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM repository_configurations r),'connections',(SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM source_control_connections c),'reviews',(SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM pull_request_reviews r),'audit',(SELECT jsonb_agg(to_jsonb(a) ORDER BY id) FROM audit_events a))::text`).Scan(&content); err != nil {
 		return err
 	}
 	var valid bool

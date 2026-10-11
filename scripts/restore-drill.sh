@@ -125,14 +125,14 @@ kubectl -n justcd exec -i postgres -- psql -U postgres -d justcd_restored -v ON_
 [[ $(kubectl -n justcd exec postgres -- psql -U postgres -d justcd_restored -Atc "SELECT count(*) FROM operations WHERE status IN ('queued','running')") == 0 ]]
 [[ $(kubectl -n justcd exec postgres -- psql -U postgres -d justcd_restored -Atc "SELECT jsonb_array_length(progress->'completed') FROM operations WHERE id='dr-running' AND status='failed'") == 1 ]]
 [[ $(kubectl -n justcd exec postgres -- psql -U postgres -d justcd_restored -Atc "SELECT count(*) FROM plans WHERE status='current'") == 0 ]]
-"$scratch/fixture" verify > "$scratch/quarantined.sha256"
+"$scratch/fixture" quarantined > "$scratch/quarantined.sha256"
 # Restore the same Helm release against the replacement database and original key.
 printf 'JUSTCD_DATABASE_URL=postgres://postgres:synthetic-drill-only@postgres:5432/justcd_restored?sslmode=disable\nJUSTCD_ENCRYPTION_KEY=%s\n' "$JUSTCD_ENCRYPTION_KEY" > "$scratch/backend.env"
 kubectl -n justcd create secret generic justcd-config --from-env-file="$scratch/backend.env" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n justcd scale deployment justcd-backend --replicas=1
 kubectl -n justcd rollout status deployment/justcd-backend --timeout=180s
 kubectl -n justcd exec deployment/justcd-backend -- wget -qO- http://127.0.0.1:8080/healthz
-"$scratch/fixture" verify > "$scratch/after-start.sha256"
+"$scratch/fixture" quarantined > "$scratch/after-start.sha256"
 cmp "$scratch/quarantined.sha256" "$scratch/after-start.sha256"
 # Validate both RBAC recipes, including denied cross-namespace/cluster permissions.
 kubectl apply -f "$root/docs/operations/rbac-namespaced.yaml"

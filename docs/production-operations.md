@@ -177,10 +177,10 @@ with the recorded replica count and resume policies deliberately after validatio
      --file=docs/operations/quarantine-restored.sql
    ```
 
-   [quarantine-restored.sql](operations/quarantine-restored.sql) pauses auto-sync,
+   [quarantine-restored.sql](operations/quarantine-restored.sql) records the prior automation switches in a recovery audit event, disables source-control/preview polling and cleanup, repository discovery and repository PR settings, pauses auto-sync,
    cancels old queued work, marks restored running work failed, preserves partial
    progress/completed history, removes leases, invalidates current plans and
-   appends an audit event. It does not mutate Kubernetes. Keep the original dump
+   appends an audit event. Application pause alone does not fence PR preview mutation or repository discovery; all these switches must remain disabled before startup. It does not mutate Kubernetes. Keep the original dump
    for forensics. This assumes the documented schema and is **not** a live retry
    or maintenance command; old workers must already be fenced.
 6. Restore the Secret using the original key and new TLS-verified database URL
@@ -203,7 +203,7 @@ with the recorded replica count and resume policies deliberately after validatio
    changed since the backup. Build **new** plans/approvals, review partial changes,
    ownership and pruning, and explicitly adopt only verified resources missing
    from old inventory. Do not delete/recreate them just to remove a conflict.
-8. Run a reviewed canary, resume selected policies and reopen submissions. Record
+8. Run a reviewed canary, then use the recovery audit event’s `priorAutomation` inventory to resume selected application, repository, source-control and PR/preview switches deliberately. Review outstanding preview cleanup/expiry and Git-managed settings before re-enabling them; enabling repository discovery can recreate or overwrite application/PR settings from Git. Do not bulk-replay old switches or blindly restore them from SQL. Reopen submissions after that review. Record
    actual RPO/RTO, discrepancies and follow-up actions. No database backup can
    guarantee exactly-once mutations across PostgreSQL and Kubernetes.
 
@@ -228,7 +228,7 @@ Git/Kubernetes credentials, plans, terminal/queued/running operations and audit
 history; stops workers; encrypts the dump/key with separate age recipients, decrypts and restores into a new DB; compares exact ciphertext,
 records and timestamps; and decrypts both credential types without exposing them.
 It verifies wrong-key rejection, runs the quarantine script, preserves partial
-progress, starts the Helm backend using the original key/new DB, checks health
+progress, verifies repository discovery, PR discovery/polling/review/cleanup selectors return no work and prior switches are recorded; starts the Helm backend using the original key/new DB, checks health
 and verifies history again. Positive/negative RBAC tests verify namespace and
 cluster access. Its HTTP/plaintext-DB settings are limited to the disposable
 cluster. Cleanup deletes only its own cluster/files; it never uses your current

@@ -236,6 +236,7 @@ func (s *Service) CalculateDecommissionPlan(ctx context.Context, app store.Appli
 		return core.Plan{}, err
 	}
 	setApprovalRule(&plan, "deletion", policy.Deletion)
+	setReviewReasons(&plan, app, false)
 	if err := core.RefreshDigest(&plan); err != nil {
 		return core.Plan{}, err
 	}
@@ -243,6 +244,23 @@ func (s *Service) CalculateDecommissionPlan(ctx context.Context, app store.Appli
 }
 
 func (s *Service) RecheckPlan(ctx context.Context, app store.Application, record store.PlanRecord) (core.Plan, error) {
+	plan, err := s.recalculatePlan(ctx, app, record)
+	if err == nil {
+		err = preserveReviewSchema(&plan, record.Plan)
+	}
+	return plan, err
+}
+
+func preserveReviewSchema(fresh *core.Plan, stored core.Plan) error {
+	// Older plans did not record reasons. Their existing security fields remain
+	// fully compared; adding explanatory metadata alone must not invalidate them.
+	if len(stored.ApprovalReasons) == 0 {
+		fresh.ApprovalReasons = nil
+	}
+	return core.RefreshDigest(fresh)
+}
+
+func (s *Service) recalculatePlan(ctx context.Context, app store.Application, record store.PlanRecord) (core.Plan, error) {
 	if record.Plan.Rollback != nil {
 		plan, _, err := s.CalculateRollbackPlan(ctx, app, *record.Plan.Rollback)
 		return plan, err
@@ -519,6 +537,7 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 		kind, rule = "takeover", store.ApprovalRule{RequiredApprovals: count, ApproverRoles: []string{"owner"}, ApproverUserIDs: []string{}}
 	}
 	setApprovalRule(&plan, kind, rule)
+	setReviewReasons(&plan, app, hasClusterScoped && policy.Sync.RequiredApprovals == 0 && !hasDeletes)
 	if err := core.RefreshDigest(&plan); err != nil {
 		return core.Plan{}, nil, err
 	}

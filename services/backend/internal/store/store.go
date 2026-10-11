@@ -2423,6 +2423,10 @@ func (s *Store) SavePlanOrReuse(ctx context.Context, record PlanRecord) (PlanRec
 }
 
 func (s *Store) savePlan(ctx context.Context, record PlanRecord, reuse bool) (PlanRecord, bool, error) {
+	reviewReasons, err := json.Marshal(record.Plan.ApprovalReasons)
+	if err != nil {
+		return PlanRecord{}, false, err
+	}
 	namespaceCreations, err := json.Marshal(record.Plan.NamespaceCreations)
 	if err != nil {
 		return PlanRecord{}, false, err
@@ -2496,7 +2500,7 @@ func (s *Store) savePlan(ctx context.Context, record PlanRecord, reuse bool) (Pl
 	if _, err = tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, record.Plan.ApplicationID); err != nil {
 		return PlanRecord{}, false, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO plans(id,application_id,revision,digest,bindings,changes,desired,created_by,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target,namespace_creations) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`, record.ID, record.Plan.ApplicationID, record.Plan.Revision, record.Plan.Digest, bindings, changes, desired, record.CreatedBy, record.ExpiresAt, record.Status, ignored, selection, record.Plan.IgnoreRulesDigest, record.Plan.Decommission, record.Plan.ApprovalKind, record.Plan.RequiredApprovals, approverRoles, approverUserIDs, rollbackTarget, namespaceCreations)
+	_, err = tx.ExecContext(ctx, `INSERT INTO plans(id,application_id,revision,digest,bindings,changes,desired,created_by,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target,namespace_creations,approval_reasons) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`, record.ID, record.Plan.ApplicationID, record.Plan.Revision, record.Plan.Digest, bindings, changes, desired, record.CreatedBy, record.ExpiresAt, record.Status, ignored, selection, record.Plan.IgnoreRulesDigest, record.Plan.Decommission, record.Plan.ApprovalKind, record.Plan.RequiredApprovals, approverRoles, approverUserIDs, rollbackTarget, namespaceCreations, reviewReasons)
 	if err != nil {
 		return PlanRecord{}, false, err
 	}
@@ -2529,8 +2533,8 @@ func (s *Store) savePlan(ctx context.Context, record PlanRecord, reuse bool) (Pl
 
 func (s *Store) PlanByID(ctx context.Context, id string) (PlanRecord, error) {
 	var out PlanRecord
-	var bindings, changes, desired, ignored, selection, approverRoles, approverUserIDs, rollbackTarget, triggerInfo, namespaceCreations []byte
-	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target,trigger_info,namespace_creations FROM plans WHERE id=$1`, id).Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission, &out.Plan.ApprovalKind, &out.Plan.RequiredApprovals, &approverRoles, &approverUserIDs, &rollbackTarget, &triggerInfo, &namespaceCreations)
+	var bindings, changes, desired, ignored, selection, approverRoles, approverUserIDs, rollbackTarget, triggerInfo, namespaceCreations, reviewReasons []byte
+	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target,trigger_info,namespace_creations,approval_reasons FROM plans WHERE id=$1`, id).Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission, &out.Plan.ApprovalKind, &out.Plan.RequiredApprovals, &approverRoles, &approverUserIDs, &rollbackTarget, &triggerInfo, &namespaceCreations, &reviewReasons)
 	if err != nil {
 		return PlanRecord{}, err
 	}
@@ -2539,6 +2543,9 @@ func (s *Store) PlanByID(ctx context.Context, id string) (PlanRecord, error) {
 		if err = json.Unmarshal(triggerInfo, out.Trigger); err != nil {
 			return PlanRecord{}, err
 		}
+	}
+	if err = json.Unmarshal(reviewReasons, &out.Plan.ApprovalReasons); err != nil {
+		return PlanRecord{}, err
 	}
 	if err = json.Unmarshal(namespaceCreations, &out.Plan.NamespaceCreations); err != nil {
 		return PlanRecord{}, err
@@ -2585,7 +2592,7 @@ func (s *Store) ListPlans(ctx context.Context, applicationID string, limit int) 
 	if limit < 1 || limit > 100 {
 		limit = 20
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target,trigger_info,namespace_creations FROM plans WHERE application_id=$1 ORDER BY created_at DESC LIMIT $2`, applicationID, limit)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target,trigger_info,namespace_creations,approval_reasons FROM plans WHERE application_id=$1 ORDER BY created_at DESC LIMIT $2`, applicationID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -2593,8 +2600,8 @@ func (s *Store) ListPlans(ctx context.Context, applicationID string, limit int) 
 	items := make([]PlanRecord, 0)
 	for rows.Next() {
 		var out PlanRecord
-		var bindings, changes, desired, ignored, selection, approverRoles, approverUserIDs, rollbackTarget, triggerInfo, namespaceCreations []byte
-		if err := rows.Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission, &out.Plan.ApprovalKind, &out.Plan.RequiredApprovals, &approverRoles, &approverUserIDs, &rollbackTarget, &triggerInfo, &namespaceCreations); err != nil {
+		var bindings, changes, desired, ignored, selection, approverRoles, approverUserIDs, rollbackTarget, triggerInfo, namespaceCreations, reviewReasons []byte
+		if err := rows.Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission, &out.Plan.ApprovalKind, &out.Plan.RequiredApprovals, &approverRoles, &approverUserIDs, &rollbackTarget, &triggerInfo, &namespaceCreations, &reviewReasons); err != nil {
 			return nil, err
 		}
 		if len(triggerInfo) > 0 {
@@ -2602,6 +2609,9 @@ func (s *Store) ListPlans(ctx context.Context, applicationID string, limit int) 
 			if err := json.Unmarshal(triggerInfo, out.Trigger); err != nil {
 				return nil, err
 			}
+		}
+		if err := json.Unmarshal(reviewReasons, &out.Plan.ApprovalReasons); err != nil {
+			return nil, err
 		}
 		if err := json.Unmarshal(namespaceCreations, &out.Plan.NamespaceCreations); err != nil {
 			return nil, err

@@ -6,6 +6,7 @@ import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { ArrowLeft01Icon, Edit02Icon, ViewIcon, Layers01Icon } from "@hugeicons/core-free-icons"
+import { ApplicationGroupPlanReview } from "@/components/application-group-plan-review"
 import { RowActions } from "@/components/action-menu"
 import { Skeleton } from "@/components/ui/skeleton"
 import { KustomizeOptions } from "@/components/applications/kustomize-options"
@@ -117,6 +118,7 @@ export default function ApplicationGroupPage() {
     <PageHeading title={group?.name ?? "Deployment group"} description="Shared renderer configuration and per-target application status." actions={<Button render={<Link href="/applications" />} nativeButton={false} variant="ghost" size="sm"><HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={1.8} aria-hidden="true" />Applications</Button>} />
     {error != null && <ErrorNotice error={error} />}
     {loading || !group ? (error != null ? null : <div role="status" aria-label="Loading deployment group" className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]"><Skeleton className="h-64 rounded-xl" /><Skeleton className="h-96 rounded-xl" /></div>) : <>
+      <div className="mb-5"><ApplicationGroupPlanReview applications={applications}/></div>
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         <Panel title="Targets" description="Every target has independent plans, sync history, and approval rules.">
           <ul className="divide-y">

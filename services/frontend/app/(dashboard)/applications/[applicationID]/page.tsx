@@ -723,7 +723,7 @@ export default function ApplicationDetailPage() {
         <Tabs.Panel value="changes" className="min-w-0 outline-none">
           <ChangesTab plans={plans} activePlan={activePlan} onSelectPlan={(id) => { setApprovalSummary(null); setActivePlan(plans.find((plan) => plan.id === id) ?? null) }} plansLoading={pendingData.plans} plansError={plansError} retryingPlans={retryingPlans} onRetryPlans={() => void retryPlans()}
             decommissioning={application.decommissioning} canDeploy={canDeploy} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} hasOwnershipConflict={Boolean(ownershipConflict)}
-            reviewResource={reviewResource} onReviewResourceChange={setReviewResource}
+            onReviewOwnershipConflict={() => setConflictOpen(true)} reviewResource={reviewResource} onReviewResourceChange={setReviewResource}
             selectionResources={selectionResources} selectionFields={selectionFields} selectionDirty={selectionDirty} onToggleResource={toggleResourceExclusion} onToggleField={toggleFieldExclusion}
             onResetSelection={() => { setSelectionResources(activePlan?.plan.selection?.resources ?? []); setSelectionFields(activePlan?.plan.selection?.fields ?? []) }} onSaveSelection={() => void savePlanSelection()}
             ignoreRules={ignoreRules} ignoreReasons={ignoreReasons} onIgnoreReasonChange={(key, reason) => setIgnoreReasons((current) => ({ ...current, [key]: reason }))} onSaveIgnore={(identity, path, reason) => void saveIgnoreRule(identity, path, reason)} onRemoveRule={removeIgnoreRule}

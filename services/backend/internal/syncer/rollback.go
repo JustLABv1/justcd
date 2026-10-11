@@ -386,6 +386,7 @@ func (s *Service) requireRollbackApprovals(ctx context.Context, app store.Applic
 	plan.ApproverRoles = []string{"owner"}
 	plan.ApproverUserIDs = []string{}
 	plan.RequiresApproval = true
+	setReviewReasons(plan, app, false)
 	return nil
 }
 

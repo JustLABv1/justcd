@@ -1,0 +1,30 @@
+# Optional separate identity. Namespace creation is cluster-scoped and cannot
+# be constrained by resourceNames. Omit create/delete unless truly required.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: justcd-cluster-deployer
+  namespace: justcd-target
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: justcd-namespace-deployer
+rules:
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list, watch, create, patch, update, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: justcd-namespace-deployer
+subjects:
+  - kind: ServiceAccount
+    name: justcd-cluster-deployer
+    namespace: justcd-target
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: justcd-namespace-deployer

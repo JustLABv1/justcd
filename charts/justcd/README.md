@@ -205,3 +205,5 @@ Apply with the usual `helm upgrade --install` command. After rotating the
 certificate in the Secret, restart the backend deployment: Go caches its CA
 pool, so updating the mounted file alone does not reload trust. Do not override
 `SSL_CERT_DIR`, `GIT_SSL_CAINFO`, or `GIT_SSL_CAPATH` in `backend.extraEnv` when using this option.
+
+See the [production operations runbook](../../docs/production-operations.md) for coordinated backups, cold restore, least-privilege target RBAC, troubleshooting and tested recovery drills.

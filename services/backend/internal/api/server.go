@@ -57,6 +57,7 @@ func New(s *store.Store, cfg config.Config, logger *slog.Logger) (*Server, error
 }
 
 func (s *Server) routes() {
+	s.Mux.Handle("/api/v1/mcp", s.mcpHandler())
 	s.Mux.HandleFunc("POST /api/v1/agents/enroll", s.agentEnroll)
 	s.Mux.HandleFunc("POST /api/v1/agents/renew", s.agentRenew)
 	s.Mux.HandleFunc("POST /api/v1/agents/heartbeat", s.agentHeartbeat)

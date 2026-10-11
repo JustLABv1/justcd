@@ -157,10 +157,10 @@ func (s *Service) buildRollbackRecord(ctx context.Context, app store.Application
 	}
 	now := time.Now().UTC()
 	record := store.PlanRecord{ID: store.NewID(), Plan: plan, Desired: desired, CreatedBy: actorID, CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute), Status: "current"}
-	if err := s.Store.SavePlan(ctx, record); err != nil {
+	record, _, err = s.Store.SavePlanOrReuse(ctx, record)
+	if err != nil {
 		return store.PlanRecord{}, err
 	}
-	_ = s.Store.Audit(ctx, actorID, "rollback.plan_created", "application", app.ID, map[string]any{"planId": record.ID, "targetKind": target.Kind, "targetId": target.ID, "targetRevision": plan.Rollback.Revision, "digest": plan.Digest, "changes": len(plan.Changes)})
 	return record, nil
 }
 

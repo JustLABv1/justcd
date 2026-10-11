@@ -29,6 +29,14 @@ type Service struct {
 	Store         *store.Store
 	EncryptionKey []byte
 	Metrics       *observability.Metrics
+	// Failure-injection tests observe these boundaries; production leaves nil.
+	testCheckpoint func(string)
+}
+
+func (s *Service) checkpoint(name string) {
+	if s.testCheckpoint != nil {
+		s.testCheckpoint(name)
+	}
 }
 
 type planStageError struct {
@@ -170,16 +178,18 @@ func (s *Service) BuildPlanWithSelection(ctx context.Context, app store.Applicat
 	}
 	now := time.Now().UTC()
 	record := store.PlanRecord{ID: store.NewID(), Plan: plan, Desired: desired, CreatedBy: actorID, CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute), Status: "current"}
-	span.SetAttributes(attribute.String("plan.id", record.ID), attribute.Int("plan.change_count", len(plan.Changes)), attribute.Bool("plan.requires_approval", plan.RequiresApproval))
-	if err := s.Store.SavePlan(ctx, record); err != nil {
+	s.checkpoint("plan.before_save")
+	record, _, err = s.Store.SavePlanOrReuse(ctx, record)
+	if err != nil {
 		observability.MarkError(span, err)
 		return store.PlanRecord{}, err
 	}
+	span.SetAttributes(attribute.String("plan.id", record.ID), attribute.Int("plan.change_count", len(plan.Changes)), attribute.Bool("plan.requires_approval", plan.RequiresApproval))
+	s.checkpoint("plan.saved")
 	if _, err := s.Store.DB.ExecContext(ctx, `UPDATE applications SET health=$2,status_issues='[]'::jsonb,last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, app.ID, healthForPlan(plan)); err != nil {
 		observability.MarkError(span, err)
 		return store.PlanRecord{}, err
 	}
-	_ = s.Store.Audit(ctx, actorID, "plan.created", "application", app.ID, map[string]any{"planId": record.ID, "revision": plan.Revision, "digest": plan.Digest, "changes": len(plan.Changes)})
 	return record, nil
 }
 
@@ -196,10 +206,10 @@ func (s *Service) BuildDecommissionPlan(ctx context.Context, app store.Applicati
 	}
 	now := time.Now().UTC()
 	record := store.PlanRecord{ID: store.NewID(), Plan: plan, Desired: []core.Resource{}, CreatedBy: actorID, CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute), Status: "current"}
-	if err := s.Store.SavePlan(ctx, record); err != nil {
+	record, _, err = s.Store.SavePlanOrReuse(ctx, record)
+	if err != nil {
 		return store.PlanRecord{}, err
 	}
-	_ = s.Store.Audit(ctx, actorID, "application.decommission_plan_created", "application", app.ID, map[string]any{"planId": record.ID, "deletions": len(plan.Changes), "digest": plan.Digest})
 	return record, nil
 }
 

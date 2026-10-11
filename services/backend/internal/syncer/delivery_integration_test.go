@@ -35,7 +35,7 @@ func TestIntegrationDeliveryAgainstKind(t *testing.T) {
 	if dsn == "" || configPath == "" {
 		t.Skip("set JUSTCD_E2E_DATABASE_URL and JUSTCD_E2E_KUBECONFIG for the real-cluster suite")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
 	db, err := store.Open(ctx, dsn)
 	if err != nil {
@@ -161,6 +161,7 @@ func TestIntegrationDeliveryAgainstKind(t *testing.T) {
 	<-workerDone
 	workerStopped = true
 	verifyIntegrationWorkerCrash(t, ctx, svc, db, repo, workspaceID, clusterID, sourceID, credentialID, ownerID, namespace)
+	verifyIntegrationCrashMatrix(t, ctx, svc, kubeClient, repo, workspaceID, clusterID, sourceID, credentialID, ownerID, namespace, key)
 	audit, err := db.ListAuditEvents(ctx, 200, 0)
 	if err != nil {
 		t.Fatal(err)

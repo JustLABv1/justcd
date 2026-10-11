@@ -80,6 +80,11 @@ func (s *Service) ResourceAction(ctx context.Context, app store.Application, act
 		_ = s.Store.FinishOperation(finishCtx, operationID, status, message)
 		_ = s.Store.Audit(finishCtx, actorID, "resource."+action.Action, "application", app.ID, map[string]any{"identity": action.Identity, "replicas": action.Replicas, "status": status, "operationId": operationID})
 	}()
+	guard, err := s.Store.AcquireExecutionGuard(ctx, app.ID)
+	if err != nil {
+		return err
+	}
+	defer guard.Close()
 	input, err := s.loadPlanInput(ctx, app)
 	if err != nil {
 		return err

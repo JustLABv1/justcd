@@ -61,7 +61,7 @@ done
 export JUSTCD_E2E_DATABASE_URL="postgres://postgres:e2eonly@127.0.0.1:$port/justcd_e2e?sslmode=disable"
 
 cd "$root/services/backend"
-go test -tags integration ./internal/store -run '^TestIntegrationMigrationUpgradeAndPoller$' -count=1 -v -timeout 2m 2>&1 | tee "$artifacts/database.log"
+go test -tags integration ./internal/store -run '^TestIntegration(MigrationUpgradeAndPoller|ConcurrentMigrations)$' -count=1 -v -timeout 2m 2>&1 | tee "$artifacts/database.log"
 
 go test -tags integration ./internal/syncer -run '^TestIntegrationRepositoryConfiguration$' -count=1 -v -timeout 2m 2>&1 | tee "$artifacts/repository.log"
 
@@ -77,5 +77,5 @@ if [[ "$mode" == full ]]; then
   kind create cluster --name "$cluster" --wait 5m --kubeconfig "$scratch/kubeconfig" 2>&1 | tee "$artifacts/kind-create.log"
   cluster_created=true
   export JUSTCD_E2E_KUBECONFIG="$scratch/kubeconfig"
-  go test -tags integration ./internal/syncer -run '^TestIntegrationDeliveryAgainstKind$' -count=1 -v -timeout 7m 2>&1 | tee "$artifacts/delivery.log"
+  go test -tags integration ./internal/syncer -run '^TestIntegrationDeliveryAgainstKind$' -count=1 -v -timeout 15m 2>&1 | tee "$artifacts/delivery.log"
 fi

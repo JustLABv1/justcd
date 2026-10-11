@@ -7,11 +7,10 @@ metadata:
     {{- include "justcd.labels" . | nindent 4 }}
     app.kubernetes.io/component: backend
 spec:
-  replicas: 1
-  # The API also runs the reconciliation worker. Avoid overlapping workers
-  # while replacing the single backend pod.
+  replicas: {{ .Values.backend.replicaCount }}
+  # Queue claims, execution guards, and migration locks coordinate replicas.
   strategy:
-    type: Recreate
+    {{- toYaml .Values.backend.strategy | nindent 4 }}
   selector:
     matchLabels:
       {{- include "justcd.selectorLabels" (dict "root" . "component" "backend") | nindent 6 }}

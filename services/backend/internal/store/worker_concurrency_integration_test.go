@@ -82,6 +82,9 @@ func testWorkerClaimConcurrency(t *testing.T, ctx context.Context, s *Store) {
 	if _, err := s.DB.ExecContext(ctx, `UPDATE operation_leases SET expires_at=NOW()-INTERVAL '1 second' WHERE operation_id=$1`, queued.ID); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.RenewOperationLease(ctx, queued.ID, 90*time.Second); err == nil {
+		t.Fatal("expired lease was resurrected")
+	}
 	for range 2 {
 		if err := s.RecoverInterruptedOperations(ctx); err != nil {
 			t.Fatal(err)
@@ -94,5 +97,96 @@ func testWorkerClaimConcurrency(t *testing.T, ctx context.Context, s *Store) {
 	var auditCount int
 	if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE resource_id=$1 AND action='sync.failed' AND details->>'operationId'=$2`, app.ID, queued.ID).Scan(&auditCount); err != nil || auditCount != 1 {
 		t.Fatalf("recovery should emit exactly one audit event: %d, %v", auditCount, err)
+	}
+	if _, err := s.QueueOperation(ctx, app.ID, planID, "integration-owner", nil, "fixture-digest", "", 90*time.Second, OperationProgress{}); err == nil {
+		t.Fatal("interrupted plan could be replayed without fresh review")
+	}
+	if err := s.SetOperationProgress(ctx, queued.ID, OperationProgress{Phase: "complete"}); err == nil {
+		t.Fatal("stale executor overwrote recovered progress")
+	}
+	if err := s.FinishOperationWithRetry(ctx, queued.ID, app.ID, "stale worker", 1, "stale", nil, "stale"); err == nil {
+		t.Fatal("stale executor overwrote recovered terminal state")
+	}
+	if err := s.CompleteDeployment(ctx, interrupted, "stale", "synced", "sync.succeeded", nil); err == nil {
+		t.Fatal("stale executor completed an interrupted operation")
+	}
+	guard, err := s.AcquireExecutionGuard(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if competing, err := s.AcquireExecutionGuard(ctx, app.ID); err == nil {
+		competing.Close()
+		t.Fatal("competing session acquired application execution guard")
+	}
+	var pid int
+	if err := guard.conn.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB.ExecContext(ctx, `SELECT pg_terminate_backend($1)`, pid); err != nil {
+		t.Fatal(err)
+	}
+	if err := guard.Check(ctx); err == nil {
+		t.Fatal("dead execution session reported healthy")
+	}
+	guard.Close()
+	replacement, err := s.AcquireExecutionGuard(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("dead session retained execution lock: %v", err)
+	}
+	replacement.Close()
+	const freshPlanID = "integration-worker-fresh-plan"
+	if _, err := s.DB.ExecContext(ctx, `INSERT INTO plans(id,application_id,revision,digest,changes,desired,created_by,expires_at) VALUES($1,$2,'fresh','fresh-digest','[]','[]','integration-owner',NOW()+INTERVAL '1 hour')`, freshPlanID, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.QueueOperation(ctx, app.ID, freshPlanID, "integration-owner", nil, "fresh-digest", "", 90*time.Second, OperationProgress{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB.ExecContext(ctx, `UPDATE cluster_operation_gates SET next_operation_at=NOW() WHERE cluster_id=$1`, app.ClusterID); err != nil {
+		t.Fatal(err)
+	}
+	fresh, claimed, err := s.ClaimQueuedOperation(ctx, 90*time.Second)
+	if err != nil || !claimed {
+		t.Fatalf("fresh reviewed plan did not become executable: %v", err)
+	}
+	fresh.Progress.Phase = "complete"
+	fresh.Message = "completed"
+	for range 2 {
+		if err := s.CompleteDeployment(ctx, fresh, "fresh", "synced", "sync.succeeded", map[string]any{"operationId": fresh.ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE resource_id=$1 AND action='sync.succeeded' AND details->>'operationId'=$2`, app.ID, fresh.ID).Scan(&auditCount); err != nil || auditCount != 1 {
+		t.Fatalf("completion replay duplicated audit: %d, %v", auditCount, err)
+	}
+	if _, err := s.QueueOperation(ctx, app.ID, freshPlanID, "integration-owner", nil, "fresh-digest", "", 90*time.Second, OperationProgress{}); err == nil {
+		t.Fatal("completed plan could be executed twice")
+	}
+	if _, err := s.DB.ExecContext(ctx, `UPDATE applications SET auto_sync_paused=FALSE WHERE id=$1`, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecoverInterruptedOperations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	current, err := s.ApplicationByID(ctx, app.ID)
+	if err != nil || current.AutoSyncPaused || current.Health != "synced" || current.LastSyncedRevision != "fresh" {
+		t.Fatalf("historical interruption degraded a completed retry: %+v, %v", current, err)
+	}
+	type planResult struct {
+		record PlanRecord
+		err    error
+	}
+	planned := make(chan planResult, 2)
+	for range 2 {
+		go func() {
+			record, _, err := s.SavePlanOrReuse(ctx, PlanRecord{ID: NewID(), Plan: core.Plan{ApplicationID: app.ID, Revision: "fresh", Digest: "concurrent-plan-digest"}, CreatedBy: "integration-owner", CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour), Status: "current"})
+			planned <- planResult{record, err}
+		}()
+	}
+	first, second := <-planned, <-planned
+	if first.err != nil || second.err != nil || first.record.ID != second.record.ID {
+		t.Fatalf("identical planners did not reuse one immutable plan: %+v, %+v", first, second)
+	}
+	if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE details->>'planId'=$1 AND action='plan.created'`, first.record.ID).Scan(&auditCount); err != nil || auditCount != 1 {
+		t.Fatalf("concurrent planning duplicated its audit event: %d, %v", auditCount, err)
 	}
 }

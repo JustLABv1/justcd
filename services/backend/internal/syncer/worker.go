@@ -113,6 +113,13 @@ type operationJob struct {
 
 func (s *Service) executeOperationJob(ctx context.Context, job operationJob, logger *slog.Logger) {
 	operation := job.operation
+	guard, err := s.Store.AcquireExecutionGuard(ctx, operation.ApplicationID)
+	if err != nil {
+		logger.Warn("could not acquire application execution guard", "operationId", operation.ID, "error", err)
+		s.markClaimedOperationInterrupted(operation, logger)
+		return
+	}
+	defer guard.Close()
 	parent := observability.ContextFromTraceParent(ctx, operation.TraceParent)
 	spanOptions := []trace.SpanStartOption{trace.WithSpanKind(trace.SpanKindConsumer), trace.WithAttributes(
 		attribute.String("operation.id", operation.ID),
@@ -136,6 +143,10 @@ func (s *Service) executeOperationJob(ctx context.Context, job operationJob, log
 			case <-opCtx.Done():
 				return
 			case <-ticker.C:
+				if err := guard.Check(opCtx); err != nil {
+					cancel()
+					return
+				}
 				if err := s.Store.RenewOperationLease(opCtx, operation.ID, 90*time.Second); err != nil {
 					logger.Error("could not renew JustCD sync lease; stopping the operation", "operationId", operation.ID, "error", err)
 					cancel()
@@ -144,6 +155,7 @@ func (s *Service) executeOperationJob(ctx context.Context, job operationJob, log
 			}
 		}
 	}()
+	s.checkpoint("operation.claimed")
 	result, executeErr := s.executeQueuedOperation(opCtx, operation)
 	cancel()
 	<-heartbeatDone
@@ -174,14 +186,6 @@ func (s *Service) markClaimedOperationInterrupted(operation store.Operation, log
 	}
 	if err := s.Store.FinishOperationWithRetry(finishCtx, operation.ID, operation.ApplicationID, message, attempt, "operation.interrupted", nil, "interrupted_requires_review"); err != nil {
 		logger.Error("could not persist interrupted JustCD operation", "operationId", operation.ID, "error", err)
+		return
 	}
-	if operation.PlanID != nil {
-		_ = s.Store.SetPlanStatus(finishCtx, *operation.PlanID, "failed")
-	}
-	_ = s.Store.PauseAutoSync(finishCtx, operation.ApplicationID)
-	actorID := ""
-	if operation.ActorID != nil {
-		actorID = *operation.ActorID
-	}
-	_ = s.Store.Audit(finishCtx, actorID, operation.Type+".failed", "application", operation.ApplicationID, map[string]any{"operationId": operation.ID, "planId": operation.PlanID, "message": message, "attemptCount": attempt, "errorCode": "operation.interrupted", "terminalReason": "interrupted_requires_review", "interrupted": true})
 }

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -32,7 +33,9 @@ func Open(ctx context.Context, connectionString string) (*Store, error) {
 	}
 	connectionConfig.Tracer = NewQueryTracer(otel.GetTracerProvider())
 	db := stdlib.OpenDB(*connectionConfig)
-	db.SetMaxOpenConns(20)
+	// Execution guards reserve one session per worker; leave capacity for their
+	// queries, API requests, discovery, and migration coordination.
+	db.SetMaxOpenConns(64)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(30 * time.Minute)
 	if err := db.PingContext(ctx); err != nil {
@@ -48,7 +51,22 @@ func Open(ctx context.Context, connectionString string) (*Store, error) {
 }
 
 func (s *Store) Migrate(ctx context.Context) error {
-	if _, err := s.DB.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`); err != nil {
+	conn, err := s.DB.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock(7411,hashtext(current_schema()))`); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	defer func() {
+		unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := conn.ExecContext(unlockCtx, `SELECT pg_advisory_unlock(7411,hashtext(current_schema()))`); err != nil {
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+	}()
+	if _, err := conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`); err != nil {
 		return fmt.Errorf("create migration ledger: %w", err)
 	}
 	files, err := fs.Glob(migrationFiles, "migrations/*.sql")
@@ -59,7 +77,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 	for _, filename := range files {
 		version := strings.TrimSuffix(strings.TrimPrefix(filename, "migrations/"), ".sql")
 		var applied bool
-		if err := s.DB.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)`, version).Scan(&applied); err != nil {
+		if err := conn.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)`, version).Scan(&applied); err != nil {
 			return fmt.Errorf("check migration %s: %w", version, err)
 		}
 		if applied {
@@ -69,7 +87,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", version, err)
 		}
-		tx, err := s.DB.BeginTx(ctx, nil)
+		tx, err := conn.BeginTx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("begin migration %s: %w", version, err)
 		}
@@ -2284,7 +2302,7 @@ func (s *Store) ResumeRollbackTracking(ctx context.Context, id, selectedRevision
 	return tx.Commit()
 }
 func (s *Store) RenewOperationLease(ctx context.Context, operationID string, lease time.Duration) error {
-	result, err := s.DB.ExecContext(ctx, `UPDATE operation_leases SET expires_at=NOW()+($2 * INTERVAL '1 second') WHERE operation_id=$1`, operationID, int64(lease.Seconds()))
+	result, err := s.DB.ExecContext(ctx, `UPDATE operation_leases l SET expires_at=NOW()+($2 * INTERVAL '1 second') WHERE l.operation_id=$1 AND l.expires_at>NOW() AND EXISTS(SELECT 1 FROM operations o WHERE o.id=l.operation_id AND o.status='running')`, operationID, int64(lease.Seconds()))
 	if err != nil {
 		return err
 	}
@@ -2394,75 +2412,119 @@ func (s *Store) ListRollbackTargets(ctx context.Context, applicationID string) (
 }
 
 func (s *Store) SavePlan(ctx context.Context, record PlanRecord) error {
+	_, _, err := s.savePlan(ctx, record, false)
+	return err
+}
+
+// SavePlanOrReuse serializes planners and preserves an identical current plan
+// and its approvals when a request is retried or another replica plans it.
+func (s *Store) SavePlanOrReuse(ctx context.Context, record PlanRecord) (PlanRecord, bool, error) {
+	return s.savePlan(ctx, record, true)
+}
+
+func (s *Store) savePlan(ctx context.Context, record PlanRecord, reuse bool) (PlanRecord, bool, error) {
 	namespaceCreations, err := json.Marshal(record.Plan.NamespaceCreations)
 	if err != nil {
-		return err
+		return PlanRecord{}, false, err
 	}
 	bindings, err := json.Marshal(record.Plan.Bindings)
 	if err != nil {
-		return err
+		return PlanRecord{}, false, err
 	}
 	changes, err := json.Marshal(record.Plan.Changes)
 	if err != nil {
-		return err
+		return PlanRecord{}, false, err
 	}
 	ignored, err := json.Marshal(record.Plan.Ignored)
 	if err != nil {
-		return err
+		return PlanRecord{}, false, err
 	}
 	selection, err := json.Marshal(record.Plan.Selection)
 	if err != nil {
-		return err
+		return PlanRecord{}, false, err
 	}
 	desired, err := json.Marshal(record.Desired)
 	if err != nil {
-		return err
+		return PlanRecord{}, false, err
 	}
 	approverRoles, err := json.Marshal(record.Plan.ApproverRoles)
 	if err != nil {
-		return err
+		return PlanRecord{}, false, err
 	}
 	approverUserIDs, err := json.Marshal(record.Plan.ApproverUserIDs)
 	if err != nil {
-		return err
+		return PlanRecord{}, false, err
 	}
 	var rollbackTarget any
 	if record.Plan.Rollback != nil {
 		encoded, err := json.Marshal(record.Plan.Rollback)
 		if err != nil {
-			return err
+			return PlanRecord{}, false, err
 		}
 		rollbackTarget = encoded
 	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return PlanRecord{}, false, err
 	}
 	defer tx.Rollback()
 	var applicationID string
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE id=$1 FOR UPDATE`, record.Plan.ApplicationID).Scan(&applicationID); err != nil {
-		return err
+		return PlanRecord{}, false, err
 	}
 	var operationActive bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM operation_leases WHERE application_id=$1 AND expires_at>NOW())`, record.Plan.ApplicationID).Scan(&operationActive); err != nil {
-		return err
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM operation_leases WHERE application_id=$1)`, record.Plan.ApplicationID).Scan(&operationActive); err != nil {
+		return PlanRecord{}, false, err
 	}
 	if operationActive {
-		return errors.New("application is currently syncing; plan refresh is temporarily unavailable")
+		return PlanRecord{}, false, errors.New("application is currently syncing; plan refresh is temporarily unavailable")
+	}
+	if reuse {
+		var existingID string
+		err := tx.QueryRowContext(ctx, `SELECT id FROM plans WHERE application_id=$1 AND digest=$2 AND status='current' AND expires_at>NOW() ORDER BY created_at DESC LIMIT 1`, record.Plan.ApplicationID, record.Plan.Digest).Scan(&existingID)
+		if err == nil {
+			if err := tx.Rollback(); err != nil {
+				return PlanRecord{}, false, err
+			}
+			existing, err := s.PlanByID(ctx, existingID)
+			return existing, false, err
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return PlanRecord{}, false, err
+		}
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, record.Plan.ApplicationID); err != nil {
-		return err
+		return PlanRecord{}, false, err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO plans(id,application_id,revision,digest,bindings,changes,desired,created_by,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target,namespace_creations) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`, record.ID, record.Plan.ApplicationID, record.Plan.Revision, record.Plan.Digest, bindings, changes, desired, record.CreatedBy, record.ExpiresAt, record.Status, ignored, selection, record.Plan.IgnoreRulesDigest, record.Plan.Decommission, record.Plan.ApprovalKind, record.Plan.RequiredApprovals, approverRoles, approverUserIDs, rollbackTarget, namespaceCreations)
 	if err != nil {
-		return err
+		return PlanRecord{}, false, err
 	}
 	if record.Plan.Decommission {
 		if _, err := tx.ExecContext(ctx, `UPDATE applications SET decommissioning=TRUE,updated_at=NOW() WHERE id=$1`, record.Plan.ApplicationID); err != nil {
-			return err
+			return PlanRecord{}, false, err
 		}
 	}
-	return tx.Commit()
+	if reuse {
+		action := "plan.created"
+		if record.Plan.Decommission {
+			action = "application.decommission_plan_created"
+		}
+		if record.Plan.Rollback != nil {
+			action = "rollback.plan_created"
+		}
+		details, err := json.Marshal(map[string]any{"planId": record.ID, "digest": record.Plan.Digest, "revision": record.Plan.Revision, "changes": len(record.Plan.Changes), "rollbackTarget": record.Plan.Rollback})
+		if err != nil {
+			return PlanRecord{}, false, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,$2,'application',$3,$4)`, record.CreatedBy, action, record.Plan.ApplicationID, details); err != nil {
+			return PlanRecord{}, false, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return PlanRecord{}, false, err
+	}
+	return record, true, nil
 }
 
 func (s *Store) PlanByID(ctx context.Context, id string) (PlanRecord, error) {
@@ -3286,20 +3348,44 @@ func (s *Store) ClaimQueuedOperation(ctx context.Context, lease time.Duration) (
 // RecoverInterruptedOperations makes expired running jobs visible as failed;
 // queued jobs remain eligible for normal processing after a restart.
 func (s *Store) RecoverInterruptedOperations(ctx context.Context) error {
-	_, err := s.DB.ExecContext(ctx, `WITH interrupted AS (
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// Use the same application-first lock order as queueing and completion.
+	rows, err := tx.QueryContext(ctx, `SELECT a.id FROM applications a WHERE EXISTS(SELECT 1 FROM operations o WHERE o.application_id=a.id AND o.status='running' AND NOT EXISTS(SELECT 1 FROM operation_leases l WHERE l.operation_id=o.id AND l.expires_at>NOW())) ORDER BY a.id FOR UPDATE`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `WITH interrupted AS (
 		UPDATE operations o SET status='failed',message=CASE WHEN o.operation_type='rollback' THEN 'Rollback interrupted by backend restart or worker loss; partial changes remain and the operation will not resume automatically. Review cluster state and any available checkpoint.' ELSE 'Sync interrupted by backend restart or worker loss; review the plan before retrying.' END,error_code='operation.interrupted',next_retry_at=NULL,terminal_reason='interrupted_requires_review',finished_at=NOW()
 		WHERE o.status='running' AND NOT EXISTS (SELECT 1 FROM operation_leases l WHERE l.operation_id=o.id AND l.expires_at>NOW())
 		RETURNING o.id,o.actor_id,o.application_id,o.plan_id,o.operation_type,o.message
+	), failed_plans AS (
+		UPDATE plans p SET status='failed' FROM interrupted i WHERE p.id=i.plan_id AND p.status='current'
+	), paused AS (
+		UPDATE applications a SET auto_sync_paused=TRUE,health='degraded',retry_next_at=NULL,retry_terminal_reason='interrupted_requires_review',retry_last_error_code='operation.interrupted',updated_at=NOW() WHERE a.id IN (SELECT application_id FROM interrupted)
+	), released AS (
+		DELETE FROM operation_leases l USING interrupted i WHERE l.operation_id=i.id
 	) INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details)
 	SELECT actor_id,operation_type||'.failed','application',application_id,jsonb_build_object('operationId',id,'planId',plan_id,'message',message,'interrupted',true) FROM interrupted`)
 	if err != nil {
 		return err
 	}
-	if _, err := s.DB.ExecContext(ctx, `UPDATE applications a SET auto_sync_paused=TRUE,health='degraded',retry_next_at=NULL,retry_terminal_reason='interrupted_requires_review',retry_last_error_code='operation.interrupted',updated_at=NOW() WHERE a.sync_policy='auto-safe' AND EXISTS (SELECT 1 FROM operations o WHERE o.application_id=a.id AND o.status='failed' AND o.terminal_reason='interrupted_requires_review')`); err != nil {
-		return err
-	}
-	_, err = s.DB.ExecContext(ctx, `DELETE FROM operation_leases l USING operations o WHERE l.operation_id=o.id AND l.expires_at<=NOW() AND o.status<>'queued'`)
-	return err
+	return tx.Commit()
 }
 
 func (s *Store) SetOperationProgress(ctx context.Context, id string, progress OperationProgress) error {
@@ -3307,7 +3393,14 @@ func (s *Store) SetOperationProgress(ctx context.Context, id string, progress Op
 	if err != nil {
 		return err
 	}
-	_, err = s.DB.ExecContext(ctx, `UPDATE operations SET progress=$2 WHERE id=$1`, id, encoded)
+	result, err := s.DB.ExecContext(ctx, `UPDATE operations o SET progress=$2 WHERE o.id=$1 AND o.status='running' AND EXISTS(SELECT 1 FROM operation_leases l WHERE l.operation_id=o.id AND l.expires_at>NOW())`, id, encoded)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err == nil && count != 1 {
+		return errors.New("operation no longer owns an active lease")
+	}
 	return err
 }
 
@@ -3410,16 +3503,38 @@ func (s *Store) FinishOperation(ctx context.Context, id, status, message string)
 	return tx.Commit()
 }
 
-func (s *Store) FinishOperationWithRetry(ctx context.Context, id, applicationID, message string, attempt int, errorCode string, nextRetryAt *time.Time, terminalReason string) error {
+func (s *Store) FinishOperationWithRetry(ctx context.Context, id, applicationID, message string, attempt int, errorCode string, nextRetryAt *time.Time, terminalReason string, planStatuses ...string) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE operations SET status='failed',message=$2,finished_at=NOW(),attempt_count=$3,error_code=$4,next_retry_at=$5,terminal_reason=$6 WHERE id=$1`, id, message, attempt, errorCode, nextRetryAt, terminalReason); err != nil {
+	var lockedID string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE id=$1 FOR UPDATE`, applicationID).Scan(&lockedID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE applications SET retry_attempt_count=$2,retry_last_error_code=$3,retry_next_at=$4,retry_terminal_reason=$5,health='degraded',auto_sync_paused=auto_sync_paused OR ($3='cluster.agent_unknown_outcome'),last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, applicationID, attempt, errorCode, nextRetryAt, terminalReason); err != nil {
+	result, err := tx.ExecContext(ctx, `UPDATE operations SET status='failed',message=$2,finished_at=NOW(),attempt_count=$3,error_code=$4,next_retry_at=$5,terminal_reason=$6 WHERE id=$1 AND application_id=$7 AND status='running'`, id, message, attempt, errorCode, nextRetryAt, terminalReason, applicationID)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return errors.New("operation is already terminal or belongs to another application")
+	}
+	planStatus := "failed"
+	if len(planStatuses) > 0 && planStatuses[0] != "" {
+		planStatus = planStatuses[0]
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status=$2 WHERE id=(SELECT plan_id FROM operations WHERE id=$1)`, id, planStatus); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET retry_attempt_count=$2,retry_last_error_code=$3,retry_next_at=$4,retry_terminal_reason=$5,health='degraded',auto_sync_paused=auto_sync_paused OR ($3 IN ('cluster.agent_unknown_outcome','operation.interrupted')) OR ($4::timestamptz IS NULL AND (sync_policy='auto-safe' OR EXISTS(SELECT 1 FROM operations WHERE id=$6 AND operation_type='rollback'))),last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, applicationID, attempt, errorCode, nextRetryAt, terminalReason, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) SELECT actor_id,operation_type||'.failed','application',application_id,jsonb_build_object('operationId',id,'planId',plan_id,'message',message,'attemptCount',attempt_count,'errorCode',error_code,'nextRetryAt',next_retry_at,'terminalReason',terminal_reason,'completed',jsonb_array_length(COALESCE(NULLIF(progress->'completed','null'::jsonb),'[]'::jsonb)),'total',progress->'total','rollbackCheckpointId',rollback_checkpoint_id,'interrupted',error_code='operation.interrupted') FROM operations WHERE id=$1`, id); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM operation_leases WHERE operation_id=$1`, id); err != nil {

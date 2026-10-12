@@ -84,6 +84,8 @@ printf 'JUSTCD_DATABASE_URL=postgres://postgres:synthetic-drill-only@postgres:54
 kubectl -n justcd create secret generic justcd-config --from-env-file="$scratch/backend.env"
 helm upgrade --install justcd "$root/charts/justcd" -n justcd \
   --set publicUrl=http://justcd.invalid --set cookieSecure=false \
+  --set 'backend.extraEnv[0].name=JUSTCD_ENV' --set 'backend.extraEnv[0].value=development' \
+  --set 'frontend.extraEnv[0].name=JUSTCD_ENV' --set 'frontend.extraEnv[0].value=development' \
   --set backend.existingSecret=justcd-config \
   --set backend.image.repository="${backend_image%:*}" --set backend.image.tag="${backend_image##*:}" \
   --set frontend.image.repository="${frontend_image%:*}" --set frontend.image.tag="${frontend_image##*:}" \

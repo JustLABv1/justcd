@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/justcd-logo-light.svg">
+    <img src="docs/assets/justcd-logo-dark.svg" alt="JustCD" width="160">
+  </picture>
+</p>
+
 # JustCD
 
 JustCD is a Git-driven Kubernetes delivery control plane that runs outside the

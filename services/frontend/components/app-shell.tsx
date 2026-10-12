@@ -1,5 +1,6 @@
 "use client"
 
+import { LogoMark } from "@/components/logo"
 import Link from "next/link"
 import styles from "./app-shell.module.css"
 import { usePathname, useRouter } from "next/navigation"
@@ -169,7 +170,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="min-h-svh bg-muted text-foreground dark:bg-background">
       <aside className="fixed bottom-3 left-3 top-3 z-20 hidden w-[224px] flex-col overflow-hidden rounded-[24px] border border-border/70 bg-card shadow-[0_8px_32px_-16px_rgb(0_0_0_/_0.2)] lg:flex">
         <Link href="/" className="flex shrink-0 items-center gap-3 px-5 pb-7 pt-6">
-          <span className="grid size-9 place-items-center rounded-xl bg-primary text-sm font-bold text-primary-foreground">J</span>
+          <LogoMark className="h-9 w-auto shrink-0 text-foreground" />
           <span>
             <span className="block text-[15px] font-semibold tracking-tight">JustCD</span>
             <span className="block text-xs text-muted-foreground">continuous delivery</span>
@@ -187,7 +188,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="lg:pl-[248px]">
         <header className="flex h-14 items-center justify-between gap-4 px-5 sm:px-8 lg:hidden">
           <Link href="/" className="flex items-center gap-2">
-            <span className="grid size-8 place-items-center rounded-lg bg-primary font-bold text-primary-foreground">J</span>
+            <LogoMark className="h-7 w-auto text-foreground" />
             <span className="font-semibold">JustCD</span>
           </Link>
           <AccountMenu user={user} onSignOut={signOut} compact />

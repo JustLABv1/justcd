@@ -906,6 +906,7 @@ func CanonicalLiveAgainstIgnoring(object *unstructured.Unstructured, clusterID, 
 			return core.Resource{}, "", nil, fmt.Errorf("decode stored manifest for comparison: %w", err)
 		}
 	}
+	normalizeEquivalentQuantities(desired, live.Object)
 	ignoredSegments := make([][]string, 0, len(ignoredPaths))
 	reportPaths := ignoredPaths
 	if len(reportPathSets) > 0 {
@@ -999,6 +1000,7 @@ func ComparisonManifests(liveManifest, desiredManifest, previousManifest []byte)
 			return nil, nil, err
 		}
 	}
+	normalizeEquivalentQuantities(desired, live)
 	paths := make([][]string, 0, 64)
 	collectManagedPaths(desired, nil, &paths)
 	collectManagedPaths(previous, nil, &paths)

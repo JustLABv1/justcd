@@ -2,13 +2,14 @@
 
 import Link from "next/link"
 import type { ReactNode } from "react"
+import { LogoMark } from "@/components/logo"
 import { ThemePicker } from "@/components/theme-picker"
 import styles from "./auth-shell.module.css"
 
 export function AuthShell({ eyebrow, title, description, children }: { eyebrow: string; title: string; description: string; children: ReactNode }) {
   return <main className={styles.scene}>
     <header className={styles.header}>
-      <Link href="/login" className={styles.brand} aria-label="JustCD sign in"><span className={styles.logo}>J</span>JustCD<span className={styles.brandCaption}>continuous delivery</span></Link>
+      <Link href="/login" className={styles.brand} aria-label="JustCD sign in"><LogoMark className={styles.logo} />JustCD<span className={styles.brandCaption}>continuous delivery</span></Link>
       <ThemePicker />
     </header>
     <div className={styles.backdrop} aria-hidden="true">

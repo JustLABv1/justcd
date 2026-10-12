@@ -9,6 +9,7 @@ import { makeEntry, resourceKey } from "@/lib/plan-review"
 import { Button } from "@/components/ui/button"
 
 export function PlanReviewFixture() {
+  const [policyMode, setPolicyMode] = useState<"warn" | "block">("warn")
   const fixture = useMemo(() => {
     const data = Object.fromEntries(
       Array.from({ length: 10000 }, (_, i) => [
@@ -75,7 +76,20 @@ export function PlanReviewFixture() {
       approvalKind: "takeover",
       requiredApprovals: 1,
       approverRoles: ["owner"],
-      digest: "synthetic-immutable-fixture",
+      digest: `synthetic-immutable-fixture-${policyMode}`,
+      policyEvaluation: {
+        configDigest: "synthetic-policy-config",
+        mode: policyMode,
+        results: [
+          {
+            resource: changes[101].identity,
+            rule: "mutable-image-tags",
+            evidence: "containers[0].image is not pinned to a SHA-256 digest",
+            remediation:
+              "Pin the image using image@sha256:<64 hexadecimal characters>.",
+          },
+        ],
+      },
       approvalReasons: [
         {
           code: "takeover",
@@ -94,7 +108,7 @@ export function PlanReviewFixture() {
       expiresAt: "2099-01-01T00:00:00Z",
       status: "current",
     } satisfies PlanRecord
-  }, [])
+  }, [policyMode])
   const [selected, setSelected] = useState(
       diffId(fixture.plan.changes[1].identity)
     ),
@@ -131,6 +145,16 @@ export function PlanReviewFixture() {
         onClick={() => setGroup((g) => !g)}
       >
         {group ? "Review single application" : "Review five group children"}
+      </Button>
+      <Button
+        className="mb-4 ml-2"
+        variant="outline"
+        onClick={() => {
+          setPolicyMode((mode) => (mode === "warn" ? "block" : "warn"))
+          setApproved(false)
+        }}
+      >
+        {policyMode === "warn" ? "Test blocking policy" : "Test warning policy"}
       </Button>
       {group ? (
         <PlanReview

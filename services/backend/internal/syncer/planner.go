@@ -237,6 +237,9 @@ func (s *Service) CalculateDecommissionPlan(ctx context.Context, app store.Appli
 	}
 	setApprovalRule(&plan, "deletion", policy.Deletion)
 	setReviewReasons(&plan, app, false)
+	if err := s.evaluateGuardrails(ctx, app, &plan, nil); err != nil {
+		return core.Plan{}, err
+	}
 	if err := core.RefreshDigest(&plan); err != nil {
 		return core.Plan{}, err
 	}
@@ -538,6 +541,9 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 	}
 	setApprovalRule(&plan, kind, rule)
 	setReviewReasons(&plan, app, hasClusterScoped && policy.Sync.RequiredApprovals == 0 && !hasDeletes)
+	if err := s.evaluateGuardrails(ctx, app, &plan, desired); err != nil {
+		return core.Plan{}, nil, err
+	}
 	if err := core.RefreshDigest(&plan); err != nil {
 		return core.Plan{}, nil, err
 	}

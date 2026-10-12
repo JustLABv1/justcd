@@ -63,6 +63,9 @@ func (s *Service) ApplyWithApprovals(ctx context.Context, planID, actorID string
 		}
 		return store.Operation{}, &StalePlanError{Fresh: newRecord}
 	}
+	if err := s.Store.CheckPlanGuardrails(ctx, record.ID); err != nil {
+		return store.Operation{}, err
+	}
 	required := core.RequiredApprovalCount(record.Plan)
 	if required > 0 {
 		if len(approvalIDs) < required {
@@ -200,6 +203,9 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		if record.Plan.Rollback != nil && role != "owner" {
 			return finishFailure(errors.New("rollback requires a workspace owner"), "failed")
 		}
+	}
+	if err := s.Store.CheckPlanGuardrails(ctx, record.ID); err != nil {
+		return finishFailure(err, "stale")
 	}
 	authorizationTime := time.Now()
 	// The schedule may delay a request already authorized and durably consumed.

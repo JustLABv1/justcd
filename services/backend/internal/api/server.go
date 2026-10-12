@@ -89,6 +89,8 @@ func (s *Server) routes() {
 	s.Mux.Handle("POST /api/v1/auth/logout", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.logout))))
 	s.Mux.Handle("GET /api/v1/onboarding", s.requireAuth(s.requireAdmin(http.HandlerFunc(s.onboardingStatus))))
 	s.Mux.Handle("PUT /api/v1/onboarding/steps/{stepID}/complete", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.completeOnboardingStep)))))
+	s.Mux.Handle("GET /api/v1/workspaces/{workspaceID}/guardrail-policy", s.requireAuth(http.HandlerFunc(s.getGuardrailPolicy)))
+	s.Mux.Handle("PUT /api/v1/workspaces/{workspaceID}/guardrail-policy", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.putGuardrailPolicy))))
 	s.Mux.Handle("GET /api/v1/workspaces/{workspaceID}/deployment-schedule", s.requireAuth(http.HandlerFunc(s.getDeploymentSchedule)))
 	s.Mux.Handle("PUT /api/v1/workspaces/{workspaceID}/deployment-schedule", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.putDeploymentSchedule))))
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}/deployment-schedule", s.requireAuth(http.HandlerFunc(s.getDeploymentSchedule)))

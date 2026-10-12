@@ -409,3 +409,45 @@ approvals remain central; Kubernetes credentials and scope enforcement stay in
 the target cluster. See [installation and recovery](docs/cluster-agents.md).
 
 Production administrators: see the [operations and disaster-recovery runbook](docs/production-operations.md) for tested backup/restore, scoped RBAC, capacity and upgrade procedures.
+
+### Deployment policy guardrails
+
+Workspace owners configure deployment guardrails in workspace settings or with
+`GET`/`PUT /api/v1/workspaces/{workspaceID}/guardrail-policy`:
+
+```json
+{
+  "mode": "block",
+  "forbiddenNamespaces": ["kube-system"],
+  "disabledRules": []
+}
+```
+
+All five built-in checks are enabled by default: `privileged-containers`
+(privileged containers and host network/PID/IPC access), `mutable-image-tags`
+(images must use a SHA-256 digest), `missing-resource-limits` (positive CPU and
+memory limits on regular and init containers), `public-services` (LoadBalancer,
+NodePort, or externalIPs), and `forbidden-namespaces` (exact namespace names).
+Pod, Deployment, StatefulSet, DaemonSet, ReplicaSet, ReplicationController, Job,
+and CronJob manifests are supported. Ephemeral containers are checked for
+privilege and image pinning; Kubernetes does not allow resource limits on them.
+Use `disabledRules` to opt out of a specific check.
+
+The default mode is `audit`, which records findings without preventing deployment.
+`warn` also highlights findings in review. `block` prevents approval and apply
+while any enabled rule has findings, including for already-approved plans.
+Configuration changes invalidate current plans in that workspace; queued and
+running operations recheck the policy before starting each resource step.
+A resource step already started can finish, and completed changes remain applied.
+Deletion-only plans evaluate no desired resources so remediation by deletion
+remains possible.
+
+Plan API responses expose `plan.policyEvaluation` with the configuration digest,
+mode, and findings (resource, rule, evidence, remediation). These fields are bound
+to the plan digest and included in plan creation audit events. Evidence uses
+field paths instead of manifest values. The pure `core.PolicyEngine` interface
+provides an extension boundary for future local CEL or OPA/Rego adapters; no
+custom policy runtime is enabled. Engines receive desired manifests and policy
+configuration without access to stored credentials, database handles, or cluster
+clients, and must remain deterministic and unable to perform network or mutation
+operations.

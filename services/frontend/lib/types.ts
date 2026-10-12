@@ -371,7 +371,10 @@ export type IgnoreSelector = {
   createdAt?: string
 }
 
+export type ApprovalReason = { code: string; rule: string; description: string; resources: Identity[] }
+
 export type Plan = {
+  approvalReasons?: ApprovalReason[]
   applicationId: string
   decommission?: boolean
   revision: string

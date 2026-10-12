@@ -152,6 +152,8 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 		t.Fatalf("list plans after schema repair: %v", err)
 	}
 
+	testPlanReviewPersistence(t, ctx, s)
+
 	clusterApps, err := s.ListApplications(ctx, "integration-workspace")
 	if err != nil || len(clusterApps) != 1 {
 		t.Fatalf("application cluster lookup: %+v %v", clusterApps, err)

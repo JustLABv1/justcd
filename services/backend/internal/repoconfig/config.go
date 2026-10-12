@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/justlab/justcd/services/backend/internal/schedule"
 	"github.com/justlab/justcd/services/backend/internal/store"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/yaml"
@@ -45,10 +46,11 @@ type Definition struct {
 			Cluster          string `json:"cluster"`
 			Namespace        string `json:"namespace"`
 		} `json:"destination"`
-		PullRequests    *store.RepositoryPRConfig `json:"pullRequests,omitempty"`
-		IgnoreResources []IgnoreResource          `json:"ignoreResources,omitempty"`
-		SyncPolicy      string                    `json:"syncPolicy,omitempty"`
-		PollSeconds     int                       `json:"pollSeconds,omitempty"`
+		DeploymentSchedule schedule.Policy           `json:"deploymentSchedule,omitempty"`
+		PullRequests       *store.RepositoryPRConfig `json:"pullRequests,omitempty"`
+		IgnoreResources    []IgnoreResource          `json:"ignoreResources,omitempty"`
+		SyncPolicy         string                    `json:"syncPolicy,omitempty"`
+		PollSeconds        int                       `json:"pollSeconds,omitempty"`
 	} `json:"spec"`
 	File string `json:"-"`
 	Hash string `json:"-"`
@@ -192,6 +194,9 @@ func Discover(root string) ([]Definition, error) {
 			if err := store.ValidatePreviewProfile(profile, store.Application{Renderer: source.Renderer, ManifestPath: source.Path}); err != nil {
 				return fail(fmt.Errorf("pullRequests: %w", err))
 			}
+		}
+		if err := d.Spec.DeploymentSchedule.Validate(); err != nil {
+			return fail(fmt.Errorf("deploymentSchedule: %w", err))
 		}
 		if d.Spec.SyncPolicy == "" {
 			d.Spec.SyncPolicy = "manual"

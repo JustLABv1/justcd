@@ -1,5 +1,6 @@
 "use client"
 
+import { DeploymentSchedulePanel, ScheduledOperationActions } from "@/components/deployment-schedule"
 import { useParams, useRouter } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
 import { Tabs } from "@base-ui/react/tabs"
@@ -721,8 +722,10 @@ export default function ApplicationDetailPage() {
     {!loading && application && <>
       {visibleOperation && <OperationBar operation={visibleOperation} plan={plans.find((plan) => plan.id === visibleOperation.planId)} checkpointId={visibleOperationCheckpoint} canRestore={canApprove} disabled={busy || hasPendingOperation} onRestore={(target) => void createRollbackPlan(target)} />}
 
+        {visibleOperation?.status === "queued" && <div className="mb-5 rounded-xl border bg-card p-4"><ScheduledOperationActions operation={visibleOperation} canOverride={canApprove} canCancel={canDeploy} onUpdated={loadData} /></div>}
         <Tabs.Panel value="overview" className="outline-none">
           <OverviewTab application={application} latestPlan={latestPlan} plansError={plansError} retryingPlans={retryingPlans} topology={topology} topologyError={topologyError} pending={{ topology: pendingData.topology, plans: pendingData.plans, operations: pendingData.operations }} operations={operations} operationsError={operationsError} canDeploy={canDeploy} busy={busy} hasPendingOperation={hasPendingOperation} creatingPlan={pendingAction === "create-plan"} planBlockedByNamespace={planBlockedByNamespace} onCreatePlan={() => void createPlan()} onRetryPlans={() => void retryPlans()} onSelectTab={selectTab} />
+          <div className="mt-5"><DeploymentSchedulePanel key={application.id} scope="applications" id={application.id} canEdit={canApprove} /></div>
         </Tabs.Panel>
 
         <Tabs.Panel value="topology" className="outline-none">

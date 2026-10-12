@@ -220,6 +220,9 @@ func (s *Store) UpsertRepositoryPRApplication(ctx context.Context, repo Reposito
 			return v, errors.New("PR destination cannot change; close this PR and clean up first")
 		}
 		if old.ConfigurationHash != app.ConfigurationHash || old.Revision != app.Revision {
+			if err = cancelScheduledForConfiguration(ctx, tx, app.ID); err != nil {
+				return v, err
+			}
 			if err = updateApplication(ctx, tx, app); err != nil {
 				return v, err
 			}
@@ -260,6 +263,9 @@ func (s *Store) UpsertRepositoryPRApplication(ctx context.Context, repo Reposito
 			return v, err
 		}
 	} else {
+		return v, err
+	}
+	if err = writeApplicationPolicy(ctx, tx, app.ID, app.RepositoryDeploymentSchedule); err != nil {
 		return v, err
 	}
 	if err = replaceRepositoryIgnores(ctx, tx, app); err != nil {

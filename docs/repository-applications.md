@@ -393,3 +393,92 @@ removed immediately. Repository records retain the outcome after cleanup.
 
 Close and clean up active PR applications before changing this policy. Errors
 appear in repository PR settings and the application's Pull requests view.
+
+
+## Deployment schedules
+
+Use `spec.deploymentSchedule` to configure application maintenance windows and
+freezes in Git. Workspace restrictions (called project restrictions in older
+versions) also apply and cannot be bypassed by an application definition.
+Owners configure workspace restrictions in **Workspace settings → Deployment
+schedule**. Applications created manually use **Overview → Deployment schedule**.
+Git-managed application schedules are read-only in the UI.
+
+```yaml
+spec:
+  deploymentSchedule:
+    windows:
+      - timeZone: Europe/Berlin
+        days: [1, 2, 3, 4, 5] # Sunday=0; Saturday=6
+        start: "09:00"
+        end: "17:00"
+    freezes:
+      - reason: Holiday release freeze
+        start: "2026-12-24T00:00:00+01:00"
+        end: "2027-01-02T00:00:00+01:00"
+      - reason: Weekly database maintenance
+        schedule:
+          timeZone: Europe/Berlin
+          days: [0]
+          start: "01:00"
+          end: "04:00"
+      # A freeze with only a reason lasts until removed:
+      # - reason: Incident response
+```
+
+Every recurring schedule requires an explicit IANA time zone. Each scope allows
+up to 16 windows and 16 freezes. Fixed freeze timestamps use RFC 3339 with `Z` or
+an explicit UTC offset; the UI edits these in UTC. A missing start means
+immediately; a missing end means indefinitely. Recurring freezes use `schedule`
+and cannot also specify fixed timestamps. Every freeze requires a reason.
+
+Windows within one scope form a union; workspace and application policies form
+an intersection. Any active freeze wins over all windows. Empty or omitted
+windows allow all hours, subject to freezes and the workspace policy. Omitting
+the entire application schedule removes its Git-managed restrictions on the next
+successful discovery. This never removes workspace restrictions.
+
+Start times are inclusive and end times exclusive. An end earlier than the start
+continues into the following day; `days` identifies its start day. Equal start
+and end times mean the entire selected local calendar day. On spring DST
+transitions, nonexistent wall-clock minutes do not occur. On autumn transitions,
+both occurrences of a repeated minute belong to the schedule. The next allowed
+start is searched over the next eight days, jumping over active finite freezes;
+if none is found, the UI reports that no start exists in the next weekly cycle.
+
+Planning, drift observation, and approval remain available outside windows.
+Submitting apply queues the exact reviewed snapshot. Auto-safe applies use the
+same queue gate. Entries and waiting reasons persist across backend restarts;
+workers reevaluate restrictions about every 30 seconds (subject to queue load) and again before the
+first cluster write. Policy edits wake waiting entries. A queued operation waits
+when its window closes; an operation admitted to apply finishes even if a window
+closes or a freeze begins while it is running. Running work is never resumed
+automatically after a worker crash.
+
+Plan and approval expiry are checked when apply is accepted. An accepted request
+that waits for a schedule retains that authorization, including consumed approvals,
+while waiting. Before executing it, JustCD still checks current deploy/owner and
+approver permissions, current policy, the exact plan digest, Git revision, live
+state, and resource preconditions. Drift polling continues for waiting entries.
+Changed plans are cancelled and require a fresh plan and any required review.
+Changes to a Git definition cancel its waiting entry before discovery updates the
+application. Owners and deployers may also cancel a queued apply in the UI.
+
+A workspace owner can select **Emergency override** on a waiting operation and
+must provide a reason (at most 1,000 characters). The override applies only to
+that operation's windows and freezes. It does not bypass plan, approval,
+permission, destination, or cluster concurrency checks. The owner is checked
+again at execution time. The audit trail records the owner, reason, operation,
+and restrictions being overridden. Instances retain their existing administrator
+access to workspace owner actions. Git manifests cannot grant overrides.
+
+The authenticated API exposes `GET` and owner-only `PUT` at
+`/api/v1/workspaces/{id}/deployment-schedule` and
+`/api/v1/applications/{id}/deployment-schedule`. Responses contain `policy`,
+`managedByGit`, and `decision` (`allowed`, `reasons`, optional `nextAllowedAt`).
+Use owner-only `POST /api/v1/operations/{id}/schedule-override` with
+`{"reason":"Incident response"}` or deployer-level
+`POST /api/v1/operations/{id}/cancel` for a queued operation. All mutations
+require the normal CSRF token. Operations expose `waitingReasons`,
+`nextAllowedAt`, `scheduleDeferred`, `scheduleOverrideReason`, and
+`scheduleOverrideActorId`.

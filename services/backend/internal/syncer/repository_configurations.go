@@ -152,7 +152,7 @@ func (s *Service) ResolveRepositoryDefinition(ctx context.Context, repository st
 		HelmReleaseName: definition.Spec.Source.ReleaseName, HelmValuesFiles: definition.Spec.Source.ValuesFiles, HelmValuesYAML: definition.Spec.Source.ValuesYAML,
 		KustomizeHelmEnabled: definition.Spec.Source.KustomizeHelmEnabled, KustomizeNamespaceOverride: definition.Spec.Source.KustomizeNamespaceOverride,
 		CreateNamespaces: definition.Spec.Destination.CreateNamespaces, ClusterID: clusterID, Namespaces: []store.NamespaceBinding{binding}, SyncPolicy: definition.Spec.SyncPolicy, PollSeconds: definition.Spec.PollSeconds, RetryPolicy: store.DefaultRetryPolicy(),
-		RepositoryPullRequests: definition.Spec.PullRequests, RepositoryConfigurationID: repository.ID, ConfigurationPath: definition.File, ConfigurationHash: definition.Hash,
+		RepositoryDeploymentSchedule: definition.Spec.DeploymentSchedule, RepositoryPullRequests: definition.Spec.PullRequests, RepositoryConfigurationID: repository.ID, ConfigurationPath: definition.File, ConfigurationHash: definition.Hash,
 	}
 	for _, ignore := range definition.Spec.IgnoreResources {
 		if ignore.Name != "" {

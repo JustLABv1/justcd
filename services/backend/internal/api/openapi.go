@@ -8,6 +8,70 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /workspaces/{workspaceID}/deployment-schedule:
+    parameters:
+      - { name: workspaceID, in: path, required: true, schema: { type: string } }
+    get:
+      summary: Read workspace deployment restrictions and next allowed start (viewer)
+      responses:
+        '200': { description: Deployment policy and decision, content: { application/json: { schema: { $ref: '#/components/schemas/DeploymentSchedule' } } } }
+        '403': { description: Workspace access required }
+    put:
+      summary: Replace workspace maintenance windows and freezes (owner)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/DeploymentPolicy' } } }
+      responses:
+        '200': { description: Saved policy and decision }
+        '400': { description: Invalid time zone, schedule, timestamp or reason }
+        '403': { description: Owner role and CSRF required }
+  /applications/{applicationID}/deployment-schedule:
+    parameters:
+      - { name: applicationID, in: path, required: true, schema: { type: string } }
+    get:
+      summary: Read application policy and effective workspace/application decision (viewer)
+      responses:
+        '200': { description: Deployment policy and decision, content: { application/json: { schema: { $ref: '#/components/schemas/DeploymentSchedule' } } } }
+        '403': { description: Workspace access required }
+    put:
+      summary: Replace a manual application's maintenance windows and freezes (owner)
+      description: Git-managed applications use spec.deploymentSchedule in justcd.yaml. Application restrictions cannot bypass workspace restrictions.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/DeploymentPolicy' } } }
+      responses:
+        '200': { description: Saved policy and effective decision }
+        '400': { description: Invalid policy }
+        '403': { description: Owner role and CSRF required }
+        '409': { description: Application policy is managed by Git }
+  /operations/{operationID}/schedule-override:
+    parameters:
+      - { name: operationID, in: path, required: true, schema: { type: string } }
+    post:
+      summary: Audit an emergency override for this queued apply (workspace owner)
+      description: Bypasses windows and freezes only. Requires a current owner at request and execution time. Normal plan, approval, destination, and concurrency checks remain mandatory.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 1000 }
+      responses:
+        '200': { description: Updated queued operation }
+        '403': { description: Owner role and CSRF required }
+        '409': { description: Operation is no longer queued or reason is empty }
+  /operations/{operationID}/cancel:
+    parameters:
+      - { name: operationID, in: path, required: true, schema: { type: string } }
+    post:
+      summary: Cancel a queued apply and invalidate its plan (deployer)
+      responses:
+        '200': { description: Queued operation cancelled and lease released }
+        '403': { description: Deploy permission and CSRF required }
+        '409': { description: Operation already started or finished }
   /repository-configurations:
     get:
       summary: List application discovery connections (workspace viewer)
@@ -716,6 +780,43 @@ paths:
         '409': { description: Issuer change rejected for a provider with linked users }
 components:
   schemas:
+    DeploymentWindow:
+      type: object
+      additionalProperties: false
+      required: [timeZone, days, start, end]
+      properties:
+        timeZone: { type: string, description: Explicit IANA time zone; Local is not permitted }
+        days: { type: array, minItems: 1, maxItems: 7, uniqueItems: true, items: { type: integer, minimum: 0, maximum: 6 }, description: Start weekdays; Sunday is 0 }
+        start: { type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$', description: Inclusive local HH:MM }
+        end: { type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$', description: Exclusive local HH:MM; earlier means overnight; equal means full selected day }
+    DeploymentFreeze:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 1000 }
+        start: { type: string, format: date-time, description: Optional inclusive fixed instant; cannot be used with schedule }
+        end: { type: string, format: date-time, description: Optional exclusive fixed instant; cannot be used with schedule }
+        schedule: { $ref: '#/components/schemas/DeploymentWindow' }
+    DeploymentPolicy:
+      type: object
+      additionalProperties: false
+      properties:
+        windows: { type: array, maxItems: 16, items: { $ref: '#/components/schemas/DeploymentWindow' }, description: Union within scope; empty allows all hours subject to freezes }
+        freezes: { type: array, maxItems: 16, items: { $ref: '#/components/schemas/DeploymentFreeze' }, description: Every active freeze blocks applies }
+    DeploymentSchedule:
+      type: object
+      required: [policy, managedByGit, decision]
+      properties:
+        policy: { $ref: '#/components/schemas/DeploymentPolicy' }
+        managedByGit: { type: boolean }
+        decision:
+          type: object
+          required: [allowed, reasons]
+          properties:
+            allowed: { type: boolean }
+            reasons: { type: array, items: { type: string } }
+            nextAllowedAt: { type: string, format: date-time, description: Next allowed start found in the next weekly cycle after active finite freezes; omitted if none is found }
     BackgroundTask:
       type: object
       required: [id, applicationId, kind, status, createdAt]

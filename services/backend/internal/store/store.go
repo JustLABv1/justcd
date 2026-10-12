@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/justlab/justcd/services/backend/internal/apphealth"
 	"github.com/justlab/justcd/services/backend/internal/core"
+	"github.com/justlab/justcd/services/backend/internal/schedule"
 	"go.opentelemetry.io/otel"
 )
 
@@ -1362,6 +1363,7 @@ func (policy RetryPolicy) Validate() error {
 }
 
 type Application struct {
+	RepositoryDeploymentSchedule   schedule.Policy                    `json:"-"`
 	BranchTest                     *BranchTest                        `json:"branchTest,omitempty"`
 	ClusterName                    string                             `json:"clusterName,omitempty"`
 	CreateNamespaces               bool                               `json:"createNamespaces"`
@@ -1835,7 +1837,7 @@ func (s *Store) CreateApplicationGroup(ctx context.Context, group ApplicationGro
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO application_groups(id,workspace_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,sync_policy,poll_seconds) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, group.ID, group.WorkspaceID, group.Name, group.SourceID, group.Revision, group.ManifestPath, group.Renderer, group.KustomizeHelmEnabled, group.KustomizeNamespaceOverride, valuesFiles, group.HelmValuesYAML, group.SyncPolicy, group.PollSeconds); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO application_groups(id,workspace_id,name,source_id,revision,manifest_path,renderer,kustomize_helm_enabled,kustomize_namespace_override,helm_values_files,helm_values_yaml,sync_policy,poll_seconds) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, group.ID, group.WorkspaceID, group.Name, group.SourceID, group.Revision, group.ManifestPath, group.Renderer, group.KustomizeHelmEnabled, group.KustomizeNamespaceOverride, valuesFiles, group.HelmValuesYAML, group.SyncPolicy, group.PollSeconds); err != nil {
 		return err
 	}
 	for _, app := range apps {
@@ -1946,7 +1948,7 @@ func (s *Store) DueApplications(ctx context.Context, limit int) ([]Application, 
 		    OR (a.retry_next_at IS NULL AND (a.last_checked_at IS NULL OR a.last_checked_at<=NOW()-(a.poll_seconds * INTERVAL '1 second')))
 		    OR (a.retry_next_at IS NULL AND EXISTS (SELECT 1 FROM git_push_triggers t WHERE t.application_id=a.id))
 		  )
-		  AND NOT EXISTS (SELECT 1 FROM operation_leases l WHERE l.application_id=a.id AND l.expires_at>NOW())
+		  AND NOT EXISTS (SELECT 1 FROM operation_leases l JOIN operations o ON o.id=l.operation_id WHERE l.application_id=a.id AND l.expires_at>NOW() AND NOT(o.status='queued' AND o.schedule_deferred))
 		ORDER BY COALESCE(a.retry_next_at,a.last_checked_at) ASC NULLS FIRST
 		LIMIT $1`, limit)
 	if err != nil {
@@ -3141,24 +3143,29 @@ func (s *Store) DeleteManagedResource(ctx context.Context, applicationID string,
 }
 
 type Operation struct {
-	ID                   string            `json:"id"`
-	ApplicationID        string            `json:"applicationId"`
-	PlanID               *string           `json:"planId,omitempty"`
-	ActorID              *string           `json:"actorId,omitempty"`
-	ApprovalID           string            `json:"-"`
-	ApprovalIDs          []string          `json:"-"`
-	Status               string            `json:"status"`
-	Type                 string            `json:"type"`
-	RollbackCheckpointID string            `json:"rollbackCheckpointId,omitempty"`
-	Message              string            `json:"message"`
-	Progress             OperationProgress `json:"progress"`
-	AttemptCount         int               `json:"attemptCount"`
-	ErrorCode            string            `json:"errorCode,omitempty"`
-	NextRetryAt          *time.Time        `json:"nextRetryAt,omitempty"`
-	TerminalReason       string            `json:"terminalReason,omitempty"`
-	StartedAt            time.Time         `json:"startedAt"`
-	FinishedAt           *time.Time        `json:"finishedAt,omitempty"`
-	TraceParent          string            `json:"-"`
+	ScheduleDeferred        bool              `json:"scheduleDeferred,omitempty"`
+	WaitingReasons          []string          `json:"waitingReasons,omitempty"`
+	NextAllowedAt           *time.Time        `json:"nextAllowedAt,omitempty"`
+	ScheduleOverrideReason  string            `json:"scheduleOverrideReason,omitempty"`
+	ScheduleOverrideActorID string            `json:"scheduleOverrideActorId,omitempty"`
+	ID                      string            `json:"id"`
+	ApplicationID           string            `json:"applicationId"`
+	PlanID                  *string           `json:"planId,omitempty"`
+	ActorID                 *string           `json:"actorId,omitempty"`
+	ApprovalID              string            `json:"-"`
+	ApprovalIDs             []string          `json:"-"`
+	Status                  string            `json:"status"`
+	Type                    string            `json:"type"`
+	RollbackCheckpointID    string            `json:"rollbackCheckpointId,omitempty"`
+	Message                 string            `json:"message"`
+	Progress                OperationProgress `json:"progress"`
+	AttemptCount            int               `json:"attemptCount"`
+	ErrorCode               string            `json:"errorCode,omitempty"`
+	NextRetryAt             *time.Time        `json:"nextRetryAt,omitempty"`
+	TerminalReason          string            `json:"terminalReason,omitempty"`
+	StartedAt               time.Time         `json:"startedAt"`
+	FinishedAt              *time.Time        `json:"finishedAt,omitempty"`
+	TraceParent             string            `json:"-"`
 }
 
 type OperationProgress struct {
@@ -3252,7 +3259,18 @@ func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actor
 	if rollback {
 		operationType, message = "rollback", "Rollback queued"
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO operations(id,application_id,plan_id,actor_id,approval_id,approval_ids,operation_type,status,message,progress,attempt_count,traceparent) VALUES($1,$2,$3,NULLIF($4,''),$5,$6,$7,'queued',$8,$9,$10,$11)`, id, applicationID, planID, actorID, approval, encodedApprovalIDs, operationType, message, encoded, attemptCount, traceParent)
+	decision, err := applicationSchedule(ctx, tx, applicationID, time.Now())
+	if err != nil {
+		return Operation{}, err
+	}
+	if !decision.Allowed {
+		message = "Waiting for deployment schedule"
+	}
+	waitingReasons, err := json.Marshal(decision.Reasons)
+	if err != nil {
+		return Operation{}, err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO operations(id,application_id,plan_id,actor_id,approval_id,approval_ids,operation_type,status,message,progress,attempt_count,traceparent,waiting_reasons,next_allowed_at,schedule_deferred) VALUES($1,$2,$3,NULLIF($4,''),$5,$6,$7,'queued',$8,$9,$10,$11,$12,$13,$14)`, id, applicationID, planID, actorID, approval, encodedApprovalIDs, operationType, message, encoded, attemptCount, traceParent, waitingReasons, decision.NextAllowedAt, !decision.Allowed)
 	if err != nil {
 		return Operation{}, err
 	}
@@ -3277,7 +3295,7 @@ func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actor
 	if len(approvalIDs) > 0 {
 		firstApprovalID = approvalIDs[0]
 	}
-	return Operation{ID: id, ApplicationID: applicationID, PlanID: &plan, ActorID: &actor, ApprovalID: firstApprovalID, ApprovalIDs: append([]string(nil), approvalIDs...), Status: "queued", Type: operationType, Progress: progress, AttemptCount: attemptCount, StartedAt: time.Now().UTC(), Message: message, TraceParent: traceParent}, nil
+	return Operation{ID: id, ApplicationID: applicationID, PlanID: &plan, ActorID: &actor, ApprovalID: firstApprovalID, ApprovalIDs: append([]string(nil), approvalIDs...), Status: "queued", Type: operationType, Progress: progress, AttemptCount: attemptCount, StartedAt: time.Now().UTC(), Message: message, TraceParent: traceParent, WaitingReasons: decision.Reasons, NextAllowedAt: decision.NextAllowedAt, ScheduleDeferred: !decision.Allowed}, nil
 }
 
 // ClaimQueuedOperation atomically claims one durable queue entry. It never
@@ -3291,24 +3309,41 @@ func (s *Store) ClaimQueuedOperation(ctx context.Context, lease time.Duration) (
 	var operation Operation
 	var progress []byte
 	var rawApprovalIDs []byte
+	var rawWaiting []byte
 	var clusterID string
 	var maxConcurrent, operationsPerMinute int
-	err = tx.QueryRowContext(ctx, `SELECT o.id,o.application_id,o.plan_id,o.actor_id,COALESCE(o.approval_id,''),o.approval_ids,o.operation_type,COALESCE(o.rollback_checkpoint_id,''),o.status,o.message,o.progress,o.attempt_count,o.error_code,o.next_retry_at,o.terminal_reason,o.started_at,o.finished_at,COALESCE(o.traceparent,''),a.cluster_id,c.max_concurrent_operations,c.operations_per_minute
+	err = tx.QueryRowContext(ctx, `SELECT o.id,o.application_id,o.plan_id,o.actor_id,COALESCE(o.approval_id,''),o.approval_ids,o.operation_type,COALESCE(o.rollback_checkpoint_id,''),o.status,o.message,o.progress,o.attempt_count,o.error_code,o.next_retry_at,o.terminal_reason,o.started_at,o.finished_at,COALESCE(o.traceparent,''),o.waiting_reasons,o.next_allowed_at,o.schedule_override_reason,COALESCE(o.schedule_override_actor_id,''),o.schedule_deferred,a.cluster_id,c.max_concurrent_operations,c.operations_per_minute
 		FROM operations o
 		JOIN applications a ON a.id=o.application_id
 		JOIN clusters c ON c.id=a.cluster_id
 		JOIN cluster_operation_gates g ON g.cluster_id=c.id
-		WHERE o.status='queued' AND (o.next_retry_at IS NULL OR o.next_retry_at<=NOW()) AND g.next_operation_at<=NOW()
+		WHERE o.status='queued' AND (o.schedule_check_at IS NULL OR o.schedule_check_at<=NOW()) AND (o.next_retry_at IS NULL OR o.next_retry_at<=NOW()) AND g.next_operation_at<=NOW()
 		AND (SELECT COUNT(*) FROM operations running
 			JOIN applications running_app ON running_app.id=running.application_id
 			JOIN operation_leases active_lease ON active_lease.operation_id=running.id
 			WHERE running.status='running' AND active_lease.expires_at>NOW() AND running_app.cluster_id=a.cluster_id) < c.max_concurrent_operations
-		ORDER BY o.started_at,o.id LIMIT 1 FOR UPDATE OF o,g SKIP LOCKED`).Scan(&operation.ID, &operation.ApplicationID, &operation.PlanID, &operation.ActorID, &operation.ApprovalID, &rawApprovalIDs, &operation.Type, &operation.RollbackCheckpointID, &operation.Status, &operation.Message, &progress, &operation.AttemptCount, &operation.ErrorCode, &operation.NextRetryAt, &operation.TerminalReason, &operation.StartedAt, &operation.FinishedAt, &operation.TraceParent, &clusterID, &maxConcurrent, &operationsPerMinute)
+		ORDER BY o.schedule_check_at NULLS FIRST,o.started_at,o.id LIMIT 1 FOR UPDATE OF o,g SKIP LOCKED`).Scan(&operation.ID, &operation.ApplicationID, &operation.PlanID, &operation.ActorID, &operation.ApprovalID, &rawApprovalIDs, &operation.Type, &operation.RollbackCheckpointID, &operation.Status, &operation.Message, &progress, &operation.AttemptCount, &operation.ErrorCode, &operation.NextRetryAt, &operation.TerminalReason, &operation.StartedAt, &operation.FinishedAt, &operation.TraceParent, &rawWaiting, &operation.NextAllowedAt, &operation.ScheduleOverrideReason, &operation.ScheduleOverrideActorID, &operation.ScheduleDeferred, &clusterID, &maxConcurrent, &operationsPerMinute)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Operation{}, false, nil
 	}
 	if err != nil {
 		return Operation{}, false, err
+	}
+	if err := json.Unmarshal(rawWaiting, &operation.WaitingReasons); err != nil {
+		return Operation{}, false, err
+	}
+	if operation.ScheduleOverrideReason == "" {
+		decision, err := applicationSchedule(ctx, tx, operation.ApplicationID, time.Now())
+		if err != nil {
+			return Operation{}, false, err
+		}
+		if !decision.Allowed {
+			reasons, _ := json.Marshal(decision.Reasons)
+			if _, err := tx.ExecContext(ctx, `UPDATE operations SET schedule_deferred=TRUE,message='Waiting for deployment schedule',waiting_reasons=$2,next_allowed_at=$3,schedule_check_at=NOW()+INTERVAL '30 seconds' WHERE id=$1`, operation.ID, reasons, decision.NextAllowedAt); err != nil {
+				return Operation{}, false, err
+			}
+			return Operation{}, false, tx.Commit()
+		}
 	}
 	if err := json.Unmarshal(progress, &operation.Progress); err != nil {
 		return Operation{}, false, err
@@ -3344,7 +3379,7 @@ func (s *Store) ClaimQueuedOperation(ctx context.Context, lease time.Duration) (
 	if operation.Type == "rollback" {
 		message = "Rollback in progress"
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE operations SET status='running',message=$2 WHERE id=$1 AND status='queued'`, operation.ID, message); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE operations SET status='running',message=$2,waiting_reasons='[]',next_allowed_at=NULL,schedule_check_at=NULL WHERE id=$1 AND status='queued'`, operation.ID, message); err != nil {
 		return Operation{}, false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -3352,6 +3387,8 @@ func (s *Store) ClaimQueuedOperation(ctx context.Context, lease time.Duration) (
 	}
 	operation.Status = "running"
 	operation.Message = message
+	operation.WaitingReasons = nil
+	operation.NextAllowedAt = nil
 	return operation, true, nil
 }
 
@@ -3555,13 +3592,16 @@ func (s *Store) FinishOperationWithRetry(ctx context.Context, id, applicationID,
 
 func (s *Store) OperationByID(ctx context.Context, id string) (Operation, error) {
 	var item Operation
-	var rawProgress, rawApprovalIDs []byte
-	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,plan_id,actor_id,COALESCE(approval_id,''),approval_ids,operation_type,COALESCE(rollback_checkpoint_id,''),status,message,progress,attempt_count,error_code,next_retry_at,terminal_reason,started_at,finished_at,COALESCE(traceparent,'') FROM operations WHERE id=$1`, id).
-		Scan(&item.ID, &item.ApplicationID, &item.PlanID, &item.ActorID, &item.ApprovalID, &rawApprovalIDs, &item.Type, &item.RollbackCheckpointID, &item.Status, &item.Message, &rawProgress, &item.AttemptCount, &item.ErrorCode, &item.NextRetryAt, &item.TerminalReason, &item.StartedAt, &item.FinishedAt, &item.TraceParent)
+	var rawProgress, rawApprovalIDs, rawWaiting []byte
+	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,plan_id,actor_id,COALESCE(approval_id,''),approval_ids,operation_type,COALESCE(rollback_checkpoint_id,''),status,message,progress,attempt_count,error_code,next_retry_at,terminal_reason,started_at,finished_at,COALESCE(traceparent,''),waiting_reasons,next_allowed_at,schedule_override_reason,COALESCE(schedule_override_actor_id,''),schedule_deferred FROM operations WHERE id=$1`, id).
+		Scan(&item.ID, &item.ApplicationID, &item.PlanID, &item.ActorID, &item.ApprovalID, &rawApprovalIDs, &item.Type, &item.RollbackCheckpointID, &item.Status, &item.Message, &rawProgress, &item.AttemptCount, &item.ErrorCode, &item.NextRetryAt, &item.TerminalReason, &item.StartedAt, &item.FinishedAt, &item.TraceParent, &rawWaiting, &item.NextAllowedAt, &item.ScheduleOverrideReason, &item.ScheduleOverrideActorID, &item.ScheduleDeferred)
 	if err != nil {
 		return Operation{}, err
 	}
 	if err := json.Unmarshal(rawApprovalIDs, &item.ApprovalIDs); err != nil {
+		return Operation{}, err
+	}
+	if err := json.Unmarshal(rawWaiting, &item.WaitingReasons); err != nil {
 		return Operation{}, err
 	}
 	if err := json.Unmarshal(rawProgress, &item.Progress); err != nil {
@@ -3578,7 +3618,7 @@ func (s *Store) ListOperations(ctx context.Context, applicationID string, limit 
 }
 
 func (s *Store) ListOperationsPage(ctx context.Context, applicationID string, limit, offset int) ([]Operation, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,plan_id,actor_id,operation_type,COALESCE(rollback_checkpoint_id,''),status,message,progress,attempt_count,error_code,next_retry_at,terminal_reason,started_at,finished_at,COALESCE(traceparent,'') FROM operations WHERE application_id=$1 ORDER BY started_at DESC, id DESC LIMIT $2 OFFSET $3`, applicationID, limit, offset)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,plan_id,actor_id,operation_type,COALESCE(rollback_checkpoint_id,''),status,message,progress,attempt_count,error_code,next_retry_at,terminal_reason,started_at,finished_at,COALESCE(traceparent,''),waiting_reasons,next_allowed_at,schedule_override_reason,COALESCE(schedule_override_actor_id,''),schedule_deferred FROM operations WHERE application_id=$1 ORDER BY started_at DESC, id DESC LIMIT $2 OFFSET $3`, applicationID, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -3586,8 +3626,11 @@ func (s *Store) ListOperationsPage(ctx context.Context, applicationID string, li
 	out := make([]Operation, 0)
 	for rows.Next() {
 		var item Operation
-		var rawProgress []byte
-		if err := rows.Scan(&item.ID, &item.ApplicationID, &item.PlanID, &item.ActorID, &item.Type, &item.RollbackCheckpointID, &item.Status, &item.Message, &rawProgress, &item.AttemptCount, &item.ErrorCode, &item.NextRetryAt, &item.TerminalReason, &item.StartedAt, &item.FinishedAt, &item.TraceParent); err != nil {
+		var rawProgress, rawWaiting []byte
+		if err := rows.Scan(&item.ID, &item.ApplicationID, &item.PlanID, &item.ActorID, &item.Type, &item.RollbackCheckpointID, &item.Status, &item.Message, &rawProgress, &item.AttemptCount, &item.ErrorCode, &item.NextRetryAt, &item.TerminalReason, &item.StartedAt, &item.FinishedAt, &item.TraceParent, &rawWaiting, &item.NextAllowedAt, &item.ScheduleOverrideReason, &item.ScheduleOverrideActorID, &item.ScheduleDeferred); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(rawWaiting, &item.WaitingReasons); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(rawProgress, &item.Progress); err != nil {

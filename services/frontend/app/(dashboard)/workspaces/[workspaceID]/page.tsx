@@ -13,14 +13,12 @@ import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { ConfirmDisclosure } from "@/components/confirm-disclosure"
-import { ApprovalRuleEditor } from "@/components/approval-rule-editor"
+import { WorkspaceSettings } from "@/components/workspace-settings"
 import { ErrorNotice } from "@/components/workspace-ui"
-import { ConnectionRow, DangerZone, EmptyState, FormField, PageHeading, Panel } from "@/components/ui-kit"
+import { ConnectionRow, EmptyState, FormField, PageHeading, Panel } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
 import { api, apiPost, errorMessage } from "@/lib/api"
-import type { ApprovalPolicy, ListResponse, Workspace, WorkspaceMember } from "@/lib/types"
+import type { ListResponse, Workspace, WorkspaceMember } from "@/lib/types"
 
 export default function WorkspaceDetailPage() {
   const { workspaceID } = useParams<{ workspaceID: string }>()
@@ -28,10 +26,6 @@ export default function WorkspaceDetailPage() {
   const toast = useToast()
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [members, setMembers] = useState<WorkspaceMember[]>([])
-  const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy>({
-    sync: { requiredApprovals: 0, approverRoles: ["owner"], approverUserIds: [] },
-    deletion: { requiredApprovals: 1, approverRoles: ["owner"], approverUserIds: [] },
-  })
   const [error, setError] = useState<unknown | null>(null)
   const [loading, setLoading] = useState(true)
   const [memberEmail, setMemberEmail] = useState("")
@@ -39,11 +33,6 @@ export default function WorkspaceDetailPage() {
   const [memberBusy, setMemberBusy] = useState(false)
   const [memberOpen, setMemberOpen] = useState(false)
   const [memberActionId, setMemberActionId] = useState<string | null>(null)
-  const [editName, setEditName] = useState("")
-  const [editDescription, setEditDescription] = useState("")
-  const [workspaceBusy, setWorkspaceBusy] = useState(false)
-  const [approvalPolicyBusy, setApprovalPolicyBusy] = useState(false)
-  const [deletePolicy, setDeletePolicy] = useState("keep")
   const [deletionPlans, setDeletionPlans] = useState<{ applicationId: string; applicationName: string; managedResources: number }[]>([])
   const [activeTab, setActiveTab] = useState("members")
 
@@ -76,9 +65,6 @@ export default function WorkspaceDetailPage() {
         if (!active) return
         const selected = workspaces.items.find((item) => item.id === workspaceID) ?? null
         setWorkspace(selected)
-        if (selected) setApprovalPolicy(selected.approvalPolicy)
-        setEditName(selected?.name ?? "")
-        setEditDescription(selected?.description ?? "")
         setMembers(workspaceMembers.items)
       } catch (cause) {
         if (active) setError(cause)
@@ -115,28 +101,7 @@ export default function WorkspaceDetailPage() {
     toast.success(`Removed ${member.displayName || member.email} from the workspace.`)
   }
 
-  async function saveWorkspace(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setWorkspaceBusy(true)
-    try {
-      await api(`/api/v1/workspaces/${encodeURIComponent(workspaceID)}`, { method: "PUT", body: JSON.stringify({ name: editName, description: editDescription }) })
-      setWorkspace((current) => current ? { ...current, name: editName.trim(), description: editDescription.trim() } : current)
-      toast.success("Workspace settings saved.")
-    } catch (cause) { toast.error(errorMessage(cause), cause) }
-    finally { setWorkspaceBusy(false) }
-  }
-
-  async function saveApprovalPolicy(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setApprovalPolicyBusy(true)
-    try {
-      const result = await api<{ approvalPolicy: ApprovalPolicy }>(`/api/v1/workspaces/${encodeURIComponent(workspaceID)}/approval-policy`, { method: "PUT", body: JSON.stringify(approvalPolicy) })
-      setApprovalPolicy(result.approvalPolicy)
-      setWorkspace((current) => current ? { ...current, approvalPolicy: result.approvalPolicy } : current)
-      toast.success("Workspace approval rules saved. Existing plans are stale.")
-    } catch (cause) { toast.error(errorMessage(cause), cause) }
-    finally { setApprovalPolicyBusy(false) }
-  }
-
-  async function deleteWorkspace() {
+  async function deleteWorkspace(deletePolicy: string) {
     const result = await api<{ deleted: boolean; plans?: typeof deletionPlans }>(`/api/v1/workspaces/${encodeURIComponent(workspaceID)}?resources=${deletePolicy}`, { method: "DELETE" })
     if (result.deleted) { toast.success("Workspace deleted."); router.push("/workspaces"); router.refresh(); return }
     setDeletionPlans(result.plans ?? [])
@@ -201,30 +166,8 @@ export default function WorkspaceDetailPage() {
           </ul>
         </Panel>
       </Tabs.Panel>}
-      {isOwner && workspace && <Tabs.Panel value="settings" className="min-w-0 space-y-5 outline-none">
-        <div className="grid min-w-0 gap-5 xl:grid-cols-2 xl:items-start">
-          <Panel title="Workspace settings" description="Change the workspace name and description.">
-            <form className="space-y-3 p-5" onSubmit={saveWorkspace}>
-              <FormField label="Workspace name" htmlFor="edit-workspace-name"><Input id="edit-workspace-name" value={editName} onChange={(event) => setEditName(event.target.value)} required maxLength={100} /></FormField>
-              <FormField label="Description" htmlFor="edit-workspace-description"><Textarea id="edit-workspace-description" value={editDescription} onChange={(event) => setEditDescription(event.target.value)} maxLength={500} /></FormField>
-              <div className="flex justify-end"><Button size="sm" type="submit" loading={workspaceBusy} loadingText="Saving…">Save changes</Button></div>
-            </form>
-          </Panel>
-          <Panel title="Approval rules" description="Set workspace defaults for syncs and application deletion. Application settings can override either rule.">
-            <form className="space-y-4 p-5" onSubmit={saveApprovalPolicy}>
-              <ApprovalRuleEditor id="workspace-sync-approvals" title="Sync approvals" rule={approvalPolicy.sync} members={members} disabled={approvalPolicyBusy} onChange={(sync) => setApprovalPolicy((current) => ({ ...current, sync }))} />
-              <ApprovalRuleEditor id="workspace-deletion-approvals" title="Application deletion approvals" rule={approvalPolicy.deletion} members={members} deletion disabled={approvalPolicyBusy} onChange={(deletion) => setApprovalPolicy((current) => ({ ...current, deletion }))} />
-              <div className="flex justify-end"><Button size="sm" type="submit" loading={approvalPolicyBusy} loadingText="Saving…">Save changes</Button></div>
-            </form>
-          </Panel>
-        </div>
-        <DangerZone description="Deleting this workspace removes its applications and workspace-scoped connections from JustCD.">
-          <p className="text-sm text-muted-foreground">This cannot be undone in JustCD.</p>
-          <ConfirmDisclosure trigger="Delete workspace" title={`Delete ${workspace.name}?`} description="Choose what happens to resources managed by applications in this workspace. This cannot be undone in JustCD." confirmLabel="Delete workspace" onConfirm={deleteWorkspace}>
-            <FormField label="Managed cluster resources" htmlFor="workspace-delete-policy"><FormSelect id="workspace-delete-policy" value={deletePolicy} onValueChange={setDeletePolicy} items={[{ value: "keep", label: "Keep resources in Kubernetes" }, { value: "delete", label: "Delete resources through reviewed plans" }]} /></FormField>
-            {deletePolicy === "delete" && <p className="mt-2 text-sm text-muted-foreground">JustCD prepares deletion plans for each application with managed resources. The workspace is removed only after all plans have been approved, applied, and the inventory is empty.</p>}
-          </ConfirmDisclosure>
-        </DangerZone>
+      {isOwner && workspace && <Tabs.Panel value="settings" className="min-w-0 outline-none">
+        <WorkspaceSettings key={workspace.id} workspace={workspace} members={members} onUpdated={setWorkspace} onDelete={deleteWorkspace} />
       </Tabs.Panel>}
     </Tabs.Root>
   </>

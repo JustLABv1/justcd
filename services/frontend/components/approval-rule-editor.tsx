@@ -19,6 +19,7 @@ export function ApprovalRuleEditor({
   members,
   deletion = false,
   disabled = false,
+  surface = "card",
   onChange,
 }: {
   id: string
@@ -27,6 +28,7 @@ export function ApprovalRuleEditor({
   members: WorkspaceMember[]
   deletion?: boolean
   disabled?: boolean
+  surface?: "card" | "flat"
   onChange: (rule: ApprovalRule) => void
 }) {
   const minimum = deletion ? 1 : 0
@@ -53,7 +55,7 @@ export function ApprovalRuleEditor({
   }
 
   return (
-    <section className="rounded-lg border p-4">
+    <section className={surface === "flat" ? "space-y-4" : "rounded-lg border p-4"}>
       <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_120px] sm:items-center">
         <div>
           <h3 className="text-sm font-semibold">{title}</h3>

@@ -163,6 +163,7 @@ func (s *Store) DeliverNotification(ctx context.Context, send func(NotificationD
 		return false, err
 	}
 	e.SchemaVersion = 1
+	e.OccurredAt = e.OccurredAt.UTC()
 	result := notifications.Result{Code: "destination_disabled"}
 	status := "disabled"
 	if d.Enabled {

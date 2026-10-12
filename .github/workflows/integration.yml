@@ -23,6 +23,14 @@ jobs:
         with:
           go-version-file: services/backend/go.mod
           cache-dependency-path: services/backend/go.sum
+      - name: Check backend Go vulnerabilities
+        working-directory: services/backend
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          "$(go env GOPATH)/bin/govulncheck" ./...
+      - name: Check runtime tool Go vulnerabilities
+        working-directory: services/backend/tools
+        run: '"$(go env GOPATH)/bin/govulncheck" helm.sh/helm/v4/cmd/helm sigs.k8s.io/kustomize/kustomize/v5'
       - name: Install kind
         run: |
           go install sigs.k8s.io/kind@v0.33.0

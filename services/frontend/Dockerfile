@@ -11,6 +11,7 @@ COPY . .
 RUN pnpm build
 
 FROM ${NODE_IMAGE} AS runtime
+RUN apk upgrade --no-cache
 # The standalone server only needs Node, not package managers or build tooling.
 RUN rm -rf /usr/local/lib/node_modules/npm /opt/yarn-* \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/yarn /usr/local/bin/yarnpkg

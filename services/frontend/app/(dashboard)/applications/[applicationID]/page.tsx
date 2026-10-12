@@ -593,6 +593,7 @@ export default function ApplicationDetailPage() {
     try {
       const approvalIds = currentApprovalSummary?.approvals.filter((item) => item.eligible).map((item) => item.id) ?? []
       const result = await apiPost<{ operation: Operation }>(`/api/v1/plans/${encodeURIComponent(activePlan.id)}/apply`, { approvalIds })
+      setOperations((current) => [result.operation, ...current.filter((operation) => operation.id !== result.operation.id)])
       toast.success(result.operation.message || "Sync queued.")
       setApprovalSummary(null)
       await loadData()
@@ -659,9 +660,9 @@ export default function ApplicationDetailPage() {
   })
   const deletionApprovalCount = application?.approvalPolicyOverride?.deletion?.requiredApprovals ?? workspace?.approvalPolicy.deletion.requiredApprovals ?? 1
   const latestOperation = operations[0]
-  const visibleOperation = operations.find((operation) => operation.status === "queued" || operation.status === "running") ?? (latestOperation?.status === "failed" ? latestOperation : null)
-  const visibleOperationCheckpoint = visibleOperation?.rollbackCheckpointId ?? rollbackTargets.find((target) => target.kind === "pre_operation" && target.operationId === visibleOperation?.id)?.id
   const latestPlan = plans[0]
+  const visibleOperation = operations.find((operation) => operation.status === "queued" || operation.status === "running") ?? (latestOperation && (latestOperation.status === "failed" || latestOperation.status === "cancelled" || (latestOperation.status === "succeeded" && latestOperation.planId === latestPlan?.id)) ? latestOperation : null)
+  const visibleOperationCheckpoint = visibleOperation?.rollbackCheckpointId ?? rollbackTargets.find((target) => target.kind === "pre_operation" && target.operationId === visibleOperation?.id)?.id
 
   const namespaceMismatch = Boolean(application?.renderer === "kustomize" && kustomization?.namespace && application.namespaces.length === 1 && kustomization.namespace !== application.namespaces[0].namespace)
   if (loading && !application) return <ApplicationDetailSkeleton />
@@ -718,7 +719,7 @@ export default function ApplicationDetailPage() {
       {ownershipConflict && <OwnershipConflictDialog open={conflictOpen} onOpenChange={setConflictOpen} conflicts={ownershipConflicts} applicationId={application.id} canApprove={canApprove} busy={busy} selectedKeys={selectedConflictKeys} onSelectedKeysChange={setSelectedConflictKeys} claimableKeys={claimableConflictKeys} onAdopt={adoptConflict} onAdoptSelected={adoptSelectedConflicts} onConfigureIgnore={configureConflictIgnore} />}
     </>}
     {!loading && application && <>
-      {visibleOperation && <OperationBar operation={visibleOperation} checkpointId={visibleOperationCheckpoint} canRestore={canApprove} disabled={busy || hasPendingOperation} onRestore={(target) => void createRollbackPlan(target)} />}
+      {visibleOperation && <OperationBar operation={visibleOperation} plan={plans.find((plan) => plan.id === visibleOperation.planId)} checkpointId={visibleOperationCheckpoint} canRestore={canApprove} disabled={busy || hasPendingOperation} onRestore={(target) => void createRollbackPlan(target)} />}
 
         <Tabs.Panel value="overview" className="outline-none">
           <OverviewTab application={application} latestPlan={latestPlan} plansError={plansError} retryingPlans={retryingPlans} topology={topology} topologyError={topologyError} pending={{ topology: pendingData.topology, plans: pendingData.plans, operations: pendingData.operations }} operations={operations} operationsError={operationsError} canDeploy={canDeploy} busy={busy} hasPendingOperation={hasPendingOperation} creatingPlan={pendingAction === "create-plan"} planBlockedByNamespace={planBlockedByNamespace} onCreatePlan={() => void createPlan()} onRetryPlans={() => void retryPlans()} onSelectTab={selectTab} />

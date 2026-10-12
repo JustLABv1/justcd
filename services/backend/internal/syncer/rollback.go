@@ -350,6 +350,9 @@ func (s *Service) calculateSnapshotPlan(ctx context.Context, app store.Applicati
 	if err := s.validateRollbackDryRun(ctx, app, plan, desired); err != nil {
 		return core.Plan{}, nil, err
 	}
+	if err := s.evaluateGuardrails(ctx, app, &plan, desired); err != nil {
+		return core.Plan{}, nil, err
+	}
 	if err := core.RefreshDigest(&plan); err != nil {
 		return core.Plan{}, nil, err
 	}

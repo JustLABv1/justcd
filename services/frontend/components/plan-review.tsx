@@ -17,6 +17,7 @@ import { useToast } from "@/components/toast-provider"
 import { Input } from "@/components/ui/input"
 import { FormSelect } from "@/components/ui/form-select"
 import { EmptyState } from "@/components/ui-kit"
+import { PolicyEvidence } from "@/components/guardrail-policy"
 import { ApprovalEvidence } from "@/components/approval-evidence"
 import { VirtualReviewList } from "@/components/virtual-review-list"
 import {
@@ -155,6 +156,7 @@ export function PlanReview({
         </Button>
       </div>
       <div>
+        {plan && <PolicyEvidence plan={plan} />}
         {plan && (
           <ApprovalEvidence
             plan={plan}

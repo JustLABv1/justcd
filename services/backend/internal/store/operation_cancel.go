@@ -55,11 +55,37 @@ func (s *Store) RequestOperationCancellation(ctx context.Context, id, actor stri
 // BeginOperationResource atomically orders a stop request against starting the
 // next step. Ordinary progress writes preserve the independently persisted flag.
 func (s *Store) BeginOperationResource(ctx context.Context, id string, progress OperationProgress) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var appID string
+	if err := tx.QueryRowContext(ctx, `SELECT application_id FROM operations WHERE id=$1`, id).Scan(&appID); err != nil {
+		return err
+	}
+	var locked string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE id=$1 FOR UPDATE`, appID).Scan(&locked); err != nil {
+		return err
+	}
+	var planID *string
+	var cancelled bool
+	if err := tx.QueryRowContext(ctx, `SELECT plan_id,COALESCE((progress->>'cancelRequested')::boolean,false) FROM operations WHERE id=$1`, id).Scan(&planID, &cancelled); err != nil {
+		return err
+	}
+	if cancelled {
+		return ErrOperationCancelled
+	}
+	if planID != nil {
+		if err := checkPlanGuardrailSnapshot(ctx, tx, *planID); err != nil {
+			return err
+		}
+	}
 	raw, err := json.Marshal(progress)
 	if err != nil {
 		return err
 	}
-	result, err := s.DB.ExecContext(ctx, `UPDATE operations o SET progress=$2::jsonb || jsonb_build_object('cancelRequested',COALESCE((o.progress->>'cancelRequested')::boolean,false)) WHERE o.id=$1 AND o.status='running' AND NOT COALESCE((o.progress->>'cancelRequested')::boolean,false) AND EXISTS(SELECT 1 FROM operation_leases l WHERE l.operation_id=o.id AND l.expires_at>NOW())`, id, raw)
+	result, err := tx.ExecContext(ctx, `UPDATE operations o SET progress=$2::jsonb || jsonb_build_object('cancelRequested',COALESCE((o.progress->>'cancelRequested')::boolean,false)) WHERE o.id=$1 AND o.status='running' AND NOT COALESCE((o.progress->>'cancelRequested')::boolean,false) AND EXISTS(SELECT 1 FROM operation_leases l WHERE l.operation_id=o.id AND l.expires_at>NOW())`, id, raw)
 	if err != nil {
 		return err
 	}
@@ -68,7 +94,7 @@ func (s *Store) BeginOperationResource(ctx context.Context, id string, progress 
 		return err
 	}
 	if n == 1 {
-		return nil
+		return tx.Commit()
 	}
 	op, err := s.OperationByID(ctx, id)
 	if err != nil {

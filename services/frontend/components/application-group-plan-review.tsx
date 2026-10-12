@@ -11,6 +11,7 @@ import {
 } from "@/lib/plan-review"
 import type { Application, ListResponse, PlanRecord } from "@/lib/types"
 import { PlanReview } from "@/components/plan-review"
+import { PolicyEvidence } from "@/components/guardrail-policy"
 import { ApprovalEvidence } from "@/components/approval-evidence"
 import { ManifestDiff } from "@/components/manifest-diff"
 import { Button } from "@/components/ui/button"
@@ -163,6 +164,7 @@ export function ApplicationGroupPlanReview({
                   </div>
                   {entry.plan && (
                     <div className="p-3">
+                      <PolicyEvidence plan={entry.plan} />
                       <ApprovalEvidence
                         plan={entry.plan}
                         workspaceId={

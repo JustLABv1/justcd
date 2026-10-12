@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { GuardrailPolicyPanel } from "@/components/guardrail-policy"
 import { ApprovalRuleEditor } from "@/components/approval-rule-editor"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
 import { DeploymentSchedulePanel } from "@/components/deployment-schedule"
@@ -91,6 +92,8 @@ export function WorkspaceSettings({ workspace, members, onUpdated, onDelete }: {
         })}
       </SettingsGroup>
     </SettingsSection>
+
+    <GuardrailPolicyPanel key={workspace.id} workspaceId={workspace.id} />
 
     <SettingsSection title="Deployment schedule" description="Control when deployments may start. Planning and review are always available.">
       <DeploymentSchedulePanel scope="workspaces" id={workspace.id} canEdit layout="settings" />

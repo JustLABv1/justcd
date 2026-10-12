@@ -147,8 +147,10 @@ export function ChangesTab({ workspaceId, plans, activePlan, onSelectPlan, plans
   const counts = activePlan?.plan.changes.reduce((acc, item) => ({ ...acc, [item.kind]: acc[item.kind] + 1 }), { create: 0, update: 0, delete: 0 })
   const title = activePlan?.plan.rollback ? "Rollback plan & diff" : activePlan?.plan.decommission ? "Deletion plan & diff" : "Plan & diff"
   const description = activePlan?.plan.rollback ? "A rollback is a new reviewed plan that restores a recorded deployment or Git revision." : activePlan?.plan.decommission ? "Every managed resource below will be checked again before it is deleted." : "A reviewed plan is a snapshot of the desired Git commit and live cluster state."
-  const blocked = busy || hasPendingOperation
+  const policyBlocked = activePlan?.plan.policyEvaluation?.mode === "block" && activePlan.plan.policyEvaluation.results.length > 0
+  const blocked = busy || hasPendingOperation || policyBlocked
   const applyBlockedReason = busy ? "Wait for the current action to finish."
+    : policyBlocked ? "Deployment is blocked by project policy. Fix the findings and create a new plan."
     : hasPendingOperation ? "Wait for the queued or running operation to finish."
     : hasOwnershipConflict ? "Review and resolve existing resource ownership conflicts before applying."
     : selectionDirty ? "Save or reset your changed resource selection before applying."

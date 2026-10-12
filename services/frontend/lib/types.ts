@@ -377,7 +377,19 @@ export type IgnoreSelector = {
 
 export type ApprovalReason = { code: string; rule: string; description: string; resources: Identity[] }
 
+export type GuardrailPolicy = {
+  mode: "audit" | "warn" | "block"
+  forbiddenNamespaces?: string[]
+  disabledRules?: string[]
+}
+export type PolicyEvaluation = {
+  configDigest: string
+  mode: GuardrailPolicy["mode"]
+  results: { resource: Identity; rule: string; evidence: string; remediation: string }[]
+}
+
 export type Plan = {
+  policyEvaluation?: PolicyEvaluation
   approvalReasons?: ApprovalReason[]
   applicationId: string
   decommission?: boolean

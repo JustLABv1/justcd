@@ -57,6 +57,36 @@ func (s *Service) reconcileDue(ctx context.Context, logger *slog.Logger) {
 func (s *Service) reconcileApplication(parent context.Context, logger *slog.Logger, app store.Application) {
 	ctx, span := otel.Tracer("justcd/poller").Start(parent, "reconciliation", trace.WithAttributes(attribute.String("application.id", app.ID)))
 	defer span.End()
+	// Scheduled queue entries keep their reviewed snapshot, while drift and
+	// runtime health continue to be observed. A changed snapshot is cancelled.
+	queued, queueErr := s.Store.ScheduledQueuedOperation(ctx, app.ID)
+	if queueErr != nil && !errors.Is(queueErr, sql.ErrNoRows) {
+		logger.ErrorContext(ctx, "could not inspect scheduled queue", "error", queueErr)
+		return
+	}
+	if queueErr == nil && queued.PlanID != nil {
+		record, err := s.Store.PlanByID(ctx, *queued.PlanID)
+		if err != nil {
+			logger.WarnContext(ctx, "could not load queued plan", "error", err)
+			return
+		}
+		fresh, err := s.RecheckPlan(ctx, app, record)
+		if err != nil {
+			_ = s.Store.SetApplicationStatusIssues(ctx, app.ID, []store.ApplicationStatusIssue{statusIssue("plan", err, time.Now().UTC())})
+			_ = s.RefreshApplicationHealth(ctx, app)
+			return
+		}
+		_ = s.RefreshApplicationHealth(ctx, app)
+		if fresh.Digest == record.Plan.Digest && record.Status == "current" {
+			_, _ = s.Store.DB.ExecContext(ctx, `UPDATE applications SET health=$2,last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, app.ID, healthForPlan(fresh))
+			s.Metrics.RecordDriftChanges(fresh.Changes)
+			return
+		}
+		cancelled, err := s.Store.CancelQueuedOperation(ctx, queued.ID, systemActorID, "Queued plan changed while waiting; build and review a fresh plan")
+		if err != nil || !cancelled {
+			return
+		}
+	}
 	trigger, triggerErr := s.Store.GitPushTrigger(ctx, app.ID)
 	if triggerErr != nil && !errors.Is(triggerErr, sql.ErrNoRows) {
 		logger.ErrorContext(ctx, "could not read Git push trigger", "applicationId", app.ID, "error", triggerErr)

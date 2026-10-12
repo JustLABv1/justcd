@@ -364,6 +364,7 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 	}
 	testSyncPauseSafety(t, ctx, s)
 	testWorkerClaimConcurrency(t, ctx, s)
+	testDeploymentSchedules(t, ctx, s)
 	testRepositoryConfigurationSafety(t, ctx, s)
 	testConnectionDeletionSafety(t, ctx, s)
 }

@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"github.com/justlab/justcd/services/backend/internal/core"
+	"github.com/justlab/justcd/services/backend/internal/schedule"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ func testRepositoryConfigurationSafety(t *testing.T, ctx context.Context, s *Sto
 	if err != nil {
 		t.Fatal(err)
 	}
-	app := Application{WorkspaceID: repository.WorkspaceID, Name: "git-managed", SourceID: repository.SourceID, Revision: repository.Revision, ManifestPath: "manifests", Renderer: "yaml", ClusterID: "integration-cluster", Namespaces: []NamespaceBinding{binding}, SyncPolicy: "manual", PollSeconds: 300, RetryPolicy: DefaultRetryPolicy(), ConfigurationPath: "manifests/justcd.yaml", ConfigurationHash: "first", CreateNamespaces: true}
+	app := Application{WorkspaceID: repository.WorkspaceID, Name: "git-managed", SourceID: repository.SourceID, Revision: repository.Revision, ManifestPath: "manifests", Renderer: "yaml", ClusterID: "integration-cluster", Namespaces: []NamespaceBinding{binding}, SyncPolicy: "manual", PollSeconds: 300, RetryPolicy: DefaultRetryPolicy(), ConfigurationPath: "manifests/justcd.yaml", ConfigurationHash: "first", CreateNamespaces: true, RepositoryDeploymentSchedule: schedule.Policy{Freezes: []schedule.Freeze{{Reason: "Git freeze"}}}}
 	if err := s.ApplyRepositoryApplications(ctx, repository, "commit-1", []Application{app}); err != nil {
 		t.Fatal(err)
 	}
@@ -38,6 +39,13 @@ func testRepositoryConfigurationSafety(t *testing.T, ctx context.Context, s *Sto
 	}
 	if !stored.CreateNamespaces || stored.ID == "" || stored.RepositoryConfigurationID != repository.ID || stored.ConfigurationCommit != "commit-1" || stored.ConfigurationPath != app.ConfigurationPath {
 		t.Fatalf("missing Git provenance: %+v", stored)
+	}
+	policy, err := s.DeploymentPolicy(ctx, "application", stored.ID)
+	if err != nil || len(policy.Freezes) != 1 || policy.Freezes[0].Reason != "Git freeze" {
+		t.Fatalf("lost Git schedule %+v %v", policy, err)
+	}
+	if err := s.SetDeploymentPolicy(ctx, "application", stored.ID, "integration-owner", schedule.Policy{}); err == nil {
+		t.Fatal("Git policy editable outside Git")
 	}
 	originalID := stored.ID
 	prerequisite := core.Identity{ClusterID: app.ClusterID, APIVersion: "v1", Kind: "Namespace", Name: "default", ClusterScoped: true}
@@ -95,6 +103,29 @@ func testRepositoryConfigurationSafety(t *testing.T, ctx context.Context, s *Sto
 		if err != nil || exists != check.want {
 			t.Fatalf("owner existence %s: %v %v", check.id, exists, err)
 		}
+	}
+
+	// A Git freeze can be removed while a reviewed apply is waiting.
+	queuedPlan := PlanRecord{ID: NewID(), Plan: core.Plan{ApplicationID: originalID, Revision: "commit-1", Digest: "queued-git-digest", Changes: []core.Change{}}, CreatedBy: "integration-owner", ExpiresAt: time.Now().Add(time.Hour), Status: "current"}
+	if err := s.SavePlan(ctx, queuedPlan); err != nil {
+		t.Fatal(err)
+	}
+	queued, err := s.QueueOperation(ctx, originalID, queuedPlan.ID, "integration-owner", nil, queuedPlan.Plan.Digest, "", time.Minute, OperationProgress{})
+	if err != nil || !queued.ScheduleDeferred {
+		t.Fatalf("Git freeze did not queue %+v %v", queued, err)
+	}
+	app.RepositoryDeploymentSchedule = schedule.Policy{}
+	app.ConfigurationHash = "schedule-removed"
+	if err := s.ApplyRepositoryApplications(ctx, repository, "schedule-removed", []Application{app}); err != nil {
+		t.Fatal(err)
+	}
+	cancelled, err := s.OperationByID(ctx, queued.ID)
+	if err != nil || cancelled.Status != "cancelled" {
+		t.Fatalf("changed Git policy did not release queue %+v %v", cancelled, err)
+	}
+	removed, err := s.DeploymentPolicy(ctx, "application", originalID)
+	if err != nil || len(removed.Freezes) > 0 {
+		t.Fatalf("removed Git policy persisted %+v %v", removed, err)
 	}
 
 	// Git exclusions reconcile atomically while manual rules survive.

@@ -454,6 +454,11 @@ export type TopologyEdge = { from: string; to: string; relation: string }
 export type ResourceTopology = { planId?: string; nodes: TopologyNode[]; edges: TopologyEdge[]; warnings: string[] }
 
 export type Operation = {
+ waitingReasons?: string[]
+ nextAllowedAt?: string
+ scheduleOverrideReason?: string
+ scheduleOverrideActorId?: string
+ scheduleDeferred?: boolean
   id: string
   applicationId: string
   planId?: string
@@ -509,4 +514,26 @@ export type BackgroundTask<T = unknown> = {
   createdAt: string
   startedAt?: string
   finishedAt?: string
+}
+
+export type DeploymentWindow = {
+  timeZone: string
+  days: number[]
+  start: string
+  end: string
+}
+export type DeploymentFreeze = {
+  reason: string
+  start?: string
+  end?: string
+  schedule?: DeploymentWindow
+}
+export type DeploymentPolicy = {
+  windows: DeploymentWindow[]
+  freezes: DeploymentFreeze[]
+}
+export type DeploymentSchedule = {
+  policy: DeploymentPolicy
+  managedByGit: boolean
+  decision: { allowed: boolean; reasons: string[]; nextAllowedAt?: string }
 }

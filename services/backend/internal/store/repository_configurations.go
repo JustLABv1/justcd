@@ -151,6 +151,9 @@ func (s *Store) ApplyRepositoryApplications(ctx context.Context, repository Repo
 			}
 			// Operational rollback pins remain effective until explicitly resumed.
 			if (existing.ConfigurationHash != app.ConfigurationHash || existing.SyncPolicy != app.SyncPolicy) && existing.RollbackResumeState == nil && existing.BranchTest == nil {
+				if err := cancelScheduledForConfiguration(ctx, tx, app.ID); err != nil {
+					return err
+				}
 				if err := updateApplication(ctx, tx, app); err != nil {
 					return fmt.Errorf("application %q: %w", app.Name, err)
 				}
@@ -167,6 +170,12 @@ func (s *Store) ApplyRepositoryApplications(ctx context.Context, repository Repo
 			app.Namespaces[i] = resolved
 		}
 		if changed {
+			if err := writeApplicationPolicy(ctx, tx, app.ID, app.RepositoryDeploymentSchedule); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE operations SET schedule_check_at=NULL WHERE application_id=$1 AND status='queued'`, app.ID); err != nil {
+				return err
+			}
 			if err := replaceRepositoryIgnores(ctx, tx, app); err != nil {
 				return fmt.Errorf("application %q: %w", app.Name, err)
 			}

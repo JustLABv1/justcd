@@ -15,6 +15,7 @@ import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
+import { DeploymentSchedulePanel } from "@/components/deployment-schedule"
 import { ApprovalRuleEditor } from "@/components/approval-rule-editor"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { ConnectionRow, DangerZone, EmptyState, FormField, PageHeading, Panel } from "@/components/ui-kit"
@@ -218,6 +219,7 @@ export default function WorkspaceDetailPage() {
             </form>
           </Panel>
         </div>
+        <DeploymentSchedulePanel scope="workspaces" id={workspaceID} canEdit={isOwner} />
         <DangerZone description="Deleting this workspace removes its applications and workspace-scoped connections from JustCD.">
           <p className="text-sm text-muted-foreground">This cannot be undone in JustCD.</p>
           <ConfirmDisclosure trigger="Delete workspace" title={`Delete ${workspace.name}?`} description="Choose what happens to resources managed by applications in this workspace. This cannot be undone in JustCD." confirmLabel="Delete workspace" onConfirm={deleteWorkspace}>

@@ -209,5 +209,6 @@ spec:
 	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_unlock(7412,hashtext($1))`, repository.ID); err != nil {
 		t.Fatal(err)
 	}
+	testScheduledApprovalExpiry(t, ctx, db, original, ownerID)
 	testOperationWorkerDrain(t, ctx, db, original, ownerID)
 }

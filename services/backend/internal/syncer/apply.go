@@ -183,6 +183,12 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 			return finishFailure(errors.New("rollback requires a workspace owner"), "failed")
 		}
 	}
+	authorizationTime := time.Now()
+	// The schedule may delay a request already authorized and durably consumed.
+	// Expiry still applies at enqueue; role, digest, and exact change checks remain live.
+	if operation.ScheduleDeferred {
+		authorizationTime = operation.StartedAt
+	}
 	if required := core.RequiredApprovalCount(record.Plan); required > 0 {
 		approvalIDs := operation.ApprovalIDs
 		if len(approvalIDs) == 0 && operation.ApprovalID != "" {
@@ -212,7 +218,7 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 			}
 			approvals = append(approvals, stored.Approval)
 		}
-		if err := core.AuthorizeApplyMany(record.Plan, approvals, time.Now()); err != nil {
+		if err := core.AuthorizeApplyMany(record.Plan, approvals, authorizationTime); err != nil {
 			return finishFailure(err, "failed")
 		}
 	}
@@ -224,7 +230,7 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 	if err != nil {
 		return finishFailure(err, "failed")
 	}
-	if record.Status != "current" || !time.Now().Before(record.ExpiresAt) || fresh.Digest != record.Plan.Digest {
+	if record.Status != "current" || !authorizationTime.Before(record.ExpiresAt) || fresh.Digest != record.Plan.Digest {
 		return finishFailure(errors.New("plan changed after approval while sync was queued"), "stale")
 	}
 	input, err := s.loadPlanInput(ctx, app)
@@ -237,6 +243,26 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 			return finishFailure(fmt.Errorf("could not durably save the pre-operation checkpoint: %w", err), "failed")
 		}
 		operation.RollbackCheckpointID = checkpoint.ID
+	}
+	// Admission is checked again after potentially slow live-state validation.
+	// Once admitted, the complete operation may finish beyond the window end.
+	if operation.ScheduleOverrideReason != "" {
+		if err := s.Store.CheckScheduleOverrideOwner(ctx, app.WorkspaceID, operation.ScheduleOverrideActorID); err != nil {
+			return finishFailure(err, "failed")
+		}
+	} else {
+		decision, err := s.Store.ApplicationSchedule(ctx, app.ID)
+		if err != nil {
+			return finishFailure(err, "failed")
+		}
+		if !decision.Allowed {
+			if err := s.Store.DeferScheduledOperation(ctx, operationID, decision); err != nil {
+				return finishFailure(err, "failed")
+			}
+			operation.Status, operation.Message = "queued", "Waiting for deployment schedule"
+			operation.WaitingReasons, operation.NextAllowedAt = decision.Reasons, decision.NextAllowedAt
+			return operation, nil
+		}
 	}
 	operation.Progress.Phase = "applying"
 	if err := s.Store.SetOperationProgress(ctx, operationID, operation.Progress); err != nil {

@@ -6,8 +6,9 @@ import styles from "./app-shell.module.css"
 import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useMemo, useState } from "react"
 import { AccountMenu } from "@/components/account-menu"
+import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { api, apiPost } from "@/lib/api"
+import { APIError, api, apiPost, errorMessage } from "@/lib/api"
 import { WorkspaceSelectionProvider } from "@/hooks/workspace-selection"
 import type { Application, ListResponse, OnboardingStatus, Workspace, User } from "@/lib/types"
 import { HugeiconsIcon } from "@hugeicons/react"
@@ -40,6 +41,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
+  const [sessionError, setSessionError] = useState<unknown>(null)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [workspacesLoading, setWorkspacesLoading] = useState(true)
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("")
@@ -52,8 +54,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       .then((response) => {
         if (active) setUser(response.user)
       })
-      .catch(() => {
-        if (active) router.replace("/login")
+      .catch((cause) => {
+        if (!active) return
+        if (cause instanceof APIError && cause.status === 401) router.replace("/login")
+        else setSessionError(cause)
       })
       .finally(() => active && setLoading(false))
     return () => {
@@ -158,9 +162,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   if (loading || !user) {
     return (
       <main className="grid min-h-svh place-items-center bg-muted/30">
-        <div className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3 text-sm text-muted-foreground shadow-sm">
-          <span className="size-2 animate-pulse rounded-full bg-primary" />
-          Loading your JustCD workspace…
+        <div role={sessionError ? "alert" : "status"} className="flex max-w-md flex-wrap items-center gap-3 rounded-xl border bg-card px-4 py-3 text-sm text-muted-foreground shadow-sm">
+          {sessionError ? <><span>{errorMessage(sessionError)}</span><Button onClick={() => window.location.reload()}>Try again</Button></> : <><span className="size-2 animate-pulse rounded-full bg-primary motion-reduce:animate-none" />Loading your JustCD workspace…</>}
         </div>
       </main>
     )

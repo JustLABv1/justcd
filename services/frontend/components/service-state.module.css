@@ -1,0 +1,53 @@
+.scene { min-height: 100svh; display: flex; flex-direction: column; overflow: hidden; background: var(--background); color: var(--foreground); }
+.header { display: flex; align-items: center; justify-content: space-between; padding: 28px 5vw; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 18px; letter-spacing: -.6px; }
+.content { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 12px 24px 32px; }
+.copy { text-align: center; max-width: 520px; animation: arrive 600ms cubic-bezier(.23,1,.32,1) both; }
+.eyebrow { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 1.7px; font-weight: 600; color: var(--muted-foreground); }
+.eyebrow > span { width: 6px; height: 6px; border-radius: 50%; background: var(--primary); }
+.copy h1 { margin: 16px 0; font-size: clamp(30px, 4vw, 48px); line-height: 1.1; font-weight: 600; letter-spacing: -2px; text-wrap: balance; }
+.description { color: var(--muted-foreground); font-size: 15px; line-height: 1.8; text-wrap: pretty; max-width: 440px; margin: auto; }
+.actions { margin-top: 26px; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+.actions button, .actions a { height: 42px; padding-inline: 18px; gap: 12px; }
+.feedback { min-height: 36px; margin-top: 16px; font-size: 12px; color: var(--muted-foreground); }
+.footer { display: flex; justify-content: space-between; gap: 20px; padding: 24px 5vw; font-size: 11px; color: var(--muted-foreground); }
+.footer > span:first-child { font-family: var(--font-code); font-size: 10px; letter-spacing: 1px; }
+.artwork { --scene-accent: var(--primary); position: relative; width: min(440px, 100%); height: 320px; isolation: isolate; margin-bottom: 26px; }
+.maintenance { --scene-accent: var(--warning); }
+.halo { position: absolute; inset: 0 -20px; background: radial-gradient(ellipse, color-mix(in oklch, var(--scene-accent) 13%, transparent), transparent 65%); }
+.grid { position: absolute; inset: 15px; background-image: linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg,var(--border) 1px,transparent 1px); background-size: 32px 32px; opacity: .38; mask-image: radial-gradient(ellipse, black, transparent 65%); transform: perspective(450px) rotateX(55deg); }
+.coordinates { position: absolute; bottom: 13px; width: 100%; text-align: center; font: 9px var(--font-code); letter-spacing: 2px; color: var(--muted-foreground); }
+.numerals { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: clamp(100px, 26vw, 150px); font-weight: 650; letter-spacing: -12px; color: var(--foreground); text-shadow: 0 12px 40px color-mix(in oklch,var(--scene-accent) 12%,transparent); }
+.numerals span { display: inline-block; color: var(--primary); animation: float 6s cubic-bezier(.45,0,.55,1) infinite; }
+.orbit { position: absolute; width: 340px; height: 240px; top: 40px; left: calc(50% - 170px); border: 1px solid color-mix(in oklch,var(--scene-accent) 25%,var(--border)); border-radius: 50%; transform: rotate(-28deg); }
+.orbit > span { position: absolute; inset: -1px; border-radius: 50%; animation: spin 16s linear infinite; }
+.orbit > span::after { content: ""; display: block; position: absolute; top: 24px; left: 47px; width: 9px; height: 9px; background: var(--primary); border-radius: 50%; box-shadow: 0 0 0 5px color-mix(in oklch,var(--primary) 10%,transparent); }
+.orbitTwo { transform: rotate(28deg); width: 280px; left: calc(50% - 140px); height: 270px; top: 25px; opacity: .5; }
+.orbitTwo > span { animation-duration: 24s; animation-direction: reverse; }
+.satellite { position: absolute; top: 40px; right: 45px; width: 54px; height: 54px; display: grid; place-items: center; border-radius: 16px; border: 1px solid var(--border); background: var(--card); box-shadow: 0 10px 30px color-mix(in oklch,var(--foreground) 8%,transparent); animation: satellite 7s cubic-bezier(.45,0,.55,1) infinite; }
+.assembly { position: absolute; width: 160px; height: 160px; left: calc(50% - 80px); top: 82px; transform: rotateX(55deg) rotateZ(-35deg); transform-style: preserve-3d; }
+.layer { position: absolute; inset: 0; border-radius: 22px; border: 1px solid color-mix(in oklch,var(--scene-accent) 50%,var(--border)); background: linear-gradient(135deg,var(--card),color-mix(in oklch,var(--scene-accent) 12%,var(--card))); box-shadow: -5px 6px 0 color-mix(in oklch,var(--scene-accent) 20%,var(--card)), -10px 15px 25px color-mix(in oklch,var(--foreground) 8%,transparent); transform: translateZ(calc(var(--layer) * 44px)); animation: assemble 6s cubic-bezier(.77,0,.175,1) infinite; animation-delay: calc(var(--layer) * -120ms); }
+.layerLines { position: absolute; inset: 25px; border: 1px solid color-mix(in oklch,var(--scene-accent) 25%,transparent); border-radius: 10px; }
+.layerLines::after { content: ""; position: absolute; inset: 19px; border-radius: 5px; border: inherit; }
+.layerLight { position: absolute; right: 14px; bottom: 14px; width: 7px; height: 7px; background: var(--scene-accent); border-radius: 50%; animation: blink 3s ease infinite; animation-delay: calc(var(--layer) * .4s); }
+.assemblyRing { position: absolute; width: 280px; height: 100px; border: 1px dashed color-mix(in oklch,var(--scene-accent) 35%,transparent); border-radius: 50%; left: calc(50% - 140px); bottom: 39px; }
+.beacon { position: absolute; width: 124px; left: calc(50% - 62px); top: 94px; animation: float 6s cubic-bezier(.45,0,.55,1) infinite; }
+.beaconHead { width: 84px; height: 54px; border: 1px solid var(--border); border-radius: 18px 18px 10px 10px; background: var(--card); margin: auto; display: flex; justify-content: center; align-items: center; gap: 7px; box-shadow: 0 8px 20px color-mix(in oklch,var(--primary) 10%,transparent); }
+.beaconHead span { width: 6px; height: 6px; background: var(--primary); border-radius: 50%; animation: blink 2.4s ease infinite; }
+.beaconHead span:nth-child(2) { animation-delay: .3s; }.beaconHead span:nth-child(3) { animation-delay: .6s; }
+.beaconBody { height: 86px; background: linear-gradient(135deg,var(--card),var(--muted)); border: 1px solid var(--border); border-radius: 14px; margin-top: 8px; padding: 20px; position: relative; }
+.beaconBody i { display: block; width: 47px; height: 3px; background: var(--border); margin-bottom: 7px; border-radius: 2px; }
+.beaconBody > span { position: absolute; right: 18px; top: 22px; width: 6px; height: 6px; border-radius: 50%; background: var(--warning); }
+.beaconBase { margin: 10px auto 0; width: 88px; height: 9px; border-radius: 50%; background: color-mix(in oklch,var(--primary) 13%,transparent); }
+.signalRing { position: absolute; border: 1px solid color-mix(in oklch,var(--primary) 35%,transparent); border-radius: 50%; width: 170px; height: 170px; left: calc(50% - 85px); top: 67px; animation: signal 6s cubic-bezier(.2,0,.4,1) infinite; }
+.signalRing:nth-of-type(4) { animation-delay: -2s; }.signalRing:nth-of-type(5) { animation-delay: -4s; }
+.signalDot { position: absolute; width: 7px; height: 7px; border-radius: 50%; background: var(--primary); top: 62px; left: 90px; animation: blink 3s ease infinite; }
+@keyframes arrive { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes float { 0%,100% { transform: translateY(-5px); } 50% { transform: translateY(5px); } }
+@keyframes satellite { 0%,100% { transform: translateY(0) rotate(-12deg); } 50% { transform: translateY(-14px) rotate(3deg); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes assemble { 0%,100% { transform: translateZ(calc(var(--layer) * 44px)); } 50% { transform: translateZ(calc(var(--layer) * 12px)) rotateZ(8deg); } }
+@keyframes blink { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+@keyframes signal { 0% { transform: scale(.8); opacity: 0; } 15% { opacity: .7; } 100% { transform: scale(2); opacity: 0; } }
+@media (max-width: 480px) { .header { padding: 20px 24px; }.artwork { height: 285px; margin-bottom: 20px; }.footer { flex-direction: column; align-items: center; gap: 8px; }.copy h1 { letter-spacing: -1px; }.orbit { width: 290px; left: calc(50% - 145px); }.orbitTwo { width: 250px; left: calc(50% - 125px); }.satellite { right: 12px; }.content { padding-inline: 20px; } }
+@media (prefers-reduced-motion: reduce) { .scene *, .scene *::after { animation: none !important; }.signalRing { opacity: .35; }.signalRing:nth-of-type(4) { transform: scale(1.35); }.signalRing:nth-of-type(5) { transform: scale(1.7); } }

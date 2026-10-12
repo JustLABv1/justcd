@@ -211,6 +211,22 @@ func cancelQueuedOperationTx(ctx context.Context, tx *sql.Tx, id, actor, reason,
 	if err != nil || n == 0 {
 		return false, err
 	}
+	var raw []byte
+	if err := tx.QueryRowContext(ctx, `SELECT progress FROM operations WHERE id=$1`, id).Scan(&raw); err != nil {
+		return false, err
+	}
+	var progress OperationProgress
+	if err := json.Unmarshal(raw, &progress); err != nil {
+		return false, err
+	}
+	progress.Stop(reason)
+	raw, err = json.Marshal(progress)
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE operations SET progress=$2 WHERE id=$1`, id, raw); err != nil {
+		return false, err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE id=(SELECT plan_id FROM operations WHERE id=$1)`, id); err != nil {
 		return false, err
 	}

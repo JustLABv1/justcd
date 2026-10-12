@@ -10,6 +10,11 @@ import (
 // progress, audit event, and lease release together. Repeating a committed
 // completion is a no-op; a recovered or superseded executor cannot complete it.
 func (s *Store) CompleteDeployment(ctx context.Context, operation Operation, revision, health, action string, details any) error {
+	for _, resource := range operation.Progress.Resources {
+		if resource.Status != "succeeded" {
+			return errors.New("operation cannot succeed with unfinished resource results")
+		}
+	}
 	progress, err := json.Marshal(operation.Progress)
 	if err != nil {
 		return err

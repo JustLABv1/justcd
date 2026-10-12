@@ -92,4 +92,23 @@ func TestIntegrationDeploymentScheduleAuthorization(t *testing.T) {
 	if w := request(server.cancelQueuedOperation, "schedule-deployer", "operationID", "schedule-op", `{}`); w.Code != 200 {
 		t.Fatalf("deployer could not cancel: %d %s", w.Code, w.Body)
 	}
+	if _, err := db.DB.ExecContext(ctx, `INSERT INTO operations(id,application_id,actor_id,status,progress) VALUES('schedule-running','schedule-app','schedule-deployer','running','{"phase":"applying","completed":[]}')`); err != nil {
+		t.Fatal(err)
+	}
+	if w := request(server.cancelQueuedOperation, "schedule-viewer", "operationID", "schedule-running", `{}`); w.Code != 403 {
+		t.Fatalf("viewer stopped running operation: %d", w.Code)
+	}
+	w := request(server.cancelQueuedOperation, "schedule-deployer", "operationID", "schedule-running", `{}`)
+	var ack struct {
+		Cancelled bool            `json:"cancelled"`
+		Requested bool            `json:"cancellationRequested"`
+		Operation store.Operation `json:"operation"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &ack); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != 200 || ack.Cancelled || !ack.Requested || ack.Operation.Status != "running" {
+		t.Fatalf("request falsely reported completion: %d %s", w.Code, w.Body)
+	}
+
 }

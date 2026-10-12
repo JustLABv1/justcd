@@ -119,14 +119,19 @@ func (s *Server) cancelQueuedOperation(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "deployer") {
 		return
 	}
-	cancelled, err := s.Store.CancelQueuedOperation(r.Context(), op.ID, currentUser(r).ID, "Queued apply cancelled by user; create a fresh plan to deploy")
+	cancelled, err := s.Store.RequestOperationCancellation(r.Context(), op.ID, currentUser(r).ID)
 	if err != nil {
-		writeStoreError(w, "could not cancel queued operation")
+		writeStoreError(w, "could not request operation cancellation")
 		return
 	}
 	if !cancelled {
-		writeError(w, http.StatusConflict, "operation has already started or finished")
+		writeError(w, http.StatusConflict, "operation has finished or does not support cancellation")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"cancelled": true})
+	op, err = s.Store.OperationByID(r.Context(), op.ID)
+	if err != nil {
+		writeStoreError(w, "could not load operation after cancellation request")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cancelled": op.Status == "cancelled", "cancellationRequested": op.Progress.CancelRequested, "operation": op})
 }

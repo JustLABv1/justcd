@@ -696,7 +696,7 @@ export default function ApplicationDetailPage() {
         onConfigureExclusion={(issue) => configureIgnore({ mode: "kind", ...(issue.resource ? { version: issue.resource.apiVersion, kind: issue.resource.kind } : {}) })}
         resumeRevision={resumeRevision} onResumeRevisionChange={setResumeRevision} onKeepPin={() => void updateRollbackTracking("keep")} onResume={() => void updateRollbackTracking("resume")} />}
     {!loading && application && <>
-      {visibleOperation && <OperationBar operation={visibleOperation} plan={plans.find((plan) => plan.id === visibleOperation.planId)} checkpointId={visibleOperationCheckpoint} canRestore={canApprove} disabled={busy || hasPendingOperation} onRestore={(target) => void createRollbackPlan(target)} />}
+      {visibleOperation && <OperationBar key={visibleOperation.id} operation={visibleOperation} plan={plans.find((plan) => plan.id === visibleOperation.planId)} checkpointId={visibleOperationCheckpoint} canRestore={canApprove} disabled={busy || hasPendingOperation} onRestore={(target) => void createRollbackPlan(target)} canCancel={canDeploy && !busy} onUpdated={loadData} onReviewResource={(identity) => { const operationPlan = plans.find((plan) => plan.id === visibleOperation.planId); if (operationPlan) setActivePlan(operationPlan); setReviewResource(diffId(identity)); selectTab("changes") }} />}
 
         {visibleOperation?.status === "queued" && <div className="mb-5 rounded-xl border bg-card p-4"><ScheduledOperationActions operation={visibleOperation} canOverride={canApprove} canCancel={canDeploy} onUpdated={loadData} /></div>}
     </>}

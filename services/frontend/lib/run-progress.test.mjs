@@ -69,3 +69,15 @@ test("the last phase is still running until the operation reports success", () =
   assert.equal(view.stages.at(-1).status, "running")
   assert.ok(view.current <= view.stages.length)
 })
+
+test("durable resource results supply phase counts including namespace prerequisites", () => {
+  const op = operation("applying", "running", [identity("namespace")])
+  op.progress.resources = [
+    { identity: identity("namespace"), action: "create_namespace", status: "succeeded" },
+    { identity: identity("api"), action: "create", status: "retrying" },
+    { identity: identity("old"), action: "delete", status: "queued" },
+  ]
+  const progress = syncRunProgress(op)
+  assert.equal(progress.stages.find(stage => stage.id === "applying").details[0].value, "1 / 2")
+  assert.equal(progress.stages.find(stage => stage.id === "deleting").details[0].value, "0 / 1")
+})

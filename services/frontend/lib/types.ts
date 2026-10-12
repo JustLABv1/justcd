@@ -472,7 +472,23 @@ export type Operation = {
   rollbackCheckpointId?: string
   status: string
   message: string
-  progress?: { phase?: string; total: number; completed: Identity[]; current?: Identity }
+  progress?: {
+    phase?: string
+    total: number
+    completed: Identity[]
+    current?: Identity
+    cancelRequested?: boolean
+    resources?: {
+      identity: Identity
+      action: string
+      status: "queued" | "running" | "retrying" | "succeeded" | "failed" | "skipped"
+      stage?: string
+      attemptCount: number
+      startedAt?: string
+      finishedAt?: string
+      message?: string
+    }[]
+  }
   attemptCount: number
   errorCode?: string
   nextRetryAt?: string

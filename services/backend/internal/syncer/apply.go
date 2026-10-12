@@ -100,7 +100,7 @@ func (s *Service) ApplyWithApprovals(ctx context.Context, planID, actorID string
 	} else if len(approvalIDs) > 0 {
 		return store.Operation{}, errors.New("this plan does not require an approval")
 	}
-	progress := store.OperationProgress{Phase: "queued", Total: len(record.Plan.Changes), Completed: []core.Identity{}}
+	progress := store.NewOperationProgress(record.Plan)
 	return s.Store.QueueOperation(ctx, app.ID, record.ID, actorID, approvalIDs, record.Plan.Digest, observability.TraceParent(ctx), 90*time.Second, progress)
 }
 
@@ -137,9 +137,27 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 	finishFailure := func(cause error, planStatus string) (store.Operation, error) {
 		finishCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		if errors.Is(cause, store.ErrOperationCancelled) {
+			if err := s.Store.FinishCancelledOperation(finishCtx, operation); err != nil {
+				return operation, err
+			}
+			return s.Store.OperationByID(finishCtx, operationID)
+		}
 		message := safeApplyFailure(cause, operation.Progress, operation.Type)
-		automatic := !app.AutoSyncPaused && operation.Type == "sync" && !record.Plan.Decommission && record.Plan.Rollback == nil
+		operation.Progress.Stop(message)
+		if err := s.Store.SetOperationProgress(finishCtx, operationID, operation.Progress); err != nil {
+			return operation, errors.Join(cause, err)
+		}
+		persisted, err := s.Store.OperationByID(finishCtx, operationID)
+		if err != nil {
+			return operation, errors.Join(cause, err)
+		}
+		automatic := !app.AutoSyncPaused && !persisted.Progress.CancelRequested && operation.Type == "sync" && !record.Plan.Decommission && record.Plan.Rollback == nil
 		decision := DecideRetry(ctx, app.RetryPolicy, operation.AttemptCount, cause, time.Now().UTC(), retryJitterSample(), automatic)
+		if persisted.Progress.CancelRequested {
+			decision.NextRetryAt = nil
+			decision.TerminalReason = "cancelled_after_failure_requires_review"
+		}
 		if planStatus == "stale" {
 			decision.NextRetryAt = nil
 			decision.TerminalReason = "plan_changed_requires_review"
@@ -269,12 +287,17 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		return finishFailure(err, "failed")
 	}
 	beginResource := func(identity core.Identity) error {
-		operation.Progress.Current = &identity
-		return s.Store.SetOperationProgress(ctx, operationID, operation.Progress)
+		next := operation.Progress
+		next.Resources = append([]store.ResourceProgress(nil), next.Resources...)
+		next.BeginResource(identity, operation.AttemptCount)
+		if err := s.Store.BeginOperationResource(ctx, operationID, next); err != nil {
+			return err
+		}
+		operation.Progress = next
+		return nil
 	}
 	completeResource := func(identity core.Identity) error {
-		operation.Progress.Completed = append(operation.Progress.Completed, identity)
-		operation.Progress.Current = nil
+		operation.Progress.CompleteResource(identity)
 		if err := s.Store.SetOperationProgress(ctx, operationID, operation.Progress); err != nil {
 			return err
 		}
@@ -361,6 +384,10 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		if err := completeResource(change.Identity); err != nil {
 			return finishFailure(err, "failed")
 		}
+	}
+	operation.Progress.Phase = "complete"
+	if err := s.Store.BeginOperationResource(ctx, operationID, operation.Progress); err != nil {
+		return finishFailure(err, "failed")
 	}
 	health := "synced"
 	if record.Plan.Decommission {

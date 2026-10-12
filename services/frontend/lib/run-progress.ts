@@ -114,7 +114,14 @@ export function syncRunProgress(
   const completed = new Set(
     operation.progress?.completed?.map(resourceKey) ?? []
   )
+  const results = operation.progress?.resources
   const resourceCounts = (deleting: boolean) => {
+    if (results?.length) {
+      const resources = results.filter(
+        (resource) => (resource.action === "delete") === deleting
+      )
+      return `${resources.filter((resource) => resource.status === "succeeded").length} / ${resources.length}`
+    }
     if (!changes) return `${completed.size} / ${operation.progress?.total ?? 0}`
     const resources = changes.filter(
       (change) => (change.kind === "delete") === deleting
@@ -124,7 +131,10 @@ export function syncRunProgress(
   const phase = operation.progress?.phase
   const includeDeletes =
     phase === "deleting" ||
-    Boolean(changes?.some((change) => change.kind === "delete"))
+    Boolean(
+      results?.some((resource) => resource.action === "delete") ||
+      changes?.some((change) => change.kind === "delete")
+    )
   const definitions: StageDefinition[] = [
     {
       id: "queued",

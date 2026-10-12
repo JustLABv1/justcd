@@ -168,6 +168,45 @@ paths:
         '200': { description: Updated repository configuration }
         '403': { description: Workspace owner required }
         '409': { description: Invalid policy, inaccessible destination or credential, or active PR applications }
+  /service-status:
+    get:
+      summary: Check service availability and session-validated administrator maintenance bypass
+      responses:
+        '200':
+          description: Current availability (no-store; varies by session cookie)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, maintenanceEnabled, adminBypass]
+                properties:
+                  status: { type: string, enum: [online, maintenance] }
+                  maintenanceEnabled: { type: boolean }
+                  adminBypass: { type: boolean }
+        '500': { description: Could not read instance state }
+  /admin/instance-settings:
+    get:
+      summary: Read instance maintenance settings (instance administrators only)
+      responses:
+        '200': { description: Instance settings including maintenanceEnabled }
+        '401': { description: Authentication required }
+        '403': { description: Instance administrator role required }
+    put:
+      summary: Enable or disable persisted maintenance mode (instance administrators only; CSRF required)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [maintenanceEnabled]
+              properties:
+                maintenanceEnabled: { type: boolean }
+      responses:
+        '200': { description: Updated and audited maintenance settings }
+        '400': { description: Invalid or missing maintenanceEnabled }
+        '401': { description: Authentication required }
+        '403': { description: Administrator role and valid CSRF token required }
   /health:
     get:
       summary: Check API health

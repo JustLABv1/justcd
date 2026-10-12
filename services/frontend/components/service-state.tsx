@@ -144,7 +144,7 @@ export function ServiceStatePage({
   )
 
   useEffect(() => {
-    if (state !== "offline") return
+    if (state === "not-found" || onRecover) return
     const controller = new AbortController()
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible")
@@ -154,7 +154,7 @@ export function ServiceStatePage({
       window.clearInterval(timer)
       controller.abort()
     }
-  }, [state, checkConnection])
+  }, [state, checkConnection, onRecover])
 
   return (
     <main className={styles.scene}>
@@ -204,6 +204,16 @@ export function ServiceStatePage({
               </Button>
             )}
           </div>
+          {state === "maintenance" && (
+            <Button
+              variant="link"
+              nativeButton={false}
+              render={<Link href="/login" />}
+              className="mt-3"
+            >
+              Administrator sign in
+            </Button>
+          )}
           <p role="status" className={styles.feedback}>
             {message ||
               (state === "offline"

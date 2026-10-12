@@ -2,49 +2,49 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { GET } from "../app/api/service-status/route.ts"
 
-async function withService(maintenance, fetch, run) {
-  const previousFlag = process.env.JUSTCD_MAINTENANCE
+async function withFetch(fetch, run) {
   const previousFetch = globalThis.fetch
-  process.env.JUSTCD_MAINTENANCE = maintenance
   globalThis.fetch = fetch
-  try { await run() } finally {
-    globalThis.fetch = previousFetch
-    if (previousFlag === undefined) delete process.env.JUSTCD_MAINTENANCE
-    else process.env.JUSTCD_MAINTENANCE = previousFlag
-  }
+  try { await run() } finally { globalThis.fetch = previousFetch }
 }
 
-test("maintenance takes precedence and does not contact the backend", async () => {
-  await withService("true", () => { throw new Error("must not fetch") }, async () => {
-    const response = await GET()
+const request = new Request("http://localhost/api/service-status", { headers: { cookie: "justcd_session=test-session" } })
+
+test("backend maintenance is returned with 503 and cannot be cached", async () => {
+  await withFetch(async () => Response.json({ status: "maintenance", maintenanceEnabled: true, adminBypass: false }), async () => {
+    const response = await GET(request)
     assert.equal(response.status, 503)
     assert.equal(response.headers.get("cache-control"), "no-store")
-    assert.deepEqual(await response.json(), { status: "maintenance" })
+    assert.equal(response.headers.get("vary"), "Cookie")
+    assert.equal((await response.json()).status, "maintenance")
   })
 })
 
-test("online requires a successful JustCD health response", async () => {
-  await withService("false", async (url, init) => {
-    assert.equal(url.pathname, "/healthz")
+test("session cookie is forwarded and backend-validated admin bypass stays online", async () => {
+  await withFetch(async (url, init) => {
+    assert.equal(url.pathname, "/api/v1/service-status")
+    assert.equal(init.headers.cookie, "justcd_session=test-session")
     assert.equal(init.cache, "no-store")
+    assert.equal(init.redirect, "error")
     assert.ok(init.signal instanceof AbortSignal)
-    return Response.json({ status: "ok" })
+    return Response.json({ status: "online", maintenanceEnabled: true, adminBypass: true })
   }, async () => {
-    const response = await GET()
+    const response = await GET(request)
     assert.equal(response.status, 200)
-    assert.deepEqual(await response.json(), { status: "online" })
+    assert.deepEqual(await response.json(), { status: "online", maintenanceEnabled: true, adminBypass: true })
   })
 })
 
-test("unreachable, unhealthy and non-JustCD backends are offline", async () => {
+test("unreachable, unhealthy and malformed backends are offline", async () => {
   for (const fetch of [
     async () => { throw new Error("connection refused") },
-    async () => Response.json({ status: "ok" }, { status: 503 }),
+    async () => Response.json({ status: "online", maintenanceEnabled: false, adminBypass: false }, { status: 503 }),
     async () => Response.json({ status: "unknown" }),
+    async () => Response.json({ status: "online" }),
     async () => new Response("<html>gateway error</html>"),
   ]) {
-    await withService("false", fetch, async () => {
-      const response = await GET()
+    await withFetch(fetch, async () => {
+      const response = await GET(request)
       assert.equal(response.status, 503)
       assert.deepEqual(await response.json(), { status: "offline" })
     })

@@ -15,7 +15,6 @@ elif command -v podman >/dev/null && podman info >/dev/null 2>&1; then
 else
   echo 'Docker or Podman is required' >&2; exit 1
 fi
-for tool in kind kubectl helm go openssl rg age age-keygen; do command -v "$tool" >/dev/null; done
 cleanup() {
   status=$?
   trap - EXIT
@@ -25,6 +24,12 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT
+for tool in kind kubectl helm go openssl rg age age-keygen; do
+  if ! command -v "$tool" >/dev/null; then
+    echo "Required restore-drill command is missing: $tool" >&2
+    exit 1
+  fi
+done
 backend_image=${JUSTCD_DRILL_BACKEND_IMAGE:-"localhost/justcd-drill-backend:local"}
 frontend_image=${JUSTCD_DRILL_FRONTEND_IMAGE:-"localhost/justcd-drill-frontend:local"}
 if [[ -z "${JUSTCD_DRILL_BACKEND_IMAGE:-}" ]]; then "$engine" build -t "$backend_image" "$root/services/backend"; fi

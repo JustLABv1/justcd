@@ -10,7 +10,7 @@
 }
 .header { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; padding: 24px 32px; }
 .brand { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 650; letter-spacing: -.4px; }
-.logo { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: var(--primary); color: var(--primary-foreground); }
+.logo { height: 28px; width: auto; color: var(--foreground); }
 .brandCaption { margin-left: 8px; padding-left: 18px; border-left: 1px solid var(--border); color: var(--muted-foreground); font-size: 11px; font-weight: 400; letter-spacing: 0; }
 .backdrop { position: absolute; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; animation: atmosphereIn 900ms cubic-bezier(.23, 1, .32, 1) both; }
 .atmosphere { position: absolute; inset: 0; background: radial-gradient(ellipse at 12% 65%, color-mix(in srgb, var(--primary) 7%, transparent), transparent 42%), radial-gradient(ellipse at 88% 30%, color-mix(in srgb, var(--primary) 6%, transparent), transparent 40%); }

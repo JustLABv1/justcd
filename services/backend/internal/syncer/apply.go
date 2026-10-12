@@ -487,7 +487,7 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 	}
 	fieldManager := "justcd/" + applicationID
 	patchOptions := applyPatchOptions(change, fieldManager)
-	applied, err := resourceClient.Patch(ctx, resource.Identity.Name, types.ApplyPatchType, body, patchOptions)
+	applied, err := applyWithOwnershipMigration(ctx, resourceClient, resource.Identity.Name, body, patchOptions)
 	if err != nil {
 		return fmt.Errorf("server-side apply failed for %s %s/%s: %w", resource.Identity.Kind, resource.Identity.Namespace, resource.Identity.Name, err)
 	}

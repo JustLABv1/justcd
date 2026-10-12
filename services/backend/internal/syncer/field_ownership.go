@@ -3,11 +3,14 @@ package syncer
 import (
 	"context"
 	"errors"
+	"strconv"
+	"strings"
 
 	"github.com/justlab/justcd/services/backend/internal/core"
 	"github.com/justlab/justcd/services/backend/internal/render"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 )
@@ -29,9 +32,35 @@ func fieldOwnershipConflict(err error) bool {
 	return true
 }
 
+// applyWithOwnershipMigration transitions JustCD's own Create/Update field
+// ownership to Apply ownership. Kubernetes distinguishes these operations even
+// under the same manager name. Only conflicts exclusively with this application's
+// manager can be retried automatically; other managers require a sealed takeover.
+// Preserve the caller's dry-run and resource-version preconditions on the retry.
+func applyWithOwnershipMigration(ctx context.Context, rc dynamic.ResourceInterface, name string, body []byte, options metav1.PatchOptions) (*unstructured.Unstructured, error) {
+	object, err := rc.Patch(ctx, name, types.ApplyPatchType, body, options)
+	if options.Force != nil && *options.Force || !fieldOwnershipConflict(err) {
+		return object, err
+	}
+	var status apierrors.APIStatus
+	if !errors.As(err, &status) {
+		return object, err
+	}
+	prefix := "conflict with " + strconv.Quote(options.FieldManager)
+	for _, cause := range status.Status().Details.Causes {
+		if cause.Message != prefix && !strings.HasPrefix(cause.Message, prefix+" using ") {
+			return object, err
+		}
+	}
+	force := true
+	options.Force = &force
+	return rc.Patch(ctx, name, types.ApplyPatchType, body, options)
+}
+
 // Detect field ownership transfers before sealing the plan and its approval
-// policy. This includes Apply/Update ownership under the same manager name.
-// All requests are dry-runs; only an approved takeover can force a real apply.
+// policy, after migrating ownership already held by this application's manager.
+// All requests are dry-runs; transferring another manager's ownership still
+// requires an approved takeover before the real apply.
 func (s *Service) detectFieldTakeovers(ctx context.Context, input planInput, plan *core.Plan, desired []core.Resource) error {
 	byKey := make(map[string]core.Resource, len(desired))
 	for _, resource := range desired {
@@ -70,7 +99,7 @@ func (s *Service) detectFieldTakeovers(ctx context.Context, input planInput, pla
 		}
 		options := applyPatchOptions(*change, "justcd/"+plan.ApplicationID)
 		options.DryRun = []string{metav1.DryRunAll}
-		_, err = rc.Patch(ctx, change.Identity.Name, types.ApplyPatchType, body, options)
+		_, err = applyWithOwnershipMigration(ctx, rc, change.Identity.Name, body, options)
 		if !change.Takeover && fieldOwnershipConflict(err) {
 			change.Takeover = true
 			options = applyPatchOptions(*change, "justcd/"+plan.ApplicationID)

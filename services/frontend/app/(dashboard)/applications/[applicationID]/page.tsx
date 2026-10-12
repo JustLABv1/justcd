@@ -673,7 +673,7 @@ export default function ApplicationDetailPage() {
   const planBlockedByNamespace = Boolean(application && namespaceMismatch && !application.kustomizeNamespaceOverride)
 
   return <>
-    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.clusterName || application.clusterId} / ${application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"}${application.autoSyncPaused ? " · Auto-sync paused" : ""}` : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Sync <StatusBadge status={application.health} /></span><span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Runtime <StatusBadge status={application.healthCondition?.status ?? "Unknown"} /></span></div>} actions={application && <>
+    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.clusterName || application.clusterId} / ${application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"}${application.autoSyncPaused ? " · Auto-sync paused" : ""}` : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Sync <StatusBadge status={application.health} /></span></div>} metadata={application && <RuntimeHealthStrip application={application} healthHistory={healthHistory} />} actions={application && <>
       {pendingData.workspace && <span role="status" className="text-sm text-muted-foreground">Loading permissions…</span>}
       {planBlockedByNamespace && !application.configurationMissing && !application.decommissioning && canDeploy
         ? <Tooltip>
@@ -695,7 +695,6 @@ export default function ApplicationDetailPage() {
         onCancelDecommission={() => void cancelDecommission()}
         onConfigureExclusion={(issue) => configureIgnore({ mode: "kind", ...(issue.resource ? { version: issue.resource.apiVersion, kind: issue.resource.kind } : {}) })}
         resumeRevision={resumeRevision} onResumeRevisionChange={setResumeRevision} onKeepPin={() => void updateRollbackTracking("keep")} onResume={() => void updateRollbackTracking("resume")} />}
-    {application && <RuntimeHealthStrip application={application} healthHistory={healthHistory} />}
     {!loading && application && <>
       {visibleOperation && <OperationBar operation={visibleOperation} plan={plans.find((plan) => plan.id === visibleOperation.planId)} checkpointId={visibleOperationCheckpoint} canRestore={canApprove} disabled={busy || hasPendingOperation} onRestore={(target) => void createRollbackPlan(target)} />}
 

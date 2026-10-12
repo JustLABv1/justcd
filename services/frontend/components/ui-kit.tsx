@@ -13,11 +13,13 @@ export function PageHeading({
   description,
   actions,
   badge,
+  metadata,
 }: {
   title: string
   description?: string
   actions?: ReactNode
   badge?: ReactNode
+  metadata?: ReactNode
 }) {
   return (
     <header className="mb-5 flex shrink-0 flex-wrap items-center justify-between gap-x-6 gap-y-4">
@@ -27,6 +29,7 @@ export function PageHeading({
           {badge}
         </div>
         {description && <p className="mt-1.5 max-w-2xl break-words text-sm leading-6 text-muted-foreground">{description}</p>}
+        {metadata && <div className="mt-2">{metadata}</div>}
       </div>
       {actions && <div className="flex max-w-full flex-wrap items-center gap-2">{actions}</div>}
     </header>

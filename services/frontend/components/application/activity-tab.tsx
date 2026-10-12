@@ -7,6 +7,8 @@ import { operationPhaseLabel, resourceLabel } from "@/components/application/hel
 import type { RollbackRequest } from "@/components/application/operation-bar"
 import { ErrorDetailsButton, ErrorDetailsDialog } from "@/components/error-details"
 import { Button } from "@/components/ui/button"
+import { FormSelect } from "@/components/ui/form-select"
+import { filterRollbackTargets } from "@/lib/activity-history"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState, FormField, Panel, StatusBadge } from "@/components/ui-kit"
@@ -27,6 +29,7 @@ function operationTitle(operation: Operation) {
   const noun = type === "rollback" ? "Rollback" : "Sync"
   if (status === "succeeded") return type === "rollback" ? "Rollback completed" : "Sync completed"
   if (status === "failed") return `${noun} stopped`
+  if (status === "cancelled") return `${noun} cancelled`
   if (status === "queued") return `${noun} queued`
   return `${noun} running`
 }
@@ -75,23 +78,47 @@ export function ActivityTab({ application, operations, operationsLoading, rollba
   const [rollbackRevision, setRollbackRevision] = useState("")
   const [page, setPage] = useState(0)
   const [retry, setRetry] = useState(0)
-  const [history, setHistory] = useState<{ page: number; items: Operation[]; hasMore: boolean } | null>(null)
+  const [history, setHistory] = useState<{ key: string; items: Operation[]; hasMore: boolean } | null>(null)
   const [historyError, setHistoryError] = useState<unknown>(null)
-  const pageSize = 10
+  const [operationSearch, setOperationSearch] = useState("")
+  const [operationStatus, setOperationStatus] = useState("")
+  const [operationType, setOperationType] = useState("")
+  const [rollbackSearch, setRollbackSearch] = useState("")
+  const [rollbackKind, setRollbackKind] = useState("")
+  const [rollbackPage, setRollbackPage] = useState(0)
+  const pageSize = 5
+  const historyKey = JSON.stringify([application.id, page, operationSearch.trim(), operationStatus, operationType])
+  const filteredTargets = filterRollbackTargets(rollbackTargets, rollbackSearch, rollbackKind)
+  const targetPage = Math.min(rollbackPage, Math.max(0, Math.ceil(filteredTargets.length / pageSize) - 1))
+  const visibleTargets = filteredTargets.slice(targetPage * pageSize, (targetPage + 1) * pageSize)
   useEffect(() => {
-    let active = true
-    api<{ items: Operation[]; hasMore: boolean }>(`/api/v1/applications/${encodeURIComponent(application.id)}/operations?limit=${pageSize}&offset=${page * pageSize}`)
-      .then((result) => { if (active) { setHistory({ page, ...result }); setHistoryError(null) } })
-      .catch((cause) => { if (active) setHistoryError(cause) })
-    return () => { active = false }
-  }, [application.id, page, operations, retry])
-  const historyLoading = operationsLoading || history?.page !== page
+    const controller = new AbortController()
+    const query = new URLSearchParams({ limit: String(pageSize), offset: String(page * pageSize) })
+    if (operationSearch.trim()) query.set("q", operationSearch.trim())
+    if (operationStatus) query.set("status", operationStatus)
+    if (operationType) query.set("type", operationType)
+    const timer = setTimeout(() => {
+      api<{ items: Operation[]; hasMore: boolean }>(`/api/v1/applications/${encodeURIComponent(application.id)}/operations?${query}`, { signal: controller.signal })
+        .then((result) => { if (!controller.signal.aborted) { setHistory({ key: historyKey, ...result }); setHistoryError(null) } })
+        .catch((cause) => { if (!controller.signal.aborted) setHistoryError(cause) })
+    }, operationSearch.trim() ? 250 : 0)
+    return () => { clearTimeout(timer); controller.abort() }
+  }, [application.id, page, operationSearch, operationStatus, operationType, historyKey, operations, retry])
+  const historyLoading = operationsLoading || history?.key !== historyKey
+  const operationFiltersActive = Boolean(operationSearch.trim() || operationStatus || operationType)
+  const rollbackFiltersActive = Boolean(rollbackSearch.trim() || rollbackKind)
   const blocked = busy || hasPendingOperation
   const linkButton = (href: string, label: string): ReactNode => <Button variant="link" size="sm" className="h-auto justify-start p-0" render={<Link href={href} />}>{label}</Button>
 
   return <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
     <div className="min-w-0 space-y-5">
       <Panel title="Recent operations" description="Sync history and result state">
+        <div className="grid gap-3 border-b p-5 sm:grid-cols-[minmax(0,1fr)_160px_160px]">
+          <Input aria-label="Search operations" placeholder="Search messages or IDs…" maxLength={256} value={operationSearch} onChange={(event) => { setOperationSearch(event.target.value); setPage(0); setHistoryError(null) }} />
+          <FormSelect ariaLabel="Filter operations by status" value={operationStatus} emptyOption="All statuses" items={[{ value: "succeeded", label: "Succeeded" }, { value: "failed", label: "Failed" }, { value: "queued", label: "Queued" }, { value: "running", label: "Running" }, { value: "cancelled", label: "Cancelled" }]} onValueChange={(value) => { setOperationStatus(value); setPage(0); setHistoryError(null) }} />
+          <FormSelect ariaLabel="Filter operations by type" value={operationType} emptyOption="All operation types" items={[{ value: "sync", label: "Sync" }, { value: "rollback", label: "Rollback" }, { value: "resource_action", label: "Resource action" }]} onValueChange={(value) => { setOperationType(value); setPage(0); setHistoryError(null) }} />
+          {operationFiltersActive && <Button variant="ghost" size="sm" className="justify-self-start" onClick={() => { setOperationSearch(""); setOperationStatus(""); setOperationType(""); setPage(0); setHistoryError(null) }}>Clear operation filters</Button>}
+        </div>
         {(application.retryTerminalReason || application.retryNextAt) && <div className="flex flex-wrap items-center gap-3 border-b bg-muted/20 px-5 py-3"><div className="min-w-0 flex-1"><p className="text-sm font-medium">Reconciliation needs attention</p><p className="mt-1 text-sm text-muted-foreground">{application.retryNextAt ? `Next automatic attempt: ${new Date(application.retryNextAt).toLocaleString()}` : application.retryTerminalReason?.replaceAll("_", " ")}{application.retryLastErrorCode ? ` · ${application.retryLastErrorCode}` : ""}</p></div>{canDeploy && !application.decommissioning && <Button size="sm" variant="outline" loading={pendingAction === "retry-reconciliation"} disabled={blocked} onClick={() => onRetryReconciliation()}>Retry now</Button>}</div>}
         {historyError ? <div role="alert" className="space-y-2 p-5"><p className="text-sm">Could not load operations: {errorMessage(historyError)}</p><Button variant="outline" size="sm" onClick={() => { setHistoryError(null); setRetry((value) => value + 1) }}>Retry</Button></div> : historyLoading ? <SectionLoading label="Loading recent operations" /> : history?.items.length ? <ul className="divide-y">{history.items.map((operation) => {
           const checkpoint = operation.rollbackCheckpointId ?? rollbackTargets.find((target) => target.kind === "pre_operation" && target.operationId === operation.id)?.id
@@ -105,7 +132,7 @@ export function ActivityTab({ application, operations, operationsLoading, rollba
             </div>}
             <p className="mt-1.5 text-sm text-muted-foreground">{new Date(operation.startedAt).toLocaleString()}</p>
           </li>
-        })}</ul> : <EmptyState title="No syncs yet" description="Operations will be recorded here with the actor and resulting status." />}
+        })}</ul> : <EmptyState title={operationFiltersActive ? "No matching operations" : "No syncs yet"} description={operationFiltersActive ? "Try a different search or clear the filters." : "Operations will be recorded here with the actor and resulting status."} />}
         <nav aria-label="Activity pagination" className="flex flex-wrap items-center justify-between gap-3 border-t px-5 py-3">
           <p role="status" aria-live="polite" className="text-sm text-muted-foreground">Page {page + 1}{!historyLoading && history?.items.length ? ` · Operations ${page * pageSize + 1}–${page * pageSize + history.items.length}` : ""}</p>
           <div className="flex items-center gap-2">
@@ -116,10 +143,22 @@ export function ActivityTab({ application, operations, operationsLoading, rollba
       </Panel>
       <Panel title="Rollback targets" description="Review a new plan to restore a previous deployment. Opening a target never changes the cluster.">
         <div className="space-y-4 p-5">
-          {rollbackLoading ? <SectionLoading label="Loading rollback targets" /> : rollbackTargets.length > 0 ? <ul className="divide-y rounded-lg border">{rollbackTargets.map((target) => {
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px]">
+            <Input aria-label="Search rollback targets" placeholder="Search revision or operation ID…" value={rollbackSearch} onChange={(event) => { setRollbackSearch(event.target.value); setRollbackPage(0) }} />
+            <FormSelect ariaLabel="Filter rollback targets by type" value={rollbackKind} emptyOption="All target types" items={[{ value: "successful_sync", label: "Successful deployment" }, { value: "pre_operation", label: "Before failed operation" }]} onValueChange={(value) => { setRollbackKind(value); setRollbackPage(0) }} />
+            {rollbackFiltersActive && <Button variant="ghost" size="sm" className="justify-self-start" onClick={() => { setRollbackSearch(""); setRollbackKind(""); setRollbackPage(0) }}>Clear rollback filters</Button>}
+          </div>
+          {rollbackLoading ? <SectionLoading label="Loading rollback targets" /> : visibleTargets.length > 0 ? <ul className="divide-y rounded-lg border">{visibleTargets.map((target) => {
             const title = target.kind === "successful_sync" ? "Successful deployment" : "Before failed operation"
             return <li key={target.id} className="flex flex-wrap items-center gap-3 px-3 py-3"><div className="min-w-0 flex-1"><p className="text-sm font-medium">{title}</p><p className="mt-1 text-sm text-muted-foreground">{new Date(target.createdAt).toLocaleString()} · {target.resourceCount} resources{target.revision ? ` · ${target.revision.slice(0, 12)}` : " · no successful revision"}</p>{target.operationId && <p className="mt-0.5 font-mono text-sm text-muted-foreground">Operation {target.operationId.slice(0, 12)}</p>}</div>{canApprove && <Button size="sm" variant="outline" aria-label={`Review rollback to ${title.toLowerCase()} from ${new Date(target.createdAt).toLocaleString()}`} loading={pendingAction === "rollback-plan"} disabled={blocked} onClick={() => void onCreateRollbackPlan({ kind: target.kind, id: target.id })}>Review rollback</Button>}</li>
-          })}</ul> : <EmptyState title="No rollback history yet" description="A target appears after a successful deployment or a failed/interrupted operation with a saved checkpoint." />}
+          })}</ul> : <EmptyState title={rollbackFiltersActive ? "No matching rollback targets" : "No rollback history yet"} description={rollbackFiltersActive ? "Try a different search or clear the filters." : "A target appears after a successful deployment or a failed/interrupted operation with a saved checkpoint."} />}
+          <nav aria-label="Rollback target pagination" className="flex flex-wrap items-center justify-between gap-3">
+            <p role="status" aria-live="polite" className="text-sm text-muted-foreground">Page {targetPage + 1} of {Math.max(1, Math.ceil(filteredTargets.length / pageSize))} · {filteredTargets.length} targets</p>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={rollbackLoading || targetPage === 0} onClick={() => setRollbackPage(targetPage - 1)}>Previous</Button>
+              <Button variant="outline" size="sm" disabled={rollbackLoading || (targetPage + 1) * pageSize >= filteredTargets.length} onClick={() => setRollbackPage(targetPage + 1)}>Next</Button>
+            </div>
+          </nav>
           <div className="border-t pt-4">
             <FormField label="Git revision" htmlFor="rollback-git-revision"><Input id="rollback-git-revision" value={rollbackRevision} onChange={(event) => setRollbackRevision(event.target.value)} placeholder="branch, tag, or commit SHA" disabled={!canApprove || blocked} /></FormField>
             <div className="mt-2 flex flex-wrap items-center justify-between gap-3"><p className="max-w-xl text-sm text-muted-foreground">Enter a branch, tag, or commit SHA to enable review. JustCD resolves and renders it, then shows a create/update/delete diff for owner approval.</p><Button size="sm" variant="outline" loading={pendingAction === "rollback-plan"} loadingText="Rendering target…" disabled={!canApprove || blocked || !rollbackRevision.trim()} onClick={async () => { if (await onCreateRollbackPlan({ kind: "git_revision", revision: rollbackRevision.trim() })) setRollbackRevision("") }}>Review Git rollback</Button></div>

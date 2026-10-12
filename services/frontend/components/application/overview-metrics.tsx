@@ -5,6 +5,7 @@ import {
   Shield01Icon,
   Alert02Icon,
 } from "@hugeicons/core-free-icons"
+import { applicationResourceNodes } from "@/lib/topology-view"
 import { MetricCard } from "@/components/metric-card"
 import { Badge } from "@/components/reui/badge"
 import type { Application, PlanRecord, ResourceTopology } from "@/lib/types"
@@ -29,8 +30,8 @@ export function OverviewMetrics({
   const health = application.healthCondition
   const current = latestPlan?.status === "current"
   const changes = current ? latestPlan.plan.changes : []
-  const observed =
-    topology?.nodes.filter((node) => node.source === "kubernetes").length ?? 0
+  const resources = topology ? applicationResourceNodes(topology) : []
+  const observed = resources.filter((node) => node.source === "kubernetes").length
   const counts = changes.reduce(
     (acc, change) => ({ ...acc, [change.kind]: acc[change.kind] + 1 }),
     { create: 0, update: 0, delete: 0 }
@@ -64,14 +65,14 @@ export function OverviewMetrics({
       </MetricCard>
       <MetricCard
         title="Resources"
-        subtitle="Desired and discovered resources"
+        subtitle="Declared or managed by JustCD"
         icon={Layers01Icon}
         loading={pending.topology}
         value={
           topologyError
             ? "Unavailable"
             : topology
-              ? String(topology.nodes.length)
+              ? String(resources.length)
               : "—"
         }
         onClick={() => onSelectTab("topology")}
@@ -80,10 +81,10 @@ export function OverviewMetrics({
           aria-hidden="true"
           className="flex h-1.5 overflow-hidden rounded-full bg-muted"
         >
-          {topology && topology.nodes.length > 0 && (
+          {topology && resources.length > 0 && (
             <span
               className="bg-success"
-              style={{ width: `${(observed / topology.nodes.length) * 100}%` }}
+              style={{ width: `${(observed / resources.length) * 100}%` }}
             />
           )}
         </div>
@@ -91,9 +92,10 @@ export function OverviewMetrics({
           {topologyError
             ? "Resource discovery could not be loaded."
             : topology
-              ? `${observed} observed in the cluster · ${topology.nodes.length - observed} not observed`
+              ? `${observed} observed in the cluster · ${resources.length - observed} not observed`
               : "No resource inventory yet."}
         </p>
+        {topology && topology.nodes.length > resources.length && <p className="text-xs text-muted-foreground">{topology.nodes.length - resources.length} runtime children shown in topology</p>}
       </MetricCard>
       <MetricCard
         title="Planned changes"

@@ -15,15 +15,17 @@ import (
 )
 
 type Node struct {
-	ID              string                     `json:"id"`
-	Identity        core.Identity              `json:"identity"`
-	Source          string                     `json:"source"`
-	UID             string                     `json:"uid,omitempty"`
-	ResourceVersion string                     `json:"resourceVersion,omitempty"`
-	Phase           string                     `json:"phase,omitempty"`
-	Readiness       string                     `json:"readiness,omitempty"`
-	HealthSummary   *apphealth.ResourceDetails `json:"healthSummary,omitempty"`
-	ObservedAt      *time.Time                 `json:"observedAt,omitempty"`
+	ID              string                        `json:"id"`
+	Identity        core.Identity                 `json:"identity"`
+	Tracked         bool                          `json:"tracked"`
+	Health          *apphealth.ResourceAssessment `json:"health,omitempty"`
+	Source          string                        `json:"source"`
+	UID             string                        `json:"uid,omitempty"`
+	ResourceVersion string                        `json:"resourceVersion,omitempty"`
+	Phase           string                        `json:"phase,omitempty"`
+	Readiness       string                        `json:"readiness,omitempty"`
+	HealthSummary   *apphealth.ResourceDetails    `json:"healthSummary,omitempty"`
+	ObservedAt      *time.Time                    `json:"observedAt,omitempty"`
 }
 
 type Edge struct {
@@ -58,7 +60,7 @@ func Build(plan *store.PlanRecord, managed []store.ManagedResource, observed []s
 		graph.PlanID = plan.ID
 		for _, resource := range plan.Desired {
 			identity := resource.Identity
-			items[ID(identity)] = &material{node: Node{ID: ID(identity), Identity: identity, Source: "desired"}, value: parse(resource.Manifest)}
+			items[ID(identity)] = &material{node: Node{ID: ID(identity), Identity: identity, Tracked: true, Source: "desired"}, value: parse(resource.Manifest)}
 		}
 	}
 	for _, resource := range managed {
@@ -72,7 +74,7 @@ func Build(plan *store.PlanRecord, managed []store.ManagedResource, observed []s
 				existing.value = parse(resource.Manifest)
 			}
 		} else {
-			items[key] = &material{node: Node{ID: key, Identity: identity, Source: "managed", UID: resource.UID, ResourceVersion: resource.ResourceVersion}, value: parse(resource.Manifest)}
+			items[key] = &material{node: Node{ID: key, Identity: identity, Tracked: true, Source: "managed", UID: resource.UID, ResourceVersion: resource.ResourceVersion}, value: parse(resource.Manifest)}
 		}
 	}
 	for _, resource := range observed {
@@ -80,10 +82,18 @@ func Build(plan *store.PlanRecord, managed []store.ManagedResource, observed []s
 		key := ID(identity)
 		at := resource.ObservedAt
 		var manifest map[string]any
+		tracked := false
+		var health *apphealth.ResourceAssessment
+		observation := apphealth.Observation{Identity: identity, Source: resource.Source, Phase: resource.Phase, Readiness: resource.Readiness, Details: resource.HealthSummary}
+		if resource.Source == "kubernetes" && apphealth.SupportsObservation(observation) {
+			assessment := apphealth.Assess(observation)
+			health = &assessment
+		}
 		if existing := items[key]; existing != nil {
 			manifest = existing.value
+			tracked = existing.node.Tracked
 		}
-		items[key] = &material{value: manifest, node: Node{ID: key, Identity: identity, Source: resource.Source, UID: resource.UID, ResourceVersion: resource.ResourceVersion, Phase: resource.Phase, Readiness: resource.Readiness, HealthSummary: nonEmptyHealthSummary(resource.HealthSummary), ObservedAt: &at}, labels: resource.Labels, owners: resource.OwnerUIDs}
+		items[key] = &material{value: manifest, node: Node{ID: key, Identity: identity, Tracked: tracked, Health: health, Source: resource.Source, UID: resource.UID, ResourceVersion: resource.ResourceVersion, Phase: resource.Phase, Readiness: resource.Readiness, HealthSummary: nonEmptyHealthSummary(resource.HealthSummary), ObservedAt: &at}, labels: resource.Labels, owners: resource.OwnerUIDs}
 	}
 
 	byUID := map[string]*material{}
@@ -238,7 +248,7 @@ func Build(plan *store.PlanRecord, managed []store.ManagedResource, observed []s
 }
 
 func nonEmptyHealthSummary(details apphealth.ResourceDetails) *apphealth.ResourceDetails {
-	if details.Generation == 0 && !details.StatusObserved && details.DesiredReplicas == nil && details.ReadyReplicas == nil && details.UpdatedReplicas == nil && details.AvailableReplicas == nil && details.DesiredScheduled == nil && details.NumberScheduled == nil && details.UpdatedScheduled == nil && details.NumberReady == nil && details.NumberAvailable == nil && details.NumberMisscheduled == nil && details.Completions == nil && details.Active == nil && details.Succeeded == nil && details.Failed == nil && !details.Suspended && details.FailureReason == "" && details.FailureMessage == "" && len(details.Conditions) == 0 {
+	if details.LastReconciledGeneration == nil && details.DesiredInstances == nil && details.CurrentInstances == nil && details.Generation == 0 && !details.StatusObserved && details.DesiredReplicas == nil && details.ReadyReplicas == nil && details.UpdatedReplicas == nil && details.AvailableReplicas == nil && details.DesiredScheduled == nil && details.NumberScheduled == nil && details.UpdatedScheduled == nil && details.NumberReady == nil && details.NumberAvailable == nil && details.NumberMisscheduled == nil && details.Completions == nil && details.Active == nil && details.Succeeded == nil && details.Failed == nil && !details.Suspended && details.FailureReason == "" && details.FailureMessage == "" && len(details.Conditions) == 0 {
 		return nil
 	}
 	return &details

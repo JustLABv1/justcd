@@ -745,7 +745,24 @@ func (s *Server) listApplicationOperations(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	items, err := s.Store.ListOperationsPage(r.Context(), app.ID, limit+1, offset)
+	status, operationType, query := r.URL.Query().Get("status"), r.URL.Query().Get("type"), strings.TrimSpace(r.URL.Query().Get("q"))
+	switch status {
+	case "", "queued", "running", "succeeded", "failed", "cancelled":
+	default:
+		writeError(w, http.StatusBadRequest, "invalid operation status filter")
+		return
+	}
+	switch operationType {
+	case "", "sync", "rollback", "resource_action":
+	default:
+		writeError(w, http.StatusBadRequest, "invalid operation type filter")
+		return
+	}
+	if len(query) > 256 {
+		writeError(w, http.StatusBadRequest, "operation search must be at most 256 bytes")
+		return
+	}
+	items, err := s.Store.ListOperationsFilteredPage(r.Context(), app.ID, limit+1, offset, status, operationType, query)
 	if err != nil {
 		writeStoreError(w, "could not load application operations")
 		return

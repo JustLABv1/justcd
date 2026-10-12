@@ -14,6 +14,7 @@ import { diffId, isClaimable, sameIdentity, type IgnorePrefill, type NewIgnore }
 import { OperationBar, type RollbackRequest } from "@/components/application/operation-bar"
 import { OverviewTab } from "@/components/application/overview-tab"
 import { OwnershipConflictDialog } from "@/components/application/ownership-conflict-dialog"
+import { applicationResourceNodes } from "@/lib/topology-view"
 import { RuntimeHealthStrip } from "@/components/application/runtime-health"
 import { SettingsTab } from "@/components/application/settings-tab"
 import { ApplicationDetailSkeleton } from "@/components/application-detail-skeleton"
@@ -672,7 +673,7 @@ export default function ApplicationDetailPage() {
   const planBlockedByNamespace = Boolean(application && namespaceMismatch && !application.kustomizeNamespaceOverride)
 
   return <>
-    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.clusterName || application.clusterId} / ${application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"}${application.autoSyncPaused ? " · Auto-sync paused" : ""}` : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Sync <StatusBadge status={application.health} /></span><span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Runtime <StatusBadge status={application.healthCondition?.status ?? "Unknown"} /></span></div>} actions={application && <>
+    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.clusterName || application.clusterId} / ${application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"}${application.autoSyncPaused ? " · Auto-sync paused" : ""}` : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Sync <StatusBadge status={application.health} /></span></div>} metadata={application && <RuntimeHealthStrip application={application} healthHistory={healthHistory} />} actions={application && <>
       {pendingData.workspace && <span role="status" className="text-sm text-muted-foreground">Loading permissions…</span>}
       {planBlockedByNamespace && !application.configurationMissing && !application.decommissioning && canDeploy
         ? <Tooltip>
@@ -694,11 +695,16 @@ export default function ApplicationDetailPage() {
         onCancelDecommission={() => void cancelDecommission()}
         onConfigureExclusion={(issue) => configureIgnore({ mode: "kind", ...(issue.resource ? { version: issue.resource.apiVersion, kind: issue.resource.kind } : {}) })}
         resumeRevision={resumeRevision} onResumeRevisionChange={setResumeRevision} onKeepPin={() => void updateRollbackTracking("keep")} onResume={() => void updateRollbackTracking("resume")} />}
+    {!loading && application && <>
+      {visibleOperation && <OperationBar operation={visibleOperation} plan={plans.find((plan) => plan.id === visibleOperation.planId)} checkpointId={visibleOperationCheckpoint} canRestore={canApprove} disabled={busy || hasPendingOperation} onRestore={(target) => void createRollbackPlan(target)} />}
+
+        {visibleOperation?.status === "queued" && <div className="mb-5 rounded-xl border bg-card p-4"><ScheduledOperationActions operation={visibleOperation} canOverride={canApprove} canCancel={canDeploy} onUpdated={loadData} /></div>}
+    </>}
       <Tabs.Root value={activeTab} onValueChange={(value) => selectTab(String(value))} className="min-w-0">
         {application && <Tabs.List aria-label="Application views" className="mb-6 flex gap-6 overflow-x-auto border-b" activateOnFocus>
           {[
             { id: "overview", label: "Overview" },
-            { id: "topology", label: "Resources", count: pendingData.topology ? undefined : topology?.nodes.length },
+            { id: "topology", label: "Resources", count: pendingData.topology ? undefined : topology ? applicationResourceNodes(topology).length : undefined },
             { id: "changes", label: "Changes", count: pendingData.plans || plansError != null ? undefined : latestPlan?.status === "current" ? latestPlan.plan.changes.length + (latestPlan.plan.ignored?.length ?? 0) : 0 },
             { id: "activity", label: "Activity" },
             { id: "pull-requests", label: "Pull requests" },
@@ -716,13 +722,9 @@ export default function ApplicationDetailPage() {
       toast.success(updated.branchTest ? "Branch selected. Create and review a fresh plan before deploying." : "Tracked source restored. Review a fresh plan before deploying and resuming auto-sync.")
     }} />}
     {application && <>
-      <RuntimeHealthStrip application={application} healthHistory={healthHistory} />
       {ownershipConflict && <OwnershipConflictDialog open={conflictOpen} onOpenChange={setConflictOpen} conflicts={ownershipConflicts} applicationId={application.id} canApprove={canApprove} busy={busy} selectedKeys={selectedConflictKeys} onSelectedKeysChange={setSelectedConflictKeys} claimableKeys={claimableConflictKeys} onAdopt={adoptConflict} onAdoptSelected={adoptSelectedConflicts} onConfigureIgnore={configureConflictIgnore} />}
     </>}
     {!loading && application && <>
-      {visibleOperation && <OperationBar operation={visibleOperation} plan={plans.find((plan) => plan.id === visibleOperation.planId)} checkpointId={visibleOperationCheckpoint} canRestore={canApprove} disabled={busy || hasPendingOperation} onRestore={(target) => void createRollbackPlan(target)} />}
-
-        {visibleOperation?.status === "queued" && <div className="mb-5 rounded-xl border bg-card p-4"><ScheduledOperationActions operation={visibleOperation} canOverride={canApprove} canCancel={canDeploy} onUpdated={loadData} /></div>}
         <Tabs.Panel value="overview" className="outline-none">
           <OverviewTab application={application} latestPlan={latestPlan} plansError={plansError} retryingPlans={retryingPlans} topology={topology} topologyError={topologyError} pending={{ topology: pendingData.topology, plans: pendingData.plans, operations: pendingData.operations }} operations={operations} operationsError={operationsError} canDeploy={canDeploy} busy={busy} hasPendingOperation={hasPendingOperation} creatingPlan={pendingAction === "create-plan"} planBlockedByNamespace={planBlockedByNamespace} onCreatePlan={() => void createPlan()} onRetryPlans={() => void retryPlans()} onSelectTab={selectTab} />
           <div className="mt-5"><DeploymentSchedulePanel key={application.id} scope="applications" id={application.id} canEdit={canApprove} /></div>

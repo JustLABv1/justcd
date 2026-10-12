@@ -217,3 +217,42 @@ func TestCustomReadinessAndConfiguration(t *testing.T) {
 		t.Fatal("configuration exemption crossed API groups")
 	}
 }
+
+func TestOperatorHealthEvidence(t *testing.T) {
+	tests := []struct {
+		name, apiVersion, kind string
+		details                ResourceDetails
+		want                   Status
+	}{
+		{"legacy vault reconciled", "secrets.hashicorp.com/v1beta1", "VaultStaticSecret", ResourceDetails{Generation: 4, LastReconciledGeneration: count(4)}, Healthy},
+		{"legacy vault stale", "secrets.hashicorp.com/v1beta1", "VaultStaticSecret", ResourceDetails{Generation: 4, LastReconciledGeneration: count(3)}, Progressing},
+		{"vault no evidence", "secrets.hashicorp.com/v1beta1", "VaultStaticSecret", ResourceDetails{}, Unknown},
+		{"vault sync failed despite ready", "secrets.hashicorp.com/v1beta1", "VaultStaticSecret", ResourceDetails{Conditions: []KubernetesCondition{{Type: "Ready", Status: "True"}, {Type: "SecretSynced", Status: "False", Reason: "SyncError"}}}, Degraded},
+		{"stackgres inactive failure", "stackgres.io/v1", "SGCluster", ResourceDetails{Conditions: []KubernetesCondition{{Type: "Failed", Status: "False", Reason: "FalseFailed"}}}, Unknown},
+		{"stackgres bootstrapped", "stackgres.io/v1", "SGCluster", ResourceDetails{Conditions: []KubernetesCondition{{Type: "Failed", Status: "False"}, {Type: "Bootstrapped", Status: "True"}, {Type: "InitialScriptsApplied", Status: "True"}}}, Healthy},
+		{"stackgres scripts pending", "stackgres.io/v1", "SGCluster", ResourceDetails{Conditions: []KubernetesCondition{{Type: "Bootstrapped", Status: "True"}, {Type: "InitialScriptsApplied", Status: "False"}}}, Progressing},
+		{"stackgres active failure", "stackgres.io/v1", "SGCluster", ResourceDetails{Conditions: []KubernetesCondition{{Type: "Failed", Status: "True"}}}, Degraded},
+		{"stackgres stale failure", "stackgres.io/v1", "SGCluster", ResourceDetails{Generation: 4, Conditions: []KubernetesCondition{{Type: "Failed", Status: "True", ObservedGeneration: count(3)}}}, Progressing},
+		{"stackgres instances pending", "stackgres.io/v1", "SGCluster", ResourceDetails{DesiredInstances: count(3), CurrentInstances: count(1), Conditions: []KubernetesCondition{{Type: "Bootstrapped", Status: "True"}}}, Progressing},
+		{"stackgres stale inactive failure", "stackgres.io/v1", "SGCluster", ResourceDetails{Generation: 4, Conditions: []KubernetesCondition{{Type: "Failed", Status: "False", ObservedGeneration: count(3)}, {Type: "Bootstrapped", Status: "True", ObservedGeneration: count(4)}}}, Healthy},
+		{"stackgres current failure outranks stale bootstrap", "stackgres.io/v1", "SGCluster", ResourceDetails{Generation: 4, Conditions: []KubernetesCondition{{Type: "Bootstrapped", Status: "True", ObservedGeneration: count(3)}, {Type: "Failed", Status: "True", ObservedGeneration: count(4)}}}, Degraded},
+		{"stackgres restart pending", "stackgres.io/v1", "SGCluster", ResourceDetails{Conditions: []KubernetesCondition{{Type: "Bootstrapped", Status: "True"}, {Type: "PendingRestart", Status: "True"}}}, Progressing},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			id := core.Identity{APIVersion: tt.apiVersion, Kind: tt.kind, Name: "operator"}
+			observation := Observation{Identity: id, Source: "kubernetes", Details: tt.details}
+			if result := Assess(observation); result.Status != tt.want {
+				t.Fatalf("assessment=%#v, want %s", result, tt.want)
+			}
+			result := Evaluate([]core.Identity{id}, []Observation{observation}, nil, false, time.Now())
+			if result.Status != tt.want {
+				t.Fatalf("application=%#v, want %s", result, tt.want)
+			}
+		})
+	}
+	id := core.Identity{APIVersion: "stackgres.io/v1", Kind: "SGCluster", Name: "missing"}
+	if result := Evaluate([]core.Identity{id}, nil, nil, false, time.Now()); result.Status != Missing {
+		t.Fatalf("missing operator=%#v", result)
+	}
+}

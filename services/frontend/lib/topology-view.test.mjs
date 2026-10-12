@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { relatedNodes, topologyLayout, syncState, nodeHeight, nodeWidth } from "./topology-view.ts"
+import { applicationResourceNodes, relatedNodes, topologyLayout, syncState, nodeHeight, nodeWidth } from "./topology-view.ts"
 
 const node = (id, kind = "Deployment", extra = {}) => ({ id, identity: { clusterId: "cluster", apiVersion: "v1", kind, namespace: "demo", name: id }, source: "desired", ...extra })
 const edge = (from, to, relation = "uses") => ({ from, to, relation })
@@ -52,4 +52,16 @@ test("collapsed standalone workloads share a compact band without overlapping", 
   assert.equal(new Set([...layout.positions.values()].map(p => p.y)).size, 3)
   const positions = [...layout.positions.values()]
   positions.forEach((a, i) => positions.slice(i + 1).forEach(b => assert.ok(a.x + nodeWidth <= b.x || b.x + nodeWidth <= a.x || a.y + nodeHeight <= b.y || b.y + nodeHeight <= a.y)))
+})
+
+
+test("application counts exclude generated children but include explicitly tracked Pods and ReplicaSets", () => {
+ const graph = { nodes: [node("app", "Deployment", { tracked: true, source: "kubernetes" }), node("generated", "ReplicaSet", { tracked: false, source: "kubernetes" }), node("pod", "Pod", { tracked: false, source: "kubernetes" }), node("declared", "ReplicaSet", { tracked: true, source: "kubernetes" }), node("standalone", "Pod", { tracked: true })], edges: [edge("app", "generated", "owns"), edge("generated", "pod", "owns"), edge("app", "declared", "owns")] }
+ assert.deepEqual(applicationResourceNodes(graph).map(n => n.id), ["app", "declared", "standalone"])
+ assert.equal(graph.nodes.length, 5)
+})
+
+test("legacy topology uses ownership rather than kind to distinguish runtime children", () => {
+ const graph = { nodes: [node("app"), node("generated", "ReplicaSet", { source: "kubernetes" }), node("standalone", "Pod", { source: "kubernetes" })], edges: [edge("app", "generated", "owns")] }
+ assert.deepEqual(applicationResourceNodes(graph).map(n => n.id), ["app", "standalone"])
 })

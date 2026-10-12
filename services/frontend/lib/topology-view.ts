@@ -83,3 +83,10 @@ export function topologyLayout(graph: ResourceTopology, nodes: TopologyNode[]) {
   }
   return { positions, bands, width, height: Math.max(320, y) }
 }
+
+// Tracked resources are declared or managed by JustCD. Runtime descendants stay
+// in the graph, but do not inflate application inventory metrics.
+export function applicationResourceNodes(graph: ResourceTopology): TopologyNode[] {
+  const children = new Set(graph.edges.filter((edge) => edge.relation === "owns").map((edge) => edge.to))
+  return graph.nodes.filter((node) => node.tracked ?? (node.source === "desired" || node.source === "managed" || !children.has(node.id)))
+}

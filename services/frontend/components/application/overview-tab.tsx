@@ -1,5 +1,7 @@
 "use client"
 
+import { applicationResourceNodes } from "@/lib/topology-view"
+
 import Link from "next/link"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { ArrowRight01Icon } from "@hugeicons/core-free-icons"
@@ -94,7 +96,7 @@ export function OverviewTab({
     : topologyError
       ? "Resource count unavailable"
       : topology
-        ? `${topology.nodes.length} resources`
+        ? `${applicationResourceNodes(topology).length} application resources`
         : "Resources not observed yet"
 
   return (

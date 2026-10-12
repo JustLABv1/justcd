@@ -244,6 +244,9 @@ export type Application = {
 export type ApplicationHealthStatus = "Healthy" | "Progressing" | "Degraded" | "Suspended" | "Missing" | "Unknown" | "Partial"
 export type KubernetesCondition = { type: string; status: string; reason?: string; message?: string; lastTransitionTime?: string; observedGeneration?: number }
 export type ResourceHealthSummary = {
+  lastReconciledGeneration?: number
+  desiredInstances?: number
+  currentInstances?: number
   generation?: number
   desiredReplicas?: number
   readyReplicas?: number
@@ -439,6 +442,8 @@ export type PlanRecord = {
 export type ManagedResource = { identity: Identity; uid: string; resourceVersion: string; adopted?: boolean }
 
 export type TopologyNode = {
+  tracked?: boolean
+  health?: ResourceHealthAssessment
   id: string
   identity: Identity
   source: "desired" | "managed" | "kubernetes" | "sample"

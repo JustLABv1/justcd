@@ -13,7 +13,7 @@ import styles from "./resource-map.module.css"
 import { ResourceActions } from "@/components/resource-actions"
 import { DataGridList } from "@/components/data-grid-table"
 import { Input } from "@/components/ui/input"
-import { identityKey, observed, workload, configurationResource, relatedNodes, syncState, topologyLayout, nodeWidth, nodeHeight, type SyncState } from "@/lib/topology-view"
+import { applicationResourceNodes, identityKey, observed, workload, configurationResource, relatedNodes, syncState, topologyLayout, nodeWidth, nodeHeight, type SyncState } from "@/lib/topology-view"
 import type { Application, Identity, ManagedResource, Operation, PlanRecord, ResourceTopology, TopologyNode } from "@/lib/types"
 
 const labels: Record<SyncState, string> = { syncing: "Applying", applied: "Deployed · health separate", failed: "Failed", create: "Will be created", update: "Out of sync", delete: "Will be destroyed", synced: "Deployed", unknown: "State unknown", observed: "Observed" }
@@ -31,6 +31,7 @@ const resourceIcons: Record<string, typeof CubeIcon> = {
 const iconFor = (kind: string) => resourceIcons[kind] ?? Settings02Icon
 function health(node: TopologyNode) {
   if (node.source === "sample") return `Sample · ${node.readiness || node.phase || "unknown"}`
+  if (node.health) return node.health.message || node.health.status
   const details = node.healthSummary
   const ready = details?.conditions?.find((item) => item.type === "Ready")
   if (ready?.observedGeneration !== undefined && ready.observedGeneration < (details?.generation ?? 0)) return "Readiness pending current generation"
@@ -38,16 +39,19 @@ function health(node: TopologyNode) {
   if (details?.readyReplicas !== undefined && details.desiredReplicas !== undefined) return `Ready ${details.readyReplicas}/${details.desiredReplicas} replicas`
   if (details?.numberReady !== undefined && details.desiredScheduled !== undefined) return `Ready ${details.numberReady}/${details.desiredScheduled} pods`
   if (details?.succeeded !== undefined && details.completions !== undefined) return `Completed ${details.succeeded}/${details.completions}`
-  const condition = details?.conditions?.find((item) => item.status !== "True") ?? details?.conditions?.[0]
+  if (node.uid && configurationResource(node.identity)) return "No workload health check"
+  const condition = ready ?? details?.conditions?.find((item) => ["Failed", "ReplicaFailure"].includes(item.type) && item.status === "True")
+  if (!condition && details?.conditions?.some((item) => item.type === "Failed" && item.status === "False")) return "No failure reported"
   if (condition) return `${condition.type}: ${condition.status}${condition.reason ? ` · ${condition.reason}` : ""}`
   if (details?.failureReason) return details.failureReason
   if (node.phase) return `Phase: ${node.phase}`
-  if (node.uid && configurationResource(node.identity)) return "No workload health check"
   return node.uid ? "Health not reported" : "Not observed in cluster"
 }
 function healthTone(node: TopologyNode) {
+  if (node.source === "sample") return "text-muted-foreground"
+  if (node.health) return node.health.status === "Healthy" ? "font-medium text-success-foreground dark:text-success" : node.health.status === "Degraded" || node.health.status === "Missing" ? "font-medium text-destructive" : node.health.status === "Progressing" ? "font-medium text-warning-foreground dark:text-warning" : "text-muted-foreground"
   if (node.readiness === "Ready" || node.phase === "Succeeded") return "font-medium text-success-foreground dark:text-success"
-  if (node.readiness === "Not ready" || node.phase === "Failed" || node.healthSummary?.failureReason || node.healthSummary?.conditions?.some((item) => item.status === "False")) return "font-medium text-destructive"
+  if (node.readiness === "Not ready" || node.phase === "Failed" || node.healthSummary?.failureReason || node.healthSummary?.conditions?.some((item) => ["Failed", "ReplicaFailure"].includes(item.type) && item.status === "True")) return "font-medium text-destructive"
   if (node.readiness === "Unknown") return "font-medium text-warning-foreground dark:text-warning"
   return "text-muted-foreground"
 }
@@ -128,7 +132,7 @@ export function ResourceMap({ view, onViewChange, application, plan, inventory, 
 
   return <section ref={root} aria-label="Application resource topology" className="mb-6 min-w-0 overflow-hidden rounded-xl border bg-card fullscreen:overflow-auto fullscreen:rounded-none">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
-      <div><h2 className="text-base font-semibold">Resources</h2><p className="mt-1 text-sm text-muted-foreground">{application.name} · {graph.nodes.length} resources · {changedCount} changes · {graph.nodes.filter(observed).length} observed</p></div>
+      <div><h2 className="text-base font-semibold">Resources</h2><p className="mt-1 text-sm text-muted-foreground">{application.name} · {applicationResourceNodes(graph).length} application resources · {graph.nodes.length - applicationResourceNodes(graph).length} runtime children · {changedCount} changes · {graph.nodes.filter(observed).length} observed</p></div>
       <div className="flex items-center gap-2">
         <Button type="button" variant="outline" onClick={onRefresh} loading={refreshing} loadingText="Refreshing…"><HugeiconsIcon icon={RefreshIcon} strokeWidth={1.8} aria-hidden="true" />Refresh cluster</Button>
         <ActionMenu label="View" variant="outline" items={[

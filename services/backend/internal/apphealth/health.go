@@ -33,26 +33,29 @@ type KubernetesCondition struct {
 // ResourceDetails contains only bounded, non-secret status fields copied from
 // Kubernetes. It intentionally does not retain the unstructured Status object.
 type ResourceDetails struct {
-	Generation         int64                 `json:"generation,omitempty"`
-	StatusObserved     bool                  `json:"statusObserved,omitempty"`
-	DesiredReplicas    *int64                `json:"desiredReplicas,omitempty"`
-	ReadyReplicas      *int64                `json:"readyReplicas,omitempty"`
-	UpdatedReplicas    *int64                `json:"updatedReplicas,omitempty"`
-	AvailableReplicas  *int64                `json:"availableReplicas,omitempty"`
-	DesiredScheduled   *int64                `json:"desiredScheduled,omitempty"`
-	NumberScheduled    *int64                `json:"numberScheduled,omitempty"`
-	UpdatedScheduled   *int64                `json:"updatedScheduled,omitempty"`
-	NumberReady        *int64                `json:"numberReady,omitempty"`
-	NumberAvailable    *int64                `json:"numberAvailable,omitempty"`
-	NumberMisscheduled *int64                `json:"numberMisscheduled,omitempty"`
-	Completions        *int64                `json:"completions,omitempty"`
-	Active             *int64                `json:"active,omitempty"`
-	Succeeded          *int64                `json:"succeeded,omitempty"`
-	Failed             *int64                `json:"failed,omitempty"`
-	Suspended          bool                  `json:"suspended,omitempty"`
-	FailureReason      string                `json:"failureReason,omitempty"`
-	FailureMessage     string                `json:"failureMessage,omitempty"`
-	Conditions         []KubernetesCondition `json:"conditions,omitempty"`
+	LastReconciledGeneration *int64                `json:"lastReconciledGeneration,omitempty"`
+	DesiredInstances         *int64                `json:"desiredInstances,omitempty"`
+	CurrentInstances         *int64                `json:"currentInstances,omitempty"`
+	Generation               int64                 `json:"generation,omitempty"`
+	StatusObserved           bool                  `json:"statusObserved,omitempty"`
+	DesiredReplicas          *int64                `json:"desiredReplicas,omitempty"`
+	ReadyReplicas            *int64                `json:"readyReplicas,omitempty"`
+	UpdatedReplicas          *int64                `json:"updatedReplicas,omitempty"`
+	AvailableReplicas        *int64                `json:"availableReplicas,omitempty"`
+	DesiredScheduled         *int64                `json:"desiredScheduled,omitempty"`
+	NumberScheduled          *int64                `json:"numberScheduled,omitempty"`
+	UpdatedScheduled         *int64                `json:"updatedScheduled,omitempty"`
+	NumberReady              *int64                `json:"numberReady,omitempty"`
+	NumberAvailable          *int64                `json:"numberAvailable,omitempty"`
+	NumberMisscheduled       *int64                `json:"numberMisscheduled,omitempty"`
+	Completions              *int64                `json:"completions,omitempty"`
+	Active                   *int64                `json:"active,omitempty"`
+	Succeeded                *int64                `json:"succeeded,omitempty"`
+	Failed                   *int64                `json:"failed,omitempty"`
+	Suspended                bool                  `json:"suspended,omitempty"`
+	FailureReason            string                `json:"failureReason,omitempty"`
+	FailureMessage           string                `json:"failureMessage,omitempty"`
+	Conditions               []KubernetesCondition `json:"conditions,omitempty"`
 }
 
 type Observation struct {
@@ -114,6 +117,18 @@ func ConfigurationResource(identity core.Identity) bool {
 	}
 }
 
+// SupportsObservation includes operators even when they have not emitted Ready.
+func SupportsObservation(item Observation) bool {
+	return !ConfigurationResource(item.Identity) && (SupportedKind(item.Identity.Kind) || operatorResource(item.Identity) || readyCondition(item) != nil)
+}
+
+func operatorResource(identity core.Identity) bool {
+	return (strings.HasPrefix(identity.APIVersion, "secrets.hashicorp.com/") && identity.Kind == "VaultStaticSecret") || (strings.HasPrefix(identity.APIVersion, "stackgres.io/") && identity.Kind == "SGCluster")
+}
+
+// Assess is shared by application health and topology so their interpretation agrees.
+func Assess(item Observation) ResourceAssessment { return assess(item) }
+
 func readyCondition(item Observation) *KubernetesCondition {
 	if !isCustomResource(item.Identity.APIVersion) {
 		return nil
@@ -158,7 +173,7 @@ func Evaluate(managed []core.Identity, observed []Observation, warnings []string
 			sampleCount++
 			continue
 		}
-		if item.Source != "kubernetes" || (!SupportedKind(item.Identity.Kind) && readyCondition(item) == nil) {
+		if item.Source != "kubernetes" || !SupportsObservation(item) {
 			continue
 		}
 		live[item.Identity.Key()] = item
@@ -173,7 +188,7 @@ func Evaluate(managed []core.Identity, observed []Observation, warnings []string
 	managedWorkloads := map[string]core.Identity{}
 	unsupportedResources := make([]core.Identity, 0)
 	for _, identity := range managed {
-		if SupportedKind(identity.Kind) {
+		if SupportedKind(identity.Kind) || operatorResource(identity) {
 			managedWorkloads[identity.Key()] = identity
 		} else if isCustomResource(identity.APIVersion) && !ConfigurationResource(identity) && readyCondition(live[identity.Key()]) == nil {
 			// Built-in resources such as Services and ConfigMaps are not workload
@@ -284,6 +299,34 @@ func Evaluate(managed []core.Identity, observed []Observation, warnings []string
 
 func assess(item Observation) ResourceAssessment {
 	assessment := ResourceAssessment{Identity: item.Identity, Phase: item.Phase, Readiness: item.Readiness, Status: Unknown, Reason: "StatusUnavailable", Message: "Kubernetes did not report enough status to determine this resource's health."}
+	if operatorResource(item.Identity) {
+		// A current explicit failure outranks unrelated stale status. Inactive
+		// failure/maintenance conditions do not provide readiness evidence.
+		for _, c := range item.Details.Conditions {
+			if (c.Type == "Failed" || c.Type == "ReplicaFailure") && c.Status == "True" && (c.ObservedGeneration == nil || *c.ObservedGeneration >= item.Details.Generation) {
+				return withStatus(assessment, Degraded, firstNonEmpty(c.Reason, c.Type), firstNonEmpty(c.Message, c.Type+" condition reports failure."))
+			}
+		}
+		for _, c := range item.Details.Conditions {
+			if (c.Type == "Ready" || c.Type == "Healthy" || c.Type == "SecretSynced" || c.Type == "Bootstrapped" || c.Type == "InitialScriptsApplied" || ((c.Type == "Failed" || c.Type == "ReplicaFailure" || c.Type == "PendingRestart" || c.Type == "PendingUpgrade") && c.Status == "True")) && c.ObservedGeneration != nil && *c.ObservedGeneration < item.Details.Generation {
+				if c.Type == "Ready" {
+					return withStatus(assessment, Progressing, "ReadinessStale", "The operator has not reported readiness for the current resource generation.")
+				}
+				return withStatus(assessment, Progressing, "OperatorStatusStale", "The operator has not assessed the current resource generation.")
+			}
+		}
+		if item.Identity.Kind == "VaultStaticSecret" {
+			for _, c := range item.Details.Conditions {
+				if (c.Type == "Healthy" || c.Type == "SecretSynced") && c.Status != "True" {
+					status := Unknown
+					if c.Status == "False" {
+						status = Degraded
+					}
+					return withStatus(assessment, status, firstNonEmpty(c.Reason, "SecretSyncUnhealthy"), firstNonEmpty(c.Message, "The operator does not report successful secret synchronization."))
+				}
+			}
+		}
+	}
 	if reason := failureCondition(item.Details.Conditions); reason != nil {
 		assessment.Status, assessment.Reason, assessment.Message = Degraded, reason.Reason, reason.Message
 		if assessment.Reason == "" {
@@ -314,6 +357,37 @@ func assess(item Observation) ResourceAssessment {
 		default:
 			return withStatus(assessment, Unknown, firstNonEmpty(condition.Reason, "ResourceReadinessUnknown"), firstNonEmpty(condition.Message, "The operator cannot determine readiness."))
 		}
+	}
+
+	if operatorResource(item.Identity) {
+		if item.Identity.Kind == "VaultStaticSecret" {
+			if generation := item.Details.LastReconciledGeneration; generation != nil && *generation > 0 {
+				if *generation != item.Details.Generation {
+					return withStatus(assessment, Progressing, "SecretSyncPending", "The operator has not synchronized the current generation.")
+				}
+				return withStatus(assessment, Healthy, "SecretSyncSucceeded", "The operator successfully reconciled this generation; this operator version does not report continuous readiness.")
+			}
+			if conditionTrue(item.Details.Conditions, "Healthy") && conditionTrue(item.Details.Conditions, "SecretSynced") {
+				return withStatus(assessment, Healthy, "SecretSyncSucceeded", "The operator reports a healthy, synchronized secret.")
+			}
+		} else {
+			for _, c := range item.Details.Conditions {
+				if ((c.Type == "Bootstrapped" || c.Type == "InitialScriptsApplied") && c.Status != "True") || ((c.Type == "PendingRestart" || c.Type == "PendingUpgrade") && c.Status == "True") {
+					status := Progressing
+					if c.Status == "Unknown" {
+						status = Unknown
+					}
+					return withStatus(assessment, status, firstNonEmpty(c.Reason, c.Type), firstNonEmpty(c.Message, "The cluster is waiting for bootstrapping, scripts, or maintenance."))
+				}
+			}
+			if item.Details.DesiredInstances != nil && item.Details.CurrentInstances != nil && *item.Details.CurrentInstances < *item.Details.DesiredInstances {
+				return withStatus(assessment, Progressing, "ClusterInstancesPending", "The cluster has not created all requested instances.")
+			}
+			if conditionTrue(item.Details.Conditions, "Bootstrapped") {
+				return withStatus(assessment, Healthy, "ClusterBootstrapped", "StackGres reports the cluster bootstrapped; instance workload readiness is assessed separately.")
+			}
+		}
+		return assessment
 	}
 
 	switch item.Identity.Kind {

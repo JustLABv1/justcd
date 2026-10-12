@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/justlab/justcd/services/backend/internal/store"
@@ -104,4 +105,39 @@ func TestIntegrationApplicationOperationsPagination(t *testing.T) {
 			t.Fatalf("invalid empty page: %#v", response)
 		}
 	}
+	// Matches must be found before LIMIT/OFFSET, including older operations.
+	if _, err := db.DB.ExecContext(ctx, `UPDATE operations SET status='failed',operation_type='rollback',message='Older NEEDLE deployment 100%_literal' WHERE id IN ('operation-001','operation-003','operation-005','operation-007','operation-009','operation-011')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		query string
+		count int
+		more  bool
+		first string
+	}{
+		{"limit=5&status=failed&type=rollback&q=needle", 5, true, "operation-011"},
+		{"limit=5&offset=5&status=failed&type=rollback&q=NEEDLE", 1, false, "operation-001"},
+		{"limit=5&status=succeeded&type=rollback", 0, false, ""},
+		{"limit=5&q=100%25_literal", 5, true, "operation-011"},
+		{"limit=5&q=operation-002", 1, false, "operation-002"},
+		{"limit=5&q=absent", 0, false, ""},
+	} {
+		w := request(tt.query)
+		var response struct {
+			Items   []store.Operation `json:"items"`
+			HasMore bool              `json:"hasMore"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if w.Code != http.StatusOK || len(response.Items) != tt.count || response.HasMore != tt.more || (tt.count > 0 && response.Items[0].ID != tt.first) {
+			t.Fatalf("%s: %d %#v", tt.query, w.Code, response)
+		}
+	}
+	for _, query := range []string{"status=bad", "type=bad", "q=" + strings.Repeat("x", 257)} {
+		if w := request(query); w.Code != http.StatusBadRequest {
+			t.Fatalf("%s: %d", query, w.Code)
+		}
+	}
+
 }

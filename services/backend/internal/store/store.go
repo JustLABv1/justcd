@@ -3618,7 +3618,15 @@ func (s *Store) ListOperations(ctx context.Context, applicationID string, limit 
 }
 
 func (s *Store) ListOperationsPage(ctx context.Context, applicationID string, limit, offset int) ([]Operation, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,plan_id,actor_id,operation_type,COALESCE(rollback_checkpoint_id,''),status,message,progress,attempt_count,error_code,next_retry_at,terminal_reason,started_at,finished_at,COALESCE(traceparent,''),waiting_reasons,next_allowed_at,schedule_override_reason,COALESCE(schedule_override_actor_id,''),schedule_deferred FROM operations WHERE application_id=$1 ORDER BY started_at DESC, id DESC LIMIT $2 OFFSET $3`, applicationID, limit, offset)
+	return s.ListOperationsFilteredPage(ctx, applicationID, limit, offset, "", "", "")
+}
+
+// ListOperationsFilteredPage filters the complete history before applying the page.
+func (s *Store) ListOperationsFilteredPage(ctx context.Context, applicationID string, limit, offset int, status, operationType, query string) ([]Operation, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,plan_id,actor_id,operation_type,COALESCE(rollback_checkpoint_id,''),status,message,progress,attempt_count,error_code,next_retry_at,terminal_reason,started_at,finished_at,COALESCE(traceparent,''),waiting_reasons,next_allowed_at,schedule_override_reason,COALESCE(schedule_override_actor_id,''),schedule_deferred FROM operations WHERE application_id=$1
+ AND ($4='' OR status=$4) AND ($5='' OR operation_type=$5)
+ AND ($6='' OR strpos(lower(concat_ws(' ',id,plan_id,actor_id,message,error_code,terminal_reason)),lower($6))>0)
+ ORDER BY started_at DESC, id DESC LIMIT $2 OFFSET $3`, applicationID, limit, offset, status, operationType, query)
 	if err != nil {
 		return nil, err
 	}

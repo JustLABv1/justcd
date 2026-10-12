@@ -89,3 +89,16 @@ func TestObservedCustomReadinessGeneration(t *testing.T) {
 		t.Fatalf("stale Ready condition accepted: %#v", result)
 	}
 }
+
+func TestObservedOperatorSummary(t *testing.T) {
+	vault := unstructured.Unstructured{Object: map[string]any{"apiVersion": "secrets.hashicorp.com/v1beta1", "kind": "VaultStaticSecret", "metadata": map[string]any{"generation": int64(4)}, "status": map[string]any{"lastGeneration": int64(4), "secretMAC": "must-not-retain"}}}
+	details := observedHealthSummary(vault)
+	if details.LastReconciledGeneration == nil || *details.LastReconciledGeneration != 4 {
+		t.Fatalf("vault details=%#v", details)
+	}
+	sg := unstructured.Unstructured{Object: map[string]any{"apiVersion": "stackgres.io/v1", "kind": "SGCluster", "spec": map[string]any{"instances": int64(3)}, "status": map[string]any{"instances": int64(2)}}}
+	details = observedHealthSummary(sg)
+	if details.DesiredInstances == nil || *details.DesiredInstances != 3 || details.CurrentInstances == nil || *details.CurrentInstances != 2 {
+		t.Fatalf("cluster details=%#v", details)
+	}
+}

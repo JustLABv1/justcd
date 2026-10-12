@@ -3169,10 +3169,12 @@ type Operation struct {
 }
 
 type OperationProgress struct {
-	Phase     string          `json:"phase,omitempty"`
-	Total     int             `json:"total"`
-	Completed []core.Identity `json:"completed"`
-	Current   *core.Identity  `json:"current,omitempty"`
+	Phase           string             `json:"phase,omitempty"`
+	Total           int                `json:"total"`
+	Completed       []core.Identity    `json:"completed"`
+	Current         *core.Identity     `json:"current,omitempty"`
+	Resources       []ResourceProgress `json:"resources"`
+	CancelRequested bool               `json:"cancelRequested,omitempty"`
 }
 
 func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actorID string, approvalIDs []string, planDigest, traceParent string, lease time.Duration, progress OperationProgress) (Operation, error) {
@@ -3440,7 +3442,7 @@ func (s *Store) SetOperationProgress(ctx context.Context, id string, progress Op
 	if err != nil {
 		return err
 	}
-	result, err := s.DB.ExecContext(ctx, `UPDATE operations o SET progress=$2 WHERE o.id=$1 AND o.status='running' AND EXISTS(SELECT 1 FROM operation_leases l WHERE l.operation_id=o.id AND l.expires_at>NOW())`, id, encoded)
+	result, err := s.DB.ExecContext(ctx, `UPDATE operations o SET progress=$2::jsonb || jsonb_build_object('cancelRequested',COALESCE((o.progress->>'cancelRequested')::boolean,false)) WHERE o.id=$1 AND o.status='running' AND EXISTS(SELECT 1 FROM operation_leases l WHERE l.operation_id=o.id AND l.expires_at>NOW())`, id, encoded)
 	if err != nil {
 		return err
 	}
@@ -3610,6 +3612,7 @@ func (s *Store) OperationByID(ctx context.Context, id string) (Operation, error)
 	if len(item.ApprovalIDs) == 0 && item.ApprovalID != "" {
 		item.ApprovalIDs = []string{item.ApprovalID}
 	}
+	item.NormalizeProgress()
 	return item, nil
 }
 
@@ -3644,6 +3647,7 @@ func (s *Store) ListOperationsFilteredPage(ctx context.Context, applicationID st
 		if err := json.Unmarshal(rawProgress, &item.Progress); err != nil {
 			return nil, err
 		}
+		item.NormalizeProgress()
 		out = append(out, item)
 	}
 	return out, rows.Err()

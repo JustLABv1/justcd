@@ -31,6 +31,7 @@ services:
         condition: service_healthy
     environment:
       JUSTCD_DATABASE_URL: postgres://justcd:${JUSTCD_POSTGRES_PASSWORD:?Set JUSTCD_POSTGRES_PASSWORD in .env}@postgres:5432/justcd?sslmode=disable
+      JUSTCD_ENV: ${JUSTCD_ENV:-development}
       JUSTCD_ENCRYPTION_KEY: ${JUSTCD_ENCRYPTION_KEY:?Set JUSTCD_ENCRYPTION_KEY in .env}
       JUSTCD_LISTEN_ADDRESS: ":8080"
       JUSTCD_PUBLIC_URL: ${JUSTCD_PUBLIC_URL:-http://localhost:3000}
@@ -56,6 +57,7 @@ services:
       backend:
         condition: service_healthy
     environment:
+      JUSTCD_ENV: ${JUSTCD_ENV:-development}
       JUSTCD_API_URL: http://backend:8080
       PORT: "3000"
       HOSTNAME: 0.0.0.0

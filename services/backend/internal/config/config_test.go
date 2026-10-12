@@ -7,6 +7,7 @@ import (
 )
 
 func TestShutdownGracePeriod(t *testing.T) {
+	t.Setenv("JUSTCD_ENV", "development")
 	t.Setenv("JUSTCD_DATABASE_URL", "postgres://test.invalid/justcd")
 	t.Setenv("JUSTCD_ENCRYPTION_KEY", strings.Repeat("a", 32))
 	t.Setenv("JUSTCD_OTEL_ENABLED", "false")

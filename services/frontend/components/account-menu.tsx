@@ -1,5 +1,6 @@
 "use client"
 
+import { useRouter } from "next/navigation"
 import { useTheme } from "next-themes"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { ArrowDown01Icon, Logout01Icon } from "@hugeicons/core-free-icons"
@@ -9,6 +10,7 @@ import type { User } from "@/lib/types"
 
 export function AccountMenu({ user, onSignOut, compact = false }: { user: User; onSignOut: () => Promise<void>; compact?: boolean }) {
   const { theme, setTheme } = useTheme()
+  const router = useRouter()
   const name = user.displayName || user.email
   return <DropdownMenu>
     <DropdownMenuTrigger aria-label="Account menu" className={compact
@@ -30,6 +32,7 @@ export function AccountMenu({ user, onSignOut, compact = false }: { user: User; 
         </DropdownMenuRadioGroup>
       </DropdownMenuGroup>
       <DropdownMenuSeparator />
+      <DropdownMenuItem onClick={() => router.push("/settings/security")} className="gap-2 py-2">Account security</DropdownMenuItem>
       <DropdownMenuItem onClick={() => void onSignOut()} className="gap-2 py-2"><HugeiconsIcon icon={Logout01Icon} className="size-4" aria-hidden="true" />Sign out</DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>

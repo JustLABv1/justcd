@@ -213,6 +213,9 @@ func (s *Server) updateNamespaceBinding(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) testGitSource(w http.ResponseWriter, r *http.Request) {
+	if !s.securityLimit(w, r, "credential-test", currentUser(r).ID, 10, time.Minute) {
+		return
+	}
 	workspaceID := r.URL.Query().Get("workspaceId")
 	if !s.requireWorkspaceRole(w, r, workspaceID, "viewer") || !s.requireWorkspaceGitSource(w, r, workspaceID, r.PathValue("sourceID")) {
 		return
@@ -336,6 +339,9 @@ func validClusterOperationLimits(maxConcurrent, operationsPerMinute int) bool {
 }
 
 func (s *Server) testCluster(w http.ResponseWriter, r *http.Request) {
+	if !s.securityLimit(w, r, "credential-test", currentUser(r).ID, 10, time.Minute) {
+		return
+	}
 	var input struct {
 		WorkspaceID         string `json:"workspaceId"`
 		Namespace           string `json:"namespace"`

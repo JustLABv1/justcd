@@ -22,6 +22,8 @@ export default function LoginPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [busy, setBusy] = useState(false)
+  const [mfaRequired, setMfaRequired] = useState(false)
+  const [code, setCode] = useState("")
   const [signupAvailable, setSignupAvailable] = useState(false)
   const [loadingOptions, setLoadingOptions] = useState(true)
   const [loadError, setLoadError] = useState<unknown | null>(null)
@@ -49,7 +51,8 @@ export default function LoginPage() {
     event.preventDefault()
     setBusy(true)
     try {
-      await apiPost("/api/v1/auth/login", { email, password })
+      const result = await apiPost<{ mfaRequired?: boolean }>("/api/v1/auth/login", { email, password, code })
+      if (result.mfaRequired) { setMfaRequired(true); return }
       router.replace("/")
     } catch (cause) {
       toast.error(errorMessage(cause), cause)
@@ -61,8 +64,9 @@ export default function LoginPage() {
   return (
     <AuthShell eyebrow="Welcome back" title="Sign in to JustCD" description="Your next deployment starts here.">
       <form className="mt-7 space-y-4" onSubmit={submit}>
-        <FormField label="Email address" htmlFor="email"><Input id="email" type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} required /></FormField>
-        <FormField label="Password" htmlFor="password"><Input id="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></FormField>
+        <FormField label="Email address" htmlFor="email"><Input id="email" type="email" autoComplete="username" value={email} disabled={busy} onChange={(event) => { setEmail(event.target.value); setMfaRequired(false); setCode("") }} required /></FormField>
+        <FormField label="Password" htmlFor="password"><Input id="password" type="password" autoComplete="current-password" value={password} disabled={busy} onChange={(event) => { setPassword(event.target.value); setMfaRequired(false); setCode("") }} required /></FormField>
+        {mfaRequired && <FormField label="Authenticator or recovery code" htmlFor="login-code"><Input id="login-code" autoComplete="one-time-code" value={code} onChange={e => setCode(e.target.value)} required autoFocus disabled={busy} /></FormField>}
         <Button className="w-full" type="submit" loading={busy} loadingText="Signing in…">Sign in</Button>
       </form>
 

@@ -49,17 +49,49 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and publish ${{ matrix.service }}
+      - name: Build ${{ matrix.service }}
         uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
-          push: true
+          load: true
+          pull: true
+          no-cache-filters: runtime
           tags: |
             ghcr.io/justlabv1/justcd:${{ matrix.service }}
             ghcr.io/justlabv1/justcd:${{ matrix.service }}-${{ github.ref_name }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+      - name: Record all ${{ matrix.service }} vulnerability findings
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ghcr.io/justlabv1/justcd:${{ matrix.service }}-${{ github.ref_name }}
+          scanners: vuln
+          format: json
+          output: trivy-${{ matrix.service }}.json
+          exit-code: '0'
+      - name: Keep vulnerability report
+        uses: actions/upload-artifact@v7
+        with:
+          name: vulnerabilities-${{ matrix.service }}
+          path: trivy-${{ matrix.service }}.json
+          retention-days: 14
+      - name: Block fixable HIGH/CRITICAL findings before publishing
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          skip-setup-trivy: true
+          image-ref: ghcr.io/justlabv1/justcd:${{ matrix.service }}-${{ github.ref_name }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Publish scanned ${{ matrix.service }}
+        env:
+          IMAGE: ghcr.io/justlabv1/justcd:${{ matrix.service }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          docker push "$IMAGE-$RELEASE_TAG"
+          docker push "$IMAGE"
 
   release:
     needs: images

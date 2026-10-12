@@ -359,7 +359,21 @@ trivy image --scanners vuln --severity HIGH,CRITICAL ghcr.io/justlabv1/justcd:fr
 
 Rebuild and rescan regularly as base images and vulnerability data change.
 
-Deploy with the [Helm chart](charts/justcd/README.md). It requires an external
+Deploy on a server with [Docker Compose](docs/docker-compose.md). The included
+stack runs the frontend, backend, and PostgreSQL with persistent database storage:
+
+```sh
+cp .env.example .env
+# Edit .env: generate two separate secrets with openssl rand -hex 32.
+docker compose pull
+docker compose up -d --wait
+```
+
+The frontend binds to `127.0.0.1:3000` by default. The guide covers first setup,
+HTTPS reverse proxies, release pinning, source builds, backups, and upgrades.
+JustCD still deploys applications to Kubernetes; Compose hosts the control plane.
+
+Alternatively, deploy with the [Helm chart](charts/justcd/README.md). It requires an external
 PostgreSQL database, a Secret holding `JUSTCD_DATABASE_URL` and
 `JUSTCD_ENCRYPTION_KEY`, and the browser-facing `publicUrl`.
 

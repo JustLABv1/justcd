@@ -39,6 +39,7 @@ services/frontend/yarn-debug.log*
 services/frontend/yarn-error.log*
 
 # local env files
+.env
 .env*.local
 
 # typescript

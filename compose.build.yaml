@@ -1,0 +1,11 @@
+# Optional: build the checked-out source instead of pulling release images.
+# docker compose -f compose.yaml -f compose.build.yaml up -d --build --wait
+services:
+  backend:
+    image: justcd-backend:local
+    build:
+      context: ./services/backend
+  frontend:
+    image: justcd-frontend:local
+    build:
+      context: ./services/frontend

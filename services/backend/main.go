@@ -81,6 +81,9 @@ func run(logger *slog.Logger) error {
 	lifecycle.Start(func(ctx, executionCtx context.Context) {
 		server.Syncer.RunOperationWorkerWithDrain(ctx, executionCtx, logger)
 	})
+	lifecycle.Start(func(ctx, executionCtx context.Context) {
+		server.RunTaskWorker(ctx, executionCtx, logger)
+	})
 	lifecycle.Start(func(ctx, _ context.Context) { server.RunReviewWorker(ctx, logger) })
 	if telemetry.Metrics.Enabled() {
 		lifecycle.Start(func(ctx, _ context.Context) { runQueueMetrics(ctx, db, telemetry.Metrics, logger) })

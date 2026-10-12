@@ -15,9 +15,11 @@ import type { FilterField, FilterQuery } from "@/components/reui/filters/filters
 import { EmptyState, PageHeading } from "@/components/ui-kit"
 import { Badge } from "@/components/reui/badge"
 import { ErrorDetailsButton } from "@/components/error-details"
-import { api, apiPost, errorMessage } from "@/lib/api"
+import { BackgroundTaskStatus } from "@/components/background-task-status"
+import { useBackgroundTasks } from "@/hooks/background-tasks"
+import { APIError, api, apiPostIdempotent, errorMessage } from "@/lib/api"
 import { useWorkspaceSelection } from "@/hooks/workspace-selection"
-import type { Workspace } from "@/lib/types"
+import type { BackgroundTask, Workspace } from "@/lib/types"
 
 type Request = {
   planId: string; planDigest: string; applicationId: string; applicationName: string; applicationGroupId?: string
@@ -26,6 +28,7 @@ type Request = {
 }
 type Inbox = { items: Request[]; applications: { id: string; name: string }[]; page: number; limit: number; total: number; hasMore: boolean }
 type Result = { results: { planId: string; status: number; success: boolean; error?: string }[]; succeeded: number; failed: number }
+type QueuedResult = { results: { planId: string; status: number; accepted: boolean; error?: string; task?: BackgroundTask }[] }
 const pageSize = 20
 const maxSelection = 20
 
@@ -42,11 +45,13 @@ function WorkspaceApprovalInbox({ workspace, workspaceId }: { workspace: Workspa
   const [selected, setSelected] = useState<string[]>([])
   const [comment, setComment] = useState("")
   const [loading, setLoading] = useState(true)
-  const [busy, setBusy] = useState(false)
+  const [actionBusy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [results, setResults] = useState<Result | null>(null)
   const [revision, setRevision] = useState(0)
   const refresh = useCallback(() => { setLoading(true); setError(null); setRevision(value => value + 1) }, [])
+  const backgroundTasks = useBackgroundTasks({ workspaceId }, refresh)
+  const busy = actionBusy || backgroundTasks.pending
   const conditions = flattenFilterConditions(filterQuery)
   const filterValue = (field: string) => String(conditions.find((condition) => condition.field === field)?.values[0] ?? "")
   const applicationId = filterValue("applicationId")
@@ -83,13 +88,31 @@ function WorkspaceApprovalInbox({ workspace, workspaceId }: { workspace: Workspa
     if (!items.length) return
     setBusy(true); setError(null); setResults(null)
     try {
-      const result = await apiPost<Result>("/api/v1/approval-inbox/batch", { items: items.map(item => ({ planId: item.planId, planDigest: item.planDigest })), comment: comment.trim() })
-      setResults(result); setSelected([]); refresh()
-    } catch (cause) { setError(cause) }
+      const queued = await apiPostIdempotent<QueuedResult>("/api/v1/approval-inbox/batch", { items: items.map(item => ({ planId: item.planId, planDigest: item.planDigest })), comment: comment.trim() })
+      setSelected([])
+      void finishBatch(queued)
+    } catch (cause) { if (!(cause instanceof Error && cause.name === "AbortError")) setError(cause) }
     finally { setBusy(false) }
+  }
+  async function finishBatch(queued: QueuedResult) {
+    try {
+      const completed = await Promise.all(queued.results.map(async (item) => {
+        if (!item.accepted || !item.task) return { planId: item.planId, status: item.status, success: false, error: item.error }
+        try {
+          await backgroundTasks.wait(item.task)
+          return { planId: item.planId, status: 201, success: true }
+        } catch (cause) {
+          if (cause instanceof Error && cause.name === "AbortError") throw cause
+          return { planId: item.planId, status: cause instanceof APIError ? cause.status : 0, success: false, error: errorMessage(cause) }
+        }
+      }))
+      const succeeded = completed.filter(item => item.success).length
+      setResults({ results: completed, succeeded, failed: completed.length - succeeded }); setSelected([]); refresh()
+    } catch (cause) { if (!(cause instanceof Error && cause.name === "AbortError")) setError(cause) }
   }
   return <>
     <PageHeading title="Approvals" description={workspace ? `Plans waiting for review in ${workspace.name}.` : "Select a workspace to review its plans."} actions={<Button variant="outline" onClick={refresh} disabled={loading || busy}><HugeiconsIcon icon={Refresh01Icon} strokeWidth={1.8} aria-hidden="true" />Refresh</Button>} />
+    <BackgroundTaskStatus tasks={backgroundTasks.tasks.filter(task => task.kind === "approval")} error={backgroundTasks.error} onRefresh={() => void backgroundTasks.refresh()} showApplication />
     <section aria-label="Filter approval requests" className="mb-5 rounded-xl border bg-card p-4">
       <Filters fields={fields} query={filterQuery} onQueryChange={changeFilters} onBeforeQueryChange={(next) => { const paths = flattenFilterRules(next).map((rule) => rule.path.join(".")); return new Set(paths).size === paths.length }} size="sm" />
     </section>

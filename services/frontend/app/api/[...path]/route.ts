@@ -11,7 +11,7 @@ async function proxy(
   target.search = request.nextUrl.search
 
   const headers = new Headers()
-  for (const name of ["accept", "content-type", "cookie", "x-csrf-token"]) {
+  for (const name of ["accept", "content-type", "cookie", "x-csrf-token", "idempotency-key"]) {
     const value = request.headers.get(name)
     if (value) headers.set(name, value)
   }
@@ -32,7 +32,7 @@ async function proxy(
   })
 
   const responseHeaders = new Headers()
-  for (const name of ["content-type", "cache-control", "location", "www-authenticate"]) {
+  for (const name of ["content-type", "cache-control", "location", "www-authenticate", "retry-after"]) {
     const value = response.headers.get(name)
     if (value) responseHeaders.set(name, value)
   }

@@ -57,6 +57,8 @@ func New(s *store.Store, cfg config.Config, logger *slog.Logger) (*Server, error
 }
 
 func (s *Server) routes() {
+	s.Mux.Handle("GET /api/v1/tasks", s.requireAuth(http.HandlerFunc(s.listBackgroundTasks)))
+	s.Mux.Handle("GET /api/v1/tasks/{taskID}", s.requireAuth(http.HandlerFunc(s.getBackgroundTask)))
 	s.Mux.HandleFunc("POST /api/v1/agents/enroll", s.agentEnroll)
 	s.Mux.HandleFunc("POST /api/v1/agents/renew", s.agentRenew)
 	s.Mux.HandleFunc("POST /api/v1/agents/heartbeat", s.agentHeartbeat)

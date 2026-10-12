@@ -86,6 +86,23 @@ The Ingress routes only to the frontend. Its same-origin `/api` proxy calls
 the backend service inside the namespace. The frontend and backend images can
 be promoted between environments without rebuilding for the internal API URL.
 
+### Background plan and approval tasks
+
+Plan generation and approvals return `202 Accepted` with a PostgreSQL-backed
+task. The frontend polls short status requests while workers fetch Git and read
+Kubernetes state independently of the browser connection. A page reload or
+navigation does not cancel the task. Deploy matching backend and frontend
+versions: API clients must poll `/api/v1/tasks/{taskID}` and read its terminal
+result instead of expecting the plan or approval in the POST response.
+
+Each backend replica runs four task workers. Queued tasks survive restarts;
+running tasks renew a 90-second lease and have a five-minute execution limit.
+Workers drain during the existing shutdown grace period. Interrupted tasks are
+marked failed without automatic replay, because approval may already have been
+recorded. The UI shows the outcome and asks users to refresh current state
+before retrying. See the
+[operations guide](../../docs/production-operations.md#background-plan-and-approval-tasks).
+
 The backend applies database migrations at startup under a PostgreSQL migration
 lock. `backend.replicaCount` defaults to one and can be increased for multiple
 API/worker replicas. The chart does

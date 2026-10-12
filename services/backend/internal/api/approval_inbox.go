@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -205,7 +206,7 @@ func (s *Server) batchApprovePlans(w http.ResponseWriter, r *http.Request) {
 	}
 	seen := map[string]bool{}
 	results := make([]map[string]any, 0, len(input.Items))
-	succeeded := 0
+	accepted := 0
 	for _, item := range input.Items {
 		if item.PlanID == "" || item.PlanDigest == "" || seen[item.PlanID] {
 			writeError(w, 400, "each plan must have a unique ID and reviewed digest")
@@ -218,11 +219,16 @@ func (s *Server) batchApprovePlans(w http.ResponseWriter, r *http.Request) {
 		request := r.Clone(r.Context())
 		request.Body = ioNopCloser{bytes.NewReader(payload)}
 		request.SetPathValue("planID", item.PlanID)
+		request.Header = r.Header.Clone()
+		if key := r.Header.Get("Idempotency-Key"); key != "" {
+			request.Header.Set("Idempotency-Key", fmt.Sprintf("%x", sha256.Sum256([]byte(key+":"+item.PlanID))))
+		}
 		recorder := httptest.NewRecorder()
 		s.approvePlan(recorder, request)
-		result := map[string]any{"planId": item.PlanID, "status": recorder.Code, "success": recorder.Code == http.StatusCreated}
-		if recorder.Code == http.StatusCreated {
-			succeeded++
+		result := map[string]any{"planId": item.PlanID, "status": recorder.Code, "accepted": recorder.Code == http.StatusAccepted}
+		if recorder.Code == http.StatusAccepted {
+			accepted++
+			result["task"] = json.RawMessage(recorder.Body.Bytes())
 		} else {
 			var failure map[string]any
 			if json.Unmarshal(recorder.Body.Bytes(), &failure) == nil {
@@ -233,7 +239,7 @@ func (s *Server) batchApprovePlans(w http.ResponseWriter, r *http.Request) {
 		}
 		results = append(results, result)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"results": results, "succeeded": succeeded, "failed": len(results) - succeeded})
+	writeJSON(w, http.StatusAccepted, map[string]any{"results": results, "accepted": accepted, "failed": len(results) - accepted})
 }
 
 type ioNopCloser struct{ *bytes.Reader }

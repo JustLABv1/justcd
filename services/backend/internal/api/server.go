@@ -57,6 +57,9 @@ func New(s *store.Store, cfg config.Config, logger *slog.Logger) (*Server, error
 }
 
 func (s *Server) routes() {
+	s.Mux.HandleFunc("GET /api/v1/service-status", s.serviceStatus)
+	s.Mux.Handle("GET /api/v1/admin/instance-settings", s.requireAuth(s.requireAdmin(http.HandlerFunc(s.getInstanceSettings))))
+	s.Mux.Handle("PUT /api/v1/admin/instance-settings", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.updateInstanceSettings)))))
 	s.Mux.Handle("GET /api/v1/tasks", s.requireAuth(http.HandlerFunc(s.listBackgroundTasks)))
 	s.Mux.Handle("GET /api/v1/tasks/{taskID}", s.requireAuth(http.HandlerFunc(s.getBackgroundTask)))
 	s.Mux.HandleFunc("POST /api/v1/agents/enroll", s.agentEnroll)
@@ -235,6 +238,17 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), userContextKey, user)
+		if !user.IsAdmin && !maintenanceExempt(r.URL.Path) {
+			settings, err := s.Store.InstanceSettings(r.Context())
+			if err != nil {
+				writeStoreError(w, "could not check service availability")
+				return
+			}
+			if settings.MaintenanceEnabled {
+				writeMaintenanceError(w)
+				return
+			}
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

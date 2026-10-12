@@ -18,6 +18,7 @@ import { GitSourcePanel } from "@/components/settings/git-source-panel"
 import { NamespacePanel } from "@/components/settings/namespace-panel"
 import { OIDCPanel } from "@/components/settings/oidc-panel"
 import { PlatformUsersPanel } from "@/components/settings/users-panel"
+import { MaintenancePanel } from "@/components/settings/maintenance-panel"
 import { LoadErrorNotice, SectionSkeleton, type ActionRunner } from "@/components/settings/shared"
 import type {
   Cluster,
@@ -33,6 +34,7 @@ import type {
 const workspaceSections = ["git-sources", "clusters", "namespaces", "credentials", "shares"]
 
 const navGroups = [
+  { title: "Instance", ids: ["maintenance"] },
   { title: "Delivery", ids: ["git-sources", "clusters", "namespaces"] },
   { title: "Security & access", ids: ["credentials", "shares", "oidc", "users"] },
 ]
@@ -68,6 +70,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
     { id: "shares", title: "Shared connections", description: "Review connection offers and workspace access" },
     { id: "oidc", title: "OIDC providers", description: "Organization sign-in and group mapping", adminOnly: true },
     { id: "users", title: "Platform users", description: "Accounts and access on this JustCD instance", adminOnly: true },
+    { id: "maintenance", title: "Maintenance", description: "Restrict access while administrators work on the instance", adminOnly: true },
   ]
   const visibleSections = sections.filter((item) => workspaceScoped ? workspaceSections.includes(item.id) : !workspaceSections.includes(item.id))
   const current = visibleSections.find((item) => item.id === section)
@@ -248,7 +251,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
         title={current?.title ?? (workspaceScoped ? "Workspace connections" : "Instance settings")}
         description={
           current?.description ??
-          (workspaceScoped ? "Repositories, Kubernetes access, and credentials for this workspace." : "Sign-in providers and accounts for the JustCD instance.")
+          (workspaceScoped ? "Repositories, Kubernetes access, and credentials for this workspace." : "Access, maintenance, and accounts for the JustCD instance.")
         }
         actions={headerAction}
       />
@@ -298,7 +301,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
             {current?.adminOnly && !user?.isAdmin && (
               <EmptyState
                 title="Administrator access required"
-                description="Only instance administrators can manage sign-in providers and local accounts."
+                description="Only instance administrators can manage maintenance, sign-in providers, and local accounts."
                 href="/settings"
                 action="Back to settings"
               />
@@ -311,7 +314,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
             ) : !section ? (
               <>
                 <InstanceNotice />
-                <Panel title="Authentication & users" description="Control how people sign in to JustCD." className="overflow-hidden">
+                <Panel title="Instance administration" description="Manage maintenance, sign-in, and user access." className="overflow-hidden">
                   <ul className="divide-y">
                     {adminVisibleSections.map((item) => (
                       <li key={item.id}>
@@ -332,6 +335,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
               </>
             ) : (
               <div className="settings-content min-w-0">
+                {section === "maintenance" && user?.isAdmin && <MaintenancePanel />}
                 {workspaceScoped && workspace && scopeLoading && <SectionSkeleton label="Loading workspace connections" />}
                 {workspaceScoped && workspace && section === "credentials" && !scopeLoading && (
                   <CredentialPanel

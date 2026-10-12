@@ -451,3 +451,5 @@ custom policy runtime is enabled. Engines receive desired manifests and policy
 configuration without access to stored credentials, database handles, or cluster
 clients, and must remain deterministic and unable to perform network or mutation
 operations.
+
+See [notification integrations](docs/notifications.md) for event routing, providers and delivery troubleshooting.

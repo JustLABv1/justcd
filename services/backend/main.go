@@ -62,6 +62,7 @@ func run(logger *slog.Logger) error {
 		server.Mux.Handle("GET /metrics", telemetry.Metrics.Handler())
 	}
 	lifecycle := newBackendLifecycle()
+	lifecycle.Start(func(ctx, _ context.Context) { server.RunNotificationWorker(ctx) })
 	httpServer := &http.Server{
 		Addr: cfg.ListenAddress, Handler: lifecycle.Handler(observability.HTTPMiddleware(server, logger, telemetry.Metrics)),
 		BaseContext:       func(net.Listener) context.Context { return lifecycle.executionCtx },

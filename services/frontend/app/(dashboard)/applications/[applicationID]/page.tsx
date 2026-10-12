@@ -686,6 +686,13 @@ export default function ApplicationDetailPage() {
       ]} />}
     </>} />
     <BackgroundTaskStatus tasks={backgroundTasks.tasks} error={backgroundTasks.error} onRefresh={() => void backgroundTasks.refresh()} />
+    {error != null && <ErrorNotice error={error} />}
+    {application && <AttentionBar application={application} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} plansError={plansError} retryingPlans={retryingPlans} onRetryPlans={() => void retryPlans()}
+        conflictCount={ownershipConflict ? ownershipConflicts.length : 0} onReviewConflicts={() => setConflictOpen(true)}
+        namespaceMismatch={namespaceMismatch} kustomizeNamespace={kustomization?.namespace} onReviewNamespaceSetting={() => selectTab("settings")}
+        onCancelDecommission={() => void cancelDecommission()}
+        onConfigureExclusion={(issue) => configureIgnore({ mode: "kind", ...(issue.resource ? { version: issue.resource.apiVersion, kind: issue.resource.kind } : {}) })}
+        resumeRevision={resumeRevision} onResumeRevisionChange={setResumeRevision} onKeepPin={() => void updateRollbackTracking("keep")} onResume={() => void updateRollbackTracking("resume")} />}
       <Tabs.Root value={activeTab} onValueChange={(value) => selectTab(String(value))} className="min-w-0">
         {application && <Tabs.List aria-label="Application views" className="mb-6 flex gap-6 overflow-x-auto border-b" activateOnFocus>
           {[
@@ -707,14 +714,7 @@ export default function ApplicationDetailPage() {
       selectTab("changes")
       toast.success(updated.branchTest ? "Branch selected. Create and review a fresh plan before deploying." : "Tracked source restored. Review a fresh plan before deploying and resuming auto-sync.")
     }} />}
-    {error != null && <ErrorNotice error={error} />}
     {application && <>
-      <AttentionBar application={application} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} plansError={plansError} retryingPlans={retryingPlans} onRetryPlans={() => void retryPlans()}
-        conflictCount={ownershipConflict ? ownershipConflicts.length : 0} onReviewConflicts={() => setConflictOpen(true)}
-        namespaceMismatch={namespaceMismatch} kustomizeNamespace={kustomization?.namespace} onReviewNamespaceSetting={() => selectTab("settings")}
-        onCancelDecommission={() => void cancelDecommission()}
-        onConfigureExclusion={(issue) => configureIgnore({ mode: "kind", ...(issue.resource ? { version: issue.resource.apiVersion, kind: issue.resource.kind } : {}) })}
-        resumeRevision={resumeRevision} onResumeRevisionChange={setResumeRevision} onKeepPin={() => void updateRollbackTracking("keep")} onResume={() => void updateRollbackTracking("resume")} />
       <RuntimeHealthStrip application={application} healthHistory={healthHistory} />
       {ownershipConflict && <OwnershipConflictDialog open={conflictOpen} onOpenChange={setConflictOpen} conflicts={ownershipConflicts} applicationId={application.id} canApprove={canApprove} busy={busy} selectedKeys={selectedConflictKeys} onSelectedKeysChange={setSelectedConflictKeys} claimableKeys={claimableConflictKeys} onAdopt={adoptConflict} onAdoptSelected={adoptSelectedConflicts} onConfigureIgnore={configureConflictIgnore} />}
     </>}

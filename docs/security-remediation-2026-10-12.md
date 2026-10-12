@@ -33,13 +33,41 @@ x/crypto in the API and Helm. Source analysis confirms that neither imports
 the deprecated x/crypto/openpgp package; Helm uses the maintained ProtonMail
 implementation. This advisory has no fixed module version.
 
-**CVE-2026-77214 remains open:** Alpine 3.24 still supplies libexpat 2.8.5-r0,
-installed as a Git dependency in the backend. Upstream fixes it in
+Alpine 3.24 still supplies libexpat 2.8.5-r0, installed as a Git dependency
+in the backend. Upstream fixes CVE-2026-77214 and CVE-2026-102633 in
 [Expat 2.9.0](https://github.com/libexpat/libexpat/releases/tag/R_2_9_0).
-The current Trivy Alpine database does not report this CVE, so its absence
-from that scan is not evidence of remediation. Rebuild after Alpine ships
-the fix and verify with the original JFrog scanner.
+The backend now builds and installs a signed `libexpat-2.9.0-r0.apk` from
+checksum-pinned upstream source, using an APKBUILD adapted from Alpine 3.24.
+The build runs upstream tests; CI verifies library resolution and a Git HTTP
+clone as the unprivileged runtime user. Only the library package and public
+signing key enter the runtime image. This removes the need to wait for Alpine
+or mix stable and edge packages, but requires temporary downstream maintenance.
 
-These changes have not been published or deployed. A new release, deployment
-and JFrog rescan of the resulting image digest are needed to update the running
-installation and reconcile the original 25 findings.
+The downstream image built successfully on Linux ARM64. Upstream `make check`
+passed, and the runtime check confirmed libexpat 2.9.0-r0, resolved Git's shared
+library dependencies and successfully cloned the HTTP fixture. Trivy confirmed
+the installed package version and reported only the two conservative
+GO-2026-5932 module findings described above. The new CI job runs the same build
+and runtime check on the Linux AMD64 GitHub runner.
+
+## JFrog rescan reported by the user
+
+The follow-up screenshots show three remaining findings and one policy
+violation. The scanned image digest was not supplied.
+
+- HIGH CVE-2026-77214 and MEDIUM CVE-2026-102633 both affect libexpat
+  2.8.5-r0 and are fixed upstream in 2.9.0. Rechecked the Alpine 3.24 main
+  package indexes for both x86_64 and aarch64: they still supply 2.8.5-r0.
+  This prompted the temporary downstream Expat 2.9.0 package described above.
+- LOW CVE-2026-106587 is reported against openssh-client-common 10.3_p1-r1.
+  The [upstream fix](https://www.openssh.org/releasenotes.html#10.6) concerns
+  `sshd` configuration options interpreted as filenames. The locally rebuilt
+  backend image contains neither `sshd` nor the openssh-server package,
+  so this server-specific issue does not apply to that image. The installed
+  client package still produces a version-based scanner finding.
+
+Publish and deploy the updated backend image, then rescan its exact digest
+with JFrog to confirm that the two libexpat findings disappear. The release
+Trivy check remains useful, but it currently misses these findings. Remove
+the downstream packaging when Alpine 3.24 supplies a patched version; see
+`services/backend/packaging/expat/README.md` for the removal procedure.

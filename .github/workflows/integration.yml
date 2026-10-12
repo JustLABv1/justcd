@@ -14,6 +14,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  backend-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build backend and run Expat upstream tests
+        run: docker build --pull -t justcd-backend-runtime-test -f services/backend/Dockerfile services/backend
+      - name: Check patched library and Git HTTP clone
+        run: sh scripts/check-backend-runtime.sh docker justcd-backend-runtime-test
+
   delivery:
     runs-on: ubuntu-latest
     timeout-minutes: 25

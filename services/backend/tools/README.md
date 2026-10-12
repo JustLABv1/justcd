@@ -26,10 +26,11 @@ on PATH. Preserve the Helm version using the linker flag in the Dockerfile.
   as an application finding. The API does not import that package, and Helm
   uses `github.com/ProtonMail/go-crypto/openpgp` instead.
 - Alpine 3.24 currently supplies libexpat 2.8.5-r0, which does not fix
-  CVE-2026-77214. Git pulls this library into the backend runtime. A patched
-  Alpine package is still needed. Do not mix Alpine stable and edge packages
-  or suppress this finding. Trivy's current Alpine database does not report
-  this CVE yet; a passing Trivy scan does not mean it has been resolved.
+  CVE-2026-77214 or CVE-2026-102633. The backend now builds a signed Expat
+  2.9.0 package from upstream source using `packaging/expat/APKBUILD`.
+  See `packaging/expat/README.md` for maintenance and removal instructions.
+  Trivy's current Alpine database misses these CVEs, so verify the installed
+  package version and confirm the resulting image digest with JFrog.
 
 Release builds pull base images, bypass cached package installation, and run
 `apk upgrade` to obtain available distribution fixes. Trivy blocks publishing

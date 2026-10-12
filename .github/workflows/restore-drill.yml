@@ -1,0 +1,56 @@
+name: Backup and restore drill
+
+on:
+  pull_request:
+    paths:
+      - 'docs/production-operations.md'
+      - 'docs/operations/**'
+      - 'scripts/restore-drill.sh'
+      - 'charts/justcd/**'
+      - 'services/backend/cmd/restore-drill/**'
+      - 'services/backend/internal/store/migrations/**'
+      - 'services/backend/internal/security/**'
+      - '.github/workflows/restore-drill.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: restore-drill-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: services/backend/go.mod
+          cache-dependency-path: services/backend/go.sum
+      - name: Install restore drill prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+          go install sigs.k8s.io/kind@v0.33.0
+          go install filippo.io/age/cmd/...@v1.3.2
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          curl -fsSL https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz -o /tmp/helm.tar.gz
+          curl -fsSL https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz.sha256sum -o /tmp/helm.sha256sum
+          echo "$(cut -d ' ' -f 1 /tmp/helm.sha256sum)  /tmp/helm.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/helm.tar.gz -C /tmp
+          sudo install /tmp/linux-amd64/helm /usr/local/bin/helm
+      - name: Install, back up, restore, and verify
+        run: |
+          set -o pipefail
+          bash scripts/restore-drill.sh 2>&1 | tee /tmp/restore-drill.log
+      - name: Keep drill evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: restore-drill
+          path: /tmp/restore-drill.log
+          if-no-files-found: ignore
+          retention-days: 7

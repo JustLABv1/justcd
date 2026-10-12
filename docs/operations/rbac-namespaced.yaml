@@ -1,0 +1,37 @@
+# Narrow example for ConfigMap-only applications in an existing namespace.
+# Add explicit resource kinds/verbs for your workloads; do not add wildcards.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: justcd-target
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: justcd-deployer
+  namespace: justcd-target
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: justcd-configmap-deployer
+  namespace: justcd-target
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: justcd-configmap-deployer
+  namespace: justcd-target
+subjects:
+  - kind: ServiceAccount
+    name: justcd-deployer
+    namespace: justcd-target
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: justcd-configmap-deployer

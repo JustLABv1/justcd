@@ -386,3 +386,5 @@ Choose **Outbound cluster agent** in the cluster connection wizard, then enroll
 and install the [agent Helm chart](charts/justcd-agent/README.md). Plans and
 approvals remain central; Kubernetes credentials and scope enforcement stay in
 the target cluster. See [installation and recovery](docs/cluster-agents.md).
+
+Production administrators: see the [operations and disaster-recovery runbook](docs/production-operations.md) for tested backup/restore, scoped RBAC, capacity and upgrade procedures.

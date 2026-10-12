@@ -70,10 +70,10 @@ func TestOwnershipConflictsUnwrapFirst(t *testing.T) {
 	}
 }
 
-func TestTakeoverIsTheOnlyApplyThatForcesOwnership(t *testing.T) {
+func TestOnlyReviewedTakeoverStartsWithForcedApply(t *testing.T) {
 	ordinary := applyPatchOptions(core.Change{Kind: core.Update}, "justcd/app-a")
 	if ordinary.Force != nil {
-		t.Fatal("ordinary updates must never force field ownership")
+		t.Fatal("ordinary updates must start without forced field ownership")
 	}
 	takeover := applyPatchOptions(core.Change{Kind: core.Update, Takeover: true}, "justcd/app-a")
 	if takeover.Force == nil || !*takeover.Force {

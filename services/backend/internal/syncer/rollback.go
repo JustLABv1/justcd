@@ -435,7 +435,7 @@ func (s *Service) validateRollbackDryRun(ctx context.Context, app store.Applicat
 				}
 				options := applyPatchOptions(change, "justcd/"+app.ID)
 				options.DryRun = []string{metav1.DryRunAll}
-				_, err = resourceClient.Patch(ctx, change.Identity.Name, types.ApplyPatchType, body, options)
+				_, err = applyWithOwnershipMigration(ctx, resourceClient, change.Identity.Name, body, options)
 			}
 		case core.Delete:
 			uid, rv := types.UID(change.LiveUID), change.LiveResourceVersion

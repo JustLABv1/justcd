@@ -245,6 +245,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     })
   } catch (cause) {
     if (cause instanceof Error && cause.name === "AbortError") throw cause
+    if (typeof window !== "undefined") window.dispatchEvent(new Event("justcd:service-unavailable"))
     throw new APIError(
       errorMessage(cause),
       0,
@@ -279,6 +280,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     )
   }
   if (!response.ok) {
+    if (response.status >= 500 && typeof window !== "undefined") window.dispatchEvent(new Event("justcd:service-unavailable"))
     const message =
       typeof payload === "object" && payload && "error" in payload
         ? String((payload as { error: unknown }).error)

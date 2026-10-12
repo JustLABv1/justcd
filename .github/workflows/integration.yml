@@ -16,13 +16,17 @@ concurrency:
 jobs:
   backend-runtime:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - name: Build backend and run Expat upstream tests
-        run: docker build --pull -t justcd-backend-runtime-test -f services/backend/Dockerfile services/backend
+        run: docker build --pull -t justcd-backend:local -f services/backend/Dockerfile services/backend
       - name: Check patched library and Git HTTP clone
-        run: sh scripts/check-backend-runtime.sh docker justcd-backend-runtime-test
+        run: sh scripts/check-backend-runtime.sh docker justcd-backend:local
+      - name: Build frontend for Compose installation
+        run: docker build --pull -t justcd-frontend:local -f services/frontend/Dockerfile services/frontend
+      - name: Check Compose startup and database persistence
+        run: bash scripts/check-compose.sh
 
   delivery:
     runs-on: ubuntu-latest

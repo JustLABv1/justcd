@@ -86,12 +86,87 @@ The Ingress routes only to the frontend. Its same-origin `/api` proxy calls
 the backend service inside the namespace. The frontend and backend images can
 be promoted between environments without rebuilding for the internal API URL.
 
-The backend applies database migrations at startup. It runs one replica with a
-recreate rollout because that process also runs sync workers. The chart does
+The backend applies database migrations at startup under a PostgreSQL migration
+lock. `backend.replicaCount` defaults to one and can be increased for multiple
+API/worker replicas. The chart does
 not install PostgreSQL or create credentials for target clusters. Set
 `cookieSecure: false` only for a local HTTP installation. Both images expose
 `/healthz` for Kubernetes probes; the backend's endpoint reports process
 availability after startup, not the health of every external connection.
+
+### Worker shutdown and recovery
+
+On SIGTERM or SIGINT the backend stops acquiring queued operations and stops
+its planning, repository, and PR polling loops. Already claimed operations
+continue executing and renewing their database leases during
+`backend.shutdownGracePeriod` (default `30s`, exposed as
+`JUSTCD_SHUTDOWN_GRACE_PERIOD`). Active HTTP requests can also finish during
+this period. New requests receive HTTP 503 while the backend drains.
+
+When the drain period expires, in-flight execution and requests are cancelled.
+The process waits for worker and request cleanup before closing PostgreSQL;
+operation failure recording has a five-second timeout. Telemetry flushing may
+take another ten seconds. Set `backend.terminationGracePeriodSeconds` (default
+`60`) at least twenty seconds longer than the drain period, and increase both
+settings for deployments that need more time to finish operations.
+
+Shutdown cancellation does not undo Kubernetes changes. Interrupted mutations
+require inspection of cluster state and a fresh reviewed plan; they are not
+automatically replayed. A hard kill can leave an operation running until its
+90-second lease expires and the recovery sweep marks it interrupted. The sweep
+runs every 30 seconds. Keep PostgreSQL available during draining and recovery.
+
+### Multiple backend replicas
+
+All replicas must run the same JustCD version and use the same writable
+PostgreSQL database/schema, encryption key, and public URL. Set
+`backend.replicaCount: 2` (or more) to run concurrent API and worker instances.
+Do not configure a separate database per replica. Browser sessions, queue
+entries, approvals, leases, progress, and audit history live in PostgreSQL.
+
+Each replica has a bounded pool of 20 executors. Queue claims serialize the
+cluster concurrency/rate gate, and only one operation can hold an application's
+lease. An additional session advisory lock prevents a suspended executor from
+overlapping its replacement even after lease expiry. Repository discovery also
+uses session advisory locks; startup migrations are serialized per schema.
+Planning can run on multiple replicas, but an active operation prevents saving
+a replacement plan. Repeating an identical current plan reuses its identity and
+approvals; plan creation and its audit event commit together. Claiming a queued operation and recording terminal
+completion use database transactions.
+
+Use PostgreSQL 16 or newer with a primary read/write connection and privileges
+to create/migrate the application tables. Connect directly or through a pooler
+in **session** mode. Transaction/statement pooling is unsupported because it
+cannot preserve advisory-lock ownership. Budget up to 64 database connections
+per backend replica, plus capacity for database administration. Keep the
+PostgreSQL primary and network available during work. Kubernetes writes use
+UID/resource-version and ownership preconditions; losing a database connection
+stops lease renewal and execution, but cannot undo an already accepted request.
+
+The default rolling strategy allows one surge replica and zero unavailable
+replicas. Allow for the surge replica when sizing PostgreSQL connections.
+When upgrading from a version without these coordination rules, first use
+`backend.strategy: {type: Recreate, rollingUpdate: null}` so all old workers stop
+before new workers start, then increase the replica count. For later releases,
+use a rolling upgrade only when their schema/API compatibility permits it.
+
+Crash recovery never automatically replays an ambiguous mutation. Recovery
+atomically fails the old operation and plan, preserves completed/current resource
+progress, pauses reconciliation, clears retry scheduling, releases the expired
+lease, and emits one audit event. Review live state, build a new plan, and obtain
+new approvals where required. If a create reached Kubernetes before its inventory
+row was stored, review and explicitly adopt that object through the ownership
+conflict flow before replanning. Existing reviewed rollback snapshots remain
+available. Already-applied resources retain their identities; a fresh plan
+converges remaining work. A committed completion is idempotent and cannot be
+changed into failure by a late executor or a later recovery sweep.
+
+The integration suite verifies simultaneous migration startup, competing
+claims/guards, lease loss, graceful draining, and SIGKILL at acquisition,
+resource mutation, progress recording, and before/after terminal commit for
+sync, rollback, and decommission. Planner death before/after durable plan
+creation is covered as well. Each interrupted mutation is recovered and then
+converged using a fresh reviewed plan with two backend instances.
 
 ## Metrics and traces
 
@@ -166,8 +241,9 @@ Helm merges security-context maps: set individual default fields to `null` to
 remove them, or set the entire context to `null` to omit it. An empty map does
 not clear defaults. If enabling `readOnlyRootFilesystem`, provide writable
 volumes for paths used by the application and its tools, including `/tmp`.
-The backend remains a single replica with a Recreate strategy to avoid
-concurrent reconciliation workers.
+Backend replicas coordinate through PostgreSQL as described above; configure
+`backend.replicaCount` and `backend.strategy` to match your availability and
+upgrade requirements.
 
 The manifests can be rendered locally; SCC admission and image compatibility
 with the assigned UID must also be verified on your OpenShift cluster.

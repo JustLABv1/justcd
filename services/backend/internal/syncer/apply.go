@@ -135,6 +135,8 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		actorID = *operation.ActorID
 	}
 	finishFailure := func(cause error, planStatus string) (store.Operation, error) {
+		finishCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 		message := safeApplyFailure(cause, operation.Progress, operation.Type)
 		automatic := !app.AutoSyncPaused && operation.Type == "sync" && !record.Plan.Decommission && record.Plan.Rollback == nil
 		decision := DecideRetry(ctx, app.RetryPolicy, operation.AttemptCount, cause, time.Now().UTC(), retryJitterSample(), automatic)
@@ -153,20 +155,9 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		if decision.NextRetryAt != nil {
 			message += " A fresh plan will be built automatically after the retry backoff."
 		}
-		if err := s.Store.FinishOperationWithRetry(context.Background(), operationID, app.ID, message, decision.AttemptCount, decision.ErrorCode, decision.NextRetryAt, decision.TerminalReason); err != nil {
-			_ = s.Store.FinishOperation(context.Background(), operationID, "failed", message)
+		if err := s.Store.FinishOperationWithRetry(finishCtx, operationID, app.ID, message, decision.AttemptCount, decision.ErrorCode, decision.NextRetryAt, decision.TerminalReason, planStatus); err != nil {
+			return operation, errors.Join(cause, err)
 		}
-		if planStatus != "" {
-			_ = s.Store.SetPlanStatus(context.Background(), planID, planStatus)
-		}
-		if decision.NextRetryAt == nil && (app.SyncPolicy == "auto-safe" || operation.Type == "rollback") {
-			_ = s.Store.PauseAutoSync(context.Background(), app.ID)
-		}
-		action := "sync.failed"
-		if record.Plan.Rollback != nil {
-			action = "rollback.failed"
-		}
-		_ = s.Store.Audit(context.Background(), actorID, action, "application", app.ID, map[string]any{"operationId": operationID, "planId": planID, "message": message, "attemptCount": decision.AttemptCount, "errorCode": decision.ErrorCode, "nextRetryAt": decision.NextRetryAt, "terminalReason": decision.TerminalReason, "completed": len(operation.Progress.Completed), "total": operation.Progress.Total, "rollbackCheckpointId": operation.RollbackCheckpointID})
 		operation.Status, operation.Message = "failed", message
 		operation.AttemptCount = decision.AttemptCount
 		operation.ErrorCode = decision.ErrorCode
@@ -258,7 +249,11 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 	completeResource := func(identity core.Identity) error {
 		operation.Progress.Completed = append(operation.Progress.Completed, identity)
 		operation.Progress.Current = nil
-		return s.Store.SetOperationProgress(ctx, operationID, operation.Progress)
+		if err := s.Store.SetOperationProgress(ctx, operationID, operation.Progress); err != nil {
+			return err
+		}
+		s.checkpoint("resource.recorded")
+		return nil
 	}
 	for _, identity := range record.Plan.NamespaceCreations {
 		if !app.CreateNamespaces || record.Plan.Decommission || record.Plan.Rollback != nil || identity.ClusterID != app.ClusterID || identity.Kind != "Namespace" || identity.APIVersion != "v1" || !identity.ClusterScoped || identity.Namespace != "" {
@@ -381,28 +376,23 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 	if record.Plan.Rollback != nil {
 		lastSyncedRevision = record.Plan.Rollback.Revision
 	}
-	if err := s.Store.MarkApplicationSynced(ctx, app.ID, lastSyncedRevision, health); err != nil {
-		return finishFailure(fmt.Errorf("cluster changes completed but sync status could not be saved: %w", err), "failed")
-	}
-	if err := s.Store.SetPlanStatus(ctx, record.ID, "applied"); err != nil {
-		return finishFailure(fmt.Errorf("cluster changes completed but plan status could not be saved: %w", err), "failed")
-	}
 	message := "Sync completed successfully"
 	action := "sync.succeeded"
 	if record.Plan.Rollback != nil {
 		message = "Rollback completed successfully; automatic reconciliation is paused"
 		action = "rollback.succeeded"
 	}
-	if err := s.Store.FinishOperation(ctx, operationID, "succeeded", message); err != nil {
-		return operation, err
-	}
 	operation.Progress.Phase = "complete"
-	_ = s.Store.SetOperationProgress(ctx, operationID, operation.Progress)
 	details := map[string]any{"operationId": operationID, "planId": record.ID, "revision": lastSyncedRevision, "digest": record.Plan.Digest, "changes": len(record.Plan.Changes)}
 	if target := record.Plan.Rollback; target != nil {
 		details["rollbackTarget"] = map[string]any{"kind": target.Kind, "id": target.ID, "revision": target.Revision}
 	}
-	_ = s.Store.Audit(ctx, actorID, action, "application", app.ID, details)
+	operation.Message = message
+	s.checkpoint("operation.before_complete")
+	if err := s.Store.CompleteDeployment(ctx, operation, lastSyncedRevision, health, action, details); err != nil {
+		return operation, err
+	}
+	s.checkpoint("operation.completed")
 	operation.Status = "succeeded"
 	operation.Message = message
 	now := time.Now().UTC()
@@ -482,6 +472,7 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 		if err != nil {
 			return fmt.Errorf("create failed for %s %s/%s: %w", resource.Identity.Kind, resource.Identity.Namespace, resource.Identity.Name, err)
 		}
+		s.checkpoint("resource.applied")
 		current, err := render.CanonicalLive(applied, input.Cluster.ID, applicationID, resource.Identity.ClusterScoped)
 		if err != nil {
 			return err
@@ -500,6 +491,7 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 	if err != nil {
 		return fmt.Errorf("server-side apply failed for %s %s/%s: %w", resource.Identity.Kind, resource.Identity.Namespace, resource.Identity.Name, err)
 	}
+	s.checkpoint("resource.applied")
 	if applied.GetUID() != existingUID {
 		return fmt.Errorf("update target %s %s/%s was replaced during apply; create a new plan", resource.Identity.Kind, resource.Identity.Namespace, resource.Identity.Name)
 	}
@@ -565,6 +557,7 @@ func (s *Service) deleteResource(ctx context.Context, input planInput, applicati
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete failed for %s %s/%s: %w", change.Identity.Kind, change.Identity.Namespace, change.Identity.Name, err)
 	}
+	s.checkpoint("resource.deleted")
 	return s.Store.DeleteManagedResource(ctx, applicationID, change.Identity)
 }
 

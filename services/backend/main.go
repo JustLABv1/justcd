@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -60,8 +61,10 @@ func run(logger *slog.Logger) error {
 	if telemetry.Metrics.Enabled() {
 		server.Mux.Handle("GET /metrics", telemetry.Metrics.Handler())
 	}
+	lifecycle := newBackendLifecycle()
 	httpServer := &http.Server{
-		Addr: cfg.ListenAddress, Handler: observability.HTTPMiddleware(server, logger, telemetry.Metrics),
+		Addr: cfg.ListenAddress, Handler: lifecycle.Handler(observability.HTTPMiddleware(server, logger, telemetry.Metrics)),
+		BaseContext:       func(net.Listener) context.Context { return lifecycle.executionCtx },
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: 90 * time.Second, IdleTimeout: 90 * time.Second,
 		MaxHeaderBytes: 1 << 20,
@@ -73,24 +76,25 @@ func run(logger *slog.Logger) error {
 	}()
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stopSignals()
-	go server.Syncer.RunPoller(signalCtx, logger)
-	go server.Syncer.RunRepositoryPoller(signalCtx, logger)
-	go server.Syncer.RunOperationWorker(signalCtx, logger)
-	go server.RunReviewWorker(signalCtx, logger)
+	lifecycle.Start(func(ctx, _ context.Context) { server.Syncer.RunPoller(ctx, logger) })
+	lifecycle.Start(func(ctx, _ context.Context) { server.Syncer.RunRepositoryPoller(ctx, logger) })
+	lifecycle.Start(func(ctx, executionCtx context.Context) {
+		server.Syncer.RunOperationWorkerWithDrain(ctx, executionCtx, logger)
+	})
+	lifecycle.Start(func(ctx, _ context.Context) { server.RunReviewWorker(ctx, logger) })
 	if telemetry.Metrics.Enabled() {
-		go runQueueMetrics(signalCtx, db, telemetry.Metrics, logger)
+		lifecycle.Start(func(ctx, _ context.Context) { runQueueMetrics(ctx, db, telemetry.Metrics, logger) })
 	}
+	var serveResult error
 	select {
 	case <-signalCtx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		return httpServer.Shutdown(shutdownCtx)
 	case err := <-serveErr:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
+		if !errors.Is(err, http.ErrServerClosed) {
+			serveResult = fmt.Errorf("serve HTTP on %s: %w", cfg.ListenAddress, err)
 		}
-		return fmt.Errorf("serve HTTP on %s: %w", cfg.ListenAddress, err)
 	}
+	logger.Info("JustCD backend draining", "gracePeriod", cfg.ShutdownGracePeriod)
+	return errors.Join(serveResult, lifecycle.Shutdown(httpServer, cfg.ShutdownGracePeriod))
 }
 
 func runQueueMetrics(ctx context.Context, db *store.Store, metrics *observability.Metrics, logger *slog.Logger) {

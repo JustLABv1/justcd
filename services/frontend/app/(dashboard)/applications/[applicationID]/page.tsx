@@ -16,6 +16,8 @@ import { OwnershipConflictDialog } from "@/components/application/ownership-conf
 import { RuntimeHealthStrip } from "@/components/application/runtime-health"
 import { SettingsTab } from "@/components/application/settings-tab"
 import { ApplicationDetailSkeleton } from "@/components/application-detail-skeleton"
+import { BackgroundTaskStatus } from "@/components/background-task-status"
+import { useBackgroundTasks } from "@/hooks/background-tasks"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -24,10 +26,10 @@ import { PageHeading, StatusBadge } from "@/components/ui-kit"
 import { ErrorDetailsButton } from "@/components/error-details"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
-import { APIError, api, apiDelete, apiPost, errorMessage } from "@/lib/api"
+import { APIError, api, apiDelete, apiPost, errorMessage, taskError } from "@/lib/api"
 import { BranchTestControls } from "@/components/branch-test-controls"
 import { PullRequestsWorkspace } from "@/components/pull-requests-workspace"
-import type { Application, ApplicationHealthTransition, FieldExclusion, Identity, IgnoreRule, IgnoreSelector, ListResponse, ManagedResource, Operation, OwnershipConflict, PlanApprovalSummary, PlanRecord, Workspace, WorkspaceMember, ResourceTopology, RollbackTarget } from "@/lib/types"
+import type { Application, ApplicationHealthTransition, BackgroundTask, FieldExclusion, Identity, IgnoreRule, IgnoreSelector, ListResponse, ManagedResource, Operation, OwnershipConflict, PlanApprovalSummary, PlanRecord, Workspace, WorkspaceMember, ResourceTopology, RollbackTarget } from "@/lib/types"
 
 export default function ApplicationDetailPage() {
   const { applicationID } = useParams<{ applicationID: string }>()
@@ -59,7 +61,7 @@ export default function ApplicationDetailPage() {
   const [approvalComment, setApprovalComment] = useState("")
   const [loading, setLoading] = useState(true)
   const [pendingData, setPendingData] = useState({ workspace: true, plans: true, resources: true, operations: true, topology: true, rollback: true, rules: true, selectors: true })
-  const [busy, setBusy] = useState(false)
+  const [actionBusy, setBusy] = useState(false)
   const [pendingAction, setPendingAction] = useState("")
   const [operationsError, setOperationsError] = useState<unknown | null>(null)
   const [plansError, setPlansError] = useState<unknown | null>(null)
@@ -73,6 +75,17 @@ export default function ApplicationDetailPage() {
   const [activeTab, setActiveTab] = useState("overview")
   const [conflictOpen, setConflictOpen] = useState(false)
   const [ignorePrefill, setIgnorePrefill] = useState<IgnorePrefill | null>(null)
+  const backgroundTasks = useBackgroundTasks({ applicationId: applicationID }, (task) => {
+    void loadData().catch(() => {})
+    if (task.kind === "approval") setApprovalSummary(null)
+    if (task.status === "failed") acceptRefreshedPlan(taskError(task))
+    if (task.status === "succeeded" && task.kind === "plan") {
+      const plan = task.result as PlanRecord
+      setActivePlan(plan)
+      selectTab("changes")
+    }
+  })
+  const busy = actionBusy || backgroundTasks.pending
 
   function setConflictReview(conflicts: OwnershipConflict[]) {
     setOwnershipConflicts(conflicts)
@@ -275,7 +288,7 @@ export default function ApplicationDetailPage() {
     conflictEpoch.current += 1
     setBusy(true); setPendingAction("create-plan"); setError(null); setApprovalSummary(null)
     try {
-      const plan = await apiPost<PlanRecord>(`/api/v1/applications/${encodeURIComponent(applicationID)}/plans`)
+      const plan = await backgroundTasks.run<PlanRecord>(`/api/v1/applications/${encodeURIComponent(applicationID)}/plans`)
       setConflictReview([])
       setPlansError(null)
       setActivePlan(plan)
@@ -284,6 +297,7 @@ export default function ApplicationDetailPage() {
       selectTab("changes")
       await refreshSummary()
     } catch (cause) {
+      if (cause instanceof Error && cause.name === "AbortError") return
       if (cause instanceof APIError && cause.status === 409 && typeof cause.payload === "object" && cause.payload && "conflict" in cause.payload) {
         const payload = cause.payload as { conflict: OwnershipConflict; conflicts?: OwnershipConflict[] }
         setConflictReview(payload.conflicts ?? [payload.conflict])
@@ -549,8 +563,16 @@ export default function ApplicationDetailPage() {
     if (!activePlan || selectionDirty) return
     setBusy(true); setPendingAction("approve-plan"); setError(null)
     try {
-      const result = await apiPost<{ id: string; expiresAt: string; operation?: Operation; autoApplyError?: string }>(`/api/v1/plans/${encodeURIComponent(activePlan.id)}/approvals`, { comment: approvalComment.trim(), planDigest: activePlan.plan.digest })
+      const task = await backgroundTasks.queue<{ id: string; expiresAt: string; operation?: Operation; autoApplyError?: string }>(`/api/v1/plans/${encodeURIComponent(activePlan.id)}/approvals`, { comment: approvalComment.trim(), planDigest: activePlan.plan.digest })
       setApprovalComment("")
+      void finishApproval(task, activePlan.id)
+    } catch (cause) { if (!(cause instanceof Error && cause.name === "AbortError") && !acceptRefreshedPlan(cause)) toast.error(errorMessage(cause), cause) }
+    finally { setBusy(false); setPendingAction("") }
+  }
+
+  async function finishApproval(task: BackgroundTask<{ id: string; expiresAt: string; operation?: Operation; autoApplyError?: string }>, planId: string) {
+    try {
+      const result = await backgroundTasks.wait(task)
       if (result.operation) {
         setApprovalSummary(null)
         toast.success("Final approval recorded. Automatic sync queued for the reviewed plan.")
@@ -558,11 +580,11 @@ export default function ApplicationDetailPage() {
         await refreshSummary()
         return
       }
-      const summary = await api<PlanApprovalSummary>(`/api/v1/plans/${encodeURIComponent(activePlan.id)}/approvals`)
+      const summary = await api<PlanApprovalSummary>(`/api/v1/plans/${encodeURIComponent(planId)}/approvals`)
       setApprovalSummary(summary)
       if (result.autoApplyError) toast.warning(result.autoApplyError)
       else toast.success(`Approval recorded: ${summary.approvedApprovals} of ${summary.requiredApprovals} required.`)
-    } catch (cause) { if (!acceptRefreshedPlan(cause)) toast.error(errorMessage(cause), cause) } finally { setBusy(false); setPendingAction("") }
+    } catch (cause) { if (!(cause instanceof Error && cause.name === "AbortError") && !acceptRefreshedPlan(cause)) toast.error(errorMessage(cause), cause) }
   }
 
   async function applyPlan() {
@@ -662,6 +684,7 @@ export default function ApplicationDetailPage() {
         ...(!application.autoSyncPaused ? [{ label: "Pause auto-sync", icon: PauseIcon, separatorBefore: true, disabled: busy || hasPendingOperation, onSelect: () => void pauseSync() }] : []),
       ]} />}
     </>} />
+    <BackgroundTaskStatus tasks={backgroundTasks.tasks} error={backgroundTasks.error} onRefresh={() => void backgroundTasks.refresh()} />
       <Tabs.Root value={activeTab} onValueChange={(value) => selectTab(String(value))} className="min-w-0">
         {application && <Tabs.List aria-label="Application views" className="mb-6 flex gap-6 overflow-x-auto border-b" activateOnFocus>
           {[

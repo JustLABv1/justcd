@@ -96,7 +96,7 @@ func stringValue(value any) string {
 	return text
 }
 
-func (s *Server) createPlan(w http.ResponseWriter, r *http.Request) {
+func (s *Server) createPlanNow(w http.ResponseWriter, r *http.Request) {
 	applicationID := r.PathValue("applicationID")
 	app, err := s.Store.ApplicationByID(r.Context(), applicationID)
 	if err != nil {
@@ -173,7 +173,7 @@ func (s *Server) getPlan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toPlanView(record))
 }
 
-func (s *Server) approvePlan(w http.ResponseWriter, r *http.Request) {
+func (s *Server) approvePlanNow(w http.ResponseWriter, r *http.Request) {
 	record, app, ok := s.authorizedPlan(w, r, "viewer")
 	if !ok {
 		return

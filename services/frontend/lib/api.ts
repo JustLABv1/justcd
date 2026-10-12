@@ -1,3 +1,5 @@
+import type { BackgroundTask } from "@/lib/types"
+
 export type APIErrorCategory =
   | "validation"
   | "authentication"
@@ -295,6 +297,83 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export function apiPost<T>(path: string, value?: unknown) {
   return api<T>(path, { method: "POST", body: JSON.stringify(value ?? {}) })
+}
+
+export function taskError(task: BackgroundTask) {
+  const payload = task.result
+  const message =
+    typeof payload === "object" && payload && "error" in payload
+      ? String(payload.error)
+      : "Background work failed."
+  const status = task.httpStatus ?? 500
+  return new APIError(
+    message,
+    status,
+    payload,
+    { method: "GET", path: `/api/v1/tasks/${task.id}` },
+    undefined,
+    errorMetadata(status, payload)
+  )
+}
+
+export async function waitForTask<T>(
+  initial: BackgroundTask<T>,
+  signal: AbortSignal
+): Promise<T> {
+  let task = initial
+  while (task.status === "queued" || task.status === "running") {
+    await new Promise<void>((resolve, reject) => {
+      signal.throwIfAborted()
+      const abort = () => {
+        clearTimeout(timer)
+        reject(new DOMException("Aborted", "AbortError"))
+      }
+      const timer = window.setTimeout(() => {
+        signal.removeEventListener("abort", abort)
+        resolve()
+      }, 1000)
+      signal.addEventListener("abort", abort, { once: true })
+    })
+    task = await api<BackgroundTask<T>>(
+      `/api/v1/tasks/${encodeURIComponent(task.id)}`,
+      { signal }
+    )
+  }
+  if (task.status === "failed") throw taskError(task)
+  return task.result as T
+}
+
+// Retrying a lost queue response with the same key cannot execute a second task.
+export async function apiPostIdempotent<T>(
+  path: string,
+  value: unknown,
+  signal?: AbortSignal
+) {
+  const key = crypto.randomUUID()
+  const init = {
+    method: "POST",
+    body: JSON.stringify(value ?? {}),
+    headers: { "idempotency-key": key },
+    signal,
+  }
+  try {
+    return await api<T>(path, init)
+  } catch (cause) {
+    if (
+      cause instanceof APIError &&
+      (cause.status === 0 || cause.status >= 500)
+    )
+      return api<T>(path, init)
+    throw cause
+  }
+}
+
+export function submitTask<T>(
+  path: string,
+  value: unknown,
+  signal: AbortSignal
+) {
+  return apiPostIdempotent<BackgroundTask<T>>(path, value, signal)
 }
 
 export function apiDelete<T>(path: string) {

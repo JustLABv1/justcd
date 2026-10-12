@@ -498,3 +498,14 @@ export type OIDCProvider = {
 }
 
 export type ListResponse<T> = { items: T[] }
+export type BackgroundTask<T = unknown> = {
+  id: string
+  applicationId: string
+  kind: "plan" | "approval"
+  status: "queued" | "running" | "succeeded" | "failed"
+  result?: T
+  httpStatus?: number
+  createdAt: string
+  startedAt?: string
+  finishedAt?: string
+}

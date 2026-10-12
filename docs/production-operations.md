@@ -43,6 +43,44 @@ version; do not scale older worker implementations by hand.
    canary plan/apply. Restrict initial signup until your administrator exists.
    Process health alone does not verify credential decryption or target access.
 
+## Background plan and approval tasks
+
+Plan generation and approval requests return `202 Accepted` immediately after
+saving a task in PostgreSQL. Git reads, cluster inspection and approval freshness
+checks execute in a bounded background worker pool. The task's `Location` header
+points to `/api/v1/tasks/{taskID}`. Poll until `status` is `succeeded` or `failed`;
+then read `result` and `httpStatus`. Failed results preserve structured error
+metadata, including ownership conflicts and refreshed stale plans. An accepted
+task does not mean an approval has been recorded.
+
+Clients should send a unique `Idempotency-Key` per intended action and reuse it
+when retrying a lost queue response. Concurrent requests for the same actor,
+application and action share active work. Keys cannot be reused with different
+input. The approval POST requires the reviewed `planDigest`; the worker reloads
+the user and workspace permissions and recalculates plan freshness before saving
+approval. Batch approval queues one task per plan and can partially succeed.
+
+The frontend shows queued/running work on the application page and approval
+inbox, and restores task status after navigation or reload. Task reads require
+both the original requester and current workspace access. Request inputs and
+lease tokens are never exposed in the status response. Deploy the backend and
+frontend together; this changes the plan/approval POST response contract from a
+completed action to a background task.
+
+Queued tasks survive backend restarts. Running tasks renew a 90-second lease,
+have a five-minute execution limit and drain during the backend's shutdown grace
+period. Expired leases become `task.interrupted` failures without automatic
+replay: an approval may already have committed. Refresh plans, approvals and
+operations before resubmitting interrupted work. Task outcomes and idempotency
+keys remain stored until their application is deleted.
+
+For slow or failed tasks, inspect `task.execute`, `plan.build` and
+`plan.calculate` traces, backend logs, Git connectivity, Kubernetes API latency
+and agent connectivity. Gateway timeouts now affect only the short submission
+and polling requests for these actions. If an HTML 504 still occurs on them,
+check database/API availability and gateway configuration. Other synchronous
+API actions continue to use the backend's 90-second HTTP write timeout.
+
 ## Least-privilege target RBAC
 
 Start with [rbac-namespaced.yaml](operations/rbac-namespaced.yaml). Its dedicated

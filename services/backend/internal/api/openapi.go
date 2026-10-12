@@ -428,11 +428,19 @@ paths:
       responses:
         '200': { description: Plan history }
     post:
-      summary: Render Git, inspect live state, and create a plan
+      summary: Queue plan generation without waiting for Git or Kubernetes
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema: { type: string, maxLength: 128 }
+          description: Retrying the same request returns its original task. Concurrent equivalent requests share active work.
       responses:
-        '201': { description: Immutable review plan }
-        '409': { description: An existing untracked resource blocks the plan; includes ownership conflict metadata }
-        '422': { description: Could not create a safe plan }
+        '202':
+          description: Durable background task. Poll its Location or /tasks/{taskID}; a successful result contains the immutable review plan and a failed result contains the structured API error.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackgroundTask' }
+        '409': { description: Idempotency key was reused with different input }
   /applications/{applicationID}/retry:
     post:
       summary: Manually retry a failed sync using a newly calculated plan (deployer or owner)
@@ -584,7 +592,7 @@ paths:
         '200': { description: Authorized, actionable requests with risk summaries and pagination metadata }
   /approval-inbox/batch:
     post:
-      summary: Independently recheck and approve up to 20 reviewed plans
+      summary: Queue independent approval checks for up to 20 reviewed plans
       requestBody:
         required: true
         content:
@@ -605,7 +613,7 @@ paths:
                       planId: { type: string }
                       planDigest: { type: string }
       responses:
-        '200': { description: One success or failure result for each plan; partial success is possible }
+        '202': { description: One accepted task or validation error per plan. Poll each accepted task to determine approval success; partial success is possible. }
   /plans/{planID}:
     get:
       summary: Get a sanitized immutable plan
@@ -617,18 +625,55 @@ paths:
       responses:
         '200': { description: Approval rule, count, and current approvals }
     post:
-      summary: Approve the exact plan as an eligible workspace member
+      summary: Queue approval of the exact reviewed plan as an eligible workspace member
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema: { type: string, maxLength: 128 }
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
+              required: [planDigest]
               properties:
                 comment: { type: string, maxLength: 1000 }
                 planDigest: { type: string, description: Digest reviewed by the approver }
       responses:
-        '201': { description: Single-use plan approval }
-        '409': { description: Plan is stale or has enough approvals }
+        '202':
+          description: Durable background task. The worker rechecks current authorization and plan freshness before recording approval. Successful task results contain the approval and any queued automatic sync operation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackgroundTask' }
+        '409': { description: Reviewed digest does not match or idempotency key was reused }
+  /tasks:
+    get:
+      summary: List the current user's active and recent background tasks
+      parameters:
+        - in: query
+          name: applicationId
+          schema: { type: string }
+        - in: query
+          name: workspaceId
+          schema: { type: string }
+      responses:
+        '200': { description: Up to 100 tasks, active work first. Requires applicationId or workspaceId and current workspace access. }
+  /tasks/{taskID}:
+    get:
+      summary: Read the current user's durable task status and outcome
+      parameters:
+        - in: path
+          name: taskID
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Task status; result and httpStatus are populated on completion
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackgroundTask' }
+        '404': { description: Task does not exist or belongs to another user }
   /plans/{planID}/apply:
     post:
       summary: Recheck plan freshness and enqueue changes after required approvals
@@ -671,6 +716,19 @@ paths:
         '409': { description: Issuer change rejected for a provider with linked users }
 components:
   schemas:
+    BackgroundTask:
+      type: object
+      required: [id, applicationId, kind, status, createdAt]
+      properties:
+        id: { type: string }
+        applicationId: { type: string }
+        kind: { type: string, enum: [plan, approval] }
+        status: { type: string, enum: [queued, running, succeeded, failed] }
+        result: { description: Sanitized plan or approval on success, structured ErrorResponse on failure }
+        httpStatus: { type: integer, description: Status returned by the background action }
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time }
     ErrorResponse:
       type: object
       required: [schemaVersion, error, code, category, retryable, remediation]

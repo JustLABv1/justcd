@@ -76,3 +76,16 @@ func TestObservedCrashLoopPodIsDegradedWithConditionDetails(t *testing.T) {
 		t.Fatalf("health = %#v, want CrashLoopBackOff degradation", condition)
 	}
 }
+
+func TestObservedCustomReadinessGeneration(t *testing.T) {
+	object := unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "secrets.hashicorp.com/v1beta1", "kind": "VaultStaticSecret",
+		"metadata": map[string]any{"name": "secret", "namespace": "demo", "generation": int64(4)},
+		"status":   map[string]any{"conditions": []any{map[string]any{"type": "Ready", "status": "True", "observedGeneration": int64(3)}}},
+	}}
+	observed := observedObject("cluster", object)
+	result := apphealth.Evaluate([]core.Identity{observed.Identity}, []apphealth.Observation{{Identity: observed.Identity, Source: observed.Source, Details: observed.HealthSummary}}, nil, false, time.Now())
+	if result.Status != apphealth.Progressing || result.Resources[0].Reason != "ReadinessStale" {
+		t.Fatalf("stale Ready condition accepted: %#v", result)
+	}
+}

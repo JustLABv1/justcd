@@ -34,3 +34,16 @@ func TestBuildCarriesHealthSummaryOnObservedNode(t *testing.T) {
 		t.Fatalf("conditions not carried to topology node: %#v", node.HealthSummary)
 	}
 }
+
+func TestObservedServiceRetainsDesiredRelationships(t *testing.T) {
+	service := core.Identity{ClusterID: "cluster", APIVersion: "v1", Kind: "Service", Namespace: "demo", Name: "web"}
+	pod := core.Identity{ClusterID: "cluster", APIVersion: "v1", Kind: "Pod", Namespace: "demo", Name: "web-pod"}
+	plan := &store.PlanRecord{Desired: []core.Resource{{Identity: service, Manifest: []byte(`{"spec":{"selector":{"app":"web"}}}`)}}}
+	graph := Build(plan, nil, []store.ObservedResource{{Identity: service, Source: "kubernetes", UID: "service-uid"}, {Identity: pod, Source: "kubernetes", UID: "pod-uid", Labels: map[string]string{"app": "web"}}})
+	for _, edge := range graph.Edges {
+		if edge.From == ID(service) && edge.To == ID(pod) && edge.Relation == "selects" {
+			return
+		}
+	}
+	t.Fatalf("observed Service lost its selector relationships: %#v", graph.Edges)
+}

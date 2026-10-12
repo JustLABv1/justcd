@@ -8,6 +8,8 @@ import { ErrorDetailsButton } from "@/components/error-details"
 import { errorMessage, taskError } from "@/lib/api"
 import { taskPending } from "@/hooks/background-tasks"
 import type { BackgroundTask } from "@/lib/types"
+import { RunProgressStages } from "@/components/application/run-progress"
+import { planRunProgress } from "@/lib/run-progress"
 
 export function BackgroundTaskStatus({
   tasks,
@@ -29,71 +31,78 @@ export function BackgroundTaskStatus({
       className="mb-5 space-y-3 rounded-xl border bg-card p-4"
     >
       {displayed.map((task) => (
-        <div
-          key={task.id}
-          role={task.status === "failed" ? "alert" : "status"}
-          className="flex flex-wrap items-center gap-3 text-sm"
-        >
-          {taskPending(task) && (
-            <Spinner
-              aria-hidden="true"
-              className="size-4 motion-reduce:animate-none"
-            />
-          )}
-          <div className="min-w-0 flex-1">
-            <p className="font-medium">
-              {task.kind === "plan" ? "Plan generation" : "Approval"}{" "}
-              <Badge
-                size="xs"
-                variant={
+        <div key={task.id} className="min-w-0 space-y-4">
+          <div
+            role={task.status === "failed" ? "alert" : "status"}
+            className="flex flex-wrap items-center gap-3 text-sm"
+          >
+            {taskPending(task) && (
+              <Spinner
+                aria-hidden="true"
+                className="size-4 motion-reduce:animate-none"
+              />
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="font-medium">
+                {task.kind === "plan" ? "Plan generation" : "Approval"}{" "}
+                <Badge
+                  size="xs"
+                  variant={
+                    task.status === "failed"
+                      ? "destructive-light"
+                      : task.status === "succeeded"
+                        ? "success-light"
+                        : "secondary"
+                  }
+                >
+                  {task.status === "succeeded"
+                    ? "Complete"
+                    : task.status === "failed"
+                      ? "Failed"
+                      : task.status === "running"
+                        ? "Running"
+                        : "Queued"}
+                </Badge>
+              </p>
+              <p
+                className={
                   task.status === "failed"
-                    ? "destructive-light"
-                    : task.status === "succeeded"
-                      ? "success-light"
-                      : "secondary"
+                    ? "mt-1 text-destructive"
+                    : "mt-1 text-muted-foreground"
                 }
               >
-                {task.status === "succeeded"
-                  ? "Complete"
+                {taskPending(task)
+                  ? "You can leave this page. Progress will be available when you return."
                   : task.status === "failed"
-                    ? "Failed"
-                    : task.status === "running"
-                      ? "Running"
-                      : "Queued"}
-              </Badge>
-            </p>
-            <p
-              className={
-                task.status === "failed"
-                  ? "mt-1 text-destructive"
-                  : "mt-1 text-muted-foreground"
-              }
-            >
-              {taskPending(task)
-                ? "You can leave this page. Progress will be available when you return."
-                : task.status === "failed"
-                  ? taskError(task).message
-                  : task.kind === "plan"
-                    ? "The plan is ready for review."
-                    : "Approval recorded."}
-            </p>
+                    ? taskError(task).message
+                    : task.kind === "plan"
+                      ? "The plan is ready for review."
+                      : "Approval recorded."}
+              </p>
+            </div>
+            {task.status === "failed" && (
+              <ErrorDetailsButton error={taskError(task)} />
+            )}
+            {showApplication && (
+              <Button
+                variant="outline"
+                size="sm"
+                render={
+                  <Link
+                    href={`/applications/${task.applicationId}?tab=changes`}
+                  />
+                }
+                nativeButton={false}
+              >
+                Open application
+              </Button>
+            )}
           </div>
-          {task.status === "failed" && (
-            <ErrorDetailsButton error={taskError(task)} />
-          )}
-          {showApplication && (
-            <Button
-              variant="outline"
-              size="sm"
-              render={
-                <Link
-                  href={`/applications/${task.applicationId}?tab=changes`}
-                />
-              }
-              nativeButton={false}
-            >
-              Open application
-            </Button>
+          {task.kind === "plan" && (
+            <RunProgressStages
+              progress={planRunProgress(task)}
+              label="Plan generation stages"
+            />
           )}
         </div>
       ))}

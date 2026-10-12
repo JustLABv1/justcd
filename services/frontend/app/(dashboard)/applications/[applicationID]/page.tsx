@@ -593,6 +593,7 @@ export default function ApplicationDetailPage() {
     try {
       const approvalIds = currentApprovalSummary?.approvals.filter((item) => item.eligible).map((item) => item.id) ?? []
       const result = await apiPost<{ operation: Operation }>(`/api/v1/plans/${encodeURIComponent(activePlan.id)}/apply`, { approvalIds })
+      setOperations((current) => [result.operation, ...current.filter((operation) => operation.id !== result.operation.id)])
       toast.success(result.operation.message || "Sync queued.")
       setApprovalSummary(null)
       await loadData()
@@ -659,9 +660,9 @@ export default function ApplicationDetailPage() {
   })
   const deletionApprovalCount = application?.approvalPolicyOverride?.deletion?.requiredApprovals ?? workspace?.approvalPolicy.deletion.requiredApprovals ?? 1
   const latestOperation = operations[0]
-  const visibleOperation = operations.find((operation) => operation.status === "queued" || operation.status === "running") ?? (latestOperation?.status === "failed" ? latestOperation : null)
-  const visibleOperationCheckpoint = visibleOperation?.rollbackCheckpointId ?? rollbackTargets.find((target) => target.kind === "pre_operation" && target.operationId === visibleOperation?.id)?.id
   const latestPlan = plans[0]
+  const visibleOperation = operations.find((operation) => operation.status === "queued" || operation.status === "running") ?? (latestOperation && (latestOperation.status === "failed" || latestOperation.status === "cancelled" || (latestOperation.status === "succeeded" && latestOperation.planId === latestPlan?.id)) ? latestOperation : null)
+  const visibleOperationCheckpoint = visibleOperation?.rollbackCheckpointId ?? rollbackTargets.find((target) => target.kind === "pre_operation" && target.operationId === visibleOperation?.id)?.id
 
   const namespaceMismatch = Boolean(application?.renderer === "kustomize" && kustomization?.namespace && application.namespaces.length === 1 && kustomization.namespace !== application.namespaces[0].namespace)
   if (loading && !application) return <ApplicationDetailSkeleton />
@@ -670,7 +671,7 @@ export default function ApplicationDetailPage() {
   const planBlockedByNamespace = Boolean(application && namespaceMismatch && !application.kustomizeNamespaceOverride)
 
   return <>
-    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.clusterName || application.clusterId} / ${application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"}${application.autoSyncPaused ? " · Auto-sync paused" : ""}` : ""} badge={application && <StatusBadge status={application.health} />} actions={application && <>
+    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.clusterName || application.clusterId} / ${application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"}${application.autoSyncPaused ? " · Auto-sync paused" : ""}` : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Sync <StatusBadge status={application.health} /></span><span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Runtime <StatusBadge status={application.healthCondition?.status ?? "Unknown"} /></span></div>} actions={application && <>
       {pendingData.workspace && <span role="status" className="text-sm text-muted-foreground">Loading permissions…</span>}
       {planBlockedByNamespace && !application.configurationMissing && !application.decommissioning && canDeploy
         ? <Tooltip>
@@ -685,6 +686,13 @@ export default function ApplicationDetailPage() {
       ]} />}
     </>} />
     <BackgroundTaskStatus tasks={backgroundTasks.tasks} error={backgroundTasks.error} onRefresh={() => void backgroundTasks.refresh()} />
+    {error != null && <ErrorNotice error={error} />}
+    {application && <AttentionBar application={application} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} plansError={plansError} retryingPlans={retryingPlans} onRetryPlans={() => void retryPlans()}
+        conflictCount={ownershipConflict ? ownershipConflicts.length : 0} onReviewConflicts={() => setConflictOpen(true)}
+        namespaceMismatch={namespaceMismatch} kustomizeNamespace={kustomization?.namespace} onReviewNamespaceSetting={() => selectTab("settings")}
+        onCancelDecommission={() => void cancelDecommission()}
+        onConfigureExclusion={(issue) => configureIgnore({ mode: "kind", ...(issue.resource ? { version: issue.resource.apiVersion, kind: issue.resource.kind } : {}) })}
+        resumeRevision={resumeRevision} onResumeRevisionChange={setResumeRevision} onKeepPin={() => void updateRollbackTracking("keep")} onResume={() => void updateRollbackTracking("resume")} />}
       <Tabs.Root value={activeTab} onValueChange={(value) => selectTab(String(value))} className="min-w-0">
         {application && <Tabs.List aria-label="Application views" className="mb-6 flex gap-6 overflow-x-auto border-b" activateOnFocus>
           {[
@@ -706,19 +714,12 @@ export default function ApplicationDetailPage() {
       selectTab("changes")
       toast.success(updated.branchTest ? "Branch selected. Create and review a fresh plan before deploying." : "Tracked source restored. Review a fresh plan before deploying and resuming auto-sync.")
     }} />}
-    {error != null && <ErrorNotice error={error} />}
     {application && <>
-      <AttentionBar application={application} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} plansError={plansError} retryingPlans={retryingPlans} onRetryPlans={() => void retryPlans()}
-        conflictCount={ownershipConflict ? ownershipConflicts.length : 0} onReviewConflicts={() => setConflictOpen(true)}
-        namespaceMismatch={namespaceMismatch} kustomizeNamespace={kustomization?.namespace} onReviewNamespaceSetting={() => selectTab("settings")}
-        onCancelDecommission={() => void cancelDecommission()}
-        onConfigureExclusion={(issue) => configureIgnore({ mode: "kind", ...(issue.resource ? { version: issue.resource.apiVersion, kind: issue.resource.kind } : {}) })}
-        resumeRevision={resumeRevision} onResumeRevisionChange={setResumeRevision} onKeepPin={() => void updateRollbackTracking("keep")} onResume={() => void updateRollbackTracking("resume")} />
       <RuntimeHealthStrip application={application} healthHistory={healthHistory} />
       {ownershipConflict && <OwnershipConflictDialog open={conflictOpen} onOpenChange={setConflictOpen} conflicts={ownershipConflicts} applicationId={application.id} canApprove={canApprove} busy={busy} selectedKeys={selectedConflictKeys} onSelectedKeysChange={setSelectedConflictKeys} claimableKeys={claimableConflictKeys} onAdopt={adoptConflict} onAdoptSelected={adoptSelectedConflicts} onConfigureIgnore={configureConflictIgnore} />}
     </>}
     {!loading && application && <>
-      {visibleOperation && <OperationBar operation={visibleOperation} checkpointId={visibleOperationCheckpoint} canRestore={canApprove} disabled={busy || hasPendingOperation} onRestore={(target) => void createRollbackPlan(target)} />}
+      {visibleOperation && <OperationBar operation={visibleOperation} plan={plans.find((plan) => plan.id === visibleOperation.planId)} checkpointId={visibleOperationCheckpoint} canRestore={canApprove} disabled={busy || hasPendingOperation} onRestore={(target) => void createRollbackPlan(target)} />}
 
         <Tabs.Panel value="overview" className="outline-none">
           <OverviewTab application={application} latestPlan={latestPlan} plansError={plansError} retryingPlans={retryingPlans} topology={topology} topologyError={topologyError} pending={{ topology: pendingData.topology, plans: pendingData.plans, operations: pendingData.operations }} operations={operations} operationsError={operationsError} canDeploy={canDeploy} busy={busy} hasPendingOperation={hasPendingOperation} creatingPlan={pendingAction === "create-plan"} planBlockedByNamespace={planBlockedByNamespace} onCreatePlan={() => void createPlan()} onRetryPlans={() => void retryPlans()} onSelectTab={selectTab} />
@@ -756,7 +757,7 @@ export default function ApplicationDetailPage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="activity" className="outline-none">
-          <ActivityTab application={application} operations={operations} operationsLoading={pendingData.operations} rollbackTargets={rollbackTargets} rollbackLoading={pendingData.rollback} kustomization={kustomization} kustomizationError={kustomizationError} canDeploy={canDeploy} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} onRetryReconciliation={(operationId) => void retryReconciliation(operationId)} onCreateRollbackPlan={createRollbackPlan} />
+          <ActivityTab key={application.id} application={application} operations={operations} operationsLoading={pendingData.operations} rollbackTargets={rollbackTargets} rollbackLoading={pendingData.rollback} kustomization={kustomization} kustomizationError={kustomizationError} canDeploy={canDeploy} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} onRetryReconciliation={(operationId) => void retryReconciliation(operationId)} onCreateRollbackPlan={createRollbackPlan} />
         </Tabs.Panel>
 
         <Tabs.Panel value="pull-requests" className="outline-none">

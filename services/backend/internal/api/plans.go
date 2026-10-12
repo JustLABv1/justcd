@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -729,12 +730,31 @@ func (s *Server) listApplicationOperations(w http.ResponseWriter, r *http.Reques
 	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "viewer") {
 		return
 	}
-	items, err := s.Store.ListOperations(r.Context(), app.ID, 50)
+	limit, offset := 50, 0
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		limit, err = strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > 100 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 100")
+			return
+		}
+	}
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		offset, err = strconv.Atoi(raw)
+		if err != nil || offset < 0 || offset > 1000000 {
+			writeError(w, http.StatusBadRequest, "offset must be between 0 and 1000000")
+			return
+		}
+	}
+	items, err := s.Store.ListOperationsPage(r.Context(), app.ID, limit+1, offset)
 	if err != nil {
 		writeStoreError(w, "could not load application operations")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "hasMore": hasMore})
 }
 
 var _ = errors.Is

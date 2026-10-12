@@ -12,13 +12,14 @@ import (
 	"github.com/justlab/justcd/services/backend/internal/core"
 	"github.com/justlab/justcd/services/backend/internal/kube"
 	"github.com/justlab/justcd/services/backend/internal/store"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-// ObserveTopology caches only controller-created descendants of directly
-// managed resources. Listing requires read access, never write access.
+// ObserveTopology caches namespaced managed resources and their controller-created
+// descendants. Reading requires read access, never write access.
 func (s *Service) ObserveTopology(ctx context.Context, app store.Application, managed []store.ManagedResource) error {
 	cluster, err := s.Store.ClusterByID(ctx, app.ClusterID)
 	if err != nil {
@@ -56,6 +57,29 @@ func (s *Service) ObserveTopology(ctx context.Context, app store.Application, ma
 		client, err := kube.ForWorkspaceBinding(ctx, s.Store, s.EncryptionKey, cluster, credentialID, false, app.WorkspaceID, stored.Namespace)
 		if err != nil {
 			return err
+		}
+		// Workloads are listed below to discover descendants. Read the other
+		// managed kinds individually, including operator readiness conditions.
+		for _, tracked := range managed {
+			identity := tracked.Identity
+			if identity.Namespace != binding.Namespace || apphealth.SupportedKind(identity.Kind) || identity.Kind == "ReplicaSet" {
+				continue
+			}
+			readCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+			mapping, readErr := client.Mapper.RESTMapping(groupKind(identity), groupVersion(identity))
+			if readErr == nil {
+				object, getErr := client.Dynamic.Resource(mapping.Resource).Namespace(identity.Namespace).Get(readCtx, identity.Name, metav1.GetOptions{})
+				readErr = getErr
+				if getErr == nil {
+					object.SetAPIVersion(identity.APIVersion)
+					object.SetKind(identity.Kind)
+					all = append(all, observedObject(app.ClusterID, *object))
+				}
+			}
+			cancel()
+			if readErr != nil && !apierrors.IsNotFound(readErr) {
+				warnings = append(warnings, fmt.Sprintf("cannot observe %s %s/%s", identity.Kind, identity.Namespace, identity.Name))
+			}
 		}
 		for _, target := range []struct {
 			gvr  schema.GroupVersionResource
@@ -192,7 +216,7 @@ func observedObject(clusterID string, object unstructured.Unstructured) store.Ob
 }
 
 func observedHealthSummary(object unstructured.Unstructured) apphealth.ResourceDetails {
-	details := apphealth.ResourceDetails{Conditions: []apphealth.KubernetesCondition{}}
+	details := apphealth.ResourceDetails{Generation: object.GetGeneration(), Conditions: []apphealth.KubernetesCondition{}}
 	_, details.StatusObserved, _ = unstructured.NestedMap(object.Object, "status")
 	conditions, _, _ := unstructured.NestedSlice(object.Object, "status", "conditions")
 	for _, raw := range conditions {
@@ -220,6 +244,9 @@ func observedHealthSummary(object unstructured.Unstructured) apphealth.ResourceD
 				parsed = parsed.UTC()
 				item.LastTransitionTime = &parsed
 			}
+		}
+		if generation, ok := condition["observedGeneration"].(int64); ok {
+			item.ObservedGeneration = &generation
 		}
 		details.Conditions = append(details.Conditions, item)
 	}

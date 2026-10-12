@@ -11,7 +11,7 @@ export type PendingApproval = {
   deletions: string[]; clusterScoped: string[]; takeovers: string[]; changeCount: number
 }
 
-type Health = {
+export type Health = {
   clusters: Cluster[]
   gitSources: GitSource[]
   agents: Record<string, AgentSnapshot>

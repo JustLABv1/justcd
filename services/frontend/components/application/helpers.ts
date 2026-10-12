@@ -21,10 +21,12 @@ export function safeIgnorePath(pointer: string) {
 export function operationPhaseLabel(phase: string | undefined, status: string) {
   if (status === "queued") return "Waiting for a sync worker"
   if (status === "failed") return "Sync stopped"
+  if (status === "cancelled") return "Sync cancelled"
+  if (status === "succeeded") return "Sync complete"
   if (phase === "validating") return "Rechecking Git, cluster state, and approval"
   if (phase === "applying") return "Applying creates and updates"
   if (phase === "deleting") return "Applying approved deletions"
-  if (phase === "complete" || status === "succeeded") return "Sync complete"
+  if (phase === "complete") return "Finalizing sync"
   return "Sync in progress"
 }
 

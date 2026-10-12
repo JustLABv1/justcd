@@ -13,7 +13,7 @@ import styles from "./resource-map.module.css"
 import { ResourceActions } from "@/components/resource-actions"
 import { DataGridList } from "@/components/data-grid-table"
 import { Input } from "@/components/ui/input"
-import { identityKey, observed, workload, relatedNodes, syncState, topologyLayout, nodeWidth, nodeHeight, type SyncState } from "@/lib/topology-view"
+import { identityKey, observed, workload, configurationResource, relatedNodes, syncState, topologyLayout, nodeWidth, nodeHeight, type SyncState } from "@/lib/topology-view"
 import type { Application, Identity, ManagedResource, Operation, PlanRecord, ResourceTopology, TopologyNode } from "@/lib/types"
 
 const labels: Record<SyncState, string> = { syncing: "Applying", applied: "Deployed · health separate", failed: "Failed", create: "Will be created", update: "Out of sync", delete: "Will be destroyed", synced: "Deployed", unknown: "State unknown", observed: "Observed" }
@@ -31,8 +31,10 @@ const resourceIcons: Record<string, typeof CubeIcon> = {
 const iconFor = (kind: string) => resourceIcons[kind] ?? Settings02Icon
 function health(node: TopologyNode) {
   if (node.source === "sample") return `Sample · ${node.readiness || node.phase || "unknown"}`
-  if (node.readiness) return node.readiness
   const details = node.healthSummary
+  const ready = details?.conditions?.find((item) => item.type === "Ready")
+  if (ready?.observedGeneration !== undefined && ready.observedGeneration < (details?.generation ?? 0)) return "Readiness pending current generation"
+  if (node.readiness) return node.readiness
   if (details?.readyReplicas !== undefined && details.desiredReplicas !== undefined) return `Ready ${details.readyReplicas}/${details.desiredReplicas} replicas`
   if (details?.numberReady !== undefined && details.desiredScheduled !== undefined) return `Ready ${details.numberReady}/${details.desiredScheduled} pods`
   if (details?.succeeded !== undefined && details.completions !== undefined) return `Completed ${details.succeeded}/${details.completions}`
@@ -40,6 +42,7 @@ function health(node: TopologyNode) {
   if (condition) return `${condition.type}: ${condition.status}${condition.reason ? ` · ${condition.reason}` : ""}`
   if (details?.failureReason) return details.failureReason
   if (node.phase) return `Phase: ${node.phase}`
+  if (node.uid && configurationResource(node.identity)) return "No workload health check"
   return node.uid ? "Health not reported" : "Not observed in cluster"
 }
 function healthTone(node: TopologyNode) {
@@ -243,6 +246,6 @@ export function ResourceMap({ view, onViewChange, application, plan, inventory, 
         })}{!connections.length && <p className="text-sm text-muted-foreground">No relationship detected in available manifests or observations.</p>}</div></div>
       </aside>}
     </div>
-    <footer className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t px-5 py-3 text-xs text-muted-foreground" aria-label="Topology status legend"><span className="font-medium text-foreground">Sync state</span><span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-2 rounded-full bg-success" />Deployed</span><span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-2 rounded-full bg-warning" />Out of sync</span><span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-2 rounded-full bg-info" />Will be created / applying</span><span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-2 rounded-full bg-destructive" />Will be destroyed / failed</span><span className="mx-1 hidden h-4 border-l sm:block" /><span><i aria-hidden="true" className="mr-1 inline-block size-2 rounded-full bg-success" />Pod Ready is health; deployed resources without reported health say so explicitly.</span></footer>
+    <footer className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t px-5 py-3 text-xs text-muted-foreground" aria-label="Topology status legend"><span className="font-medium text-foreground">Sync state</span><span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-2 rounded-full bg-success" />Deployed</span><span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-2 rounded-full bg-warning" />Out of sync</span><span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-2 rounded-full bg-info" />Will be created / applying</span><span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-2 rounded-full bg-destructive" />Will be destroyed / failed</span><span className="mx-1 hidden h-4 border-l sm:block" /><span><i aria-hidden="true" className="mr-1 inline-block size-2 rounded-full bg-success" />Runtime readiness is separate from sync. Configuration objects do not require workload health checks.</span></footer>
   </section>
 }

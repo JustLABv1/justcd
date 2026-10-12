@@ -15,6 +15,7 @@ import { ActionLink, CollectionSkeleton, LoadError, WorkspaceIcon } from "@/comp
 import { useWorkspace, needsAttention, isApplicationHealthy } from "@/hooks/use-workspace"
 import { useWorkspaceHealth } from "@/hooks/use-workspace-health"
 import { useWorkspaceSelection } from "@/hooks/workspace-selection"
+import { WorkspaceMetrics } from "@/components/workspace-metrics"
 import { tone } from "@/components/health-tone"
 import { ago } from "@/lib/relative-time"
 import { applicationAttentionReason } from "@/lib/application-status"
@@ -35,19 +36,6 @@ function LevelIcon({ level, className = "size-4" }: { level: HealthLevel; classN
       <HugeiconsIcon icon={tone[level].icon} strokeWidth={2} className={`${className} ${tone[level].text}`} aria-hidden="true" />
       <span className="sr-only">{level}: </span>
     </>
-  )
-}
-
-function Metric({ label, value, note, level, href }: { label: string; value: string; note: string; level: HealthLevel; href: string }) {
-  return (
-    <Link href={href} className="group rounded-xl border bg-card p-4 transition-colors hover:bg-muted/40 sm:p-5">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-medium text-muted-foreground">{label}</p>
-        <span aria-hidden="true" className={`size-2 rounded-full ${tone[level].dot}`} />
-      </div>
-      <p className="mt-2 text-3xl font-semibold tracking-tight tabular-nums">{value}</p>
-      <p className="mt-1 truncate text-sm text-muted-foreground">{note}</p>
-    </Link>
   )
 }
 
@@ -181,36 +169,7 @@ export default function OverviewPage() {
             </div>
           </section>
 
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <Metric
-              label="Healthy applications"
-              value={total ? `${Math.round((synced / total) * 100)}%` : "–"}
-              note={`${synced} of ${total} in sync`}
-              level={!total ? "unknown" : synced === total ? "healthy" : attention.length ? "warning" : "unknown"}
-              href={listHref()}
-            />
-            <Metric
-              label="Connections"
-              value={health.loaded ? `${rows.length - connectionsDown - connectionsWarn}/${rows.length}` : "…"}
-              note={connectionsDown ? `${connectionsDown} down` : connectionsWarn ? `${connectionsWarn} degraded` : "All reachable"}
-              level={connectionsDown ? "critical" : connectionsWarn || health.failed.length ? "warning" : health.loaded ? "healthy" : "unknown"}
-              href={connectionsHref}
-            />
-            <Metric
-              label="Needs attention"
-              value={String(attention.length + stalled.length)}
-              note={stalled.length ? `${stalled.length} stalled checks` : "Drift, errors, pauses"}
-              level={attention.length || stalled.length ? "warning" : "healthy"}
-              href={listHref("attention")}
-            />
-            <Metric
-              label="Pending approvals"
-              value={health.loaded ? String(health.approvalTotal) : "…"}
-              note={health.approvals[0] ? `Oldest ${ago(health.approvals[health.approvals.length - 1]?.createdAt, now)}` : "Nothing to review"}
-              level={health.approvalTotal ? "warning" : health.loaded ? "healthy" : "unknown"}
-              href="/approvals"
-            />
-          </div>
+          <WorkspaceMetrics total={total} healthy={synced} other={other} attention={attention} stalled={stalled} connections={rows} health={health} now={now} applicationsHref={listHref("synced")} attentionHref={listHref("attention")} connectionsHref={connectionsHref} />
 
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,420px)]">
             <div className="min-w-0 space-y-6">

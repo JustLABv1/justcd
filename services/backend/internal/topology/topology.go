@@ -79,7 +79,11 @@ func Build(plan *store.PlanRecord, managed []store.ManagedResource, observed []s
 		identity := resource.Identity
 		key := ID(identity)
 		at := resource.ObservedAt
-		items[key] = &material{node: Node{ID: key, Identity: identity, Source: resource.Source, UID: resource.UID, ResourceVersion: resource.ResourceVersion, Phase: resource.Phase, Readiness: resource.Readiness, HealthSummary: nonEmptyHealthSummary(resource.HealthSummary), ObservedAt: &at}, labels: resource.Labels, owners: resource.OwnerUIDs}
+		var manifest map[string]any
+		if existing := items[key]; existing != nil {
+			manifest = existing.value
+		}
+		items[key] = &material{value: manifest, node: Node{ID: key, Identity: identity, Source: resource.Source, UID: resource.UID, ResourceVersion: resource.ResourceVersion, Phase: resource.Phase, Readiness: resource.Readiness, HealthSummary: nonEmptyHealthSummary(resource.HealthSummary), ObservedAt: &at}, labels: resource.Labels, owners: resource.OwnerUIDs}
 	}
 
 	byUID := map[string]*material{}
@@ -234,7 +238,7 @@ func Build(plan *store.PlanRecord, managed []store.ManagedResource, observed []s
 }
 
 func nonEmptyHealthSummary(details apphealth.ResourceDetails) *apphealth.ResourceDetails {
-	if !details.StatusObserved && details.DesiredReplicas == nil && details.ReadyReplicas == nil && details.UpdatedReplicas == nil && details.AvailableReplicas == nil && details.DesiredScheduled == nil && details.NumberScheduled == nil && details.UpdatedScheduled == nil && details.NumberReady == nil && details.NumberAvailable == nil && details.NumberMisscheduled == nil && details.Completions == nil && details.Active == nil && details.Succeeded == nil && details.Failed == nil && !details.Suspended && details.FailureReason == "" && details.FailureMessage == "" && len(details.Conditions) == 0 {
+	if details.Generation == 0 && !details.StatusObserved && details.DesiredReplicas == nil && details.ReadyReplicas == nil && details.UpdatedReplicas == nil && details.AvailableReplicas == nil && details.DesiredScheduled == nil && details.NumberScheduled == nil && details.UpdatedScheduled == nil && details.NumberReady == nil && details.NumberAvailable == nil && details.NumberMisscheduled == nil && details.Completions == nil && details.Active == nil && details.Succeeded == nil && details.Failed == nil && !details.Suspended && details.FailureReason == "" && details.FailureMessage == "" && len(details.Conditions) == 0 {
 		return nil
 	}
 	return &details

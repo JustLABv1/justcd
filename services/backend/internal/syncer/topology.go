@@ -252,6 +252,15 @@ func observedHealthSummary(object unstructured.Unstructured) apphealth.ResourceD
 	}
 
 	switch object.GetKind() {
+	case "VaultStaticSecret":
+		if strings.HasPrefix(object.GetAPIVersion(), "secrets.hashicorp.com/") {
+			details.LastReconciledGeneration = nestedInt64(object.Object, "status", "lastGeneration")
+		}
+	case "SGCluster":
+		if strings.HasPrefix(object.GetAPIVersion(), "stackgres.io/") {
+			details.DesiredInstances = nestedInt64(object.Object, "spec", "instances")
+			details.CurrentInstances = nestedInt64(object.Object, "status", "instances")
+		}
 	case "Deployment", "StatefulSet":
 		details.DesiredReplicas = nestedInt64(object.Object, "spec", "replicas")
 		details.ReadyReplicas = nestedInt64(object.Object, "status", "readyReplicas")

@@ -625,6 +625,23 @@ paths:
   /applications/{applicationID}/operations:
     get:
       summary: List recent sync operations, including retry attempt and outcome metadata
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, maximum: 1000000, default: 0 }
+        - in: query
+          name: q
+          description: Case-insensitive literal search of messages, operation/plan/actor IDs, error codes, and terminal reasons; applied before pagination.
+          schema: { type: string, maxLength: 256 }
+        - in: query
+          name: status
+          schema: { type: string, enum: [queued, running, succeeded, failed, cancelled] }
+        - in: query
+          name: type
+          schema: { type: string, enum: [sync, rollback, resource_action] }
       responses:
         '200': { description: Operation history and next retry time or terminal reason }
   /approval-inbox:

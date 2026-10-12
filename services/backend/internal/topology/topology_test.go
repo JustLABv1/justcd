@@ -47,3 +47,21 @@ func TestObservedServiceRetainsDesiredRelationships(t *testing.T) {
 	}
 	t.Fatalf("observed Service lost its selector relationships: %#v", graph.Edges)
 }
+
+func TestBuildPreservesTrackingAndSharedHealth(t *testing.T) {
+	cluster := core.Identity{APIVersion: "stackgres.io/v1", Kind: "SGCluster", Namespace: "demo", Name: "db"}
+	pod := core.Identity{APIVersion: "v1", Kind: "Pod", Namespace: "demo", Name: "db-0"}
+	graph := Build(nil, []store.ManagedResource{{Identity: cluster, UID: "cluster"}}, []store.ObservedResource{
+		{Identity: cluster, Source: "kubernetes", UID: "cluster", HealthSummary: apphealth.ResourceDetails{Conditions: []apphealth.KubernetesCondition{{Type: "Bootstrapped", Status: "True"}, {Type: "Failed", Status: "False"}}}},
+		{Identity: pod, Source: "kubernetes", UID: "pod", OwnerUIDs: []string{"cluster"}},
+	})
+	for _, node := range graph.Nodes {
+		if node.Identity.Kind == "SGCluster" {
+			if !node.Tracked || node.Health == nil || node.Health.Status != apphealth.Healthy {
+				t.Fatalf("cluster=%#v", node)
+			}
+		} else if node.Tracked {
+			t.Fatalf("generated pod counted as tracked: %#v", node)
+		}
+	}
+}

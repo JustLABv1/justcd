@@ -1,7 +1,11 @@
 "use client"
 
 import Link from "next/link"
+import { useProgressDismissals } from "@/hooks/use-progress-dismissals"
 import { Button } from "@/components/ui/button"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { Cancel01Icon } from "@hugeicons/core-free-icons"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Spinner } from "@/components/ui/spinner"
 import { Badge } from "@/components/reui/badge"
 import { ErrorDetailsButton } from "@/components/error-details"
@@ -22,8 +26,9 @@ export function BackgroundTaskStatus({
   onRefresh: () => void
   showApplication?: boolean
 }) {
+  const { isDismissed, dismiss } = useProgressDismissals()
   const active = tasks.filter(taskPending)
-  const displayed = active.length ? active : tasks.slice(0, 1)
+  const displayed = active.length ? active : tasks.slice(0, 1).filter((task) => !isDismissed(`task:${task.id}`))
   if (!displayed.length && !error) return null
   return (
     <section
@@ -80,23 +85,26 @@ export function BackgroundTaskStatus({
                       : "Approval recorded."}
               </p>
             </div>
-            {task.status === "failed" && (
-              <ErrorDetailsButton error={taskError(task)} />
-            )}
-            {showApplication && (
-              <Button
-                variant="outline"
-                size="sm"
-                render={
-                  <Link
-                    href={`/applications/${task.applicationId}?tab=changes`}
-                  />
-                }
-                nativeButton={false}
-              >
-                Open application
-              </Button>
-            )}
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              {task.status === "failed" && (
+                <ErrorDetailsButton error={taskError(task)} />
+              )}
+              {showApplication && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  render={
+                    <Link
+                      href={`/applications/${task.applicationId}?tab=changes`}
+                    />
+                  }
+                  nativeButton={false}
+                >
+                  Open application
+                </Button>
+              )}
+              {!taskPending(task) && <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon" className="text-muted-foreground" aria-label="Dismiss completed background work" onClick={() => dismiss(`task:${task.id}`)} />}><HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} aria-hidden="true" /></TooltipTrigger><TooltipContent>Dismiss progress</TooltipContent></Tooltip>}
+            </div>
           </div>
           {task.kind === "plan" && (
             <RunProgressStages

@@ -8,8 +8,9 @@ are ready.
 ## Supported workload evaluation
 
 Health evaluation is deterministic and uses only bounded status fields from
-live Kubernetes observations. It does not inspect manifests for custom health
-conventions.
+live Kubernetes observations. It uses explicit `Ready` conditions for custom resources, including the
+condition generation when provided. It does not infer health from arbitrary
+condition types or the existence of an object.
 
 | Kind | Healthy | Progressing | Degraded |
 | --- | --- | --- | --- |
@@ -24,7 +25,9 @@ priority failure or incomplete observation exists. Desired replica counts that
 are omitted by Kubernetes default to one; a desired count of zero is healthy.
 For an observed workload status, omitted readiness/update counters are treated
 as zero. Built-in non-workload objects such as Services and ConfigMaps do not
-affect runtime health completeness; custom API groups remain unassessed.
+affect runtime health completeness; StackGres SGInstanceProfile and SGScript definitions are also configuration
+objects without independent readiness (script execution belongs to the consuming
+cluster). Other custom resources without a `Ready` condition remain unassessed.
 
 ## Application condition precedence
 
@@ -37,23 +40,27 @@ resources, warnings, and timestamps. Precedence is deterministic:
 3. Read/list failures yield `Partial` when any health evidence exists, otherwise
    `Unknown`. Failed reads never make an application appear `Healthy` or
    incorrectly `Missing`.
-4. Unsupported custom-resource health or supported resources without enough
+4. Custom resources without a usable readiness signal or supported resources without enough
    status yields `Unknown` when no other health can be inferred, and `Partial`
    when mixed with inferred health.
 5. Explicit suspension is `Suspended`.
 6. Incomplete supported workloads are `Progressing`; only complete supported
    health evidence can yield `Healthy`.
 
-Custom resources are not assumed healthy from their existence or from an
-arbitrary `status.conditions` array. If an application contains both supported
-workloads and custom resources, the result is `Partial` so the inferred portion
-is not mistaken for a complete application assessment. Demo/sample observations
+A custom resource's explicit `Ready=True` condition yields `Healthy`;
+`Ready=False` yields `Progressing`, and `Ready=Unknown` yields `Unknown`.
+A condition with an `observedGeneration` older than the object's generation
+is `Progressing`, even if it reports ready. Explicit failure conditions retain
+precedence. Missing readiness conditions remain unassessed and yield `Partial`
+when mixed with known health. Configuration objects do not cause `Partial`. Demo/sample observations
 are always `Unknown`, never live `Healthy`.
 
 ## Observation and history
 
 The poller refreshes workload health along with application checks, and the
-resource-topology refresh updates it immediately. Kubernetes conditions expose
+resource-topology refresh updates it immediately. Observation reads namespaced
+managed resources as well as workload descendants, retaining only bounded
+status fields, labels, and ownership metadata. Kubernetes conditions expose
 type, status, reason, message, and last-transition time; replica/completion
 counts and known container failures are also included. User-facing details are
 bounded and do not retain the raw Kubernetes status object.
@@ -69,3 +76,16 @@ GET /api/v1/applications/{applicationID}/health-history?limit=25
 
 Transition records include the status, reason, message, affected resources, and
 change time. JustCD retains at most the latest 100 transitions per application.
+
+## Application UI
+
+The application heading shows separate Sync and Runtime badges on every tab.
+The health details dialog explains partial assessment; configuration resources
+show "No workload health check" in the resource graph instead of suggesting
+missing workload status.
+
+Activity uses ten operations per page. Its API accepts `limit` (1–100, default
+50) and `offset` (0–1,000,000, default 0), returns `items` and `hasMore`, and sorts
+newest first with an ID tie-breaker. Older pages are fetched on demand. New
+operations can shift offset-based page boundaries; revisiting page one shows
+the latest history.

@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useState, type ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { ActionMenu } from "@/components/action-menu"
 import { operationPhaseLabel, resourceLabel } from "@/components/application/helpers"
 import type { RollbackRequest } from "@/components/application/operation-bar"
@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState, FormField, Panel, StatusBadge } from "@/components/ui-kit"
-import { errorMessage } from "@/lib/api"
+import { api, errorMessage } from "@/lib/api"
 import type { Application, Operation, RollbackTarget } from "@/lib/types"
 
 function SectionLoading({ label }: { label: string }) {
@@ -73,6 +73,19 @@ export function ActivityTab({ application, operations, operationsLoading, rollba
   onCreateRollbackPlan: (target: RollbackRequest) => Promise<boolean>
 }) {
   const [rollbackRevision, setRollbackRevision] = useState("")
+  const [page, setPage] = useState(0)
+  const [retry, setRetry] = useState(0)
+  const [history, setHistory] = useState<{ page: number; items: Operation[]; hasMore: boolean } | null>(null)
+  const [historyError, setHistoryError] = useState<unknown>(null)
+  const pageSize = 10
+  useEffect(() => {
+    let active = true
+    api<{ items: Operation[]; hasMore: boolean }>(`/api/v1/applications/${encodeURIComponent(application.id)}/operations?limit=${pageSize}&offset=${page * pageSize}`)
+      .then((result) => { if (active) { setHistory({ page, ...result }); setHistoryError(null) } })
+      .catch((cause) => { if (active) setHistoryError(cause) })
+    return () => { active = false }
+  }, [application.id, page, operations, retry])
+  const historyLoading = operationsLoading || history?.page !== page
   const blocked = busy || hasPendingOperation
   const linkButton = (href: string, label: string): ReactNode => <Button variant="link" size="sm" className="h-auto justify-start p-0" render={<Link href={href} />}>{label}</Button>
 
@@ -80,7 +93,7 @@ export function ActivityTab({ application, operations, operationsLoading, rollba
     <div className="min-w-0 space-y-5">
       <Panel title="Recent operations" description="Sync history and result state">
         {(application.retryTerminalReason || application.retryNextAt) && <div className="flex flex-wrap items-center gap-3 border-b bg-muted/20 px-5 py-3"><div className="min-w-0 flex-1"><p className="text-sm font-medium">Reconciliation needs attention</p><p className="mt-1 text-sm text-muted-foreground">{application.retryNextAt ? `Next automatic attempt: ${new Date(application.retryNextAt).toLocaleString()}` : application.retryTerminalReason?.replaceAll("_", " ")}{application.retryLastErrorCode ? ` · ${application.retryLastErrorCode}` : ""}</p></div>{canDeploy && !application.decommissioning && <Button size="sm" variant="outline" loading={pendingAction === "retry-reconciliation"} disabled={blocked} onClick={() => onRetryReconciliation()}>Retry now</Button>}</div>}
-        {operationsLoading ? <SectionLoading label="Loading recent operations" /> : operations.length ? <ul className="divide-y">{operations.slice(0, 8).map((operation) => {
+        {historyError ? <div role="alert" className="space-y-2 p-5"><p className="text-sm">Could not load operations: {errorMessage(historyError)}</p><Button variant="outline" size="sm" onClick={() => { setHistoryError(null); setRetry((value) => value + 1) }}>Retry</Button></div> : historyLoading ? <SectionLoading label="Loading recent operations" /> : history?.items.length ? <ul className="divide-y">{history.items.map((operation) => {
           const checkpoint = operation.rollbackCheckpointId ?? rollbackTargets.find((target) => target.kind === "pre_operation" && target.operationId === operation.id)?.id
           return <li key={operation.id} className="px-5 py-3.5">
             <div className="flex items-center justify-between gap-3"><span className="text-sm font-medium">{operationTitle(operation)}</span><StatusBadge status={operation.status} /></div>
@@ -93,6 +106,13 @@ export function ActivityTab({ application, operations, operationsLoading, rollba
             <p className="mt-1.5 text-sm text-muted-foreground">{new Date(operation.startedAt).toLocaleString()}</p>
           </li>
         })}</ul> : <EmptyState title="No syncs yet" description="Operations will be recorded here with the actor and resulting status." />}
+        <nav aria-label="Activity pagination" className="flex flex-wrap items-center justify-between gap-3 border-t px-5 py-3">
+          <p role="status" aria-live="polite" className="text-sm text-muted-foreground">Page {page + 1}{!historyLoading && history?.items.length ? ` · Operations ${page * pageSize + 1}–${page * pageSize + history.items.length}` : ""}</p>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" disabled={page === 0} onClick={() => { setHistoryError(null); setPage((value) => value - 1) }}>Previous</Button>
+            <Button variant="outline" size="sm" disabled={historyLoading || Boolean(historyError) || !history?.hasMore} onClick={() => setPage((value) => value + 1)}>Next</Button>
+          </div>
+        </nav>
       </Panel>
       <Panel title="Rollback targets" description="Review a new plan to restore a previous deployment. Opening a target never changes the cluster.">
         <div className="space-y-4 p-5">

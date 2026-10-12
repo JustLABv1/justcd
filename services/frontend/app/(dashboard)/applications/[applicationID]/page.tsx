@@ -670,7 +670,7 @@ export default function ApplicationDetailPage() {
   const planBlockedByNamespace = Boolean(application && namespaceMismatch && !application.kustomizeNamespaceOverride)
 
   return <>
-    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.clusterName || application.clusterId} / ${application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"}${application.autoSyncPaused ? " · Auto-sync paused" : ""}` : ""} badge={application && <StatusBadge status={application.health} />} actions={application && <>
+    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.clusterName || application.clusterId} / ${application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"}${application.autoSyncPaused ? " · Auto-sync paused" : ""}` : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Sync <StatusBadge status={application.health} /></span><span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Runtime <StatusBadge status={application.healthCondition?.status ?? "Unknown"} /></span></div>} actions={application && <>
       {pendingData.workspace && <span role="status" className="text-sm text-muted-foreground">Loading permissions…</span>}
       {planBlockedByNamespace && !application.configurationMissing && !application.decommissioning && canDeploy
         ? <Tooltip>
@@ -756,7 +756,7 @@ export default function ApplicationDetailPage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="activity" className="outline-none">
-          <ActivityTab application={application} operations={operations} operationsLoading={pendingData.operations} rollbackTargets={rollbackTargets} rollbackLoading={pendingData.rollback} kustomization={kustomization} kustomizationError={kustomizationError} canDeploy={canDeploy} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} onRetryReconciliation={(operationId) => void retryReconciliation(operationId)} onCreateRollbackPlan={createRollbackPlan} />
+          <ActivityTab key={application.id} application={application} operations={operations} operationsLoading={pendingData.operations} rollbackTargets={rollbackTargets} rollbackLoading={pendingData.rollback} kustomization={kustomization} kustomizationError={kustomizationError} canDeploy={canDeploy} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} onRetryReconciliation={(operationId) => void retryReconciliation(operationId)} onCreateRollbackPlan={createRollbackPlan} />
         </Tabs.Panel>
 
         <Tabs.Panel value="pull-requests" className="outline-none">

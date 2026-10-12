@@ -16,7 +16,7 @@ export function RuntimeHealthStrip({ application, healthHistory }: { application
   return <div className="mb-5 flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
     <span>{application.lastCheckedAt ? `Last checked ${new Date(application.lastCheckedAt).toLocaleString()}` : "Application checks pending"}</span>
     <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(true)}><HugeiconsIcon icon={HeartCheckIcon} strokeWidth={1.8} aria-hidden="true" />Health details</Button>
-    <AppDialog open={open} onOpenChange={setOpen} variant="info" size="lg" title="Runtime health" description="Kubernetes workload health is separate from Git sync state.">
+    <AppDialog open={open} onOpenChange={setOpen} variant="info" size="lg" title="Runtime health" description="Runtime readiness is separate from Git sync state. Partial means some runtime resources could not be assessed; configuration objects do not need workload health checks.">
       <div className="space-y-4">
         <StatusBadge status={condition?.status ?? "Unknown"} />
         <p className="text-sm"><strong>{condition?.reason ?? "HealthNotObserved"}:</strong> {condition?.message ?? "Live Kubernetes health has not been observed yet."}</p>

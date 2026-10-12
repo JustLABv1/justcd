@@ -242,8 +242,9 @@ export type Application = {
 }
 
 export type ApplicationHealthStatus = "Healthy" | "Progressing" | "Degraded" | "Suspended" | "Missing" | "Unknown" | "Partial"
-export type KubernetesCondition = { type: string; status: string; reason?: string; message?: string; lastTransitionTime?: string }
+export type KubernetesCondition = { type: string; status: string; reason?: string; message?: string; lastTransitionTime?: string; observedGeneration?: number }
 export type ResourceHealthSummary = {
+  generation?: number
   desiredReplicas?: number
   readyReplicas?: number
   updatedReplicas?: number

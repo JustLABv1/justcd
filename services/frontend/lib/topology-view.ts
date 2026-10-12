@@ -3,6 +3,13 @@ import type { Identity, Operation, PlanRecord, ResourceTopology, TopologyNode } 
 export const identityKey = (id: Identity) => JSON.stringify([id.clusterId ?? "", id.apiVersion, id.kind, id.namespace, id.name])
 export const observed = (node: TopologyNode) => node.source === "sample" || node.source === "kubernetes"
 export const workload = (node: TopologyNode) => ["Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob"].includes(node.identity.kind)
+export function configurationResource(identity: Identity) {
+  return (identity.apiVersion === "v1" && ["ConfigMap", "Secret", "Service", "ServiceAccount"].includes(identity.kind)) ||
+    (identity.apiVersion.startsWith("networking.k8s.io/") && ["Ingress", "NetworkPolicy"].includes(identity.kind)) ||
+    (identity.apiVersion.startsWith("rbac.authorization.k8s.io/")) ||
+    (identity.apiVersion.startsWith("stackgres.io/") && ["SGInstanceProfile", "SGScript"].includes(identity.kind))
+}
+
 export type SyncState = "syncing" | "applied" | "failed" | "create" | "update" | "delete" | "synced" | "unknown" | "observed"
 export function syncState(node: TopologyNode, plan: PlanRecord | null, operation?: Operation): SyncState {
   const key = identityKey(node.identity)

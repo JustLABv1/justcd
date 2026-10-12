@@ -184,3 +184,36 @@ func TestEvaluateSurfacesUnassessedCustomResources(t *testing.T) {
 		t.Fatalf("custom resource assessment = %#v", result.Resources)
 	}
 }
+
+func TestCustomReadinessAndConfiguration(t *testing.T) {
+	custom := core.Identity{ClusterID: "cluster", APIVersion: "secrets.hashicorp.com/v1beta1", Kind: "VaultStaticSecret", Namespace: "demo", Name: "secret"}
+	for _, tc := range []struct {
+		name, status string
+		generation   *int64
+		want         Status
+	}{
+		{"ready", "True", count(2), Healthy},
+		{"not ready", "False", count(2), Progressing},
+		{"unknown", "Unknown", count(2), Unknown},
+		{"stale ready", "True", count(1), Progressing},
+		{"operator without generation", "True", nil, Healthy},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configs := []core.Identity{custom, {APIVersion: "stackgres.io/v1", Kind: "SGInstanceProfile"}, {APIVersion: "stackgres.io/v1", Kind: "SGScript"}, {APIVersion: "v1", Kind: "ConfigMap"}, {APIVersion: "v1", Kind: "Service"}}
+			item := Observation{Identity: custom, Source: "kubernetes", Details: ResourceDetails{Generation: 2, Conditions: []KubernetesCondition{{Type: "Ready", Status: tc.status, ObservedGeneration: tc.generation}}}}
+			result := Evaluate(configs, []Observation{item}, nil, false, time.Now())
+			if result.Status != tc.want {
+				t.Fatalf("got %#v, want %s", result, tc.want)
+			}
+			item.Source = "sample"
+			if result := Evaluate(configs, []Observation{item}, nil, false, time.Now()); result.Status == Healthy {
+				t.Fatal("sample readiness must not be healthy")
+			}
+		})
+	}
+	// The same kind in another API group must not be silently exempted.
+	other := core.Identity{APIVersion: "example.io/v1", Kind: "SGScript"}
+	if ConfigurationResource(other) {
+		t.Fatal("configuration exemption crossed API groups")
+	}
+}

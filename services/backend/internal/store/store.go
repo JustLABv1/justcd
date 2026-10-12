@@ -3574,7 +3574,11 @@ func (s *Store) OperationByID(ctx context.Context, id string) (Operation, error)
 }
 
 func (s *Store) ListOperations(ctx context.Context, applicationID string, limit int) ([]Operation, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,plan_id,actor_id,operation_type,COALESCE(rollback_checkpoint_id,''),status,message,progress,attempt_count,error_code,next_retry_at,terminal_reason,started_at,finished_at,COALESCE(traceparent,'') FROM operations WHERE application_id=$1 ORDER BY started_at DESC LIMIT $2`, applicationID, limit)
+	return s.ListOperationsPage(ctx, applicationID, limit, 0)
+}
+
+func (s *Store) ListOperationsPage(ctx context.Context, applicationID string, limit, offset int) ([]Operation, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,plan_id,actor_id,operation_type,COALESCE(rollback_checkpoint_id,''),status,message,progress,attempt_count,error_code,next_retry_at,terminal_reason,started_at,finished_at,COALESCE(traceparent,'') FROM operations WHERE application_id=$1 ORDER BY started_at DESC, id DESC LIMIT $2 OFFSET $3`, applicationID, limit, offset)
 	if err != nil {
 		return nil, err
 	}

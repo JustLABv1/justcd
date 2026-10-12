@@ -22,6 +22,7 @@ const (
 )
 
 type KubernetesCondition struct {
+	ObservedGeneration *int64     `json:"observedGeneration,omitempty"`
 	Type               string     `json:"type"`
 	Status             string     `json:"status"`
 	Reason             string     `json:"reason,omitempty"`
@@ -32,6 +33,7 @@ type KubernetesCondition struct {
 // ResourceDetails contains only bounded, non-secret status fields copied from
 // Kubernetes. It intentionally does not retain the unstructured Status object.
 type ResourceDetails struct {
+	Generation         int64                 `json:"generation,omitempty"`
 	StatusObserved     bool                  `json:"statusObserved,omitempty"`
 	DesiredReplicas    *int64                `json:"desiredReplicas,omitempty"`
 	ReadyReplicas      *int64                `json:"readyReplicas,omitempty"`
@@ -98,6 +100,32 @@ func SupportedKind(kind string) bool {
 	}
 }
 
+// ConfigurationResource identifies custom configuration definitions with no
+// independent runtime readiness. Their consumers carry execution health.
+func ConfigurationResource(identity core.Identity) bool {
+	if !strings.HasPrefix(identity.APIVersion, "stackgres.io/") {
+		return false
+	}
+	switch identity.Kind {
+	case "SGInstanceProfile", "SGScript":
+		return true
+	default:
+		return false
+	}
+}
+
+func readyCondition(item Observation) *KubernetesCondition {
+	if !isCustomResource(item.Identity.APIVersion) {
+		return nil
+	}
+	for i := range item.Details.Conditions {
+		if item.Details.Conditions[i].Type == "Ready" {
+			return &item.Details.Conditions[i]
+		}
+	}
+	return nil
+}
+
 func isCustomResource(apiVersion string) bool {
 	parts := strings.SplitN(apiVersion, "/", 2)
 	if len(parts) != 2 {
@@ -130,7 +158,7 @@ func Evaluate(managed []core.Identity, observed []Observation, warnings []string
 			sampleCount++
 			continue
 		}
-		if item.Source != "kubernetes" || !SupportedKind(item.Identity.Kind) {
+		if item.Source != "kubernetes" || (!SupportedKind(item.Identity.Kind) && readyCondition(item) == nil) {
 			continue
 		}
 		live[item.Identity.Key()] = item
@@ -147,7 +175,7 @@ func Evaluate(managed []core.Identity, observed []Observation, warnings []string
 	for _, identity := range managed {
 		if SupportedKind(identity.Kind) {
 			managedWorkloads[identity.Key()] = identity
-		} else if isCustomResource(identity.APIVersion) {
+		} else if isCustomResource(identity.APIVersion) && !ConfigurationResource(identity) && readyCondition(live[identity.Key()]) == nil {
 			// Built-in resources such as Services and ConfigMaps are not workload
 			// health signals. Custom resources remain unassessed so supported
 			// workloads cannot make the whole application look healthy.
@@ -163,7 +191,7 @@ func Evaluate(managed []core.Identity, observed []Observation, warnings []string
 	for _, identity := range unsupportedResources {
 		assessments = append(assessments, ResourceAssessment{
 			Identity: identity, Status: Unknown, Reason: "UnsupportedResourceKind",
-			Message: "Health checks are not defined for this custom resource kind.",
+			Message: "This resource has no usable Ready condition, and no kind-specific health check is available.",
 		})
 	}
 	if len(condition.Warnings) == 0 {
@@ -231,7 +259,7 @@ func Evaluate(managed []core.Identity, observed []Observation, warnings []string
 		condition.Message = "Kubernetes returned supported workload resources without enough status to determine health."
 	case unsupported > 0 || unknown > 0:
 		condition.Status, condition.Reason = Partial, "HealthPartiallyInferred"
-		condition.Message = "Health is available for only part of the application; some resource kinds or statuses cannot be inferred."
+		condition.Message = "Health is available for only part of the application; some runtime resource kinds or statuses cannot be inferred. Configuration objects do not require workload readiness checks."
 	case suspended:
 		condition.Status, condition.Reason = Suspended, "ReconciliationSuspended"
 		condition.Message = "Application reconciliation is suspended."
@@ -243,7 +271,7 @@ func Evaluate(managed []core.Identity, observed []Observation, warnings []string
 		condition.Message = fmt.Sprintf("%d supported workload resource(s) are still becoming ready.", progressing)
 	case known > 0:
 		condition.Status, condition.Reason = Healthy, "AllWorkloadsHealthy"
-		condition.Message = "All observed supported workloads satisfy their readiness checks."
+		condition.Message = "All observed runtime resources with supported health signals satisfy their readiness checks."
 	case unsupported > 0:
 		condition.Status, condition.Reason = Unknown, "UnsupportedResourceHealth"
 		condition.Message = fmt.Sprintf("Health cannot be inferred for %d managed resource(s) of unsupported kinds.", unsupported)
@@ -272,6 +300,20 @@ func assess(item Observation) ResourceAssessment {
 			assessment.Message = item.Details.FailureReason
 		}
 		return assessment
+	}
+
+	if condition := readyCondition(item); condition != nil {
+		if condition.ObservedGeneration != nil && *condition.ObservedGeneration < item.Details.Generation {
+			return withStatus(assessment, Progressing, "ReadinessStale", "The operator has not reported readiness for the current resource generation.")
+		}
+		switch condition.Status {
+		case "True":
+			return withStatus(assessment, Healthy, firstNonEmpty(condition.Reason, "ResourceReady"), firstNonEmpty(condition.Message, "The operator reports Ready=True."))
+		case "False":
+			return withStatus(assessment, Progressing, firstNonEmpty(condition.Reason, "ResourceNotReady"), firstNonEmpty(condition.Message, "The operator reports Ready=False."))
+		default:
+			return withStatus(assessment, Unknown, firstNonEmpty(condition.Reason, "ResourceReadinessUnknown"), firstNonEmpty(condition.Message, "The operator cannot determine readiness."))
+		}
 	}
 
 	switch item.Identity.Kind {

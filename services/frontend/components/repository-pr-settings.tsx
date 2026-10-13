@@ -483,7 +483,7 @@ function SettingsDialogContent({
                       <SwitchField
                         id="repo-pr-namespace-creation"
                         label="Allow creation of matching dev namespaces"
-                        description="Applications with createNamespaces: true can register matching namespaces during discovery and create them during deployment. Uses the cluster's default workspace credential and normal deployment approvals."
+                        description="Applications with createNamespaces: true set up matching namespaces during discovery, before planning. OpenShift project requests grant the requesting account access. Workload deployment still uses normal approvals."
                         checked={settings.allowNamespaceCreation ?? false}
                         onCheckedChange={(allowNamespaceCreation) =>
                           setSettings((s) => ({ ...s, allowNamespaceCreation }))

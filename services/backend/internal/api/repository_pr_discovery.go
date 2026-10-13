@@ -241,6 +241,11 @@ func (s *Server) discoverRepositoryPRs(ctx context.Context, repo store.Repositor
 				if err = s.refreshRepositoryPREvent(ctx, *v.ConnectionID, current); err != nil {
 					return err
 				}
+				if app.CreateNamespaces {
+					if err := s.Syncer.BootstrapRepositoryPRNamespaces(ctx, *v.ApplicationID); err != nil {
+						return err
+					}
+				}
 			}
 			// Removed definitions enter the same reviewed cleanup flow as a closed MR.
 			for _, v := range known {

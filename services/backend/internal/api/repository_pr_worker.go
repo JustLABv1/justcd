@@ -117,7 +117,16 @@ func (s *Server) processRepositoryPRReview(ctx context.Context, c store.SourceCo
 	} else if review.ProcessedSHA == review.HeadSHA && !s.reviewPlanNeedsRefresh(ctx, review) && (review.Phase == "approval_required" || review.Phase == "syncing" || review.Phase == "ready" || review.Phase == "degraded") {
 		s.refreshPreviewReview(ctx, &result)
 	} else {
-		s.buildPreviewReview(ctx, app, c, &result)
+		if app.CreateNamespaces {
+			if err := s.Syncer.BootstrapRepositoryPRNamespaces(ctx, app.ID); err != nil {
+				result.Phase = "failed"
+				result.Error = "namespace setup failed: " + err.Error()
+			} else {
+				s.buildPreviewReview(ctx, app, c, &result)
+			}
+		} else {
+			s.buildPreviewReview(ctx, app, c, &result)
+		}
 	}
 	if err = s.applyPRCommentApprovals(ctx, c, &result, string(token)); err != nil {
 		result.Error = "PR comment approval check failed: " + err.Error()

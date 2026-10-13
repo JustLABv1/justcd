@@ -124,14 +124,12 @@ function WorkspaceSettingsPage() {
     {!isOwner && <p className="mb-5 text-sm text-muted-foreground">Workspace owners manage general settings, deployment policies, and notifications. You can view members and their roles here.</p>}
     {deletionPlans.length > 0 && <div role="status" className="mb-5 rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm"><p className="font-medium">Deletion plans are ready for review.</p><p className="mt-1 text-sm text-muted-foreground">Approve and apply each application plan. Once all managed resources are gone, choose “Delete workspace” again to remove the workspace record.</p><ul className="mt-3 space-y-1">{deletionPlans.map((item) => <li key={item.applicationId}><Link href={`/applications/${item.applicationId}?tab=changes`} className="font-medium underline underline-offset-4">{item.applicationName} · {item.managedResources} resources</Link></li>)}</ul></div>}
     <Tabs value={activeTab} onValueChange={(value) => selectTab(String(value))}>
-      <div className="sticky top-0 z-10 mb-5 border-b bg-background py-2">
-        <TabsList variant="line" aria-label="Workspace settings sections" className="grid w-full grid-cols-2 gap-x-2 gap-y-3 group-data-horizontal/tabs:h-auto sm:flex sm:w-fit sm:gap-4 sm:group-data-horizontal/tabs:h-10" activateOnFocus={false}>
-          {isOwner && <TabsTrigger className="h-10 justify-start whitespace-normal text-left leading-4 sm:h-9 sm:justify-center sm:whitespace-nowrap" value="general">General</TabsTrigger>}
-          <TabsTrigger className="h-10 justify-start whitespace-normal text-left leading-4 sm:h-9 sm:justify-center sm:whitespace-nowrap" value="members">Members &amp; access <Badge size="xs" variant="secondary">{members.length}</Badge></TabsTrigger>
-          {isOwner && <TabsTrigger className="h-10 justify-start whitespace-normal text-left leading-4 sm:h-9 sm:justify-center sm:whitespace-nowrap" value="policies">Deployment policies</TabsTrigger>}
-          {isOwner && <TabsTrigger className="h-10 justify-start whitespace-normal text-left leading-4 sm:h-9 sm:justify-center sm:whitespace-nowrap" value="notifications">Notifications</TabsTrigger>}
+        <TabsList variant="line" aria-label="Workspace settings sections" layout="responsive" className="sticky top-0 z-10 bg-background">
+          {isOwner && <TabsTrigger value="general">General</TabsTrigger>}
+          <TabsTrigger value="members">Members &amp; access <Badge size="xs" variant="secondary">{members.length}</Badge></TabsTrigger>
+          {isOwner && <TabsTrigger value="policies">Deployment policies</TabsTrigger>}
+          {isOwner && <TabsTrigger value="notifications">Notifications</TabsTrigger>}
         </TabsList>
-      </div>
       <TabsContent value="members" className="min-w-0">
         <AppDialog open={memberOpen} onOpenChange={setMemberOpen} busy={memberBusy} size="md" title="Add member" description="Give a teammate access to this workspace.">
           <form className="space-y-4" onSubmit={addMember}>

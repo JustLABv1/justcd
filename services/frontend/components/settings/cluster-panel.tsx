@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { Tabs } from "@base-ui/react/tabs"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { PlusSignIcon } from "@hugeicons/core-free-icons"
 import { Badge } from "@/components/reui/badge"
@@ -43,8 +43,6 @@ import {
 } from "@/components/settings/shared"
 
 type WorkspaceCredentialResponse = { credentialId: string | null }
-
-const tabClass = "flex shrink-0 items-center gap-2 border-b-2 border-transparent px-1 pb-3 text-sm font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[active]:border-primary data-[active]:text-foreground"
 
 function workspaceCredentialUrl(clusterId: string, workspaceId: string) {
   return `/api/v1/clusters/${encodeURIComponent(clusterId)}/workspace-credential?workspaceId=${encodeURIComponent(workspaceId)}`
@@ -462,13 +460,13 @@ function EditClusterDialog({ cluster, workspace, user, globalCredentials, worksp
     >
       <form className="space-y-5" onSubmit={submit} noValidate>
         {credential.error != null && <LoadErrorNotice error={credential.error} title="Could not load the default credential" onRetry={credential.retry} />}
-        <Tabs.Root value={tab} onValueChange={(value) => setTab(value as TabId)}>
-          <Tabs.List aria-label="Cluster settings" className="mb-5 flex gap-6 overflow-x-auto border-b" activateOnFocus>
-            <Tabs.Tab value="general" className={tabClass}>General{errorDot(attempted && generalInvalid)}</Tabs.Tab>
-            <Tabs.Tab value="auth" className={tabClass}>Authentication & TLS</Tabs.Tab>
-            <Tabs.Tab value="limits" className={tabClass}>Limits{errorDot(attempted && limitsInvalid)}</Tabs.Tab>
-          </Tabs.List>
-          <Tabs.Panel value="general" className="space-y-5 outline-none sm:min-h-72">
+        <Tabs value={tab} onValueChange={(value) => setTab(value as TabId)}>
+          <TabsList aria-label="Cluster settings">
+            <TabsTrigger value="general">General{errorDot(attempted && generalInvalid)}</TabsTrigger>
+            <TabsTrigger value="auth">Authentication & TLS</TabsTrigger>
+            <TabsTrigger value="limits">Limits{errorDot(attempted && limitsInvalid)}</TabsTrigger>
+          </TabsList>
+          <TabsContent value="general" className="space-y-5 outline-none sm:min-h-72">
             <FormField label="Cluster name" htmlFor="cluster-name">
               <Input id="cluster-name" placeholder="prod-eu-1" value={name} onChange={(event) => setName(event.target.value)} aria-invalid={attempted && !!nameError} aria-describedby={attempted && nameError ? "cluster-name-error" : undefined} />
               {attempted && <FieldError id="cluster-name-error">{nameError}</FieldError>}
@@ -477,8 +475,8 @@ function EditClusterDialog({ cluster, workspace, user, globalCredentials, worksp
               <Input id="cluster-api" type="url" placeholder="https://api.example.com:6443" value={apiServer} onChange={(event) => setApiServer(event.target.value)} aria-invalid={attempted && !!apiError} aria-describedby={attempted && apiError ? "cluster-api-error" : undefined} />
               {attempted && <FieldError id="cluster-api-error">{apiError}</FieldError>}
             </FormField>
-          </Tabs.Panel>
-          <Tabs.Panel value="auth" className="space-y-5 outline-none sm:min-h-72">
+          </TabsContent>
+          <TabsContent value="auth" className="space-y-5 outline-none sm:min-h-72">
             <FormField label="CA certificate (base64)" htmlFor="cluster-ca" hint="Leave blank to keep the current CA certificate.">
               <Textarea id="cluster-ca" className={monoTextareaClass} value={caDataBase64} onChange={(event) => setCaDataBase64(event.target.value)} />
             </FormField>
@@ -511,8 +509,8 @@ function EditClusterDialog({ cluster, workspace, user, globalCredentials, worksp
               label="Skip TLS certificate verification"
               description="Unsafe: JustCD will not check the cluster's identity, so traffic could be intercepted. Use only for temporary development clusters."
             />
-          </Tabs.Panel>
-          <Tabs.Panel value="limits" className="space-y-5 outline-none sm:min-h-72">
+          </TabsContent>
+          <TabsContent value="limits" className="space-y-5 outline-none sm:min-h-72">
             <p className="text-sm text-muted-foreground">Limits protect the cluster from too many simultaneous changes from JustCD.</p>
             <div className="grid gap-3 sm:grid-cols-2">
               <FormField label="Max concurrent operations" htmlFor="cluster-max-concurrent" hint="Simultaneous operations against this cluster (1–20).">
@@ -524,8 +522,8 @@ function EditClusterDialog({ cluster, workspace, user, globalCredentials, worksp
                 <FieldError id="cluster-operations-per-minute-error">{rateError}</FieldError>
               </FormField>
             </div>
-          </Tabs.Panel>
-        </Tabs.Root>
+          </TabsContent>
+        </Tabs>
         <DialogFooter>
           <DialogCancel disabled={saving} />
           <Button type="submit" loading={saving} loadingText="Saving…" disabled={!credential.loaded}>Save changes</Button>

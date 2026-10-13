@@ -137,6 +137,10 @@ export function NamespacePanel({
         title="Namespace access"
         description="Namespaces this workspace can deploy to on the selected cluster."
         count={bindings.length}
+        action={isOwner && cluster && bindings.length > 0 ? <Button type="button" size="sm" disabled={busy} onClick={() => onCreateOpenChange(true)}>
+          <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} aria-hidden="true" />
+          Grant namespace access
+        </Button> : undefined}
         toolbar={
           <div className="max-w-xs">
             <FormField label="Cluster" htmlFor="active-cluster">

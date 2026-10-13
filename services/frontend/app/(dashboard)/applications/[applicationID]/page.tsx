@@ -3,7 +3,7 @@
 import { DeploymentSchedulePanel, ScheduledOperationActions } from "@/components/deployment-schedule"
 import { useParams, useRouter } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
-import { Tabs } from "@base-ui/react/tabs"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Edit02Icon, PauseIcon, RefreshIcon, TestTubeIcon } from "@hugeicons/core-free-icons"
 import { ActionMenu } from "@/components/action-menu"
@@ -700,8 +700,8 @@ export default function ApplicationDetailPage() {
 
         {visibleOperation?.status === "queued" && <div className="mb-5 rounded-xl border bg-card p-4"><ScheduledOperationActions operation={visibleOperation} canOverride={canApprove} canCancel={canDeploy} onUpdated={loadData} /></div>}
     </>}
-      <Tabs.Root value={activeTab} onValueChange={(value) => selectTab(String(value))} className="min-w-0">
-        {application && <Tabs.List aria-label="Application views" className="mb-6 flex gap-6 overflow-x-auto border-b" activateOnFocus>
+      <Tabs value={activeTab} onValueChange={(value) => selectTab(String(value))} className="min-w-0">
+        {application && <TabsList aria-label="Application views">
           {[
             { id: "overview", label: "Overview" },
             { id: "topology", label: "Resources", count: pendingData.topology ? undefined : topology ? applicationResourceNodes(topology).length : undefined },
@@ -709,10 +709,10 @@ export default function ApplicationDetailPage() {
             { id: "activity", label: "Activity" },
             { id: "pull-requests", label: "Pull requests" },
             { id: "settings", label: "Settings" },
-          ].map((tab) => <Tabs.Tab key={tab.id} value={tab.id} className="flex shrink-0 items-center gap-2 border-b-2 border-transparent px-1 pb-3 text-sm font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[active]:border-primary data-[active]:text-foreground">
+          ].map((tab) => <TabsTrigger key={tab.id} value={tab.id}>
             {tab.label}{tab.count !== undefined && <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs tabular-nums text-muted-foreground">{tab.count}</span>}
-          </Tabs.Tab>)}
-        </Tabs.List>}
+          </TabsTrigger>)}
+        </TabsList>}
 
     {application && <BranchTestControls open={branchTestOpen} onOpenChange={setBranchTestOpen} application={application} canManage={canApprove} disabled={busy || hasPendingOperation} onSettings={() => selectTab("settings")} onReview={() => void createPlan()} onChanged={async (updated) => {
       if (updated.id !== applicationID) { router.push(`/applications/${updated.id}`); return }
@@ -725,12 +725,12 @@ export default function ApplicationDetailPage() {
       {ownershipConflict && <OwnershipConflictDialog open={conflictOpen} onOpenChange={setConflictOpen} conflicts={ownershipConflicts} applicationId={application.id} canApprove={canApprove} busy={busy} selectedKeys={selectedConflictKeys} onSelectedKeysChange={setSelectedConflictKeys} claimableKeys={claimableConflictKeys} onAdopt={adoptConflict} onAdoptSelected={adoptSelectedConflicts} onConfigureIgnore={configureConflictIgnore} />}
     </>}
     {!loading && application && <>
-        <Tabs.Panel value="overview" className="outline-none">
+        <TabsContent value="overview" className="outline-none">
           <OverviewTab application={application} latestPlan={latestPlan} plansError={plansError} retryingPlans={retryingPlans} topology={topology} topologyError={topologyError} pending={{ topology: pendingData.topology, plans: pendingData.plans, operations: pendingData.operations }} operations={operations} operationsError={operationsError} canDeploy={canDeploy} busy={busy} hasPendingOperation={hasPendingOperation} creatingPlan={pendingAction === "create-plan"} planBlockedByNamespace={planBlockedByNamespace} onCreatePlan={() => void createPlan()} onRetryPlans={() => void retryPlans()} onSelectTab={selectTab} />
           <div className="mt-5"><DeploymentSchedulePanel key={application.id} scope="applications" id={application.id} canEdit={canApprove} /></div>
-        </Tabs.Panel>
+        </TabsContent>
 
-        <Tabs.Panel value="topology" className="outline-none">
+        <TabsContent value="topology" className="outline-none">
       {pendingData.topology || pendingData.resources || pendingData.plans || pendingData.operations ? <SectionLoading label="Loading the resource map" /> : <>
       {topologyError && <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 p-3 text-sm"><span>Saved topology could not be loaded. The map uses available inventory.</span><ErrorDetailsButton error={topologyError} /></div>}
       <ResourceMap view={topologyView} onViewChange={(view) => { setTopologyView(view); const url = new URL(window.location.href); url.searchParams.set("tab", "topology"); if (view === "list") url.searchParams.set("view", "list"); else url.searchParams.delete("view"); window.history.pushState(null, "", url) }} canManageResources={canApprove} resourceActionsDisabled={busy || hasPendingOperation} onResourceActionComplete={async () => { setApplication(await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`)); await refreshSummary() }} application={application} plan={plans[0]?.status === "current" ? plans[0] : null} inventory={resources} operations={operations} topology={topology} refreshing={topologyRefreshing} onRefresh={() => {
@@ -747,9 +747,9 @@ export default function ApplicationDetailPage() {
         selectTab("changes")
         window.setTimeout(() => document.getElementById(diffId(identity))?.scrollIntoView({ behavior: "smooth", block: "center" }), 100)
       }} /></>}
-        </Tabs.Panel>
+        </TabsContent>
 
-        <Tabs.Panel value="changes" className="min-w-0 outline-none">
+        <TabsContent value="changes" className="min-w-0 outline-none">
           <ChangesTab plans={plans} activePlan={activePlan} onSelectPlan={(id) => { setApprovalSummary(null); setActivePlan(plans.find((plan) => plan.id === id) ?? null) }} plansLoading={pendingData.plans} plansError={plansError} retryingPlans={retryingPlans} onRetryPlans={() => void retryPlans()}
             decommissioning={application.decommissioning} canDeploy={canDeploy} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} hasOwnershipConflict={Boolean(ownershipConflict)}
             onReviewOwnershipConflict={() => setConflictOpen(true)} reviewResource={reviewResource} onReviewResourceChange={setReviewResource}
@@ -759,21 +759,21 @@ export default function ApplicationDetailPage() {
             requiredApprovals={requiredApprovals} approvedApprovals={approvedApprovals} approvalsComplete={approvalsComplete} approverRoles={displayedApproverRoles} approverMembers={displayedApproverMembers} approvalSummary={currentApprovalSummary}
             autoApplyAfterApproval={application.syncPolicy === "auto-safe" && !application.autoSyncPaused && !application.decommissioning && !activePlan?.plan.rollback && !activePlan?.plan.decommission}
             approvalComment={approvalComment} onApprovalCommentChange={setApprovalComment} onApprove={approvePlan} onApply={() => void applyPlan()} onCreatePlan={() => void createPlan()} />
-        </Tabs.Panel>
+        </TabsContent>
 
-        <Tabs.Panel value="activity" className="outline-none">
+        <TabsContent value="activity" className="outline-none">
           <ActivityTab key={application.id} application={application} operations={operations} operationsLoading={pendingData.operations} rollbackTargets={rollbackTargets} rollbackLoading={pendingData.rollback} kustomization={kustomization} kustomizationError={kustomizationError} canDeploy={canDeploy} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} onRetryReconciliation={(operationId) => void retryReconciliation(operationId)} onCreateRollbackPlan={createRollbackPlan} />
-        </Tabs.Panel>
+        </TabsContent>
 
-        <Tabs.Panel value="pull-requests" className="outline-none">
+        <TabsContent value="pull-requests" className="outline-none">
           <PullRequestsWorkspace embedded canConfigure={canApprove} />
-        </Tabs.Panel>
+        </TabsContent>
 
-        <Tabs.Panel value="settings" keepMounted className="outline-none">
+        <TabsContent value="settings" keepMounted className="outline-none">
           <SettingsTab application={application} kustomization={kustomization} kustomizationError={kustomizationError} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} rulesLoading={pendingData.rules || pendingData.selectors} ignoreRules={ignoreRules} ignoreSelectors={ignoreSelectors} managedResourceCount={resources.length} deletionApprovalCount={deletionApprovalCount} prefill={ignorePrefill} onSaveRenderSettings={saveRenderSettings} onAddIgnore={addIgnore} onRemoveRule={removeIgnoreRule} onRemoveSelector={removeIgnoreSelector} onDeleteApplication={deleteApplication} onCancelDecommission={() => void cancelDecommission()} />
-        </Tabs.Panel>
+        </TabsContent>
     </>}
-      </Tabs.Root>
+      </Tabs>
   </>
 }
 

@@ -7,10 +7,12 @@ import { HugeiconsIcon } from "@hugeicons/react"
 import { ArrowLeft01Icon, ArrowRight01Icon, PlusSignIcon } from "@hugeicons/core-free-icons"
 import { WorkspaceIcon } from "@/components/workspace-ui"
 import { Button } from "@/components/ui/button"
+import { FormSelect } from "@/components/ui/form-select"
 import { Skeleton } from "@/components/ui/skeleton"
-import { EmptyState, PageHeading, Panel } from "@/components/ui-kit"
+import { EmptyState, FormField, PageHeading, Panel } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
 import { api, errorMessage } from "@/lib/api"
+import { ConnectionTabs } from "@/components/connections/tabs"
 import { WorkspaceConnectionShares } from "@/components/workspace-connection-shares"
 import { ClusterPanel } from "@/components/settings/cluster-panel"
 import { CredentialPanel } from "@/components/settings/credential-panel"
@@ -61,13 +63,14 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
   const pathname = usePathname()
   const toast = useToast()
   const workspaceScoped = Boolean(fixedWorkspaceId)
-  const section = sectionOverride ?? pathname.split("/")[2] ?? ""
+  const requestedSection = sectionOverride ?? pathname.split("/")[2] ?? ""
+  const section = workspaceScoped && requestedSection === "namespaces" ? "clusters" : requestedSection
   const sections = [
     { id: "git-sources", title: "Git sources", description: "Repositories this workspace deploys from" },
-    { id: "clusters", title: "Kubernetes clusters", description: "Direct API connections and outbound cluster agents" },
+    { id: "clusters", title: "Kubernetes", description: "Cluster connections and namespace access" },
     { id: "namespaces", title: "Namespace access", description: "Namespaces this workspace can deploy to" },
     { id: "credentials", title: "Credentials", description: "Encrypted Git and Kubernetes secrets" },
-    { id: "shares", title: "Shared connections", description: "Review connection offers and workspace access" },
+    { id: "shares", title: "Sharing", description: "Review connection offers and workspace access" },
     { id: "oidc", title: "OIDC providers", description: "Organization sign-in and group mapping", adminOnly: true },
     { id: "users", title: "Platform users", description: "Accounts and access on this JustCD instance", adminOnly: true },
     { id: "maintenance", title: "Maintenance", description: "Restrict access while administrators work on the instance", adminOnly: true },
@@ -117,7 +120,8 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
         ? await api<ListResponse<Cluster>>(`/api/v1/clusters?workspaceId=${encodeURIComponent(selected.id)}`)
         : { items: [] as Cluster[] }
       setClusters(clusterList.items)
-      const initialCluster = clusterList.items[0]
+      const requestedClusterId = new URLSearchParams(window.location.search).get("clusterId")
+      const initialCluster = clusterList.items.find((item) => item.id === requestedClusterId) ?? clusterList.items[0]
       if (initialCluster) setClusterId(initialCluster.id)
     }
     loadBase()
@@ -149,17 +153,18 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
   }, [workspaceId, ticks.scope, setError])
 
   useEffect(() => {
-    if (!workspaceId || !clusterId) return
+    if (!workspaceId || !clusterId || !["clusters", "namespaces"].includes(section)) return
     let active = true
     api<ListResponse<NamespaceBinding>>(`/api/v1/clusters/${encodeURIComponent(clusterId)}/bindings?workspaceId=${encodeURIComponent(workspaceId)}`)
       .then((result) => {
         if (!active) return
         setBindings(result.items)
         setLoadedBindingsKey(`${workspaceId}:${clusterId}`)
+        setError("bindings", undefined)
       })
       .catch((cause) => { if (active) setError("bindings", cause) })
     return () => { active = false }
-  }, [workspaceId, clusterId, ticks.bindings, setError])
+  }, [workspaceId, clusterId, section, ticks.bindings, setError])
 
   useEffect(() => {
     if (!user?.isAdmin) return
@@ -176,6 +181,12 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
 
   const scopeLoading = !!workspaceId && loadedWorkspaceId !== workspaceId
   const bindingsLoading = !!workspaceId && !!clusterId && loadedBindingsKey !== `${workspaceId}:${clusterId}`
+
+  useEffect(() => {
+    if (workspaceScoped && requestedSection === "namespaces" && clusterId && !loading && !scopeLoading && !bindingsLoading) {
+      document.getElementById("namespace-access")?.scrollIntoView({ block: "start" })
+    }
+  }, [workspaceScoped, requestedSection, clusterId, loading, scopeLoading, bindingsLoading])
 
   const workspace = useMemo(() => workspaces.find((item) => item.id === workspaceId), [workspaces, workspaceId])
   const globalKubeCredentials = credentials.filter((item) => !item.workspaceId && ["kubernetes-token", "kubeconfig"].includes(item.kind))
@@ -224,11 +235,6 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
         <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} aria-hidden="true" />
         Add credential
       </Button>
-    ) : section === "namespaces" && clusterId ? (
-      <Button type="button" onClick={() => setNamespaceDialogOpen(true)}>
-        <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} aria-hidden="true" />
-        Grant namespace access
-      </Button>
     ) : null
 
   // A failed load must never render as an empty list, so it replaces the section content.
@@ -236,31 +242,19 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
     ? { kind: "base", title: "Could not load settings" }
     : workspaceScoped && errors.scope !== undefined
       ? { kind: "scope", title: "Could not load workspace connections" }
-      : section === "namespaces" && errors.bindings !== undefined
-        ? { kind: "bindings", title: "Could not load namespace access" }
-        : current?.adminOnly && user?.isAdmin && errors.providers !== undefined && section === "oidc"
-          ? { kind: "providers", title: "Could not load OIDC providers" }
-          : null
+      : current?.adminOnly && user?.isAdmin && errors.providers !== undefined && section === "oidc"
+        ? { kind: "providers", title: "Could not load OIDC providers" }
+        : null
 
   const adminVisibleSections = visibleSections.filter((item) => !item.adminOnly || user?.isAdmin)
   const providersPending = section === "oidc" && !providersLoaded && errors.providers === undefined
 
-  return (
-    <>
-      <PageHeading
-        title={current?.title ?? (workspaceScoped ? "Workspace connections" : "Instance settings")}
-        description={
-          current?.description ??
-          (workspaceScoped ? "Repositories, Kubernetes access, and credentials for this workspace." : "Access, maintenance, and accounts for the JustCD instance.")
-        }
-        actions={headerAction}
-      />
-      {loading && !sectionError ? (
+  const content = (loading && !sectionError ? (
         <SectionSkeleton rows={section ? 3 : 2} label="Loading settings" />
       ) : sectionError ? (
         <LoadErrorNotice error={errors[sectionError.kind]} title={sectionError.title} onRetry={() => retry(sectionError.kind)} />
       ) : section && !current ? (
-        <EmptyState title="Section not found" description="Choose a settings section to continue." href="/settings" action="View settings" />
+        <EmptyState title="Section not found" description="Choose a section to continue." href={workspaceScoped ? `/workspaces/${fixedWorkspaceId}/connections` : "/settings"} action={workspaceScoped ? "View connections" : "View settings"} />
       ) : (
         <div className={current && !workspaceScoped ? "grid items-start gap-8 lg:grid-cols-[200px_minmax(0,1fr)]" : ""}>
           {current && !workspaceScoped && (
@@ -352,7 +346,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                     onDeleted={(value) => setCredentials((items) => items.filter((item) => item.id !== value))}
                   />
                 )}
-                {workspaceScoped && workspace && section === "clusters" && !scopeLoading && (
+                {workspaceScoped && workspace && section === "clusters" && !scopeLoading && <div className="space-y-8">
                   <ClusterPanel
                     key={workspace.id}
                     user={user}
@@ -363,9 +357,46 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                     busy={busy}
                     action={action}
                     onUpdated={(cluster) => setClusters((items) => items.map((item) => (item.id === cluster.id ? cluster : item)))}
-                    onDeleted={(value) => setClusters((items) => items.filter((item) => item.id !== value))}
+                    onDeleted={(value) => {
+                      const remaining = clusters.filter((item) => item.id !== value)
+                      setClusters(remaining)
+                      if (clusterId === value) {
+                        setErrors((current) => ({ ...current, bindings: undefined }))
+                        setClusterId(remaining[0]?.id ?? "")
+                      }
+                    }}
                   />
-                )}
+                  {clusters.length > 0 && <section id="namespace-access" aria-label="Cluster namespace access" className="scroll-mt-28">
+                    {errors.bindings !== undefined ? <div className="space-y-4">
+                      <FormField label="Cluster" htmlFor="namespace-error-cluster">
+                        <FormSelect id="namespace-error-cluster" value={clusterId} onValueChange={(value) => {
+                          setErrors((current) => ({ ...current, bindings: undefined }))
+                          setClusterId(value)
+                        }} items={clusters.map((item) => ({ value: item.id, label: item.name }))} />
+                      </FormField>
+                      <LoadErrorNotice error={errors.bindings} title="Could not load namespace access" onRetry={() => retry("bindings")} />
+                    </div> : bindingsLoading ? <SectionSkeleton label="Loading namespace access" /> : <NamespacePanel
+                      key={`${workspaceId}:${clusterId}`}
+                      workspace={workspace}
+                      cluster={clusters.find((item) => item.id === clusterId)}
+                      credentials={namespaceCredentials}
+                      bindings={bindings}
+                      clusters={clusters}
+                      activeClusterId={clusterId}
+                      onClusterChange={(value) => {
+                        setErrors((current) => ({ ...current, bindings: undefined }))
+                        setClusterId(value)
+                      }}
+                      busy={busy}
+                      action={action}
+                      createOpen={namespaceDialogOpen}
+                      onCreateOpenChange={setNamespaceDialogOpen}
+                      onCreated={(binding) => setBindings((items) => [...items, binding].sort((a, b) => a.namespace.localeCompare(b.namespace)))}
+                      onUpdated={(binding) => setBindings((items) => items.map((item) => (item.namespace === binding.namespace ? binding : item)))}
+                      onDeleted={(value) => setBindings((items) => items.filter((item) => item.namespace !== value))}
+                    />}
+                  </section>}
+                </div>}
                 {workspaceScoped && workspace && section === "git-sources" && !scopeLoading && (
                   <GitSourcePanel
                     key={workspaceId}
@@ -380,31 +411,6 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                 )}
                 {workspaceScoped && workspace && section === "shares" && !scopeLoading && (
                   <WorkspaceConnectionShares workspace={workspace} workspaces={workspaces} clusters={clusters} sources={sources} credentials={credentials} />
-                )}
-                {workspaceScoped && workspace && section === "namespaces" && !scopeLoading && bindingsLoading && (
-                  <SectionSkeleton label="Loading namespace access" />
-                )}
-                {workspaceScoped && workspace && section === "namespaces" && !scopeLoading && !bindingsLoading && (
-                  <NamespacePanel
-                    key={`${workspaceId}:${clusterId}`}
-                    workspace={workspace}
-                    cluster={clusters.find((item) => item.id === clusterId)}
-                    credentials={namespaceCredentials}
-                    bindings={bindings}
-                    clusters={clusters}
-                    activeClusterId={clusterId}
-                    onClusterChange={(value) => {
-                      setErrors((current) => ({ ...current, bindings: undefined }))
-                      setClusterId(value)
-                    }}
-                    busy={busy}
-                    action={action}
-                    createOpen={namespaceDialogOpen}
-                    onCreateOpenChange={setNamespaceDialogOpen}
-                    onCreated={(binding) => setBindings((items) => [...items, binding].sort((a, b) => a.namespace.localeCompare(b.namespace)))}
-                    onUpdated={(binding) => setBindings((items) => items.map((item) => (item.namespace === binding.namespace ? binding : item)))}
-                    onDeleted={(value) => setBindings((items) => items.filter((item) => item.namespace !== value))}
-                  />
                 )}
                 {section === "oidc" && user?.isAdmin && providersPending && <SectionSkeleton rows={2} label="Loading OIDC providers" />}
                 {section === "oidc" && user?.isAdmin && providersLoaded && (
@@ -424,7 +430,20 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
             )}
           </div>
         </div>
-      )}
+      ))
+
+  return (
+    <>
+      <PageHeading
+        title={workspaceScoped ? "Connections" : current?.title ?? "Instance settings"}
+        description={
+          workspaceScoped
+            ? `${workspace?.name ?? "Workspace"} · Repositories, Kubernetes access, credentials, and sharing.`
+            : current?.description ?? "Access, maintenance, and accounts for the JustCD instance."
+        }
+        actions={headerAction}
+      />
+      {workspaceScoped && fixedWorkspaceId ? <ConnectionTabs workspaceId={fixedWorkspaceId} section={section}>{content}</ConnectionTabs> : content}
     </>
   )
 }

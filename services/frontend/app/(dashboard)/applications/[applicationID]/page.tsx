@@ -1,5 +1,6 @@
 "use client"
 
+import { DeploymentScheduleNotice } from "@/components/deployment-schedule-notice"
 import { DeploymentSchedulePanel, ScheduledOperationActions } from "@/components/deployment-schedule"
 import { useParams, useRouter } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
@@ -687,6 +688,7 @@ export default function ApplicationDetailPage() {
         ...(!application.autoSyncPaused ? [{ label: "Pause auto-sync", icon: PauseIcon, separatorBefore: true, disabled: busy || hasPendingOperation, onSelect: () => void pauseSync() }] : []),
       ]} />}
     </>} />
+    {application && !(visibleOperation?.status === "queued" && visibleOperation.scheduleDeferred && !visibleOperation.scheduleOverrideReason) && <DeploymentScheduleNotice key={application.id} scope="applications" id={application.id} onViewSchedule={() => { selectTab("overview"); window.setTimeout(() => document.getElementById("deployment-schedule")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" }), 0) }} />}
     <BackgroundTaskStatus tasks={backgroundTasks.tasks} error={backgroundTasks.error} onRefresh={() => void backgroundTasks.refresh()} />
     {error != null && <ErrorNotice error={error} />}
     {application && <AttentionBar application={application} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} plansError={plansError} retryingPlans={retryingPlans} onRetryPlans={() => void retryPlans()}
@@ -696,9 +698,8 @@ export default function ApplicationDetailPage() {
         onConfigureExclusion={(issue) => configureIgnore({ mode: "kind", ...(issue.resource ? { version: issue.resource.apiVersion, kind: issue.resource.kind } : {}) })}
         resumeRevision={resumeRevision} onResumeRevisionChange={setResumeRevision} onKeepPin={() => void updateRollbackTracking("keep")} onResume={() => void updateRollbackTracking("resume")} />}
     {!loading && application && <>
-      {visibleOperation && <OperationBar key={visibleOperation.id} operation={visibleOperation} plan={plans.find((plan) => plan.id === visibleOperation.planId)} checkpointId={visibleOperationCheckpoint} canRestore={canApprove} disabled={busy || hasPendingOperation} onRestore={(target) => void createRollbackPlan(target)} canCancel={canDeploy && !busy} onUpdated={loadData} onReviewResource={(identity) => { const operationPlan = plans.find((plan) => plan.id === visibleOperation.planId); if (operationPlan) setActivePlan(operationPlan); setReviewResource(diffId(identity)); selectTab("changes") }} />}
+      {visibleOperation && <OperationBar key={visibleOperation.id} operation={visibleOperation} plan={plans.find((plan) => plan.id === visibleOperation.planId)} checkpointId={visibleOperationCheckpoint} canRestore={canApprove} disabled={busy || hasPendingOperation} onRestore={(target) => void createRollbackPlan(target)} canCancel={canDeploy && !busy} scheduleActions={visibleOperation.status === "queued" ? <ScheduledOperationActions operation={visibleOperation} canOverride={canApprove} canCancel={canDeploy} onUpdated={loadData} /> : undefined} onUpdated={loadData} onReviewResource={(identity) => { const operationPlan = plans.find((plan) => plan.id === visibleOperation.planId); if (operationPlan) setActivePlan(operationPlan); setReviewResource(diffId(identity)); selectTab("changes") }} />}
 
-        {visibleOperation?.status === "queued" && <div className="mb-5 rounded-xl border bg-card p-4"><ScheduledOperationActions operation={visibleOperation} canOverride={canApprove} canCancel={canDeploy} onUpdated={loadData} /></div>}
     </>}
       <Tabs value={activeTab} onValueChange={(value) => selectTab(String(value))} className="min-w-0">
         {application && <TabsList aria-label="Application views">
@@ -727,7 +728,7 @@ export default function ApplicationDetailPage() {
     {!loading && application && <>
         <TabsContent value="overview" className="outline-none">
           <OverviewTab application={application} latestPlan={latestPlan} plansError={plansError} retryingPlans={retryingPlans} topology={topology} topologyError={topologyError} pending={{ topology: pendingData.topology, plans: pendingData.plans, operations: pendingData.operations }} operations={operations} operationsError={operationsError} canDeploy={canDeploy} busy={busy} hasPendingOperation={hasPendingOperation} creatingPlan={pendingAction === "create-plan"} planBlockedByNamespace={planBlockedByNamespace} onCreatePlan={() => void createPlan()} onRetryPlans={() => void retryPlans()} onSelectTab={selectTab} />
-          <div className="mt-5"><DeploymentSchedulePanel key={application.id} scope="applications" id={application.id} canEdit={canApprove} /></div>
+          <div id="deployment-schedule" className="mt-5 scroll-mt-5"><DeploymentSchedulePanel key={application.id} scope="applications" id={application.id} canEdit={canApprove} /></div>
         </TabsContent>
 
         <TabsContent value="topology" className="outline-none">

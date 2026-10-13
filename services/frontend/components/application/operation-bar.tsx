@@ -1,19 +1,18 @@
 "use client"
 
 import { useProgressDismissals } from "@/hooks/use-progress-dismissals"
-import { useEffect, useState } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { apiPost, errorMessage } from "@/lib/api"
 import { ActionMenu } from "@/components/action-menu"
 import {
   operationPhaseLabel,
   resourceLabel,
-  sameIdentity,
 } from "@/components/application/helpers"
 import {
   ErrorDetailsButton,
   ErrorDetailsDialog,
 } from "@/components/error-details"
-import { Disclosure } from "@/components/ui/collapsible"
+import { RolloutPanel } from "@/components/application/rollout-panel"
 import { Button } from "@/components/ui/button"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Cancel01Icon } from "@hugeicons/core-free-icons"
@@ -44,8 +43,10 @@ export function OperationBar({
   canCancel,
   onUpdated,
   onReviewResource,
+  scheduleActions,
 }: {
   operation: Operation
+  scheduleActions?: ReactNode
   plan?: PlanRecord
   checkpointId?: string
   canRestore: boolean
@@ -126,7 +127,7 @@ export function OperationBar({
       >
         <StatusBadge status={operation.status} />
         <span className="text-sm font-medium">
-          {operationPhaseLabel(operation.progress?.phase, operation.status)}
+          {operation.status === "queued" && operation.scheduleDeferred && !operation.scheduleOverrideReason ? "Waiting for deployment schedule" : operationPhaseLabel(operation.progress?.phase, operation.status)}
         </span>
         <span className="min-w-0 truncate text-sm text-muted-foreground">
           {operation.progress?.current
@@ -240,54 +241,9 @@ export function OperationBar({
           <p className="text-sm text-muted-foreground">{progress.summary}</p>
         </>
       )}
+      {scheduleActions}
       {Boolean(operation.progress?.resources?.length) && (
-        <Disclosure
-          className="rounded-lg border p-3"
-          summary={`Resource results (${operation.progress?.resources?.length})`}
-        >
-          <ul aria-label="Resource progress" className="mt-3 divide-y">
-            {operation.progress?.resources?.map((resource) => (
-              <li
-                key={`${resource.identity.clusterId}:${resourceLabel(resource.identity)}`}
-                className="space-y-1 py-3 text-sm"
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <StatusBadge status={resource.status} />
-                  <span className="min-w-0 font-medium break-all">
-                    {resourceLabel(resource.identity)}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    {resource.action.replaceAll("_", " ")} ·{" "}
-                    {resource.stage || "queued"} ·{" "}
-                    {resource.attemptCount
-                      ? `Attempt ${resource.attemptCount}`
-                      : "Not attempted"}
-                    {resource.startedAt
-                      ? ` · ${elapsed(resource.startedAt, resource.finishedAt)}`
-                      : ""}
-                  </span>
-                  {resource.status === "failed" &&
-                    plan?.plan.changes.some((change) =>
-                      sameIdentity(change.identity, resource.identity)
-                    ) && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => onReviewResource(resource.identity)}
-                      >
-                        Review resource diff
-                      </Button>
-                    )}
-                </div>
-                {resource.message && (
-                  <p className="text-xs text-muted-foreground">
-                    {resource.message}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ul>
-        </Disclosure>
+        <RolloutPanel operation={operation} plan={plan} elapsed={elapsed} onReviewResource={onReviewResource} />
       )}
     </section>
   )

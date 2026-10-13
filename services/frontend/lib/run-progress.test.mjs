@@ -81,3 +81,11 @@ test("durable resource results supply phase counts including namespace prerequis
   assert.equal(progress.stages.find(stage => stage.id === "applying").details[0].value, "1 / 2")
   assert.equal(progress.stages.find(stage => stage.id === "deleting").details[0].value, "0 / 1")
 })
+
+
+test("schedule-deferred syncs explain their wait, while overrides return to worker status", () => {
+  const queued = { ...operation(undefined, "queued"), scheduleDeferred: true, waitingReasons: ["Workspace: deployment freeze — Maintenance"] }
+  assert.match(syncRunProgress(queued).summary, /deployment schedule/)
+  assert.match(syncRunProgress({ ...queued, scheduleOverrideReason: "Incident recovery" }).summary, /sync worker/)
+  assert.match(syncRunProgress({ ...queued, status: "running", progress: { phase: "applying", completed: [], total: 3 } }).summary, /resource changes/)
+})

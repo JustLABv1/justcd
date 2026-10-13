@@ -190,7 +190,9 @@ export function syncRunProgress(
   return {
     current,
     stages: stagesWithStatus(definitions, current, status),
-    summary: done
+    summary: operation.status === "queued" && operation.scheduleDeferred && !operation.scheduleOverrideReason
+      ? "Sync is queued until the deployment schedule allows it to start. No resource changes have started."
+      : done
       ? "Changes applied. Runtime readiness is checked separately."
       : operation.status === "failed" || operation.status === "cancelled"
         ? operation.message || "Sync stopped before completion."

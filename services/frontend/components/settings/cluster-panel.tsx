@@ -1,14 +1,15 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import Link from "next/link"
-import { Tabs } from "@base-ui/react/tabs"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { PlusSignIcon } from "@hugeicons/core-free-icons"
 import { Badge } from "@/components/reui/badge"
 import { Button } from "@/components/ui/button"
 import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
 import { FormSelect } from "@/components/ui/form-select"
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
@@ -44,8 +45,6 @@ import {
 
 type WorkspaceCredentialResponse = { credentialId: string | null }
 
-const tabClass = "flex shrink-0 items-center gap-2 border-b-2 border-transparent px-1 pb-3 text-sm font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[active]:border-primary data-[active]:text-foreground"
-
 function workspaceCredentialUrl(clusterId: string, workspaceId: string) {
   return `/api/v1/clusters/${encodeURIComponent(clusterId)}/workspace-credential?workspaceId=${encodeURIComponent(workspaceId)}`
 }
@@ -72,6 +71,9 @@ export function ClusterPanel({
   workspaceCredentials,
   busy,
   action,
+  activeClusterId,
+  onManageNamespaces,
+  renderNamespaceAccess,
   onUpdated,
   onDeleted,
 }: {
@@ -82,6 +84,9 @@ export function ClusterPanel({
   workspaceCredentials: Credential[]
   busy: boolean
   action: ActionRunner
+  activeClusterId: string
+  onManageNamespaces: (clusterId: string) => void
+  renderNamespaceAccess: (cluster: Cluster) => ReactNode
   onUpdated: (value: Cluster) => void
   onDeleted: (id: string) => void
 }) {
@@ -153,7 +158,7 @@ export function ClusterPanel({
       {statusError != null && <LoadErrorNotice error={statusError} title="Could not load test results and default credentials" onRetry={retryStatus} />}
       <InventoryPanel
         title="Connected clusters"
-        description={isOwner ? undefined : "Only workspace owners can change cluster connections."}
+        description="Expand a cluster to manage the namespaces this workspace can deploy to."
         count={clusters.length}
         toolbar={<Input aria-label="Search clusters" placeholder="Search clusters or connection type…" value={clusterQuery} onChange={event => setClusterQuery(event.target.value)} className="max-w-sm" />}
       >
@@ -201,7 +206,7 @@ export function ClusterPanel({
                         ? <Badge variant="info-light" radius="full">Shared by {cluster.ownerWorkspaceName ?? "another workspace"}</Badge>
                         : <Badge variant="outline" radius="full">{cluster.workspaceId ? "Private to this workspace" : "Instance-owned"}</Badge>}
                       {credentialId
-                        ? <Badge variant="success-light" radius="full">Default credential: {workspaceCredentials.find((item) => item.id === credentialId)?.name ?? "configured"}</Badge>
+                        ? <Badge variant="success-light" radius="full" className="max-w-full text-left"><span className="min-w-0 whitespace-normal break-words">Default credential: {workspaceCredentials.find((item) => item.id === credentialId)?.name ?? "configured"}</span></Badge>
                         : cluster.connectionMode === "agent"
                           ? <Badge variant="outline" radius="full">Agent local credentials</Badge>
                           : cluster.shared
@@ -229,6 +234,7 @@ export function ClusterPanel({
                     <RowActions
                       label={cluster.name}
                       primary={
+                        <div className="flex flex-col gap-2 sm:flex-row">
                         <Button
                           size="sm"
                           variant="outline"
@@ -239,14 +245,23 @@ export function ClusterPanel({
                           disabled={busy}
                           onClick={() => void test(cluster)}
                         >
-                          Test
+                          Test access
                         </Button>
+                        </div>
                       }
                       items={items}
                     />
                   }
                 >
                   {cluster.connectionMode === "agent" && <ClusterAgentActivity key={`${workspace.id}:${cluster.id}`} cluster={cluster} workspaceId={workspace.id} />}
+                  <Collapsible open={activeClusterId === cluster.id} onOpenChange={(open) => onManageNamespaces(open ? cluster.id : "")} className="mt-4 border-t pt-3">
+                    <CollapsibleTrigger render={<Button type="button" variant="ghost" size="sm" />} aria-label={`Manage namespace access for ${cluster.name}`} className="w-full justify-between" disabled={busy}>
+                      Namespace access
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      {activeClusterId === cluster.id && <div className="pt-4">{renderNamespaceAccess(cluster)}</div>}
+                    </CollapsibleContent>
+                  </Collapsible>
                 </ConnectionRow>
               )
             })}
@@ -255,7 +270,7 @@ export function ClusterPanel({
           <SectionEmpty
             title={clusters.length ? "No matching clusters" : "No clusters connected yet"}
             description={clusters.length ? "Try another cluster name or connection type." : "Connect a cluster, or ask another workspace owner to share one. Credentials stay private to each workspace."}
-            action={!clusters.length && isOwner ? (
+            action={clusters.length > 0 && clusterQuery ? <Button type="button" size="sm" variant="outline" onClick={() => setClusterQuery("")}>Clear search</Button> : !clusters.length && isOwner ? (
               <Button nativeButton={false} render={<Link href={`/workspaces/${workspace.id}/clusters/new`} />}>
                 <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} aria-hidden="true" />
                 Connect cluster
@@ -462,13 +477,13 @@ function EditClusterDialog({ cluster, workspace, user, globalCredentials, worksp
     >
       <form className="space-y-5" onSubmit={submit} noValidate>
         {credential.error != null && <LoadErrorNotice error={credential.error} title="Could not load the default credential" onRetry={credential.retry} />}
-        <Tabs.Root value={tab} onValueChange={(value) => setTab(value as TabId)}>
-          <Tabs.List aria-label="Cluster settings" className="mb-5 flex gap-6 overflow-x-auto border-b" activateOnFocus>
-            <Tabs.Tab value="general" className={tabClass}>General{errorDot(attempted && generalInvalid)}</Tabs.Tab>
-            <Tabs.Tab value="auth" className={tabClass}>Authentication & TLS</Tabs.Tab>
-            <Tabs.Tab value="limits" className={tabClass}>Limits{errorDot(attempted && limitsInvalid)}</Tabs.Tab>
-          </Tabs.List>
-          <Tabs.Panel value="general" className="space-y-5 outline-none sm:min-h-72">
+        <Tabs value={tab} onValueChange={(value) => setTab(value as TabId)}>
+          <TabsList aria-label="Cluster settings">
+            <TabsTrigger value="general">General{errorDot(attempted && generalInvalid)}</TabsTrigger>
+            <TabsTrigger value="auth">Authentication & TLS</TabsTrigger>
+            <TabsTrigger value="limits">Limits{errorDot(attempted && limitsInvalid)}</TabsTrigger>
+          </TabsList>
+          <TabsContent value="general" className="space-y-5 outline-none sm:min-h-72">
             <FormField label="Cluster name" htmlFor="cluster-name">
               <Input id="cluster-name" placeholder="prod-eu-1" value={name} onChange={(event) => setName(event.target.value)} aria-invalid={attempted && !!nameError} aria-describedby={attempted && nameError ? "cluster-name-error" : undefined} />
               {attempted && <FieldError id="cluster-name-error">{nameError}</FieldError>}
@@ -477,8 +492,8 @@ function EditClusterDialog({ cluster, workspace, user, globalCredentials, worksp
               <Input id="cluster-api" type="url" placeholder="https://api.example.com:6443" value={apiServer} onChange={(event) => setApiServer(event.target.value)} aria-invalid={attempted && !!apiError} aria-describedby={attempted && apiError ? "cluster-api-error" : undefined} />
               {attempted && <FieldError id="cluster-api-error">{apiError}</FieldError>}
             </FormField>
-          </Tabs.Panel>
-          <Tabs.Panel value="auth" className="space-y-5 outline-none sm:min-h-72">
+          </TabsContent>
+          <TabsContent value="auth" className="space-y-5 outline-none sm:min-h-72">
             <FormField label="CA certificate (base64)" htmlFor="cluster-ca" hint="Leave blank to keep the current CA certificate.">
               <Textarea id="cluster-ca" className={monoTextareaClass} value={caDataBase64} onChange={(event) => setCaDataBase64(event.target.value)} />
             </FormField>
@@ -511,8 +526,8 @@ function EditClusterDialog({ cluster, workspace, user, globalCredentials, worksp
               label="Skip TLS certificate verification"
               description="Unsafe: JustCD will not check the cluster's identity, so traffic could be intercepted. Use only for temporary development clusters."
             />
-          </Tabs.Panel>
-          <Tabs.Panel value="limits" className="space-y-5 outline-none sm:min-h-72">
+          </TabsContent>
+          <TabsContent value="limits" className="space-y-5 outline-none sm:min-h-72">
             <p className="text-sm text-muted-foreground">Limits protect the cluster from too many simultaneous changes from JustCD.</p>
             <div className="grid gap-3 sm:grid-cols-2">
               <FormField label="Max concurrent operations" htmlFor="cluster-max-concurrent" hint="Simultaneous operations against this cluster (1–20).">
@@ -524,8 +539,8 @@ function EditClusterDialog({ cluster, workspace, user, globalCredentials, worksp
                 <FieldError id="cluster-operations-per-minute-error">{rateError}</FieldError>
               </FormField>
             </div>
-          </Tabs.Panel>
-        </Tabs.Root>
+          </TabsContent>
+        </Tabs>
         <DialogFooter>
           <DialogCancel disabled={saving} />
           <Button type="submit" loading={saving} loadingText="Saving…" disabled={!credential.loaded}>Save changes</Button>

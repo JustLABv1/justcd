@@ -40,9 +40,6 @@ import {
 export function NamespacePanel({
   workspace,
   cluster,
-  clusters,
-  activeClusterId,
-  onClusterChange,
   credentials,
   bindings,
   busy,
@@ -55,9 +52,6 @@ export function NamespacePanel({
 }: {
   workspace: Workspace
   cluster?: Cluster
-  clusters: Cluster[]
-  activeClusterId: string
-  onClusterChange: (value: string) => void
   credentials: Credential[]
   bindings: NamespaceBinding[]
   busy: boolean
@@ -72,12 +66,14 @@ export function NamespacePanel({
   const isOwner = workspace.role === "owner"
   const [editing, setEditing] = useState<NamespaceBinding | null>(null)
   const [workspaceDefault, setWorkspaceDefault] = useState(false)
+  const [reportNamespace, setReportNamespace] = useState<string | null>(null)
   const [reports, setReports] = useState<Record<string, KubernetesPermissionTest>>({})
   const [statusLoaded, setStatusLoaded] = useState(false)
   const [statusError, setStatusError] = useState<unknown | null>(null)
   const [statusTick, setStatusTick] = useState(0)
   const [testingNamespace, setTestingNamespace] = useState("")
   const [includeClusterScope, setIncludeClusterScope] = useState(false)
+  const selectedReport = reportNamespace ? reports[reportNamespace] : undefined
 
   useEffect(() => {
     if (!cluster) return
@@ -134,16 +130,15 @@ export function NamespacePanel({
     <div className="space-y-6">
       {statusError != null && <LoadErrorNotice error={statusError} title="Could not load self-test results and the default credential" onRetry={retryStatus} />}
       <InventoryPanel
-        title="Namespace access"
-        description="Namespaces this workspace can deploy to on the selected cluster."
+        title="Namespaces"
+        surface="flat"
+        description={`Namespaces this workspace can deploy to on ${cluster?.name ?? "this cluster"}.`}
         count={bindings.length}
-        toolbar={
-          <div className="max-w-xs">
-            <FormField label="Cluster" htmlFor="active-cluster">
-              <FormSelect id="active-cluster" value={activeClusterId} onValueChange={onClusterChange} emptyOption="Select cluster" items={clusters.map((item) => ({ value: item.id, label: item.name }))} />
-            </FormField>
-          </div>
-        }
+        action={isOwner && cluster && bindings.length > 0 ? <Button type="button" size="sm" disabled={busy} onClick={() => onCreateOpenChange(true)}>
+          <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} aria-hidden="true" />
+          Grant namespace access
+        </Button> : undefined}
+
       >
         {bindings.length ? (
           <ul className="divide-y">
@@ -157,7 +152,7 @@ export function NamespacePanel({
                   icon={<WorkspaceIcon name="server" className="size-4" />}
                   title={<span className="font-mono">{binding.namespace}</span>}
                   subtitle={cluster?.connectionMode === "agent" ? "Agent local namespace profile" : credentialName ? `Credential: ${credentialName}` : "Uses the default credential"}
-                  badges={report && <Badge variant={statusVariant(report.status)} radius="full">Self-test: {statusLabel(report.status)}</Badge>}
+                  badges={report && <Badge variant={statusVariant(report.status)} radius="full" className="max-w-full text-left"><span className="min-w-0 whitespace-normal">Self-test: {statusLabel(report.status)}</span></Badge>}
                   meta={
                     record
                       ? `Last self-test ${new Date(record.checkedAt).toLocaleString()}`
@@ -171,18 +166,21 @@ export function NamespacePanel({
                     <RowActions
                       label={binding.namespace}
                       primary={
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          type="button"
-                          aria-label={`Run self-test for ${binding.namespace}`}
-                          loading={testingNamespace === binding.namespace}
-                          loadingText="Testing…"
-                          disabled={busy || !cluster}
-                          onClick={() => void runSelfTest(binding.namespace, includeClusterScope)}
-                        >
-                          Run self-test
-                        </Button>
+                        <div className="flex flex-wrap justify-end gap-2">
+                          {report && <Button type="button" size="sm" variant="outline" aria-label={`View permission checks for ${binding.namespace}`} onClick={() => setReportNamespace(binding.namespace)}>View checks</Button>}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            type="button"
+                            aria-label={`Run self-test for ${binding.namespace}`}
+                            loading={testingNamespace === binding.namespace}
+                            loadingText="Testing…"
+                            disabled={busy || !cluster}
+                            onClick={() => void runSelfTest(binding.namespace, includeClusterScope)}
+                          >
+                            Run self-test
+                          </Button>
+                        </div>
                       }
                       items={isOwner && cluster ? [
                         { label: "Edit access", onSelect: () => setEditing(binding), disabled: busy },
@@ -203,13 +201,7 @@ export function NamespacePanel({
                       ] : []}
                     />
                   }
-                >
-                  {report && (
-                    <Disclosure summary="View permission checks and suggested RBAC">
-                      <PermissionReportDetails report={report} />
-                    </Disclosure>
-                  )}
-                </ConnectionRow>
+                />
               )
             })}
           </ul>
@@ -227,14 +219,26 @@ export function NamespacePanel({
           />
         )}
       </InventoryPanel>
-      <SwitchField
-        id="include-cluster-scope"
-        checked={includeClusterScope}
-        onCheckedChange={setIncludeClusterScope}
-        disabled={busy || !isOwner || !cluster}
-        label="Include optional cluster-wide checks"
-        description={clusterScopeHint}
-      />
+      <Disclosure summary={includeClusterScope ? "Advanced permission checks · cluster-wide checks enabled" : "Advanced permission checks"} className="rounded-lg border bg-card p-4">
+        <SwitchField
+          id="include-cluster-scope"
+          checked={includeClusterScope}
+          onCheckedChange={setIncludeClusterScope}
+          disabled={busy || !isOwner || !cluster}
+          label="Include cluster-wide permissions in self-tests"
+          description={clusterScopeHint}
+        />
+      </Disclosure>
+      <AppDialog
+        open={!!selectedReport}
+        onOpenChange={(open) => { if (!open) setReportNamespace(null) }}
+        title={`Permission checks · ${reportNamespace ?? "namespace"}`}
+        description={`${cluster?.name ?? "Cluster"} · ${selectedReport ? `Last tested ${new Date(selectedReport.checkedAt).toLocaleString()}.` : ""} Review the results and suggested RBAC for this namespace.`}
+        variant="info"
+        size="xl"
+      >
+        {selectedReport && <PermissionReportDetails report={selectedReport.report} />}
+      </AppDialog>
       {(createOpen || editing) && cluster && (
         <NamespaceDialog
           key={editing?.namespace ?? "new"}

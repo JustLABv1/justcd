@@ -54,12 +54,12 @@ export function Panel({
   return (
     <section className={`${surface === "flat" ? "min-w-0" : "rounded-xl border bg-card"} ${className}`}>
       {(title || action) && (
-        <div className={`flex items-start justify-between gap-4 ${surface === "flat" ? "pb-4" : "border-b px-5 py-4"}`}>
+        <div className={`flex flex-wrap items-start justify-between gap-4 ${surface === "flat" ? "pb-4" : "border-b px-5 py-4"}`}>
           <div className="min-w-0">
             {title && <h2 className="text-sm font-semibold">{title}</h2>}
             {description && <p className="mt-1 text-sm leading-5 text-muted-foreground">{description}</p>}
           </div>
-          <div className="shrink-0">{action}</div>
+          <div className="max-w-full shrink-0">{action}</div>
         </div>
       )}
       {children}
@@ -176,9 +176,9 @@ export function ConnectionRow({ icon, title, subtitle, badges, meta, actions, ch
 }) {
   return (
     <li className="px-5 py-4">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+      <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-3 sm:flex sm:flex-wrap">
         {icon && <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">{icon}</span>}
-        <div className="min-w-0 flex-1 basis-56">
+        <div className={`min-w-0 sm:flex-1 sm:basis-56 ${icon ? "" : "col-span-2"}`}>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <h3 className="truncate text-sm font-medium">{title}</h3>
             {badges}
@@ -186,7 +186,7 @@ export function ConnectionRow({ icon, title, subtitle, badges, meta, actions, ch
           {subtitle && <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">{subtitle}</p>}
           {meta && <div className="mt-1 text-xs text-muted-foreground">{meta}</div>}
         </div>
-        {actions}
+        {actions && <div className="col-span-2 justify-self-end sm:contents">{actions}</div>}
       </div>
       {children && <div className="mt-3">{children}</div>}
     </li>

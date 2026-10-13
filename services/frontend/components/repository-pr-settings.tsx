@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { useEffect, useState } from "react"
-import { Tabs } from "@base-ui/react/tabs"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Add01Icon, Delete02Icon } from "@hugeicons/core-free-icons"
 import { Badge } from "@/components/reui/badge"
@@ -57,9 +57,6 @@ type Destination = {
   namespace: string
 }
 type Actor = { providerId: string; userId: string }
-
-const tabClass =
-  "flex shrink-0 items-center gap-2 border-b-2 border-transparent px-1 pb-3 text-sm font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[active]:border-primary data-[active]:text-foreground"
 
 function initialSettings(repository: RepositoryConfiguration): RepositoryPRSettings {
   const saved = repository.prSettings
@@ -328,36 +325,35 @@ function SettingsDialogContent({
           </p>
         )}
         <fieldset disabled={busy} className="min-w-0">
-          <Tabs.Root value={tab} onValueChange={(value) => setTab(String(value))}>
-            <Tabs.List
+          <Tabs value={tab} onValueChange={(value) => setTab(String(value))}>
+            <TabsList
               aria-label="Pull request discovery sections"
-              className="mb-5 flex gap-5 overflow-x-auto border-b"
-              activateOnFocus
+
             >
-              <Tabs.Tab value="policy" className={tabClass}>
+              <TabsTrigger value="policy">
                 Policy
-              </Tabs.Tab>
-              <Tabs.Tab value="destinations" className={tabClass}>
+              </TabsTrigger>
+              <TabsTrigger value="destinations">
                 Destinations
                 <Badge size="xs" variant="secondary">
                   {settings.destinations.length}
                 </Badge>
-              </Tabs.Tab>
-              <Tabs.Tab value="limits" className={tabClass}>
+              </TabsTrigger>
+              <TabsTrigger value="limits">
                 Limits
-              </Tabs.Tab>
-              <Tabs.Tab value="approvals" className={tabClass}>
+              </TabsTrigger>
+              <TabsTrigger value="approvals">
                 Approvals
-              </Tabs.Tab>
-              <Tabs.Tab value="discovered" className={tabClass}>
+              </TabsTrigger>
+              <TabsTrigger value="discovered">
                 Discovered PRs
                 <Badge size="xs" variant="secondary">
                   {entries.length}
                 </Badge>
-              </Tabs.Tab>
-            </Tabs.List>
+              </TabsTrigger>
+            </TabsList>
 
-            <Tabs.Panel value="policy" className="space-y-4 outline-none">
+            <TabsContent value="policy" className="space-y-4 outline-none">
               <SwitchField
                 id="repo-pr-enabled"
                 label="Discover new applications in pull requests"
@@ -430,9 +426,9 @@ function SettingsDialogContent({
                   )}
                 </>
               ) : null}
-            </Tabs.Panel>
+            </TabsContent>
 
-            <Tabs.Panel value="destinations" className="space-y-3 outline-none">
+            <TabsContent value="destinations" className="space-y-3 outline-none">
               {settings.enabled ? (
                 <>
                   <div>
@@ -505,9 +501,9 @@ function SettingsDialogContent({
               ) : (
                 disabledNote
               )}
-            </Tabs.Panel>
+            </TabsContent>
 
-            <Tabs.Panel value="limits" className="space-y-4 outline-none">
+            <TabsContent value="limits" className="space-y-4 outline-none">
               {!settings.enabled ? (
                 disabledNote
               ) : settings.mode !== "isolated" ? (
@@ -563,9 +559,9 @@ function SettingsDialogContent({
                   </div>
                 </>
               )}
-            </Tabs.Panel>
+            </TabsContent>
 
-            <Tabs.Panel value="approvals" className="space-y-4 outline-none">
+            <TabsContent value="approvals" className="space-y-4 outline-none">
               {settings.enabled ? (
                 <>
                   <FormField label="Provider" htmlFor="repo-pr-provider">
@@ -685,9 +681,9 @@ function SettingsDialogContent({
               ) : (
                 disabledNote
               )}
-            </Tabs.Panel>
+            </TabsContent>
 
-            <Tabs.Panel value="discovered" className="outline-none">
+            <TabsContent value="discovered" className="outline-none">
               <h3 className="text-sm font-semibold">
                 Discovered pull request applications
               </h3>
@@ -737,8 +733,8 @@ function SettingsDialogContent({
                   ))}
                 </ul>
               )}
-            </Tabs.Panel>
-          </Tabs.Root>
+            </TabsContent>
+          </Tabs>
         </fieldset>
         <DialogFooter>
           <DialogCancel disabled={busy} />

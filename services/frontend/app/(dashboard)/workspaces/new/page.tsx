@@ -22,7 +22,7 @@ export default function NewWorkspacePage() {
     try {
       const workspace = await apiPost<Workspace>("/api/v1/workspaces", { name, description })
       toast.success("Workspace created.")
-      router.push(`/workspaces/${workspace.id}?tab=connections`)
+      router.push(`/workspaces/${workspace.id}/git-sources/new`)
     } catch (cause) { toast.error(errorMessage(cause), cause) } finally { setBusy(false) }
   }
   return <>
@@ -30,7 +30,7 @@ export default function NewWorkspacePage() {
     <div className="max-w-2xl"><Panel><form className="space-y-5 p-5" onSubmit={submit}>
       <FormField label="Workspace name" htmlFor="workspace-name"><Input id="workspace-name" placeholder="payments-platform" value={name} onChange={(event) => setName(event.target.value)} required maxLength={100} /></FormField>
       <FormField label="Description" htmlFor="workspace-description" hint="Optional. Shown to workspace members."><Textarea id="workspace-description" className="min-h-24" placeholder="Services and infrastructure for…" value={description} onChange={(event) => setDescription(event.target.value)} maxLength={500} /></FormField>
-      <div className="flex justify-end gap-2 border-t pt-4"><Button type="button" variant="outline" disabled={busy} render={<Link href="/workspaces" />}>Cancel</Button><Button type="submit" loading={busy} loadingText="Creating workspace…">Create workspace</Button></div>
+      <div className="flex justify-end gap-2 border-t pt-4"><Button nativeButton={false} variant="outline" disabled={busy} render={<Link href="/workspaces" />}>Cancel</Button><Button type="submit" loading={busy} loadingText="Creating workspace…">Create workspace</Button></div>
     </form></Panel></div>
   </>
 }

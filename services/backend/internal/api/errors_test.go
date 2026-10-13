@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/justlab/justcd/services/backend/internal/core"
 	"github.com/justlab/justcd/services/backend/internal/observability"
+	"github.com/justlab/justcd/services/backend/internal/syncer"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +16,29 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
+
+func TestPlanFailureKeepsConfigurationCause(t *testing.T) {
+	identity := core.Identity{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "mimir-rollout-operator-webhook-clusterrole", ClusterScoped: true}
+	for _, test := range []struct{ source, code, summary, remediation, category string }{
+		{"cluster", "kubernetes.cluster_scope_required", "Cluster-scoped resource ClusterRole/mimir-rollout-operator-webhook-clusterrole requires a privileged cluster-scope credential.", "Configure a cluster-scope credential or remove the resource from the dev overlay.", "kubernetes"},
+		{"cluster", "kubernetes.namespace_credential_missing", "Namespace mimir-dev has no Kubernetes credential.", "Configure the namespace or workspace credential.", "kubernetes"},
+		{"git", "application.definition_missing", "Application definition is missing from Git.", "Restore justcd.yaml and run discovery.", "git"},
+	} {
+		response := httptest.NewRecorder()
+		cause := &syncer.PlanConfigurationError{Source: test.source, Code: test.code, Summary: test.summary, Remediation: test.remediation, Resource: &identity}
+		writePlanFailure(response, http.StatusUnprocessableEntity, "could not calculate a safe plan", "app-1", fmt.Errorf("internal wrapper with private details: %w", cause))
+		var body map[string]any
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body["error"] != test.summary || body["code"] != test.code || body["category"] != test.category || body["remediation"] != test.remediation {
+			t.Fatalf("configuration cause lost: %#v", body)
+		}
+		if strings.Contains(response.Body.String(), "private details") || body["details"].(map[string]any)["issue"] == nil {
+			t.Fatal("missing structured issue or exposed wrapper", response.Body.String())
+		}
+	}
+}
 
 func TestPlanFailureReportsKubernetesPermissionDenial(t *testing.T) {
 	response := httptest.NewRecorder()

@@ -504,7 +504,7 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 			plan.Changes[index].Takeover = true
 		}
 	}
-	if err := s.detectFieldTakeovers(ctx, input, &plan, desired); err != nil {
+	if err := s.reconcileUpdatePlan(ctx, input, &plan, desired, live); err != nil {
 		return core.Plan{}, nil, &planStageError{stage: "cluster", err: err}
 	}
 	if err := addNamespaceCreations(ctx, input, &plan, desired); err != nil {

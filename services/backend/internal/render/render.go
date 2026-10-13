@@ -984,6 +984,38 @@ func CanonicalLiveAgainstIgnoring(object *unstructured.Unstructured, clusterID, 
 	return resource, fingerprint(desiredJSON), changedIgnored, nil
 }
 
+// ServerSideComparisonManifests compares a canonical live snapshot with the
+// canonical server-side dry-run result. Both lists already have Kubernetes's
+// merge/admission semantics applied, so no local list projection is needed.
+func ServerSideComparisonManifests(liveManifest, predictedManifest []byte, ignoredPaths []string) ([]byte, []byte, error) {
+	for _, path := range ignoredPaths {
+		var err error
+		liveManifest, err = RemoveJSONPointer(liveManifest, path)
+		if err != nil {
+			return nil, nil, err
+		}
+		predictedManifest, err = RemoveJSONPointer(predictedManifest, path)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	var live, predicted map[string]interface{}
+	if err := json.Unmarshal(liveManifest, &live); err != nil {
+		return nil, nil, err
+	}
+	if err := json.Unmarshal(predictedManifest, &predicted); err != nil {
+		return nil, nil, err
+	}
+	normalizeEquivalentQuantities(predicted, live)
+	normalizeEmptyEquivalents(predicted, live)
+	before, err := json.Marshal(live)
+	if err != nil {
+		return nil, nil, err
+	}
+	after, err := json.Marshal(predicted)
+	return before, after, err
+}
+
 // ComparisonManifests returns the same Git-owned field workspaceion used for
 // drift checks. These are review documents only; the original desired manifest
 // must be retained for server-side apply.

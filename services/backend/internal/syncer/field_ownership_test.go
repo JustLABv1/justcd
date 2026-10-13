@@ -63,7 +63,7 @@ func TestImageTagUpdateMigratesOwnFieldOwnershipWithoutTakeover(t *testing.T) {
 	})
 	clients := &kube.Clients{Dynamic: client, Mapper: mapper}
 	plan := core.Plan{ApplicationID: "app", Changes: []core.Change{{Kind: core.Update, Identity: resource.Identity, LiveResourceVersion: "1"}}}
-	if err := (&Service{}).detectFieldTakeovers(context.Background(), planInput{Mapper: clients, NamespaceClients: map[string]*kube.Clients{"team": clients}}, &plan, []core.Resource{resource}); err != nil {
+	if err := (&Service{}).reconcileUpdatePlan(context.Background(), planInput{Mapper: clients, NamespaceClients: map[string]*kube.Clients{"team": clients}}, &plan, []core.Resource{resource}, []core.Resource{{Identity: resource.Identity, Manifest: mustCanonicalLive(t, live)}}); err != nil {
 		t.Fatal(err)
 	}
 	if plan.Changes[0].Takeover || calls != 2 {
@@ -142,13 +142,17 @@ func TestPlannerDetectsFieldTakeoverUsingDryRunOnly(t *testing.T) {
 				if conflict && (options.Force == nil || !*options.Force) {
 					t.Fatal("takeover validation must use forced dry-run")
 				}
-				return true, &unstructured.Unstructured{}, nil
+				object := &unstructured.Unstructured{}
+				if err := object.UnmarshalJSON(action.(ktesting.PatchAction).GetPatch()); err != nil {
+					t.Fatal(err)
+				}
+				return true, object, nil
 			})
 			clients := &kube.Clients{Dynamic: client, Mapper: mapper}
 			id := core.Identity{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "team", Name: "api"}
 			plan := core.Plan{ApplicationID: "app", Changes: []core.Change{{Kind: core.Update, Identity: id}}}
 			resource := core.Resource{Identity: id, Manifest: []byte(`{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"api","namespace":"team"},"spec":{"replicas":1}}`)}
-			err := (&Service{}).detectFieldTakeovers(context.Background(), planInput{Mapper: clients, NamespaceClients: map[string]*kube.Clients{"team": clients}}, &plan, []core.Resource{resource})
+			err := (&Service{}).reconcileUpdatePlan(context.Background(), planInput{Mapper: clients, NamespaceClients: map[string]*kube.Clients{"team": clients}}, &plan, []core.Resource{resource}, []core.Resource{{Identity: id, Manifest: []byte(`{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"api","namespace":"team","labels":{"justcd.io/application-id":"app"}},"spec":{"replicas":2}}`)}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -171,4 +175,13 @@ func TestResourceVersionConflictIsNotFieldTakeover(t *testing.T) {
 	if fieldOwnershipConflict(err) {
 		t.Fatal("stale resource versions must not enable force")
 	}
+}
+
+func mustCanonicalLive(t *testing.T, object *unstructured.Unstructured) json.RawMessage {
+	t.Helper()
+	resource, err := render.CanonicalLive(object, "", "app", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resource.Manifest
 }

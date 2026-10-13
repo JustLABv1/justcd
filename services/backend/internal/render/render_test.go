@@ -202,3 +202,32 @@ func TestChangedJSONPointersTreatListsAsWholeFields(t *testing.T) {
 		}
 	}
 }
+
+func TestServerSideComparisonPreservesListSemantics(t *testing.T) {
+	for _, tc := range []struct {
+		name, live, predicted string
+		ignored               []string
+		wantPaths             []string
+	}{
+		{name: "operator defaults retained", live: `{"spec":{"scripts":[{"id":0,"sgScript":"default"},{"id":1,"sgScript":"init"}]}}`, predicted: `{"spec":{"scripts":[{"id":0,"sgScript":"default"},{"id":1,"sgScript":"init"}]}}`},
+		{name: "execution order preserved", live: `{"spec":{"scripts":[{"id":1,"sgScript":"first"},{"id":2,"sgScript":"second"}]}}`, predicted: `{"spec":{"scripts":[{"id":2,"sgScript":"second"},{"id":1,"sgScript":"first"}]}}`, wantPaths: []string{"/spec/scripts"}},
+		{name: "extra atomic entry is not projected away", live: `{"spec":{"scripts":[{"id":1,"sgScript":"init"},{"id":2,"sgScript":"extra"}]}}`, predicted: `{"spec":{"scripts":[{"id":1,"sgScript":"init"}]}}`, wantPaths: []string{"/spec/scripts"}},
+		{name: "equivalent resource quantities", live: `{"apiVersion":"apps/v1","kind":"Deployment","spec":{"template":{"spec":{"containers":[{"name":"api","resources":{"requests":{"cpu":"1"}}}]}}}}`, predicted: `{"apiVersion":"apps/v1","kind":"Deployment","spec":{"template":{"spec":{"containers":[{"name":"api","resources":{"requests":{"cpu":"1000m"}}}]}}}}`},
+		{name: "empty optional list", live: `{"spec":{}}`, predicted: `{"spec":{"tls":[]}}`},
+		{name: "ignored field deletion leaves no empty-map drift", live: `{"spec":{"config":{"replicas":2},"kept":true}}`, predicted: `{"spec":{"kept":true}}`, ignored: []string{"/spec/config/replicas"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before, after, err := ServerSideComparisonManifests([]byte(tc.live), []byte(tc.predicted), tc.ignored)
+			if err != nil {
+				t.Fatal(err)
+			}
+			paths, err := ChangedJSONPointers(before, after)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(paths) != len(tc.wantPaths) || (len(paths) > 0 && !reflect.DeepEqual(paths, tc.wantPaths)) {
+				t.Fatalf("paths=%v want=%v; before=%s after=%s", paths, tc.wantPaths, before, after)
+			}
+		})
+	}
+}

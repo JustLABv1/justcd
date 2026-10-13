@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import { ApplicationNotificationSettings } from "@/components/application-notification-settings"
 import { useState } from "react"
 import { RowActions } from "@/components/action-menu"
 import type { IgnorePrefill, NewIgnore } from "@/components/application/helpers"
@@ -114,6 +115,7 @@ export function SettingsTab({ application, kustomization, kustomizationError, ca
   }
 
   return <div className="space-y-5">
+    {canApprove && <ApplicationNotificationSettings key={application.id} applicationId={application.id} workspaceId={application.workspaceId} />}
     {application.renderer === "kustomize" && <RenderSettings application={application} kustomization={kustomization} kustomizationError={kustomizationError} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} saving={pendingAction === "render-settings"} onSave={onSaveRenderSettings} />}
     <Panel title="Ignored resources" description="Exclude an exact resource, an entire Kubernetes kind, or resources with a label. Exclusions apply before cluster discovery and live reads.">
       {application.repositoryConfigurationId && <p className="px-5 pt-5 text-sm text-muted-foreground">Define Git-managed exclusions in <code>spec.ignoreResources</code> in <code>{application.configurationPath}</code>. Additional manual exclusions remain available below. <a href="https://github.com/justlabv1/justcd/blob/main/docs/repository-applications.md#ignored-resources" target="_blank" rel="noreferrer" className="underline underline-offset-4">File format and examples</a></p>}

@@ -55,6 +55,7 @@ func New(s *store.Store, cfg config.Config, logger *slog.Logger) (*Server, error
 }
 
 func (s *Server) routes() {
+	s.notificationRoutes()
 	s.securityRoutes()
 	s.Mux.HandleFunc("GET /api/v1/service-status", s.serviceStatus)
 	s.Mux.Handle("GET /api/v1/admin/instance-settings", s.requireAuth(s.requireAdmin(http.HandlerFunc(s.getInstanceSettings))))

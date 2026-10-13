@@ -482,3 +482,24 @@ Use owner-only `POST /api/v1/operations/{id}/schedule-override` with
 require the normal CSRF token. Operations expose `waitingReasons`,
 `nextAllowedAt`, `scheduleDeferred`, `scheduleOverrideReason`, and
 `scheduleOverrideActorId`.
+
+## Notification routing
+
+Declare `spec.notifications` to manage application routing alongside deployments:
+
+```yaml
+spec:
+  notifications:
+    mode: custom
+    destinations: [Production Telegram]
+    events: [sync_failed, unhealthy]
+    minimumSeverity: error
+```
+
+Destinations reference existing workspace IDs or unique names; their credentials
+remain configured in JustCD. Use `mode: disabled` for quiet development apps or
+`mode: inherit` for workspace defaults. Declared policies are marked **Managed by
+Git** and cannot be overwritten in the UI/API. Removing the declaration restores
+inheritance and allows UI editing; omission preserves policies that were configured
+outside Git. See [notification routing](notifications.md#routing-in-justcdyaml) for
+validation, defaults, and reconciliation behavior.

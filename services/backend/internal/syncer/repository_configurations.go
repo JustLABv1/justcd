@@ -154,6 +154,34 @@ func (s *Service) ResolveRepositoryDefinition(ctx context.Context, repository st
 		CreateNamespaces: definition.Spec.Destination.CreateNamespaces, ClusterID: clusterID, Namespaces: []store.NamespaceBinding{binding}, SyncPolicy: definition.Spec.SyncPolicy, PollSeconds: definition.Spec.PollSeconds, RetryPolicy: store.DefaultRetryPolicy(),
 		RepositoryDeploymentSchedule: definition.Spec.DeploymentSchedule, RepositoryPullRequests: definition.Spec.PullRequests, RepositoryConfigurationID: repository.ID, ConfigurationPath: definition.File, ConfigurationHash: definition.Hash,
 	}
+	if n := definition.Spec.Notifications; n != nil {
+		policy := store.ApplicationNotificationPolicy{Mode: n.Mode, DestinationIDs: []string{}, Events: n.Events, MinimumSeverity: n.MinimumSeverity}
+		if n.Mode == "custom" {
+			destinations, err := s.Store.NotificationDestinations(ctx, repository.WorkspaceID)
+			if err != nil {
+				return store.Application{}, err
+			}
+			for index, ref := range n.Destinations {
+				matched := ""
+				for _, d := range destinations {
+					if d.ID == ref || d.Name == ref {
+						if matched != "" && matched != d.ID {
+							return store.Application{}, fmt.Errorf("%s: notifications: destination reference %d is ambiguous; use its ID", definition.File, index+1)
+						}
+						matched = d.ID
+					}
+				}
+				if matched == "" {
+					return store.Application{}, fmt.Errorf("%s: notifications: destination reference %d is not available in this workspace", definition.File, index+1)
+				}
+				policy.DestinationIDs = append(policy.DestinationIDs, matched)
+			}
+		}
+		if err := policy.Validate(); err != nil {
+			return store.Application{}, fmt.Errorf("%s: notifications: %w", definition.File, err)
+		}
+		app.RepositoryNotifications = &policy
+	}
 	for _, ignore := range definition.Spec.IgnoreResources {
 		if ignore.Name != "" {
 			app.RepositoryIgnoreRules = append(app.RepositoryIgnoreRules, core.IgnoreRule{Identity: core.Identity{ClusterID: clusterID, APIVersion: ignore.APIVersion, Kind: ignore.Kind, Namespace: ignore.Namespace, Name: ignore.Name, ClusterScoped: ignore.ClusterScoped}, Reason: ignore.Reason, ManagedByGit: true})

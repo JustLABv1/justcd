@@ -452,4 +452,5 @@ configuration without access to stored credentials, database handles, or cluster
 clients, and must remain deterministic and unable to perform network or mutation
 operations.
 
+See [notification integrations](docs/notifications.md) for event routing, providers and delivery troubleshooting.
 See [security hardening](docs/security-hardening.md) for production settings, sessions, MFA, rate limits and encryption-key rotation.

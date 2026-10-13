@@ -82,6 +82,7 @@ func runCommand(logger *slog.Logger, args []string) error {
 		server.Mux.Handle("GET /metrics", telemetry.Metrics.Handler())
 	}
 	lifecycle := newBackendLifecycle()
+	lifecycle.Start(func(ctx, _ context.Context) { server.RunNotificationWorker(ctx) })
 	lifecycle.Start(func(ctx, _ context.Context) {
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()

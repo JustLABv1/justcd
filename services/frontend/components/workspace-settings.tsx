@@ -1,5 +1,7 @@
 "use client"
 
+import { NotificationSettings } from "@/components/notification-settings"
+
 import { useState } from "react"
 import { GuardrailPolicyPanel } from "@/components/guardrail-policy"
 import { ApprovalRuleEditor } from "@/components/approval-rule-editor"
@@ -92,6 +94,8 @@ export function WorkspaceSettings({ workspace, members, onUpdated, onDelete }: {
         })}
       </SettingsGroup>
     </SettingsSection>
+
+    <NotificationSettings workspaceId={workspace.id} />
 
     <GuardrailPolicyPanel key={workspace.id} workspaceId={workspace.id} />
 

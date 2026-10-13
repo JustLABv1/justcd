@@ -7,32 +7,50 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"go.opentelemetry.io/otel/trace"
 )
 
-// NewLogHandler keeps structured errors useful without forwarding their text,
-// which can contain user supplied values, credentials, or renderer output.
+// NewLogHandler retains redacted error diagnostics. Callers must still avoid
+// logging raw response bodies, manifests, or renderer output as errors.
 func NewLogHandler(next slog.Handler) slog.Handler {
 	return redactingHandler{next: next}
 }
 
-// StartupError enables diagnostic text for trusted initialization errors only.
-// Do not use it for renderer output or errors containing arbitrary user content.
+// StartupError carries initialization errors through the same redaction rules
+// as ordinary errors. Retained for compatibility with existing startup callers.
 type StartupError struct{ Err error }
 
-var startupCredentials = regexp.MustCompile(`(?i)((?:["']?(?:password|passphrase|token|secret|authorization|cookie|credential|api[_-]?key)["']?)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;&]+)`)
-var startupURLCredentials = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+@`)
-var startupBearer = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/-]+=*`)
+var errorCredentials = regexp.MustCompile(`(?i)((?:["']?(?:password|passphrase|(?:access[_-]?|refresh[_-]?)?token|secret|authorization|cookie|credential|api[_-]?key|kubeconfig|known[_-]?hosts|client[_-]?certificate[_-]?data|certificate[_-]?authority[_-]?data|client[_-]?key[_-]?data)["']?)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;&]+)`)
+var errorURLCredentials = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+@`)
+var errorAuthToken = regexp.MustCompile(`(?i)((?:bearer|basic)\s+)[A-Za-z0-9._~+/-]+=*`)
+var privateKeyPattern = regexp.MustCompile(`(?s)-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?(?:-----END [^-\r\n]*PRIVATE KEY-----|$)`)
 
 func (e StartupError) message() string {
 	if e.Err == nil {
 		return ""
 	}
-	message := startupURLCredentials.ReplaceAllString(e.Err.Error(), `${1}[redacted]@`)
-	message = startupBearer.ReplaceAllString(message, `${1}[redacted]`)
-	return startupCredentials.ReplaceAllString(message, `${1}[redacted]`)
+	return redactErrorMessage(e.Err.Error())
+}
+
+func redactErrorMessage(message string) string {
+	// Redact before truncating so a length limit cannot cut a credential or key
+	// in half and leave its prefix in the log.
+	message = privateKeyPattern.ReplaceAllString(message, "[redacted private key]")
+	message = errorURLCredentials.ReplaceAllString(message, `${1}[redacted]@`)
+	message = errorAuthToken.ReplaceAllString(message, `${1}[redacted]`)
+	message = errorCredentials.ReplaceAllString(message, `${1}[redacted]`)
+	const maxErrorMessageBytes = 4000
+	if len(message) > maxErrorMessageBytes {
+		end := maxErrorMessageBytes
+		for !utf8.ValidString(message[:end]) && end > 0 {
+			end--
+		}
+		message = message[:end] + "…"
+	}
+	return message
 }
 
 type redactingHandler struct{ next slog.Handler }
@@ -84,7 +102,7 @@ func redactAttr(attr slog.Attr) slog.Attr {
 					// user values, or PostgreSQL message/detail fields.
 					return slog.Group(attr.Key, slog.String("type", reflect.TypeOf(err).String()), slog.String("sqlstate", databaseError.Code))
 				}
-				return slog.String(attr.Key, reflect.TypeOf(err).String())
+				return slog.String(attr.Key, redactErrorMessage(err.Error()))
 			}
 		}
 		return slog.String(attr.Key, "redacted")

@@ -52,9 +52,14 @@ Telemetry deliberately excludes request paths with identifiers, request or
 response bodies, headers, SQL statements, SQL parameters, database connection
 details, Kubernetes manifests, Secret data, credential values, and error
 messages. PostgreSQL spans use only the operation name. Error spans include a
-static error type but never the error string. Structured log handlers redact
-error text and fields whose keys indicate passwords, tokens, secrets,
-credentials, URLs, manifests, payloads, or headers.
+static error type but never the error string. Structured log handlers retain
+error messages with credential assignments, URL userinfo, bearer tokens, and
+private keys redacted; messages are limited to 4,000 bytes plus a truncation
+marker. PostgreSQL errors retain only their type and SQLSTATE, excluding SQL
+and database details. Fields whose keys indicate passwords, tokens, secrets,
+credentials, URLs, manifests, payloads, or headers are redacted. Error callers
+must not include raw response bodies, Kubernetes manifests, Secret data, or
+renderer output: arbitrary payload contents cannot be reliably redacted.
 
 ## Grafana dashboard
 

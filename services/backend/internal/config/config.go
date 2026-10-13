@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 )
 
 type Config struct {
+	Production          bool
 	ListenAddress       string
 	DatabaseURL         string
 	EncryptionKey       []byte
@@ -31,6 +33,11 @@ type Observability struct {
 
 func Load() (Config, error) {
 	var cfg Config
+	mode := value("JUSTCD_ENV", "production")
+	if mode != "production" && mode != "development" {
+		return Config{}, errors.New("JUSTCD_ENV must be production or development")
+	}
+	cfg.Production = mode == "production"
 	cfg.ListenAddress = value("JUSTCD_LISTEN_ADDRESS", ":8080")
 	cfg.DatabaseURL = strings.TrimSpace(os.Getenv("JUSTCD_DATABASE_URL"))
 	if cfg.DatabaseURL == "" {
@@ -47,6 +54,9 @@ func Load() (Config, error) {
 	cfg.SessionCookieSecure, err = strconv.ParseBool(secure)
 	if err != nil {
 		return Config{}, errors.New("JUSTCD_COOKIE_SECURE must be true or false")
+	}
+	if cfg.Production && (!cfg.SessionCookieSecure || !secureOrigin(cfg.FrontendURL) || !secureOrigin(cfg.PublicURL)) {
+		return Config{}, errors.New("production requires HTTPS public/frontend URLs and secure cookies; set JUSTCD_ENV=development only for local development")
 	}
 	lifetime, err := time.ParseDuration(value("JUSTCD_SESSION_LIFETIME", "12h"))
 	if err != nil || lifetime < time.Minute || lifetime > 7*24*time.Hour {
@@ -93,4 +103,9 @@ func value(name, fallback string) string {
 		return got
 	}
 	return fallback
+}
+
+func secureOrigin(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && u.Hostname() != "" && u.User == nil && u.RawQuery == "" && u.Fragment == "" && u.Path == ""
 }

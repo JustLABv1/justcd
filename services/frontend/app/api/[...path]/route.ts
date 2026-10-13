@@ -11,7 +11,7 @@ async function proxy(
   target.search = request.nextUrl.search
 
   const headers = new Headers()
-  for (const name of ["accept", "content-type", "cookie", "x-csrf-token", "idempotency-key"]) {
+  for (const name of ["accept", "content-type", "cookie", "x-csrf-token", "idempotency-key", "origin", "sec-fetch-site"]) {
     const value = request.headers.get(name)
     if (value) headers.set(name, value)
   }

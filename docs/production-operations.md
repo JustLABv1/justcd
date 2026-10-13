@@ -330,3 +330,5 @@ pre-upgrade DB plus matching key/chart/images, accepting the recorded RPO and
 reviewing target changes since backup. Do not invent down migrations or assume
 an older image will reverse startup migrations. Test compatibility and rollback
 on staging first.
+
+Authentication security, session revocation, local MFA and transactional encryption-key rotation are documented in the [security hardening runbook](security-hardening.md). Rotation requires stopping all backend writers; UI maintenance alone is insufficient.

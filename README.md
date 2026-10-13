@@ -451,3 +451,5 @@ custom policy runtime is enabled. Engines receive desired manifests and policy
 configuration without access to stored credentials, database handles, or cluster
 clients, and must remain deterministic and unable to perform network or mutation
 operations.
+
+See [security hardening](docs/security-hardening.md) for production settings, sessions, MFA, rate limits and encryption-key rotation.

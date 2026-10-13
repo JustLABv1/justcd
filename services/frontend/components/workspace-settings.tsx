@@ -28,9 +28,10 @@ function approversSummary(rule: ApprovalRule) {
   return [roleSummary, count ? `${count} specific member${count === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ") || "No eligible approvers configured"
 }
 
-export function WorkspaceSettings({ workspace, members, onUpdated, onDelete }: {
+export function WorkspaceSettings({ workspace, members, section, onUpdated, onDelete }: {
   workspace: Workspace
   members: WorkspaceMember[]
+  section: "general" | "policies" | "notifications"
   onUpdated: (workspace: Workspace) => void
   onDelete: (policy: string) => Promise<void>
 }) {
@@ -74,36 +75,39 @@ export function WorkspaceSettings({ workspace, members, onUpdated, onDelete }: {
   }
 
   return <div className="max-w-5xl space-y-7 pb-6">
-    <SettingsSection title="General" description="How this workspace appears to your team.">
+    {section === "general" && <SettingsSection title="General" description="How this workspace appears to your team.">
       <SettingsGroup>
         <SettingsRow label="Name" value={<span className="font-medium break-words">{workspace.name}</span>} action={<Button variant="outline" size="sm" onClick={editProfile}>Edit details</Button>} />
         <SettingsRow label="Description" value={workspace.description ? <span className="break-words">{workspace.description}</span> : <span className="text-muted-foreground">No description added</span>} />
       </SettingsGroup>
-    </SettingsSection>
+    </SettingsSection>}
 
-    <SettingsSection title="Approval rules" description="Defaults for deployment plans. Applications can override these rules.">
-      <SettingsGroup>
-        {(["sync", "deletion"] as const).map((kind) => {
-          const rule = workspace.approvalPolicy[kind]
-          const required = rule.requiredApprovals
-          const label = kind === "sync" ? "Deployments" : "Application deletion"
-          return <SettingsRow key={kind} label={label}
-            description={required === 0 ? "Changes can deploy without manual approval." : approversSummary(rule)}
-            value={<Badge variant="secondary" radius="full">{required === 0 ? "No approval required" : `${required} approval${required === 1 ? "" : "s"} required`}</Badge>}
-            action={<Button variant="outline" size="sm" aria-label={`Edit ${label.toLowerCase()} approval rule`} onClick={() => editApprovals(kind)}>Edit rule</Button>} />
-        })}
-      </SettingsGroup>
-    </SettingsSection>
+    {section === "policies" && <>
+      <SettingsSection title="Approval rules" description="Defaults for deployment plans. Applications can override these rules.">
+        <SettingsGroup>
+          {(["sync", "deletion"] as const).map((kind) => {
+            const rule = workspace.approvalPolicy[kind]
+            const required = rule.requiredApprovals
+            const label = kind === "sync" ? "Deployments" : "Application deletion"
+            return <SettingsRow key={kind} label={label}
+              description={required === 0 ? "Changes can deploy without manual approval." : approversSummary(rule)}
+              value={<Badge variant="secondary" radius="full">{required === 0 ? "No approval required" : `${required} approval${required === 1 ? "" : "s"} required`}</Badge>}
+              action={<Button variant="outline" size="sm" aria-label={`Edit ${label.toLowerCase()} approval rule`} onClick={() => editApprovals(kind)}>Edit rule</Button>} />
+          })}
+        </SettingsGroup>
+      </SettingsSection>
 
-    <NotificationSettings workspaceId={workspace.id} />
+      <GuardrailPolicyPanel key={workspace.id} workspaceId={workspace.id} />
 
-    <GuardrailPolicyPanel key={workspace.id} workspaceId={workspace.id} />
+      <SettingsSection title="Deployment schedule" description="Control when deployments may start. Planning and review are always available.">
+        <DeploymentSchedulePanel scope="workspaces" id={workspace.id} canEdit layout="settings" />
+      </SettingsSection>
 
-    <SettingsSection title="Deployment schedule" description="Control when deployments may start. Planning and review are always available.">
-      <DeploymentSchedulePanel scope="workspaces" id={workspace.id} canEdit layout="settings" />
-    </SettingsSection>
+    </>}
 
-    <SettingsSection title="Delete workspace" description="Permanently remove this workspace from JustCD.">
+    {section === "notifications" && <NotificationSettings workspaceId={workspace.id} />}
+
+    {section === "general" && <SettingsSection title="Delete workspace" description="Permanently remove this workspace from JustCD.">
       <SettingsGroup>
         <SettingsRow label="Delete this workspace" description="Removes applications and workspace connections. This cannot be undone." action={
           <ConfirmDisclosure trigger="Delete workspace" title={`Delete ${workspace.name}?`} description="Choose what happens to resources managed by applications in this workspace. This cannot be undone in JustCD." confirmLabel="Delete workspace" onConfirm={() => onDelete(deletePolicy)}>
@@ -112,7 +116,7 @@ export function WorkspaceSettings({ workspace, members, onUpdated, onDelete }: {
           </ConfirmDisclosure>
         } />
       </SettingsGroup>
-    </SettingsSection>
+    </SettingsSection>}
 
     <AppDialog open={profileOpen} onOpenChange={setProfileOpen} busy={profileBusy} size="md" title="Edit workspace details" description="Give your workspace a recognizable name and a short description.">
       <form className="space-y-4" onSubmit={saveProfile}>

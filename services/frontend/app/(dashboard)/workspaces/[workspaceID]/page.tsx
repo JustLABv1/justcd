@@ -1,13 +1,13 @@
 "use client"
 
 import Link from "next/link"
-import { useParams, useRouter } from "next/navigation"
-import { useEffect, useState } from "react"
-import { Tabs } from "@base-ui/react/tabs"
+import { useParams, useRouter, useSearchParams } from "next/navigation"
+import { Suspense, useEffect, useState } from "react"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { SectionSkeleton } from "@/components/settings/shared"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Add01Icon, Delete02Icon, Key01Icon, ServerStack01Icon, GitBranchIcon, Folder01Icon, UserAdd01Icon } from "@hugeicons/core-free-icons"
-import { ActionMenu, RowActions } from "@/components/action-menu"
-import { workspaceConnectionSections } from "@/components/connections/sections"
+import { Delete02Icon, UserAdd01Icon } from "@hugeicons/core-free-icons"
+import { RowActions } from "@/components/action-menu"
 import { Badge } from "@/components/reui/badge"
 import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
@@ -15,12 +15,16 @@ import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
 import { WorkspaceSettings } from "@/components/workspace-settings"
 import { ErrorNotice } from "@/components/workspace-ui"
-import { ConnectionRow, EmptyState, FormField, PageHeading, Panel } from "@/components/ui-kit"
+import { EmptyState, FormField, PageHeading, Panel } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
 import { api, apiPost, errorMessage } from "@/lib/api"
 import type { ListResponse, Workspace, WorkspaceMember } from "@/lib/types"
 
 export default function WorkspaceDetailPage() {
+  return <Suspense fallback={<SectionSkeleton label="Loading workspace settings" />}><WorkspaceSettingsPage /></Suspense>
+}
+
+function WorkspaceSettingsPage() {
   const { workspaceID } = useParams<{ workspaceID: string }>()
   const router = useRouter()
   const toast = useToast()
@@ -28,29 +32,30 @@ export default function WorkspaceDetailPage() {
   const [members, setMembers] = useState<WorkspaceMember[]>([])
   const [error, setError] = useState<unknown | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadedWorkspaceId, setLoadedWorkspaceId] = useState("")
   const [memberEmail, setMemberEmail] = useState("")
   const [memberRole, setMemberRole] = useState("viewer")
   const [memberBusy, setMemberBusy] = useState(false)
   const [memberOpen, setMemberOpen] = useState(false)
   const [memberActionId, setMemberActionId] = useState<string | null>(null)
   const [deletionPlans, setDeletionPlans] = useState<{ applicationId: string; applicationName: string; managedResources: number }[]>([])
-  const [activeTab, setActiveTab] = useState("members")
+  const searchParams = useSearchParams()
+  const requestedTab = searchParams.get("tab")
+  const isOwner = workspace?.role === "owner"
+  const activeTab = isOwner
+    ? (["general", "members", "policies", "notifications"].includes(requestedTab ?? "") ? requestedTab! : "general")
+    : "members"
 
+  // Preserve old bookmarks without keeping the duplicate connections directory.
   useEffect(() => {
-    const readTab = () => {
-      const value = new URLSearchParams(window.location.search).get("tab")
-      setActiveTab(["members", "connections", "settings"].includes(value ?? "") ? value! : "members")
+    if (requestedTab === "connections" && workspace && loadedWorkspaceId === workspaceID) {
+      router.replace(workspace.role === "viewer" ? `/workspaces/${workspaceID}?tab=members` : `/workspaces/${workspaceID}/connections/git-sources`)
     }
-    readTab()
-    window.addEventListener("popstate", readTab)
-    return () => window.removeEventListener("popstate", readTab)
-  }, [])
+  }, [requestedTab, workspace, workspaceID, loadedWorkspaceId, router])
 
   function selectTab(value: string) {
-    setActiveTab(value)
     const url = new URL(window.location.href)
-    if (value === "members") url.searchParams.delete("tab")
-    else url.searchParams.set("tab", value)
+    url.searchParams.set("tab", value)
     window.history.pushState(null, "", url)
   }
 
@@ -66,9 +71,10 @@ export default function WorkspaceDetailPage() {
         const selected = workspaces.items.find((item) => item.id === workspaceID) ?? null
         setWorkspace(selected)
         setMembers(workspaceMembers.items)
+        setError(null)
       } catch (cause) {
-        if (active) setError(cause)
-      } finally { if (active) setLoading(false) }
+        if (active) { setWorkspace(null); setError(cause) }
+      } finally { if (active) { setLoadedWorkspaceId(workspaceID); setLoading(false) } }
     }
     void load()
     return () => { active = false }
@@ -108,28 +114,25 @@ export default function WorkspaceDetailPage() {
     setError(null)
   }
 
-  const isOwner = workspace?.role === "owner"
+  if (loading || loadedWorkspaceId !== workspaceID || (requestedTab === "connections" && workspace)) return <SectionSkeleton label="Loading workspace settings" />
+  if (error) return <ErrorNotice error={error} />
+  if (!workspace) return <EmptyState title="Workspace unavailable" description="Choose a workspace you have access to." href="/workspaces" action="View workspaces" />
+
   const roleItems = [{ value: "viewer", label: "Viewer" }, { value: "deployer", label: "Deployer" }, { value: "owner", label: "Owner" }]
   return <>
-    <PageHeading
-      title={workspace?.name ?? (loading ? "Loading workspace…" : "Workspace not found")}
-      description={workspace?.description || "Manage Git-driven applications and access scoped to this workspace."}
-      actions={workspace && activeTab === "connections" && isOwner
-        ? <ActionMenu label="Connect" variant="default" icon={Add01Icon} items={[
-          { label: "Cluster", icon: ServerStack01Icon, href: `/workspaces/${workspace.id}/clusters/new` },
-          { label: "Git source", icon: GitBranchIcon, href: `/workspaces/${workspace.id}/git-sources/new` },
-          { label: "Credential", icon: Key01Icon, href: `/workspaces/${workspace.id}/connections/credentials` },
-          { label: "Namespace access", icon: Folder01Icon, href: `/workspaces/${workspace.id}/connections/namespaces` },
-        ]} />
-        : undefined}
-    />
-    {error && <ErrorNotice error={error} />}
+    <PageHeading title="Workspace settings" description={`Manage ${workspace.name} · ${workspace.description || "Members, deployment policies, and notifications."}`} />
+    {!isOwner && <p className="mb-5 text-sm text-muted-foreground">Workspace owners manage general settings, deployment policies, and notifications. You can view members and their roles here.</p>}
     {deletionPlans.length > 0 && <div role="status" className="mb-5 rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm"><p className="font-medium">Deletion plans are ready for review.</p><p className="mt-1 text-sm text-muted-foreground">Approve and apply each application plan. Once all managed resources are gone, choose “Delete workspace” again to remove the workspace record.</p><ul className="mt-3 space-y-1">{deletionPlans.map((item) => <li key={item.applicationId}><Link href={`/applications/${item.applicationId}?tab=changes`} className="font-medium underline underline-offset-4">{item.applicationName} · {item.managedResources} resources</Link></li>)}</ul></div>}
-    <Tabs.Root value={activeTab} onValueChange={(value) => selectTab(String(value))}>
-      <Tabs.List aria-label="Workspace views" className="mb-6 flex gap-6 overflow-x-auto border-b" activateOnFocus>
-        {[["members", "Members", members.length], ...(workspace && workspace.role !== "viewer" ? [["connections", "Connections", null]] : []), ...(isOwner ? [["settings", "Workspace settings", null]] : [])].map(([value, label, count]) => <Tabs.Tab key={String(value)} value={String(value)} className="flex shrink-0 items-center gap-2 border-b-2 border-transparent px-1 pb-3 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[active]:border-primary data-[active]:text-foreground">{label}{count !== null && <Badge size="xs" variant="secondary">{count}</Badge>}</Tabs.Tab>)}
-      </Tabs.List>
-      <Tabs.Panel value="members" className="max-w-3xl outline-none">
+    <Tabs value={activeTab} onValueChange={(value) => selectTab(String(value))}>
+      <div className="sticky top-0 z-10 mb-5 border-b bg-background py-2">
+        <TabsList variant="line" aria-label="Workspace settings sections" className="grid w-full grid-cols-2 gap-x-2 gap-y-3 group-data-horizontal/tabs:h-auto sm:flex sm:w-fit sm:gap-4 sm:group-data-horizontal/tabs:h-10" activateOnFocus={false}>
+          {isOwner && <TabsTrigger className="h-10 justify-start whitespace-normal text-left leading-4 sm:h-9 sm:justify-center sm:whitespace-nowrap" value="general">General</TabsTrigger>}
+          <TabsTrigger className="h-10 justify-start whitespace-normal text-left leading-4 sm:h-9 sm:justify-center sm:whitespace-nowrap" value="members">Members &amp; access <Badge size="xs" variant="secondary">{members.length}</Badge></TabsTrigger>
+          {isOwner && <TabsTrigger className="h-10 justify-start whitespace-normal text-left leading-4 sm:h-9 sm:justify-center sm:whitespace-nowrap" value="policies">Deployment policies</TabsTrigger>}
+          {isOwner && <TabsTrigger className="h-10 justify-start whitespace-normal text-left leading-4 sm:h-9 sm:justify-center sm:whitespace-nowrap" value="notifications">Notifications</TabsTrigger>}
+        </TabsList>
+      </div>
+      <TabsContent value="members" className="min-w-0">
         <AppDialog open={memberOpen} onOpenChange={setMemberOpen} busy={memberBusy} size="md" title="Add member" description="Give a teammate access to this workspace.">
           <form className="space-y-4" onSubmit={addMember}>
             <FormField label="User email" htmlFor="member-email" hint="They must have signed in to JustCD at least once."><Input id="member-email" type="email" placeholder="teammate@example.com" value={memberEmail} onChange={(event) => setMemberEmail(event.target.value)} required /></FormField>
@@ -152,23 +155,10 @@ export default function WorkspaceDetailPage() {
             </li>
           })}</ul> : <EmptyState title="No additional members yet" description={isOwner ? "The workspace owner is the only member so far. Use “Add member” to invite a teammate." : "The workspace owner is the only member so far."} />}
         </Panel>
-      </Tabs.Panel>
-      {workspace && workspace.role !== "viewer" && <Tabs.Panel value="connections" className="max-w-3xl outline-none">
-        <Panel title="Workspace connections" description={`Repositories, targets, and secrets used by ${workspace.name}.`}>
-          <ul className="divide-y">
-            {workspaceConnectionSections.map((item) => <ConnectionRow
-              key={item.id}
-              icon={<HugeiconsIcon icon={item.icon} strokeWidth={1.8} className="size-4" />}
-              title={item.title}
-              meta={item.description}
-              actions={<Button size="sm" variant="outline" aria-label={`Manage ${item.title}`} render={<Link href={`/workspaces/${workspaceID}/connections/${item.id}`} />}>Manage</Button>}
-            />)}
-          </ul>
-        </Panel>
-      </Tabs.Panel>}
-      {isOwner && workspace && <Tabs.Panel value="settings" className="min-w-0 outline-none">
-        <WorkspaceSettings key={workspace.id} workspace={workspace} members={members} onUpdated={setWorkspace} onDelete={deleteWorkspace} />
-      </Tabs.Panel>}
-    </Tabs.Root>
+      </TabsContent>
+      {isOwner && (["general", "policies", "notifications"] as const).map((section) => <TabsContent key={section} value={section}>
+        <WorkspaceSettings key={`${workspace.id}:${section}`} workspace={workspace} members={members} section={section} onUpdated={setWorkspace} onDelete={deleteWorkspace} />
+      </TabsContent>)}
+    </Tabs>
   </>
 }

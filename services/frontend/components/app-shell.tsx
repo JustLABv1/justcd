@@ -152,6 +152,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   const connections: NavItem[] = connectionNavigation.map((item) => ({ href: `/workspaces/${selectedWorkspaceId}/connections/${item.section}`, label: item.label, icon: item.icon }))
+  const workspaceNavigation: NavItem[] = [{ href: `/workspaces/${selectedWorkspaceId}`, label: "Workspace settings", icon: Settings02Icon }]
   const administration = adminNavigation.filter((item) => item.href !== "/onboarding" || onboardingIncomplete)
   const mobileGroups = [
     { label: "Delivery", items: deliveryNavigation },
@@ -183,6 +184,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-5">
           <NavGroup label="Delivery" items={deliveryNavigation} pathname={pathname} first />
           {selectedWorkspaceId && <NavGroup label="Connections" items={connections} pathname={pathname} />}
+          {selectedWorkspaceId && <NavGroup label="Workspace" items={workspaceNavigation} pathname={pathname} />}
           {user.isAdmin && <NavGroup label="Administration" items={administration} pathname={pathname} />}
         </div>
         <AccountMenu user={user} onSignOut={signOut} />
@@ -198,6 +200,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </header>
         <div className="mx-4 mb-2 lg:hidden">
           <WorkspaceSelector workspaces={workspaces} selectedId={selectedWorkspaceId} onChange={selectWorkspace} compact loading={workspacesLoading} />
+          {selectedWorkspaceId && <Button nativeButton={false} variant="outline" className="w-full justify-start" render={<Link href={`/workspaces/${selectedWorkspaceId}`} />}>
+            <HugeiconsIcon icon={Settings02Icon} className="size-4" aria-hidden="true" />Workspace settings
+          </Button>}
         </div>
         <nav aria-label="Main navigation" className={`mx-4 mt-3 flex lg:hidden ${styles.mobileNav}`}>
           {mobileGroups.map((group, groupIndex) => <div key={group.label} role="group" aria-label={group.label} className="flex shrink-0 items-center gap-1">
@@ -257,7 +262,7 @@ function WorkspaceSelector({
           {workspaces.map((workspace) => <DropdownMenuRadioItem key={workspace.id} value={workspace.id} className="min-w-0 py-2"><span className="truncate">{workspace.name}</span></DropdownMenuRadioItem>)}
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => router.push(`/workspaces/${selectedId}${workspaces.find((workspace) => workspace.id === selectedId)?.role === "owner" ? "?tab=settings" : "?tab=members"}`)} className="gap-2 py-2"><HugeiconsIcon icon={Settings02Icon} className="size-4" aria-hidden="true" />Manage current workspace</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => router.push(`/workspaces/${selectedId}`)} className="gap-2 py-2"><HugeiconsIcon icon={Settings02Icon} className="size-4" aria-hidden="true" />Workspace settings</DropdownMenuItem>
         <DropdownMenuItem onClick={() => router.push("/workspaces/new")} className="gap-2 py-2"><HugeiconsIcon icon={Add01Icon} className="size-4" aria-hidden="true" />New workspace</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -274,6 +279,7 @@ function NavGroup({ label, items, pathname, first = false }: { label: string; it
 }
 
 function isNavSelected(href: string, pathname: string) {
+  if (/^\/workspaces\/[^/]+$/.test(href)) return pathname === href
   if (isSelected(href, pathname)) return true
   const creation = /^\/workspaces\/([^/]+)\/connections\/(clusters|git-sources)$/.exec(href)
   return !!creation && pathname === `/workspaces/${creation[1]}/${creation[2]}/new`

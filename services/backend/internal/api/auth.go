@@ -3,7 +3,6 @@ package api
 import (
 	"crypto/subtle"
 	"errors"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -22,14 +21,6 @@ func (s *Server) setupStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
-	ip, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		ip = r.RemoteAddr
-	}
-	if !s.allowLogin(ip) {
-		writeError(w, http.StatusTooManyRequests, "too many attempts; try again later")
-		return
-	}
 	var input struct {
 		Email       string `json:"email"`
 		DisplayName string `json:"displayName"`
@@ -59,7 +50,6 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, "could not create administrator")
 		return
 	}
-	s.clearLogin(ip)
 	_ = s.Store.Audit(r.Context(), user.ID, "user.created", "user", user.ID, map[string]any{"email": user.Email, "isAdmin": true, "initialSetup": true})
 	s.createSession(w, r, user)
 }
@@ -68,6 +58,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
+		Code     string `json:"code"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -79,62 +70,41 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "a valid email is required")
 		return
 	}
-	user, passwordHash, err := s.Store.UserByEmail(r.Context(), input.Email)
-	key := "account:" + input.Email
-	if err != nil {
-		// Unknown account names share one bucket, so arbitrary names cannot exhaust
-		// the limiter map or block known users behind the frontend proxy.
-		key = "unknown-account"
-		passwordHash = s.dummyHash
-	}
-	if !s.allowLogin(key) {
-		writeError(w, http.StatusTooManyRequests, "too many login attempts; try again later")
+	if !s.securityLimit(w, r, "login-account", input.Email, 8, 15*time.Minute) {
 		return
+	}
+	user, passwordHash, err := s.Store.UserByEmail(r.Context(), input.Email)
+	if err != nil {
+		passwordHash = s.dummyHash
 	}
 	valid := security.VerifyPassword(passwordHash, input.Password)
 	if err != nil || !valid {
 		writeError(w, http.StatusUnauthorized, "email or password is incorrect")
 		return
 	}
-	s.clearLogin(key)
+	status, mfaErr := s.Store.MFAStatus(r.Context(), user.ID)
+	if mfaErr != nil {
+		writeStoreError(w, "could not check authentication")
+		return
+	}
+	if status.Enabled {
+		if input.Code == "" {
+			_ = s.Store.Audit(r.Context(), user.ID, "mfa.challenge_requested", "user", user.ID, nil)
+			writeJSON(w, 200, map[string]bool{"mfaRequired": true})
+			return
+		}
+		valid, verifyErr := s.Store.VerifyMFA(r.Context(), user.ID, input.Code, "challenge", s.EncryptionKey, nil)
+		if verifyErr != nil {
+			writeStoreError(w, "could not check authentication")
+			return
+		}
+		if !valid {
+			writeError(w, 401, "authentication failed")
+			return
+		}
+	}
+	_ = s.Store.Audit(r.Context(), user.ID, "session.created", "user", user.ID, nil)
 	s.createSession(w, r, user)
-}
-
-func (s *Server) allowLogin(key string) bool {
-	s.loginMu.Lock()
-	defer s.loginMu.Unlock()
-	now := time.Now()
-	cutoff := now.Add(-15 * time.Minute)
-	if s.loginTries == nil {
-		s.loginTries = map[string][]time.Time{}
-	}
-	// Prune expired keys and cap memory used by attacker-selected account names.
-	for key, attempts := range s.loginTries {
-		if len(attempts) == 0 || !attempts[len(attempts)-1].After(cutoff) {
-			delete(s.loginTries, key)
-		}
-	}
-	if len(s.loginTries) >= 10000 && s.loginTries[key] == nil {
-		return false
-	}
-	tries := s.loginTries[key][:0]
-	for _, attempt := range s.loginTries[key] {
-		if attempt.After(cutoff) {
-			tries = append(tries, attempt)
-		}
-	}
-	if len(tries) >= 8 {
-		s.loginTries[key] = tries
-		return false
-	}
-	s.loginTries[key] = append(tries, now)
-	return true
-}
-
-func (s *Server) clearLogin(key string) {
-	s.loginMu.Lock()
-	delete(s.loginTries, key)
-	s.loginMu.Unlock()
 }
 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request, user store.User) {

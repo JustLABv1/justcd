@@ -35,8 +35,6 @@ type Server struct {
 	Metrics       *observability.Metrics
 	Syncer        *syncer.Service
 	dummyHash     string
-	loginMu       sync.Mutex
-	loginTries    map[string][]time.Time
 	agentMu       sync.Mutex
 	agentPolls    map[string]bool
 	agentRequests map[string][]time.Time
@@ -51,13 +49,14 @@ func New(s *store.Store, cfg config.Config, logger *slog.Logger) (*Server, error
 	if logger == nil {
 		logger = slog.Default()
 	}
-	server := &Server{Store: s, Config: cfg, EncryptionKey: cfg.EncryptionKey, Logger: logger, Syncer: &syncer.Service{Store: s, EncryptionKey: cfg.EncryptionKey}, dummyHash: dummy, loginTries: map[string][]time.Time{}, Mux: http.NewServeMux()}
+	server := &Server{Store: s, Config: cfg, EncryptionKey: cfg.EncryptionKey, Logger: logger, Syncer: &syncer.Service{Store: s, EncryptionKey: cfg.EncryptionKey}, dummyHash: dummy, Mux: http.NewServeMux()}
 	server.routes()
 	return server, nil
 }
 
 func (s *Server) routes() {
 	s.notificationRoutes()
+	s.securityRoutes()
 	s.Mux.HandleFunc("GET /api/v1/service-status", s.serviceStatus)
 	s.Mux.Handle("GET /api/v1/admin/instance-settings", s.requireAuth(s.requireAdmin(http.HandlerFunc(s.getInstanceSettings))))
 	s.Mux.Handle("PUT /api/v1/admin/instance-settings", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.updateInstanceSettings)))))
@@ -213,6 +212,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+	if !s.hardeningRequest(w, r) {
+		return
+	}
 	if r.Method != "GET" && r.Method != "HEAD" && r.Method != "OPTIONS" {
 		limit := int64(2 << 20)
 		if strings.HasPrefix(r.URL.Path, "/api/v1/agents/tasks/") && strings.HasSuffix(r.URL.Path, "/result") {

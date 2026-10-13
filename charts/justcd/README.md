@@ -300,3 +300,5 @@ pool, so updating the mounted file alone does not reload trust. Do not override
 `SSL_CERT_DIR`, `GIT_SSL_CAINFO`, or `GIT_SSL_CAPATH` in `backend.extraEnv` when using this option.
 
 See the [production operations runbook](../../docs/production-operations.md) for coordinated backups, cold restore, least-privilege target RBAC, troubleshooting and tested recovery drills.
+
+Production mode now requires an HTTPS `publicUrl` and `cookieSecure: true`; the backend defaults to `JUSTCD_ENV=production`. For local chart testing with HTTP, explicitly set `JUSTCD_ENV=development` in backend and frontend `extraEnv`. See [security hardening](../../docs/security-hardening.md) for session management, MFA, shared rate limits and the offline encryption-key rotation procedure.

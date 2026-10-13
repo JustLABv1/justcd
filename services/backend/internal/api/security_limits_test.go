@@ -6,24 +6,6 @@ import (
 	"time"
 )
 
-func TestLoginLimitsAreAccountScoped(t *testing.T) {
-	s := &Server{}
-	for i := 0; i < 8; i++ {
-		if !s.allowLogin("account:attacker@example.invalid") {
-			t.Fatal("early limit")
-		}
-	}
-	if s.allowLogin("account:attacker@example.invalid") {
-		t.Fatal("limit bypass")
-	}
-	if !s.allowLogin("account:other@example.invalid") {
-		t.Fatal("other account blocked")
-	}
-	s.clearLogin("account:attacker@example.invalid")
-	if !s.allowLogin("account:attacker@example.invalid") {
-		t.Fatal("reset failed")
-	}
-}
 func TestAgentPollLimits(t *testing.T) {
 	s := &Server{}
 	if !s.beginAgentPoll("a") || s.beginAgentPoll("a") {

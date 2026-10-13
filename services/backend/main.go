@@ -15,18 +15,24 @@ import (
 	"github.com/justlab/justcd/services/backend/internal/api"
 	"github.com/justlab/justcd/services/backend/internal/config"
 	"github.com/justlab/justcd/services/backend/internal/observability"
+	"github.com/justlab/justcd/services/backend/internal/security"
 	"github.com/justlab/justcd/services/backend/internal/store"
 )
 
 func main() {
 	logger := slog.New(observability.NewLogHandler(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
-	if err := run(logger); err != nil {
+	if err := runCommand(logger, os.Args[1:]); err != nil {
 		logger.Error("JustCD stopped", "error", observability.StartupError{Err: err})
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger) error {
+func run(logger *slog.Logger) error { return runCommand(logger, nil) }
+
+func runCommand(logger *slog.Logger, args []string) error {
+	if len(args) > 0 && (len(args) != 1 || args[0] != "rotate-encryption-key") {
+		return fmt.Errorf("usage: justcd [rotate-encryption-key]")
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
@@ -52,6 +58,20 @@ func run(logger *slog.Logger) error {
 	if err := db.EnsureSystemActor(startupCtx); err != nil {
 		return fmt.Errorf("initialize automatic reconciliation actor: %w", err)
 	}
+	if len(args) == 1 && args[0] == "rotate-encryption-key" {
+		key, err := security.ParseEncryptionKey(os.Getenv("JUSTCD_NEW_ENCRYPTION_KEY"))
+		if err != nil {
+			return fmt.Errorf("invalid new encryption key")
+		}
+		rotationCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		count, err := db.RotateEncryptionKey(rotationCtx, cfg.EncryptionKey, key)
+		if err != nil {
+			return err
+		}
+		logger.Info("encryption key rotation committed", "valuesRotated", count)
+		return nil
+	}
 	server, err := api.New(db, cfg, logger)
 	if err != nil {
 		return fmt.Errorf("initialize API: %w", err)
@@ -63,6 +83,20 @@ func run(logger *slog.Logger) error {
 	}
 	lifecycle := newBackendLifecycle()
 	lifecycle.Start(func(ctx, _ context.Context) { server.RunNotificationWorker(ctx) })
+	lifecycle.Start(func(ctx, _ context.Context) {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := db.PruneSecurityLimits(ctx); err != nil {
+					logger.WarnContext(ctx, "could not prune security rate limits")
+				}
+			}
+		}
+	})
 	httpServer := &http.Server{
 		Addr: cfg.ListenAddress, Handler: lifecycle.Handler(observability.HTTPMiddleware(server, logger, telemetry.Metrics)),
 		BaseContext:       func(net.Listener) context.Context { return lifecycle.executionCtx },

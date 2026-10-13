@@ -3,6 +3,7 @@ package syncer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -57,18 +58,24 @@ func applyWithOwnershipMigration(ctx context.Context, rc dynamic.ResourceInterfa
 	return rc.Patch(ctx, name, types.ApplyPatchType, body, options)
 }
 
-// Detect field ownership transfers before sealing the plan and its approval
-// policy, after migrating ownership already held by this application's manager.
-// All requests are dry-runs; transferring another manager's ownership still
-// requires an approved takeover before the real apply.
-func (s *Service) detectFieldTakeovers(ctx context.Context, input planInput, plan *core.Plan, desired []core.Resource) error {
+// reconcileUpdatePlan validates ownership and compares the live snapshot with
+// the server-side apply dry-run result before sealing the approval policy.
+// Admission defaults and CRD list merging are interpreted by Kubernetes, not
+// by the local list projection. The original Git manifest remains the apply body.
+func (s *Service) reconcileUpdatePlan(ctx context.Context, input planInput, plan *core.Plan, desired, live []core.Resource) error {
 	byKey := make(map[string]core.Resource, len(desired))
 	for _, resource := range desired {
 		byKey[resource.Identity.Key()] = resource
 	}
+	liveByKey := make(map[string]core.Resource, len(live))
+	for _, resource := range live {
+		liveByKey[resource.Identity.Key()] = resource
+	}
+	changes := make([]core.Change, 0, len(plan.Changes))
 	for index := range plan.Changes {
 		change := &plan.Changes[index]
 		if change.Kind != core.Update {
+			changes = append(changes, *change)
 			continue
 		}
 		resource, ok := byKey[change.Identity.Key()]
@@ -99,16 +106,43 @@ func (s *Service) detectFieldTakeovers(ctx context.Context, input planInput, pla
 		}
 		options := applyPatchOptions(*change, "justcd/"+plan.ApplicationID)
 		options.DryRun = []string{metav1.DryRunAll}
-		_, err = applyWithOwnershipMigration(ctx, rc, change.Identity.Name, body, options)
+		applied, err := applyWithOwnershipMigration(ctx, rc, change.Identity.Name, body, options)
 		if !change.Takeover && fieldOwnershipConflict(err) {
 			change.Takeover = true
 			options = applyPatchOptions(*change, "justcd/"+plan.ApplicationID)
 			options.DryRun = []string{metav1.DryRunAll}
-			_, err = rc.Patch(ctx, change.Identity.Name, types.ApplyPatchType, body, options)
+			applied, err = rc.Patch(ctx, change.Identity.Name, types.ApplyPatchType, body, options)
 		}
 		if err != nil {
 			return &resourceAccessError{identity: change.Identity, action: "patch (dry-run)", err: err}
 		}
+		current, ok := liveByKey[change.Identity.Key()]
+		if !ok {
+			return errors.New("update plan live resource is missing")
+		}
+		if applied == nil || applied.GetAPIVersion() != change.Identity.APIVersion || applied.GetKind() != change.Identity.Kind || applied.GetName() != change.Identity.Name || applied.GetNamespace() != change.Identity.Namespace {
+			return fmt.Errorf("invalid dry-run response for %s %s/%s", change.Identity.Kind, change.Identity.Namespace, change.Identity.Name)
+		}
+		predicted, err := render.CanonicalLive(applied, change.Identity.ClusterID, plan.ApplicationID, change.Identity.ClusterScoped)
+		if err != nil {
+			return err
+		}
+		before, after, err := render.ServerSideComparisonManifests(current.Manifest, predicted.Manifest, ignoredPathsFor(input, change.Identity))
+		if err != nil {
+			return err
+		}
+		paths, err := render.ChangedJSONPointers(before, after)
+		if err != nil {
+			return err
+		}
+		// A no-op value change may still transfer ownership. Keep takeovers
+		// visible so auto-safe never silently approves an ownership transfer.
+		if len(paths) == 0 && !change.Takeover {
+			continue
+		}
+		change.Before, change.After, change.ChangedPaths = before, after, paths
+		changes = append(changes, *change)
 	}
+	plan.Changes = changes
 	return nil
 }

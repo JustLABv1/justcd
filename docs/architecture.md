@@ -16,6 +16,10 @@ manifests are a separate, explicit capability.
 4. Discover live resources using the selected credential. Compute creates,
    updates, and deletion candidates. Only resources already owned by this
    application can become deletion candidates.
+   Update candidates are validated with server-side apply dry runs. Their final
+   diffs compare the live snapshot with Kubernetes's predicted result, including
+   admission defaults and CRD list merging. Value no-ops are removed before
+   approval evaluation; ownership transfers remain explicit review items.
 5. Show the complete plan, including the source commit, target, resource
    identities, diffs, and the credential identity used for each namespace.
 6. Apply creates and updates with server-side apply. Deletions require a
@@ -105,6 +109,13 @@ and updates. Changes requiring approval stop until the configured approval
 threshold is met. For active auto-sync applications, the final approval queues
 that exact reviewed plan after rechecking its digest and approval validity.
 Manual applications, rollback, and application deletion still require Apply.
+An update dry run that reproduces live state produces no actionable change, so
+`auto-safe` marks the application synced without a write. For example, an
+operator-added default SQL script does not require an ignore rule when Kubernetes
+preserves or injects it during apply. Mutations performed asynchronously after
+admission may still require a scoped ignore rule. Review diffs use the predicted
+server result; apply continues to use the rendered Git manifest, so defaults do
+not become declared JustCD fields.
 The application list and detail page observe background updates without manual
 plan refresh. Failed read-only planning checks continue at the polling interval;
 failed writes retain their review/retry safeguards. An explicit Retry now resumes

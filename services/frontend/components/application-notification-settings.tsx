@@ -1,6 +1,9 @@
 "use client"
 import { useEffect, useState } from "react"
 import Link from "next/link"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { InformationCircleIcon } from "@hugeicons/core-free-icons"
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import {
   SettingsGroup,
   SettingsRow,
@@ -112,6 +115,29 @@ export function ApplicationNotificationSettings({
         description="Set this application's destinations, events and severity independently of workspace defaults."
       >
         <div className="space-y-3 p-5">
+          {data?.managedByGit && (
+            <Alert
+              role="note"
+              aria-labelledby="notification-git-title"
+              className="border-info/20 bg-info/5 p-4"
+            >
+              <HugeiconsIcon
+                icon={InformationCircleIcon}
+                strokeWidth={2}
+                aria-hidden="true"
+                className="text-info-foreground dark:text-info"
+              />
+              <AlertTitle id="notification-git-title">
+                Managed by Git
+              </AlertTitle>
+              <AlertDescription id="notification-git-description">
+                Routing is read-only here. To change it, edit{" "}
+                <code className="font-mono text-xs">spec.notifications</code> in{" "}
+                <code className="font-mono text-xs">justcd.yaml</code> and
+                commit the change.
+              </AlertDescription>
+            </Alert>
+          )}
           <SettingsGroup>
             <SettingsRow
               label="Routing"
@@ -127,17 +153,16 @@ export function ApplicationNotificationSettings({
                   size="sm"
                   onClick={edit}
                   disabled={busy || !data || data.managedByGit}
+                  aria-describedby={
+                    data?.managedByGit
+                      ? "notification-git-description"
+                      : undefined
+                  }
                 >
                   Edit routing
                 </Button>
               }
             />
-            {data?.managedByGit && (
-              <SettingsRow
-                label="Managed by Git"
-                description="Edit spec.notifications in justcd.yaml and commit the change to update this routing."
-              />
-            )}
             {data?.policy.mode === "custom" && (
               <SettingsRow
                 label="Selected destinations"

@@ -62,16 +62,16 @@ func addNamespaceCreations(ctx context.Context, input planInput, plan *core.Plan
 		existing, err := resource.Get(ctx, name, metav1.GetOptions{})
 		if err == nil {
 			if existing.GetDeletionTimestamp() != nil {
-				return fmt.Errorf("namespace %q is terminating", name)
+				return &PlanConfigurationError{Source: "cluster", Code: "kubernetes.namespace_terminating", Summary: fmt.Sprintf("Namespace %q is terminating.", name), Remediation: "Wait for namespace deletion to finish or resolve its remaining finalizers, then build a fresh plan."}
 			}
 			continue
 		}
 		if !apierrors.IsNotFound(err) {
-			return fmt.Errorf("check target namespace %q: %w", name, err)
+			return &resourceAccessError{identity: core.Identity{ClusterID: input.Cluster.ID, APIVersion: "v1", Kind: "Namespace", Name: name, ClusterScoped: true}, action: "get", err: err}
 		}
 		object := namespaceObject(name)
 		if _, err := resource.Create(ctx, object, metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}}); err != nil {
-			return fmt.Errorf("namespace %q creation is not permitted: %w", name, err)
+			return &resourceAccessError{identity: core.Identity{ClusterID: input.Cluster.ID, APIVersion: "v1", Kind: "Namespace", Name: name, ClusterScoped: true}, action: "create (dry-run)", err: err}
 		}
 		manifest, _ := json.Marshal(object.Object)
 		sum := sha256.Sum256(manifest)

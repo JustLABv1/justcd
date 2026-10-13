@@ -311,7 +311,6 @@ export function NotificationSettings({ workspaceId }: { workspaceId: string }) {
         description="Recent deliveries and their attempt history."
       >
         <div className="space-y-3 pt-4">
-          <h3 className="text-sm font-semibold">Recent deliveries</h3>
           {!activity.length && (
             <p className="text-sm text-muted-foreground">
               No delivery activity yet.

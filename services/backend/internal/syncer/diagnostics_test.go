@@ -40,3 +40,15 @@ func TestDiagnosticsDistinguishCredentialsFromConnectivity(t *testing.T) {
 		t.Fatalf("connectivity misclassified as RBAC: %+v", issue)
 	}
 }
+
+func TestClusterScopeRequirementHasSpecificDiagnostic(t *testing.T) {
+	identity := core.Identity{ClusterID: "cluster", APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "mimir-rollout-operator-webhook-clusterrole", ClusterScoped: true}
+	err := fmt.Errorf("internal wrapper: %w", clusterScopeRequired(&identity))
+	issue := PlanFailureDiagnostic(err)
+	if issue.Code != "kubernetes.cluster_scope_required" || issue.Source != "cluster" || issue.Resource == nil || *issue.Resource != identity || !strings.Contains(issue.Summary, identity.Name) || !strings.Contains(issue.Remediation, "PR-discovered") {
+		t.Fatalf("cluster-scope context missing: %+v", issue)
+	}
+	if strings.Contains(issue.Summary, "internal wrapper") {
+		t.Fatal("wrapper leaked into user-facing cause")
+	}
+}

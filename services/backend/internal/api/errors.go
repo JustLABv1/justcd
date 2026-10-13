@@ -133,9 +133,16 @@ func writePlanFailure(w http.ResponseWriter, status int, message, applicationID 
 		message = diagnostic.Summary
 		metadata.code = diagnostic.Code
 		metadata.category = "kubernetes"
+		if diagnostic.Source == "render" || diagnostic.Source == "git" {
+			metadata.category = diagnostic.Source
+		}
 		metadata.remediation = diagnostic.Remediation
 		metadata.remediationURL = "/applications/" + url.PathEscape(applicationID) + "?tab=settings"
 		details["issue"] = diagnostic
+		var retryable interface{ Retryable() bool }
+		if errors.As(err, &retryable) {
+			metadata.retryable = retryable.Retryable()
+		}
 	}
 	writeClassifiedError(w, status, message, metadata, details)
 }

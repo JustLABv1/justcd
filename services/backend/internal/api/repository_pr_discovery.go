@@ -161,7 +161,7 @@ func (s *Server) discoverRepositoryPRs(ctx context.Context, repo store.Repositor
 			sha := checkout.Commit
 			checkout.Close()
 			if discoverErr != nil {
-				return fmt.Errorf("PR #%d: %w", event.Number, discoverErr)
+				return discoverErr
 			}
 			if sha != event.HeadSHA {
 				return nil
@@ -185,12 +185,12 @@ func (s *Server) discoverRepositoryPRs(ctx context.Context, repo store.Repositor
 				app, err := s.Syncer.ResolveRepositoryDefinition(ctx, repo, definition)
 				if err != nil {
 					if strings.Contains(err.Error(), "requires an existing workspace binding") {
-						return fmt.Errorf("PR #%d: %w; automatic PR registration requires Allow creation of matching dev namespaces in repository settings and createNamespaces: true in justcd.yaml", event.Number, err)
+						return repositoryPRBindingError(repo.PRSettings.Mode, definition.File, definition.Spec.Destination.Namespace)
 					}
-					return fmt.Errorf("PR #%d: %w", event.Number, err)
+					return err
 				}
 				if !repo.PRSettings.Allows(app.ClusterID, definition.Spec.Destination.Namespace) {
-					return fmt.Errorf("PR #%d application %q destination is not allowed by repository settings", event.Number, app.Name)
+					return fmt.Errorf("application %q destination is not allowed by repository settings", app.Name)
 				}
 				conn := c
 				conn.ID = store.NewID()
@@ -253,6 +253,9 @@ func (s *Server) discoverRepositoryPRs(ctx context.Context, repo store.Repositor
 		}()
 		if err != nil {
 			scanErrors = append(scanErrors, fmt.Errorf("PR #%d: %w", event.Number, err))
+			if reportErr := reportRepositoryPRDiscoveryFailure(ctx, client, c, repo, event, string(token), err); reportErr != nil {
+				scanErrors = append(scanErrors, fmt.Errorf("PR #%d: could not post discovery failure comment: %w", event.Number, reportErr))
+			}
 		}
 	}
 	for _, v := range known {

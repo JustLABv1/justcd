@@ -371,6 +371,9 @@ Choose one of three modes:
 
 - **Review plans only:** creates a temporary, paused application so manifests,
   resources, and the PR plan can be inspected. Applying its plans is rejected.
+  Live planning requires an existing workspace namespace binding and Kubernetes
+  access. This mode does not register bindings or create namespaces, even when
+  the branch requests `createNamespaces: true`.
 - **Deploy in isolated namespaces:** creates a dedicated namespace per PR
   application. Kustomize applies a namespace transform. Existing preview
   restrictions, host validation, quotas, and lifetime limits apply. The new
@@ -429,6 +432,11 @@ removed immediately. Repository records retain the outcome after cleanup.
 
 Close and clean up active PR applications before changing this policy. Errors
 appear in repository PR settings and the application's Pull requests view.
+Failures while discovering a PR are also posted as a PR/MR comment, even if
+discovery stopped before an application or review could be registered. The same
+commit and error are reported once, so repeated discovery does not repeat the
+comment. If provider comment access fails, that reporting error appears alongside
+the discovery error in repository settings.
 
 
 ## Deployment schedules

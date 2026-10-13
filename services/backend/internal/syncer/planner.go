@@ -49,6 +49,18 @@ func (e *planStageError) Unwrap() error      { return e.err }
 func (e *planStageError) ErrorStage() string { return e.stage }
 
 func statusIssue(stage string, err error, at time.Time) store.ApplicationStatusIssue {
+	var configuration *PlanConfigurationError
+	if errors.As(err, &configuration) {
+		return store.ApplicationStatusIssue{Source: configuration.Source, Code: configuration.Code, Summary: configuration.Summary, Remediation: configuration.Remediation, Resource: configuration.Resource, ObservedAt: at}
+	}
+	var renderer *render.RendererError
+	if errors.As(err, &renderer) {
+		return store.ApplicationStatusIssue{Source: "render", Code: renderer.ErrorCode(), Summary: renderer.Error(), Remediation: "Check the renderer configuration and backend logs for the command failure, correct the manifests or renderer dependencies, then build a fresh plan.", ObservedAt: at}
+	}
+	var fetch *gitops.FetchError
+	if errors.As(err, &fetch) {
+		return store.ApplicationStatusIssue{Source: "git", Code: fetch.ErrorCode(), Summary: fetch.Error(), Remediation: "Check the repository URL, selected revision, Git credentials, and provider availability, then build a fresh plan.", ObservedAt: at}
+	}
 	var conflict *OwnershipConflict
 	if errors.As(err, &conflict) {
 		return store.ApplicationStatusIssue{
@@ -303,7 +315,7 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 	defer span.End()
 	span.SetAttributes(attribute.String("application.id", app.ID), attribute.String("renderer", app.Renderer))
 	if app.ConfigurationMissing {
-		return core.Plan{}, nil, errors.New("application definition is missing from Git; restore it before syncing")
+		return core.Plan{}, nil, &PlanConfigurationError{Source: "git", Code: "application.definition_missing", Summary: "Application definition is missing from Git.", Remediation: "Restore the application's justcd.yaml definition on the tracked branch and run discovery before planning."}
 	}
 	if app.Decommissioning {
 		return core.Plan{}, nil, errors.New("application is being decommissioned; cancel deletion before normal sync")
@@ -355,7 +367,7 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 			return core.Plan{}, nil, errors.New("isolated branch previews cannot manage cluster-scoped resources; remove them from the preview overlay")
 		}
 		if resource.Identity.ClusterScoped && input.ClusterScopeClient == nil {
-			return core.Plan{}, nil, fmt.Errorf("cluster-scoped resource %s/%s requires a privileged cluster-scope credential", resource.Identity.Kind, resource.Identity.Name)
+			return core.Plan{}, nil, clusterScopeRequired(&resource.Identity)
 		}
 	}
 	live, changedIgnoredFields, err := s.liveSnapshot(ctx, input, desired)
@@ -851,7 +863,7 @@ func healthForPlan(plan core.Plan) string {
 func (s *Service) loadPlanInput(ctx context.Context, app store.Application) (planInput, error) {
 	canUseCluster, err := s.Store.WorkspaceCanUseCluster(ctx, app.WorkspaceID, app.ClusterID)
 	if err != nil || !canUseCluster {
-		return planInput{}, errors.New("application cluster is no longer available to this workspace")
+		return planInput{}, &PlanConfigurationError{Source: "cluster", Code: "kubernetes.cluster_unavailable", Summary: "Application cluster is no longer available to this workspace.", Remediation: "Restore this workspace's access to the target cluster or select an accessible cluster in the application definition."}
 	}
 	cluster, err := s.Store.ClusterByID(ctx, app.ClusterID)
 	if err != nil {
@@ -859,7 +871,7 @@ func (s *Service) loadPlanInput(ctx context.Context, app store.Application) (pla
 	}
 	input := planInput{Application: app, Cluster: cluster, NamespaceBindings: map[string]store.NamespaceBinding{}, NamespaceClients: map[string]*kube.Clients{}}
 	if len(app.Namespaces) == 0 {
-		return planInput{}, errors.New("application has no namespace bindings")
+		return planInput{}, &PlanConfigurationError{Source: "cluster", Code: "kubernetes.namespace_binding_missing", Summary: "Application has no namespace bindings.", Remediation: "Bind the application's destination namespace to this workspace, then build a fresh plan."}
 	}
 	workspaceCredentialID, err := s.Store.WorkspaceClusterCredential(ctx, app.WorkspaceID, app.ClusterID)
 	if err != nil {
@@ -868,7 +880,7 @@ func (s *Service) loadPlanInput(ctx context.Context, app store.Application) (pla
 	for _, binding := range app.Namespaces {
 		stored, err := s.Store.NamespaceBinding(ctx, app.WorkspaceID, app.ClusterID, binding.Namespace)
 		if err != nil {
-			return planInput{}, fmt.Errorf("namespace %q is no longer bound to this workspace", binding.Namespace)
+			return planInput{}, &PlanConfigurationError{Source: "cluster", Code: "kubernetes.namespace_binding_missing", Summary: fmt.Sprintf("Namespace %q is no longer bound to this workspace.", binding.Namespace), Remediation: "Restore the workspace namespace binding, then build a fresh plan."}
 		}
 		credentialID := stored.CredentialID
 		if credentialID == nil {
@@ -886,7 +898,7 @@ func (s *Service) loadPlanInput(ctx context.Context, app store.Application) (pla
 			credentialID = &ref
 		}
 		if credentialID == nil {
-			return planInput{}, fmt.Errorf("namespace %q has no Kubernetes credential", binding.Namespace)
+			return planInput{}, &PlanConfigurationError{Source: "cluster", Code: "kubernetes.namespace_credential_missing", Summary: fmt.Sprintf("Namespace %q has no Kubernetes credential.", binding.Namespace), Remediation: "Configure a Kubernetes credential on the namespace binding, or a default credential for the workspace and cluster, then build a fresh plan."}
 		}
 		input.Bindings = append(input.Bindings, core.Binding{ClusterID: cluster.ID, Namespace: stored.Namespace, CredentialRef: *credentialID})
 		client, err := kube.ForWorkspaceBinding(ctx, s.Store, s.EncryptionKey, cluster, credentialID, false, app.WorkspaceID, stored.Namespace)
@@ -1064,7 +1076,7 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 			sort.Strings(namespaces)
 		} else {
 			if input.ClusterScopeClient == nil {
-				return nil, nil, errors.New("cluster-scoped live discovery requires a privileged cluster-scope credential")
+				return nil, nil, clusterScopeRequired(&identity)
 			}
 			namespaces = []string{""}
 		}

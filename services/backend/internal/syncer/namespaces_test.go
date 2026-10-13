@@ -79,6 +79,11 @@ func TestNamespaceCreationOptInAndPermissionFailure(t *testing.T) {
 	})
 	if err := addNamespaceCreations(context.Background(), input, &core.Plan{}, nil); err == nil {
 		t.Fatal("RBAC failure ignored")
+	} else {
+		issue := PlanFailureDiagnostic(err)
+		if issue.Code != "kubernetes.permission_denied" || issue.Resource == nil || issue.Resource.Kind != "Namespace" || issue.Resource.Name != "shop" || issue.Action != "get" {
+			t.Fatalf("namespace RBAC context lost: %+v", issue)
+		}
 	}
 	if _, err := namespaceProvisioningClient(input, "unbound"); err == nil {
 		t.Fatal("unbound namespace allowed")

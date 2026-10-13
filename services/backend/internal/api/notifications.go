@@ -13,6 +13,8 @@ import (
 )
 
 func (s *Server) notificationRoutes() {
+	s.Mux.Handle("GET /api/v1/applications/{applicationID}/notifications", s.requireAuth(http.HandlerFunc(s.getApplicationNotifications)))
+	s.Mux.Handle("PUT /api/v1/applications/{applicationID}/notifications", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.putApplicationNotifications))))
 	base := "/api/v1/workspaces/{workspaceID}/notifications"
 	s.Mux.Handle("GET "+base, s.requireAuth(http.HandlerFunc(s.listNotifications)))
 	s.Mux.Handle("GET "+base+"/activity", s.requireAuth(http.HandlerFunc(s.notificationActivity)))
@@ -193,4 +195,50 @@ func (s *Server) RunNotificationWorker(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (s *Server) applicationNotificationScope(w http.ResponseWriter, r *http.Request) (store.Application, bool) {
+	app, err := s.Store.ApplicationByID(r.Context(), r.PathValue("applicationID"))
+	if err != nil {
+		writeError(w, 404, "application not found")
+		return app, false
+	}
+	return app, s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner")
+}
+func (s *Server) getApplicationNotifications(w http.ResponseWriter, r *http.Request) {
+	app, ok := s.applicationNotificationScope(w, r)
+	if !ok {
+		return
+	}
+	policy, err := s.Store.ApplicationNotificationPolicy(r.Context(), app.ID)
+	if err != nil {
+		writeStoreError(w, "could not load notification policy")
+		return
+	}
+	dest, err := s.Store.NotificationDestinations(r.Context(), app.WorkspaceID)
+	if err != nil {
+		writeStoreError(w, "could not load notification destinations")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"policy": policy, "destinations": dest})
+}
+func (s *Server) putApplicationNotifications(w http.ResponseWriter, r *http.Request) {
+	app, ok := s.applicationNotificationScope(w, r)
+	if !ok {
+		return
+	}
+	var p store.ApplicationNotificationPolicy
+	if err := decodeJSON(w, r, &p); err != nil {
+		writeError(w, 400, "invalid notification policy")
+		return
+	}
+	if err := p.Validate(); err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	if err := s.Store.SaveApplicationNotificationPolicy(r.Context(), app.ID, app.WorkspaceID, currentUser(r).ID, p); err != nil {
+		writeError(w, 409, "could not save policy; select destinations in this workspace and refresh before retrying")
+		return
+	}
+	s.getApplicationNotifications(w, r)
 }

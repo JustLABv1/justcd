@@ -18,6 +18,7 @@ import (
 	"net/smtp"
 	"net/textproto"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -62,21 +63,31 @@ func Routes(events []string, minimum string, e Event) bool {
 
 // Config is encrypted as a single value. Never return it in destination or delivery responses.
 type Config struct {
-	URL           string            `json:"url,omitempty"`
-	Method        string            `json:"method,omitempty"`
-	Headers       map[string]string `json:"headers,omitempty"`
-	Body          string            `json:"body,omitempty"`
-	SigningSecret string            `json:"signingSecret,omitempty"`
-	SMTPHost      string            `json:"smtpHost,omitempty"`
-	SMTPPort      int               `json:"smtpPort,omitempty"`
-	Username      string            `json:"username,omitempty"`
-	Password      string            `json:"password,omitempty"`
-	From          string            `json:"from,omitempty"`
-	To            []string          `json:"to,omitempty"`
+	BotToken        string            `json:"botToken,omitempty"`
+	ChatID          string            `json:"chatId,omitempty"`
+	MessageThreadID int               `json:"messageThreadId,omitempty"`
+	URL             string            `json:"url,omitempty"`
+	Method          string            `json:"method,omitempty"`
+	Headers         map[string]string `json:"headers,omitempty"`
+	Body            string            `json:"body,omitempty"`
+	SigningSecret   string            `json:"signingSecret,omitempty"`
+	SMTPHost        string            `json:"smtpHost,omitempty"`
+	SMTPPort        int               `json:"smtpPort,omitempty"`
+	Username        string            `json:"username,omitempty"`
+	Password        string            `json:"password,omitempty"`
+	From            string            `json:"from,omitempty"`
+	To              []string          `json:"to,omitempty"`
 }
 
 func (c Config) Validate(provider string) error {
 	switch provider {
+	case "telegram":
+		if !regexp.MustCompile(`^[0-9]+:[A-Za-z0-9_-]{20,200}$`).MatchString(c.BotToken) {
+			return errors.New("a valid Telegram bot token is required")
+		}
+		if len(c.ChatID) > 128 || !regexp.MustCompile(`^(-?[0-9]+|@[A-Za-z0-9_]+)$`).MatchString(c.ChatID) || c.MessageThreadID < 0 {
+			return errors.New("a numeric chat ID or @channel name and optional positive topic ID are required")
+		}
 	case "email":
 		if c.SMTPHost == "" || strings.ContainsAny(c.SMTPHost, "\r\n/: ") || c.SMTPPort < 1 || c.SMTPPort > 65535 || len(c.To) == 0 || len(c.To) > 30 {
 			return errors.New("SMTP host, port, from and recipients are required")
@@ -135,6 +146,12 @@ func validHeader(k string) bool {
 func Body(provider string, c Config, e Event) ([]byte, error) {
 	message := fmt.Sprintf("JustCD %s (%s)\n%s", e.Type, e.Severity, e.URL)
 	switch provider {
+	case "telegram":
+		data := map[string]any{"chat_id": c.ChatID, "text": fmt.Sprintf("%s\nSchema v%d · Event %s\nWorkspace %s · Application %s\n%s", message, e.SchemaVersion, e.ID, e.WorkspaceID, e.ApplicationID, e.OccurredAt.UTC().Format(time.RFC3339)), "link_preview_options": map[string]bool{"is_disabled": true}}
+		if c.MessageThreadID > 0 {
+			data["message_thread_id"] = c.MessageThreadID
+		}
+		return json.Marshal(data)
 	case "slack":
 		return json.Marshal(map[string]any{"text": message, "metadata": map[string]any{"event_type": "justcd_v1", "event_payload": e}})
 	case "teams":
@@ -209,7 +226,13 @@ func Deliver(ctx context.Context, client *http.Client, provider string, c Config
 	if method == "" || provider != "webhook" {
 		method = "POST"
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.URL, bytes.NewReader(body))
+	endpoint := c.URL
+	signingKey := c.SigningSecret
+	if provider == "telegram" {
+		endpoint = "https://api.telegram.org/bot" + c.BotToken + "/sendMessage"
+		signingKey = c.BotToken
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return Result{Code: "invalid_destination"}
 	}
@@ -221,12 +244,24 @@ func Deliver(ctx context.Context, client *http.Client, provider string, c Config
 	req.Header.Set("X-JustCD-Event-ID", e.ID)
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	req.Header.Set("X-JustCD-Timestamp", timestamp)
-	req.Header.Set("X-JustCD-Signature", Signature(c.SigningSecret, timestamp, body))
+	req.Header.Set("X-JustCD-Signature", Signature(signingKey, timestamp, body))
 	res, err := client.Do(req)
 	if err != nil {
 		return Result{Retry: true, Code: "transport_failed"}
 	}
 	defer res.Body.Close()
+	if provider == "telegram" && res.StatusCode >= 200 && res.StatusCode < 300 {
+		var response struct {
+			OK        bool `json:"ok"`
+			ErrorCode int  `json:"error_code"`
+		}
+		if json.NewDecoder(io.LimitReader(res.Body, 4096)).Decode(&response) != nil {
+			return Result{StatusCode: res.StatusCode, Code: "telegram_invalid_response", Retry: true}
+		}
+		if !response.OK {
+			return Result{StatusCode: response.ErrorCode, Code: "telegram_rejected", Retry: response.ErrorCode == 429 || response.ErrorCode >= 500}
+		}
+	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 4096))
 	if res.StatusCode >= 200 && res.StatusCode < 300 {
 		return Result{StatusCode: res.StatusCode, Code: "delivered"}

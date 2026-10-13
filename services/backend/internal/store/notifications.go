@@ -155,7 +155,7 @@ func (s *Store) DeliverNotification(ctx context.Context, send func(NotificationD
 	var e notifications.Event
 	var id string
 	var attempts int
-	err = tx.QueryRowContext(ctx, `SELECT q.id,q.attempts,d.id,d.provider,d.config_cipher,d.enabled,e.id,e.workspace_id,e.application_id,e.resource_id,e.event_type,e.severity,e.occurred_at FROM notification_deliveries q JOIN notification_destinations d ON d.id=q.destination_id JOIN notification_events e ON e.id=q.event_id WHERE q.status='queued' AND q.next_at<=NOW() ORDER BY q.next_at LIMIT 1 FOR UPDATE OF q,d SKIP LOCKED`).Scan(&id, &attempts, &d.ID, &d.Provider, &d.Cipher, &d.Enabled, &e.ID, &e.WorkspaceID, &e.ApplicationID, &e.ResourceID, &e.Type, &e.Severity, &e.OccurredAt)
+	err = tx.QueryRowContext(ctx, `SELECT q.id,q.attempts,d.id,d.provider,d.config_cipher,(d.enabled AND (e.event_type='test' OR notification_routes_to(d.id,e.id))),e.id,e.workspace_id,e.application_id,e.resource_id,e.event_type,e.severity,e.occurred_at FROM notification_deliveries q JOIN notification_destinations d ON d.id=q.destination_id JOIN notification_events e ON e.id=q.event_id WHERE q.status='queued' AND q.next_at<=NOW() ORDER BY q.next_at LIMIT 1 FOR UPDATE OF q FOR SHARE OF d SKIP LOCKED`).Scan(&id, &attempts, &d.ID, &d.Provider, &d.Cipher, &d.Enabled, &e.ID, &e.WorkspaceID, &e.ApplicationID, &e.ResourceID, &e.Type, &e.Severity, &e.OccurredAt)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
@@ -164,7 +164,7 @@ func (s *Store) DeliverNotification(ctx context.Context, send func(NotificationD
 	}
 	e.SchemaVersion = 1
 	e.OccurredAt = e.OccurredAt.UTC()
-	result := notifications.Result{Code: "destination_disabled"}
+	result := notifications.Result{Code: "routing_disabled"}
 	status := "disabled"
 	if d.Enabled {
 		result = send(d, e, id)

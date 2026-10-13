@@ -7,9 +7,15 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Switch } from "@/components/ui/switch"
 import { FormSelect } from "@/components/ui/form-select"
 import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
-import { FormField, Panel, StatusBadge } from "@/components/ui-kit"
+import { FormField, StatusBadge } from "@/components/ui-kit"
 import { api, apiPost, apiDelete, errorMessage } from "@/lib/api"
-type Destination = {
+import {
+  SettingsSection,
+  SettingsGroup,
+  SettingsRow,
+} from "@/components/settings/settings-section"
+import { RowActions } from "@/components/action-menu"
+export type Destination = {
   id: string
   name: string
   provider: string
@@ -40,7 +46,7 @@ function destinationInput(d: Destination) {
     minimumSeverity: d.minimumSeverity,
   }
 }
-const events = [
+export const notificationEvents = [
   "drift",
   "approval_requested",
   "sync_failed",
@@ -53,7 +59,7 @@ const initial = {
   name: "",
   provider: "slack",
   enabled: true,
-  events,
+  events: notificationEvents,
   minimumSeverity: "info",
 }
 export function NotificationSettings({ workspaceId }: { workspaceId: string }) {
@@ -63,6 +69,7 @@ export function NotificationSettings({ workspaceId }: { workspaceId: string }) {
   const [draft, setDraft] = useState<Destination>(initial)
   const [config, setConfig] = useState<Record<string, string>>({})
   const [open, setOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const [replace, setReplace] = useState(false)
   const [busy, setBusy] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -113,25 +120,31 @@ export function NotificationSettings({ workspaceId }: { workspaceId: string }) {
     setError("")
     try {
       const settings = replace
-        ? draft.provider === "email"
+        ? draft.provider === "telegram"
           ? {
-              smtpHost: config.smtpHost,
-              smtpPort: Number(config.smtpPort ?? 587),
-              from: config.from,
-              to: (config.to ?? "")
-                .split(",")
-                .map((s) => s.trim())
-                .filter(Boolean),
-              username: config.username,
-              password: config.password,
+              botToken: config.botToken,
+              chatId: config.chatId,
+              messageThreadId: Number(config.messageThreadId || 0),
             }
-          : {
-              url: config.url,
-              signingSecret: config.signingSecret,
-              method: config.method ?? "POST",
-              headers: JSON.parse(config.headers || "{}"),
-              body: config.body,
-            }
+          : draft.provider === "email"
+            ? {
+                smtpHost: config.smtpHost,
+                smtpPort: Number(config.smtpPort ?? 587),
+                from: config.from,
+                to: (config.to ?? "")
+                  .split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean),
+                username: config.username,
+                password: config.password,
+              }
+            : {
+                url: config.url,
+                signingSecret: config.signingSecret,
+                method: config.method ?? "POST",
+                headers: JSON.parse(config.headers || "{}"),
+                body: config.body,
+              }
         : undefined
       await api(draft.id ? `${base}/${draft.id}` : base, {
         method: draft.id ? "PUT" : "POST",
@@ -164,133 +177,176 @@ export function NotificationSettings({ workspaceId }: { workspaceId: string }) {
     )
   }
   return (
-    <Panel
-      title="Notifications"
-      description="Route workspace events to Slack, Teams, email or HTTP webhooks."
-      action={
-        <Button disabled={busy || !loaded} onClick={() => edit(initial)}>
-          Add destination
-        </Button>
-      }
-    >
-      <div className="space-y-4 p-5">
-        {error && !open && (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-            <Button
-              variant="ghost"
-              disabled={busy}
-              onClick={() => void act(reload, "Refreshed.")}
-            >
-              Retry
-            </Button>
-          </p>
-        )}
-        {notice && (
-          <p role="status" className="text-sm text-muted-foreground">
-            {notice}
-          </p>
-        )}
-        {!loaded && (
-          <p className="text-sm text-muted-foreground">Loading destinations…</p>
-        )}
-        {loaded && !destinations.length && (
-          <p className="text-sm text-muted-foreground">
-            No destinations configured.
-          </p>
-        )}
-        {destinations.map((d) => (
-          <div
-            key={d.id}
-            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
-          >
-            <div className="min-w-0">
-              <p className="font-medium break-words">{d.name}</p>
-              <p className="text-sm text-muted-foreground">
-                {d.provider} · {d.enabled ? "Enabled" : "Disabled"} · Minimum{" "}
-                {d.minimumSeverity}
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" disabled={busy} onClick={() => edit(d)}>
-                Edit
-              </Button>
-              <Button
-                variant="outline"
-                disabled={busy || !d.enabled}
-                onClick={() =>
-                  void act(
-                    () => apiPost(`${base}/${d.id}/test`),
-                    "Test queued. Delivery status appears below."
-                  )
-                }
-              >
-                Test
-              </Button>
-              <Button
-                variant="outline"
-                disabled={busy}
-                onClick={() =>
-                  void act(
-                    () =>
-                      api(`${base}/${d.id}`, {
-                        method: "PUT",
-                        body: JSON.stringify({
-                          ...destinationInput(d),
-                          enabled: !d.enabled,
-                        }),
-                      }),
-                    d.enabled ? "Destination disabled." : "Destination enabled."
-                  )
-                }
-              >
-                {d.enabled ? "Disable" : "Enable"}
-              </Button>
-              <Button
-                variant="destructive"
-                disabled={busy}
-                onClick={() => setDeleting(d)}
-              >
-                Delete
-              </Button>
-            </div>
-          </div>
-        ))}
-        <h3 className="text-sm font-semibold">Recent deliveries</h3>
-        {!activity.length && (
-          <p className="text-sm text-muted-foreground">
-            No delivery activity yet.
-          </p>
-        )}
-        {activity.map((a) => (
-          <div key={a.id} className="space-y-2 rounded-lg border p-3 text-sm">
-            <div className="flex flex-wrap items-center gap-2">
-              <span>{a.eventType.replaceAll("_", " ")}</span>
-              <StatusBadge status={a.status} />
-              <span className="text-muted-foreground">
-                {a.attempts}/5 attempts · {a.resultCode || "Pending"}
-                {a.statusCode ? ` · HTTP ${a.statusCode}` : ""}
-              </span>
-            </div>
-            <p className="text-xs break-all text-muted-foreground">
-              Idempotency ID: {a.id}
-            </p>
-            {a.history.length > 0 && (
-              <details>
-                <summary>Attempt history</summary>
-                <ol className="mt-2 space-y-1">
-                  {a.history.map((h) => (
-                    <li key={h.attempt}>
-                      Attempt {h.attempt}: {h.resultCode} {h.statusCode || ""} ·{" "}
-                      {new Date(h.createdAt).toLocaleString()}
-                    </li>
-                  ))}
-                </ol>
-              </details>
+    <>
+      <SettingsSection
+        title="Notifications"
+        description="Workspace defaults for Slack, Teams, Telegram, email and webhooks. Applications can override their routing, events and severity."
+      >
+        <div className="space-y-3">
+          <SettingsGroup>
+            <SettingsRow
+              label="Destinations"
+              description="Choose where workspace events are sent."
+              value={loaded ? `${destinations.length} configured` : "Loading…"}
+              action={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy || !loaded}
+                  onClick={() => edit(initial)}
+                >
+                  Add destination
+                </Button>
+              }
+            />
+            {loaded && !destinations.length && (
+              <SettingsRow
+                label="No destinations configured"
+                description="Add a destination to start receiving events."
+              />
             )}
-          </div>
-        ))}
-      </div>
+            {destinations.map((d) => (
+              <SettingsRow
+                key={d.id}
+                label={d.name}
+                description={`${d.provider} · ${d.events.map((e) => e.replaceAll("_", " ")).join(", ")} · Minimum ${d.minimumSeverity}`}
+                value={
+                  <StatusBadge status={d.enabled ? "Enabled" : "Disabled"} />
+                }
+                action={
+                  <RowActions
+                    label={d.name}
+                    primary={
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => edit(d)}
+                      >
+                        Edit
+                      </Button>
+                    }
+                    items={[
+                      {
+                        label: "Test delivery",
+                        disabled: busy || !d.enabled,
+                        onSelect: () =>
+                          void act(
+                            () => apiPost(`${base}/${d.id}/test`),
+                            "Test queued. View delivery history for the result."
+                          ),
+                      },
+                      {
+                        label: d.enabled ? "Disable" : "Enable",
+                        disabled: busy,
+                        onSelect: () =>
+                          void act(
+                            () =>
+                              api(`${base}/${d.id}`, {
+                                method: "PUT",
+                                body: JSON.stringify({
+                                  ...destinationInput(d),
+                                  enabled: !d.enabled,
+                                }),
+                              }),
+                            d.enabled
+                              ? "Destination disabled."
+                              : "Destination enabled."
+                          ),
+                      },
+                      {
+                        label: "Delete",
+                        destructive: true,
+                        disabled: busy,
+                        onSelect: () => setDeleting(d),
+                      },
+                    ]}
+                  />
+                }
+              />
+            ))}
+            <SettingsRow
+              label="Delivery history"
+              description={
+                activity.length
+                  ? `${activity.length} recent deliveries. Inspect attempts and failures.`
+                  : "No delivery activity yet."
+              }
+              action={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy || !loaded}
+                  onClick={() => setHistoryOpen(true)}
+                >
+                  View history
+                </Button>
+              }
+            />
+          </SettingsGroup>
+          {error && !open && (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+              <Button
+                variant="ghost"
+                disabled={busy}
+                onClick={() => void act(reload, "Refreshed.")}
+              >
+                Retry
+              </Button>
+            </p>
+          )}
+          {notice && (
+            <p role="status" className="text-sm text-muted-foreground">
+              {notice}
+            </p>
+          )}
+        </div>
+      </SettingsSection>
+      <AppDialog
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        variant="info"
+        title="Notification delivery history"
+        description="Recent deliveries and their attempt history."
+      >
+        <div className="space-y-3 pt-4">
+          <h3 className="text-sm font-semibold">Recent deliveries</h3>
+          {!activity.length && (
+            <p className="text-sm text-muted-foreground">
+              No delivery activity yet.
+            </p>
+          )}
+          {activity.map((a) => (
+            <div key={a.id} className="space-y-2 rounded-lg border p-3 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <span>{a.eventType.replaceAll("_", " ")}</span>
+                <StatusBadge status={a.status} />
+                <span className="text-muted-foreground">
+                  {a.attempts}/5 attempts · {a.resultCode || "Pending"}
+                  {a.statusCode ? ` · HTTP ${a.statusCode}` : ""}
+                </span>
+              </div>
+              <p className="text-xs break-all text-muted-foreground">
+                Idempotency ID: {a.id}
+              </p>
+              {a.history.length > 0 && (
+                <details>
+                  <summary>Attempt history</summary>
+                  <ol className="mt-2 space-y-1">
+                    {a.history.map((h) => (
+                      <li key={h.attempt}>
+                        Attempt {h.attempt}: {h.resultCode} {h.statusCode || ""}{" "}
+                        · {new Date(h.createdAt).toLocaleString()}
+                      </li>
+                    ))}
+                  </ol>
+                </details>
+              )}
+            </div>
+          ))}
+        </div>
+      </AppDialog>
       <AppDialog
         open={open}
         onOpenChange={setOpen}
@@ -321,10 +377,12 @@ export function NotificationSettings({ workspaceId }: { workspaceId: string }) {
               ariaLabel="Provider"
               value={draft.provider}
               disabled={busy || (!!draft.id && !replace)}
-              items={["slack", "teams", "email", "webhook"].map((value) => ({
-                value,
-                label: value,
-              }))}
+              items={["slack", "teams", "telegram", "email", "webhook"].map(
+                (value) => ({
+                  value,
+                  label: value,
+                })
+              )}
               onValueChange={(provider) => {
                 setDraft({ ...draft, provider })
                 setConfig({})
@@ -341,7 +399,7 @@ export function NotificationSettings({ workspaceId }: { workspaceId: string }) {
           </label>
           <fieldset disabled={busy} className="space-y-2">
             <legend className="mb-2 text-sm font-medium">Events</legend>
-            {events.map((event) => (
+            {notificationEvents.map((event) => (
               <label className="flex items-center gap-2 text-sm" key={event}>
                 <Checkbox
                   disabled={busy}
@@ -385,7 +443,17 @@ export function NotificationSettings({ workspaceId }: { workspaceId: string }) {
             </label>
           )}
           {replace &&
-            (draft.provider === "email" ? (
+            (draft.provider === "telegram" ? (
+              <>
+                {field("botToken", "Telegram bot token", true, true)}
+                {field("chatId", "Chat ID or @channel", false, true)}
+                {field("messageThreadId", "Topic ID (optional)")}
+                <p className="text-sm text-muted-foreground">
+                  Add your bot to the target chat and grant permission to send
+                  messages. Use a topic ID for forum groups.
+                </p>
+              </>
+            ) : draft.provider === "email" ? (
               <>
                 {field("smtpHost", "SMTP host", false, true)}
                 {field("smtpPort", "SMTP port (default 587)")}
@@ -499,6 +567,6 @@ export function NotificationSettings({ workspaceId }: { workspaceId: string }) {
           </Button>
         </DialogFooter>
       </AppDialog>
-    </Panel>
+    </>
   )
 }

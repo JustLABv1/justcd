@@ -74,7 +74,6 @@ export function WorkspaceSettings({ workspace, members, onUpdated, onDelete }: {
   }
 
   return <div className="max-w-5xl space-y-7 pb-6">
- <NotificationSettings workspaceId={workspace.id} />
     <SettingsSection title="General" description="How this workspace appears to your team.">
       <SettingsGroup>
         <SettingsRow label="Name" value={<span className="font-medium break-words">{workspace.name}</span>} action={<Button variant="outline" size="sm" onClick={editProfile}>Edit details</Button>} />
@@ -95,6 +94,8 @@ export function WorkspaceSettings({ workspace, members, onUpdated, onDelete }: {
         })}
       </SettingsGroup>
     </SettingsSection>
+
+    <NotificationSettings workspaceId={workspace.id} />
 
     <GuardrailPolicyPanel key={workspace.id} workspaceId={workspace.id} />
 

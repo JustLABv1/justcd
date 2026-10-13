@@ -28,6 +28,7 @@ const defaults: RepositoryPRSettings = {
   pipelineStatusReporting: false,
   credentialId: "",
   mode: "review-only",
+  allowNamespaceCreation: false,
   destinations: [],
   profile: {
     enabled: false,
@@ -58,7 +59,9 @@ type Destination = {
 }
 type Actor = { providerId: string; userId: string }
 
-function initialSettings(repository: RepositoryConfiguration): RepositoryPRSettings {
+function initialSettings(
+  repository: RepositoryConfiguration
+): RepositoryPRSettings {
   const saved = repository.prSettings
   return {
     ...defaults,
@@ -112,6 +115,9 @@ function SettingsDialogContent({
   )
   const [credentials, setCredentials] = useState<Credential[]>([])
   const [destinations, setDestinations] = useState<Destination[]>([])
+  const [clusterItems, setClusterItems] = useState<
+    { value: string; label: string }[]
+  >([])
   const [members, setMembers] = useState<WorkspaceMember[]>([])
   const [actors, setActors] = useState<Actor[]>(() =>
     Object.entries(repository.prSettings?.profile.approvalActors ?? {}).map(
@@ -164,6 +170,12 @@ function SettingsDialogContent({
             )
           )
           setDestinations(bindings.flat())
+          setClusterItems(
+            clusters.items.map((cluster) => ({
+              value: cluster.id,
+              label: cluster.name,
+            }))
+          )
           setMembers(users.items)
           setEntries(reviews.items)
           setLoadError("")
@@ -186,6 +198,18 @@ function SettingsDialogContent({
     setBusy(true)
     setError("")
     try {
+      if (
+        settings.enabled &&
+        (!settings.destinations.length ||
+          settings.destinations.some(
+            (d) => !d.clusterId || (!d.namespace && !d.namespacePattern?.trim())
+          ))
+      ) {
+        setTab("destinations")
+        throw new Error(
+          "Add an allowed destination with an exact namespace or namespace regex."
+        )
+      }
       if (settings.enabled && settings.mode === "isolated") {
         const { namespacePrefix, hostSuffix, quotaCpu, quotaMemory } =
           settings.profile
@@ -228,7 +252,9 @@ function SettingsDialogContent({
         "Pull request policy saved. Discovery runs every two minutes."
       )
     } catch (cause) {
-      setError(errorMessage(cause))
+      const message = errorMessage(cause)
+      if (message.includes("namespace regex")) setTab("destinations")
+      setError(message)
     } finally {
       setBusy(false)
     }
@@ -261,6 +287,41 @@ function SettingsDialogContent({
         destinations: [
           ...s.destinations,
           { clusterId: next.clusterId, namespace: next.namespace },
+        ],
+      }))
+    else if (settings.allowNamespaceCreation && clusterItems[0]) {
+      setSettings((s) => ({
+        ...s,
+        destinations: [
+          ...s.destinations,
+          { clusterId: clusterItems[0].value, namespace: "" },
+        ],
+      }))
+    }
+  }
+  function updateDestination(
+    index: number,
+    patch: Partial<RepositoryPRSettings["destinations"][number]>
+  ) {
+    setSettings((s) => ({
+      ...s,
+      destinations: s.destinations.map((d, i) =>
+        i === index ? { ...d, ...patch } : d
+      ),
+    }))
+  }
+  function addNamespacePattern() {
+    const cluster = clusterItems[0]
+    if (cluster)
+      setSettings((s) => ({
+        ...s,
+        destinations: [
+          ...s.destinations,
+          {
+            clusterId: cluster.value,
+            namespace: "",
+            namespacePattern: "^dev-.*$",
+          },
         ],
       }))
   }
@@ -326,25 +387,16 @@ function SettingsDialogContent({
         )}
         <fieldset disabled={busy} className="min-w-0">
           <Tabs value={tab} onValueChange={(value) => setTab(String(value))}>
-            <TabsList
-              aria-label="Pull request discovery sections"
-
-            >
-              <TabsTrigger value="policy">
-                Policy
-              </TabsTrigger>
+            <TabsList aria-label="Pull request discovery sections">
+              <TabsTrigger value="policy">Policy</TabsTrigger>
               <TabsTrigger value="destinations">
                 Destinations
                 <Badge size="xs" variant="secondary">
                   {settings.destinations.length}
                 </Badge>
               </TabsTrigger>
-              <TabsTrigger value="limits">
-                Limits
-              </TabsTrigger>
-              <TabsTrigger value="approvals">
-                Approvals
-              </TabsTrigger>
+              <TabsTrigger value="limits">Limits</TabsTrigger>
+              <TabsTrigger value="approvals">Approvals</TabsTrigger>
               <TabsTrigger value="discovered">
                 Discovered PRs
                 <Badge size="xs" variant="secondary">
@@ -388,7 +440,9 @@ function SettingsDialogContent({
                     label="Report commit statuses"
                     description="Off by default; JustCD reports through PR/MR comments. Enabling this can block merges. GitLab adds an external job to a pipeline for the commit, and JustCD failures can fail that pipeline."
                     checked={settings.pipelineStatusReporting ?? false}
-                    onCheckedChange={(pipelineStatusReporting) => setSettings((s) => ({ ...s, pipelineStatusReporting }))}
+                    onCheckedChange={(pipelineStatusReporting) =>
+                      setSettings((s) => ({ ...s, pipelineStatusReporting }))
+                    }
                   />
                   <FormField label="Deployment" htmlFor="repo-pr-mode">
                     <FormSelect
@@ -398,6 +452,8 @@ function SettingsDialogContent({
                         setSettings((s) => ({
                           ...s,
                           mode: mode as RepositoryPRSettings["mode"],
+                          allowNamespaceCreation:
+                            mode === "existing" && s.allowNamespaceCreation,
                         }))
                       }
                       items={[
@@ -414,21 +470,35 @@ function SettingsDialogContent({
                     />
                   </FormField>
                   {settings.mode === "existing" && (
-                    <CheckboxCard
-                      id="repo-pr-confirm-shared"
-                      checked={settings.profile.confirmShared}
-                      onCheckedChange={(checked) =>
-                        profile("confirmShared", checked)
-                      }
-                      title="Authorize changes to approved dev environments and their data"
-                      description="On merge, the app keeps its ID and resource ownership. Unmerged pull requests require reviewed cleanup."
-                    />
+                    <div className="space-y-3">
+                      <CheckboxCard
+                        id="repo-pr-confirm-shared"
+                        checked={settings.profile.confirmShared}
+                        onCheckedChange={(checked) =>
+                          profile("confirmShared", checked)
+                        }
+                        title="Authorize changes to approved dev environments and their data"
+                        description="On merge, the app keeps its ID and resource ownership. Unmerged pull requests require reviewed cleanup."
+                      />
+                      <SwitchField
+                        id="repo-pr-namespace-creation"
+                        label="Allow creation of matching dev namespaces"
+                        description="Applications with createNamespaces: true can register matching namespaces during discovery and create them during deployment. Uses the cluster's default workspace credential and normal deployment approvals."
+                        checked={settings.allowNamespaceCreation ?? false}
+                        onCheckedChange={(allowNamespaceCreation) =>
+                          setSettings((s) => ({ ...s, allowNamespaceCreation }))
+                        }
+                      />
+                    </div>
                   )}
                 </>
               ) : null}
             </TabsContent>
 
-            <TabsContent value="destinations" className="space-y-3 outline-none">
+            <TabsContent
+              value="destinations"
+              className="space-y-3 outline-none"
+            >
               {settings.enabled ? (
                 <>
                   <div>
@@ -436,33 +506,136 @@ function SettingsDialogContent({
                       Allowed destinations in justcd.yaml
                     </h3>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Branch definitions must match a destination selected here.
+                      The destination in justcd.yaml must match one of these
+                      rules. Regex rules match the entire namespace in the
+                      selected cluster.{" "}
+                      {settings.allowNamespaceCreation
+                        ? "Matching namespaces can be registered automatically when justcd.yaml sets createNamespaces: true."
+                        : "Every destination requires existing workspace namespace access."}{" "}
                       Forks are excluded.
                     </p>
                   </div>
                   {settings.destinations.length === 0 && (
                     <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
                       No destinations yet.
-                      {loaded && !destinations.length
+                      {loaded &&
+                      !destinations.length &&
+                      !settings.allowNamespaceCreation
                         ? " Grant this workspace namespace access on a cluster first."
                         : ""}
                     </p>
                   )}
                   {settings.destinations.map((d, index) => (
-                    <div key={index} className="flex items-center gap-2">
-                      <FormSelect
-                        ariaLabel={`Allowed destination ${index + 1}`}
-                        value={`${d.clusterId}/${d.namespace}`}
-                        items={destinations}
-                        onValueChange={(value) =>
-                          chooseDestination(index, value)
-                        }
-                      />
+                    <div
+                      key={index}
+                      className="flex items-start gap-2 rounded-lg border p-3"
+                    >
+                      <div className="min-w-0 flex-1 space-y-3">
+                        <FormField
+                          label="Namespace matching"
+                          htmlFor={`repo-pr-match-${index}`}
+                        >
+                          <FormSelect
+                            id={`repo-pr-match-${index}`}
+                            value={
+                              d.namespacePattern !== undefined
+                                ? "regex"
+                                : "exact"
+                            }
+                            items={[
+                              { value: "exact", label: "Exact namespace" },
+                              { value: "regex", label: "Namespace regex" },
+                            ]}
+                            onValueChange={(value) => {
+                              if (value === "regex")
+                                updateDestination(index, {
+                                  namespace: "",
+                                  namespacePattern: "^dev-.*$",
+                                })
+                              else {
+                                const next = destinations.find(
+                                  (item) => item.clusterId === d.clusterId
+                                )
+                                updateDestination(index, {
+                                  namespace: next?.namespace ?? "",
+                                  namespacePattern: undefined,
+                                })
+                              }
+                            }}
+                          />
+                        </FormField>
+                        {d.namespacePattern !== undefined ||
+                        settings.allowNamespaceCreation ? (
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <FormField
+                              label="Cluster"
+                              htmlFor={`repo-pr-cluster-${index}`}
+                            >
+                              <FormSelect
+                                id={`repo-pr-cluster-${index}`}
+                                value={d.clusterId}
+                                items={clusterItems}
+                                onValueChange={(clusterId) =>
+                                  updateDestination(index, { clusterId })
+                                }
+                              />
+                            </FormField>
+                            <FormField
+                              label={
+                                d.namespacePattern !== undefined
+                                  ? "Namespace regex"
+                                  : "Namespace"
+                              }
+                              htmlFor={`repo-pr-namespace-${index}`}
+                              hint={
+                                d.namespacePattern !== undefined
+                                  ? "For example: ^dev-.*$ or .*-dev. Uses Go/RE2 syntax; matches the whole name."
+                                  : "An existing or new dev namespace, for example dev-shop."
+                              }
+                            >
+                              <Input
+                                id={`repo-pr-namespace-${index}`}
+                                value={d.namespacePattern ?? d.namespace}
+                                maxLength={
+                                  d.namespacePattern !== undefined ? 256 : 63
+                                }
+                                placeholder={
+                                  d.namespacePattern !== undefined
+                                    ? "^dev-.*$"
+                                    : "dev-shop"
+                                }
+                                spellCheck={false}
+                                onChange={(event) =>
+                                  updateDestination(index, {
+                                    ...(d.namespacePattern !== undefined
+                                      ? { namespacePattern: event.target.value }
+                                      : { namespace: event.target.value }),
+                                  })
+                                }
+                              />
+                            </FormField>
+                          </div>
+                        ) : (
+                          <FormField
+                            label="Destination"
+                            htmlFor={`repo-pr-destination-${index}`}
+                          >
+                            <FormSelect
+                              id={`repo-pr-destination-${index}`}
+                              value={`${d.clusterId}/${d.namespace}`}
+                              items={destinations}
+                              onValueChange={(value) =>
+                                chooseDestination(index, value)
+                              }
+                            />
+                          </FormField>
+                        )}
+                      </div>
                       <Button
                         type="button"
                         size="icon"
                         variant="ghost"
-                        aria-label={`Remove destination ${destinationLabel(d.clusterId, d.namespace)}`}
+                        aria-label={`Remove destination ${d.namespacePattern ?? destinationLabel(d.clusterId, d.namespace)}`}
                         onClick={() =>
                           setSettings((s) => ({
                             ...s,
@@ -480,23 +653,54 @@ function SettingsDialogContent({
                       </Button>
                     </div>
                   ))}
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={
-                      !destinations.length ||
-                      settings.destinations.length >= destinations.length
-                    }
-                    onClick={addDestination}
-                  >
-                    <HugeiconsIcon
-                      icon={Add01Icon}
-                      strokeWidth={1.8}
-                      aria-hidden="true"
-                    />
-                    Add destination
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={
+                        (!destinations.length &&
+                          !(
+                            settings.allowNamespaceCreation &&
+                            clusterItems.length
+                          )) ||
+                        settings.destinations.length >= 32 ||
+                        (!settings.allowNamespaceCreation &&
+                          destinations.every((d) =>
+                            settings.destinations.some(
+                              (s) =>
+                                s.clusterId === d.clusterId &&
+                                s.namespace === d.namespace
+                            )
+                          ))
+                      }
+                      onClick={addDestination}
+                    >
+                      <HugeiconsIcon
+                        icon={Add01Icon}
+                        strokeWidth={1.8}
+                        aria-hidden="true"
+                      />
+                      Add destination
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={
+                        !clusterItems.length ||
+                        settings.destinations.length >= 32
+                      }
+                      onClick={addNamespacePattern}
+                    >
+                      <HugeiconsIcon
+                        icon={Add01Icon}
+                        strokeWidth={1.8}
+                        aria-hidden="true"
+                      />
+                      Add namespace regex
+                    </Button>
+                  </div>
                 </>
               ) : (
                 disabledNote
@@ -618,7 +822,9 @@ function SettingsDialogContent({
                           value={actor.providerId}
                           inputMode="numeric"
                           onChange={(event) =>
-                            updateActor(index, { providerId: event.target.value })
+                            updateActor(index, {
+                              providerId: event.target.value,
+                            })
                           }
                         />
                       </FormField>
@@ -648,7 +854,9 @@ function SettingsDialogContent({
                         className="sm:mt-6"
                         aria-label={`Remove approval identity ${actor.providerId || index + 1}`}
                         onClick={() =>
-                          setActors((rows) => rows.filter((_, i) => i !== index))
+                          setActors((rows) =>
+                            rows.filter((_, i) => i !== index)
+                          )
                         }
                       >
                         <HugeiconsIcon
@@ -718,7 +926,9 @@ function SettingsDialogContent({
                         <Badge
                           size="sm"
                           radius="full"
-                          variant={entry.error ? "destructive-light" : "outline"}
+                          variant={
+                            entry.error ? "destructive-light" : "outline"
+                          }
                           className="capitalize"
                         >
                           {entry.phase.replaceAll("_", " ")}

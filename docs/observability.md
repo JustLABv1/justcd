@@ -59,7 +59,15 @@ marker. PostgreSQL errors retain only their type and SQLSTATE, excluding SQL
 and database details. Fields whose keys indicate passwords, tokens, secrets,
 credentials, URLs, manifests, payloads, or headers are redacted. Error callers
 must not include raw response bodies, Kubernetes manifests, Secret data, or
-renderer output: arbitrary payload contents cannot be reliably redacted.
+renderer stdout: arbitrary payload contents cannot be reliably redacted.
+Failed Helm, Kustomize, and kubectl renderer commands provide their command
+failure (including exit status) and stderr to the log handler through a
+log-only diagnostic interface. The handler applies the same redaction and
+length limit, including through wrapped plan errors. Stderr is excluded from
+public error messages and API responses; command arguments and stdout are
+never included in these diagnostics. Arbitrary unlabeled secrets in stderr
+cannot be reliably recognized, so renderer templates should avoid echoing
+sensitive values in error messages.
 
 ## Grafana dashboard
 

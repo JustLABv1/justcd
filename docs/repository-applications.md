@@ -357,6 +357,16 @@ These settings belong to the trusted repository connection; a branch's
 `spec.pullRequests`, credentials, sync policy, or `createNamespaces` flag cannot
 grant itself deployment access. Fork PRs are excluded.
 
+Allowed destinations can use an **Exact namespace** or a **Namespace regex**
+scoped to one cluster. For example, `^dev-.*$` allows `dev-shop` and
+`dev-payments` without adding a repository rule for each namespace. Patterns use
+Go/RE2 syntax, match the entire namespace name, and are limited to 256 bytes.
+An exact namespace and a regex cannot be combined in one rule. The cluster must
+already be accessible to the workspace. By default, each concrete destination
+must have an existing workspace namespace binding before PR discovery.
+The destination in `justcd.yaml` selects where the application goes; these
+owner-managed rules define where an unmerged branch is permitted to send it.
+
 Choose one of three modes:
 
 - **Review plans only:** creates a temporary, paused application so manifests,
@@ -371,6 +381,32 @@ Choose one of three modes:
   after explicit shared-environment confirmation. Resources must stay inside
   that namespace. A second PR cannot claim an application with the same name.
   Existing manual applications are never adopted implicitly.
+
+For **Deploy to approved dev namespaces**, enable **Allow creation of matching
+dev namespaces** in the Policy tab to let a new application request automatic
+namespace setup:
+
+```yaml
+spec:
+  destination:
+    cluster: development
+    namespace: dev-shop
+    createNamespaces: true
+```
+
+The option is off by default and requires the shared-environment confirmation.
+Both the owner-controlled option and `createNamespaces: true` are required.
+Exact destination rules may then name a namespace that does not exist yet, and
+regex rules can cover all matching new dev namespaces. Configure a default
+Kubernetes credential for the workspace and cluster (or a cluster agent) first.
+Discovery registers the namespace binding and application together in one
+transaction; it does not create Kubernetes objects. Existing namespace bindings
+and credential overrides are preserved; new bindings inherit the default.
+Deployment plans show a missing namespace as a cluster-scoped Create prerequisite
+under the normal owner approval rules and RBAC checks. Other cluster-scoped
+manifests remain prohibited. Closing a PR does not remove these shared dev
+namespaces or their bindings. Review-only and isolated modes do not use this
+option. A branch's `createNamespaces` flag alone never grants this permission.
 
 Every new commit updates the same temporary application at an immutable SHA and
 invalidates previous plans. Normal reconciliation stays paused. Deployment uses

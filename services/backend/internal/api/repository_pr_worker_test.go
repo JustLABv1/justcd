@@ -6,7 +6,7 @@ import (
 )
 
 func TestRepositoryPRResourcesStayInApprovedNamespace(t *testing.T) {
-	for _, identity := range []core.Identity{{Namespace: "dev", Kind: "ConfigMap"}, {Namespace: "other", Kind: "ConfigMap"}, {ClusterScoped: true, Kind: "ClusterRole"}} {
+	for _, identity := range []core.Identity{{Namespace: "dev", Kind: "ConfigMap"}, {Namespace: "other", Kind: "ConfigMap"}, {ClusterScoped: true, Kind: "ClusterRole"}, {APIVersion: "v1", Kind: "Namespace", Name: "dev", ClusterScoped: true}} {
 		err := validateRepositoryPRResourceScope([]core.Resource{{Identity: identity}}, "dev")
 		if (identity.Namespace == "dev" && !identity.ClusterScoped) != (err == nil) {
 			t.Fatalf("unexpected scope validation for %+v: %v", identity, err)

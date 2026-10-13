@@ -4,6 +4,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"github.com/justlab/justcd/services/backend/internal/core"
 	"strings"
 	"testing"
@@ -19,9 +21,23 @@ func testRepositoryPRDiscovery(t *testing.T, ctx context.Context, s *Store) {
 	if err := s.SaveRepositoryPRSettings(ctx, repo.ID, policy); err != nil {
 		t.Fatal(err)
 	}
+	// A pattern can cover future bindings without granting access to another
+	// cluster. Verify it survives persistence, then use it for registration.
+	policy.Destinations = []PRDestination{{ClusterID: "integration-cluster", NamespacePattern: "default|dev-.*"}}
+	if err := s.SaveRepositoryPRSettings(ctx, repo.ID, policy); err != nil {
+		t.Fatal(err)
+	}
+	unavailable := policy
+	unavailable.Destinations = []PRDestination{{ClusterID: "unavailable-cluster", NamespacePattern: ".*"}}
+	if err := s.SaveRepositoryPRSettings(ctx, repo.ID, unavailable); err == nil {
+		t.Fatal("regex granted access to an unavailable cluster")
+	}
 	repo, err := s.RepositoryConfigurationByID(ctx, repo.ID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !repo.PRSettings.Allows("integration-cluster", "dev-future") || repo.PRSettings.Allows("integration-cluster", "production") {
+		t.Fatal("persisted regex policy lost its namespace restriction")
 	}
 	binding, err := s.NamespaceBinding(ctx, repo.WorkspaceID, "integration-cluster", "default")
 	if err != nil {
@@ -109,5 +125,127 @@ func testRepositoryPRDiscovery(t *testing.T, ctx context.Context, s *Store) {
 	}
 	if _, _, err = s.ReviewByPreviewApplication(ctx, id); err == nil {
 		t.Fatal("promoted app still bound to PR")
+	}
+	testRepositoryPRNamespaceCreation(t, ctx, s)
+}
+
+func testRepositoryPRNamespaceCreation(t *testing.T, ctx context.Context, s *Store) {
+	t.Helper()
+	repo := RepositoryConfiguration{ID: "namespace-creation-repo", WorkspaceID: "integration-workspace", SourceID: "integration-git", Revision: "namespace-main", Enabled: true}
+	if err := s.CreateRepositoryConfiguration(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	policy := RepositoryPRSettings{Enabled: true, Provider: "gitlab", CredentialID: "integration-git-credential", Mode: "existing", Destinations: []PRDestination{{ClusterID: "integration-cluster", Namespace: "dev-created"}}, Profile: PreviewProfile{ConfirmShared: true}}
+	if err := s.SaveRepositoryPRSettings(ctx, repo.ID, policy); err == nil {
+		t.Fatal("exact destination without binding accepted without creation opt-in")
+	}
+	policy.AllowNamespaceCreation = true
+	if err := s.SaveRepositoryPRSettings(ctx, repo.ID, policy); err != nil {
+		t.Fatal("new exact destination rejected with owner opt-in", err)
+	}
+	policy.Destinations = []PRDestination{{ClusterID: "integration-cluster", NamespacePattern: "dev-.*"}}
+	policy.AllowNamespaceCreation = false
+	savePolicy := func() {
+		t.Helper()
+		if err := s.SaveRepositoryPRSettings(ctx, repo.ID, policy); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		repo, err = s.RepositoryConfigurationByID(ctx, repo.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	savePolicy()
+	app := Application{WorkspaceID: repo.WorkspaceID, Name: "dev-created-app", SourceID: repo.SourceID, Revision: strings.Repeat("d", 40), ManifestPath: "dev", Renderer: "yaml", ClusterID: "integration-cluster", Namespaces: []NamespaceBinding{{Namespace: "dev-created"}}, CreateNamespaces: true, SyncPolicy: "manual", PollSeconds: 86400, RetryPolicy: DefaultRetryPolicy(), ConfigurationHash: "new-dev", ConfigurationPath: "dev/justcd.yaml"}
+	register := func(candidate Application) (RepositoryPRApplication, error) {
+		c := SourceControlConnection{ID: NewID(), Provider: "gitlab", APIURL: "https://gitlab.com/api/v4", Repository: "repo", StatusCredentialID: &policy.CredentialID, PreviewProfile: PreviewProfile{Enabled: true, DeploymentMode: "existing", ConfirmShared: true}}
+		return s.UpsertRepositoryPRApplication(ctx, repo, RepositoryPRApplication{RepositoryID: repo.ID, Number: 99, DefinitionName: candidate.Name, Mode: "existing"}, candidate, c)
+	}
+	assertUnbound := func(namespace string) {
+		t.Helper()
+		if _, err := s.NamespaceBinding(ctx, repo.WorkspaceID, app.ClusterID, namespace); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("rejected discovery left namespace binding %q: %v", namespace, err)
+		}
+	}
+	if _, err := register(app); err == nil {
+		t.Fatal("branch enabled namespace creation without repository permission")
+	}
+	assertUnbound("dev-created")
+	policy.AllowNamespaceCreation = true
+	savePolicy()
+	withoutRequest := app
+	withoutRequest.CreateNamespaces = false
+	if _, err := register(withoutRequest); err == nil {
+		t.Fatal("namespace registered without application createNamespaces request")
+	}
+	assertUnbound("dev-created")
+	outOfScope := app
+	outOfScope.Namespaces = []NamespaceBinding{{Namespace: "production"}}
+	if _, err := register(outOfScope); err == nil {
+		t.Fatal("namespace creation escaped repository allowlist")
+	}
+	assertUnbound("production")
+	// Missing defaults fail before the binding/app transaction can commit.
+	credential, err := s.WorkspaceClusterCredential(ctx, repo.WorkspaceID, app.ClusterID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetWorkspaceClusterCredential(ctx, repo.WorkspaceID, app.ClusterID, nil); err != nil {
+		t.Fatal(err)
+	}
+	_, missingDefault := register(app)
+	if err := s.SetWorkspaceClusterCredential(ctx, repo.WorkspaceID, app.ClusterID, credential); err != nil {
+		t.Fatal(err)
+	}
+	if missingDefault == nil || !strings.Contains(missingDefault.Error(), "default Kubernetes credential") {
+		t.Fatalf("namespace registration without defaults: %v", missingDefault)
+	}
+	assertUnbound("dev-created")
+	conflict := app
+	conflict.Name = "git-managed"
+	if _, err := register(conflict); err == nil {
+		t.Fatal("duplicate application name accepted")
+	}
+	assertUnbound("dev-created")
+	v, err := register(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := s.NamespaceBinding(ctx, repo.WorkspaceID, app.ClusterID, "dev-created")
+	if err != nil || binding.CredentialID != nil {
+		t.Fatalf("new binding did not inherit defaults: %+v %v", binding, err)
+	}
+	stored, err := s.ApplicationByID(ctx, *v.ApplicationID)
+	if err != nil || !stored.CreateNamespaces || !stored.AutoSyncPaused {
+		t.Fatalf("creation opt-in lost or reconciliation unpaused: %+v %v", stored, err)
+	}
+	again, err := register(app)
+	if err != nil || *again.ApplicationID != stored.ID {
+		t.Fatal("namespace/app discovery was not idempotent", err)
+	}
+	revoked := policy
+	revoked.AllowNamespaceCreation = false
+	if err := s.SaveRepositoryPRSettings(ctx, repo.ID, revoked); err == nil {
+		t.Fatal("creation policy changed under an active PR")
+	}
+	if _, err := s.DB.ExecContext(ctx, `UPDATE repository_pr_applications SET merged=TRUE WHERE id=$1`, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	app.Revision = repo.Revision
+	app.ConfigurationHash = "merged-dev"
+	if err := s.ApplyRepositoryApplications(ctx, repo, "merge-dev", []Application{app}); err != nil {
+		t.Fatal("created dev namespace could not be promoted", err)
+	}
+	promoted, err := s.ApplicationByID(ctx, stored.ID)
+	if err != nil || !promoted.CreateNamespaces || promoted.RepositoryConfigurationID != repo.ID || !promoted.AutoSyncPaused {
+		t.Fatalf("namespace creation state lost on merge: %+v %v", promoted, err)
+	}
+	// Dev namespaces and bindings are shared infrastructure, retained on cleanup.
+	if _, err := s.DeleteApplicationKeepingResources(ctx, stored.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.NamespaceBinding(ctx, repo.WorkspaceID, app.ClusterID, "dev-created"); err != nil {
+		t.Fatal("PR app cleanup deleted its dev namespace binding", err)
 	}
 }

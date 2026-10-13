@@ -58,15 +58,31 @@ type Options struct {
 }
 
 type RendererError struct {
-	renderer  string
-	code      string
-	message   string
-	retryable bool
+	renderer     string
+	code         string
+	message      string
+	retryable    bool
+	commandError error
+	stderr       string
 }
 
 func (e *RendererError) Error() string     { return e.message }
 func (e *RendererError) Retryable() bool   { return e.retryable }
 func (e *RendererError) ErrorCode() string { return e.code }
+
+// LogDiagnostic is consumed by the redacting log handler, including through
+// wrapped plan errors. Keep stderr out of Error(), API responses and persisted
+// application status; it may contain sensitive chart or manifest content.
+func (e *RendererError) LogDiagnostic() string {
+	if e.commandError == nil {
+		return ""
+	}
+	diagnostic := e.commandError.Error()
+	if stderr := strings.TrimSpace(e.stderr); stderr != "" {
+		diagnostic += ": " + stderr
+	}
+	return diagnostic
+}
 
 func Render(ctx context.Context, opts Options) ([]core.Resource, error) {
 	ctx, span := otel.Tracer("justcd/renderer").Start(ctx, "renderer.render")
@@ -473,7 +489,7 @@ func runRenderer(parent context.Context, name string, args []string, repositoryR
 				break
 			}
 		}
-		return nil, &RendererError{renderer: name, code: "render.command_failed", message: fmt.Sprintf("%s renderer failed", name), retryable: transient}
+		return nil, &RendererError{renderer: name, code: "render.command_failed", message: fmt.Sprintf("%s renderer failed", name), retryable: transient, commandError: err, stderr: stderr.String()}
 	}
 	return stdout.Bytes(), nil
 }

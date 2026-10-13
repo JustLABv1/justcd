@@ -7,11 +7,11 @@ import { HugeiconsIcon } from "@hugeicons/react"
 import { ArrowLeft01Icon, ArrowRight01Icon, PlusSignIcon } from "@hugeicons/core-free-icons"
 import { WorkspaceIcon } from "@/components/workspace-ui"
 import { Button } from "@/components/ui/button"
-import { FormSelect } from "@/components/ui/form-select"
 import { Skeleton } from "@/components/ui/skeleton"
-import { EmptyState, FormField, PageHeading, Panel } from "@/components/ui-kit"
+import { EmptyState, PageHeading, Panel } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
 import { api, errorMessage } from "@/lib/api"
+import { workspaceConnectionSections } from "@/components/connections/sections"
 import { ConnectionTabs } from "@/components/connections/tabs"
 import { WorkspaceConnectionShares } from "@/components/workspace-connection-shares"
 import { ClusterPanel } from "@/components/settings/cluster-panel"
@@ -96,6 +96,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
   const [loading, setLoading] = useState(true)
   const [credentialDialogOpen, setCredentialDialogOpen] = useState(false)
   const [namespaceDialogOpen, setNamespaceDialogOpen] = useState(false)
+  const [shareDialogOpen, setShareDialogOpen] = useState(false)
 
   const setError = useCallback((kind: LoadKind, cause: unknown) => setErrors((current) => ({ ...current, [kind]: cause })), [])
   function retry(kind: LoadKind) {
@@ -193,6 +194,22 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
   const gitCredentials = credentials.filter((item) => ["git-ssh", "git-https"].includes(item.kind))
   const namespaceCredentials = credentials.filter((item) => ["kubernetes-token", "kubeconfig"].includes(item.kind))
 
+  function selectCluster(id: string) {
+    if (id === clusterId && errors.bindings !== undefined) retry("bindings")
+    else {
+      setErrors((current) => ({ ...current, bindings: undefined }))
+      setClusterId(id)
+    }
+    const url = new URL(window.location.href)
+    if (id) url.searchParams.set("clusterId", id)
+    else {
+      url.searchParams.delete("clusterId")
+      url.hash = ""
+      setNamespaceDialogOpen(false)
+    }
+    window.history.replaceState(null, "", url)
+  }
+
   const action: ActionRunner = async (work, success, after) => {
     setBusy(true)
     try {
@@ -234,6 +251,11 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
       <Button type="button" onClick={() => setCredentialDialogOpen(true)}>
         <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} aria-hidden="true" />
         Add credential
+      </Button>
+    ) : section === "shares" ? (
+      <Button type="button" onClick={() => setShareDialogOpen(true)}>
+        <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} aria-hidden="true" />
+        Offer connection
       </Button>
     ) : null
 
@@ -356,6 +378,26 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                     workspaceCredentials={namespaceCredentials.filter((item) => item.workspaceId === workspaceId)}
                     busy={busy}
                     action={action}
+                    activeClusterId={clusterId}
+                    onManageNamespaces={(id) => { setNamespaceDialogOpen(false); selectCluster(id) }}
+                    renderNamespaceAccess={(cluster) => (
+                      <section id="namespace-access" aria-label={`Namespace access for ${cluster.name}`} className="scroll-mt-28">
+                        {errors.bindings !== undefined ? <LoadErrorNotice error={errors.bindings} title="Could not load namespace access" onRetry={() => retry("bindings")} /> : bindingsLoading ? <SectionSkeleton label="Loading namespace access" /> : <NamespacePanel
+                          key={`${workspaceId}:${cluster.id}`}
+                          workspace={workspace}
+                          cluster={cluster}
+                          credentials={namespaceCredentials}
+                          bindings={bindings}
+                          busy={busy}
+                          action={action}
+                          createOpen={namespaceDialogOpen}
+                          onCreateOpenChange={setNamespaceDialogOpen}
+                          onCreated={(binding) => setBindings((items) => [...items, binding].sort((a, b) => a.namespace.localeCompare(b.namespace)))}
+                          onUpdated={(binding) => setBindings((items) => items.map((item) => (item.namespace === binding.namespace ? binding : item)))}
+                          onDeleted={(value) => setBindings((items) => items.filter((item) => item.namespace !== value))}
+                        />}
+                      </section>
+                    )}
                     onUpdated={(cluster) => setClusters((items) => items.map((item) => (item.id === cluster.id ? cluster : item)))}
                     onDeleted={(value) => {
                       const remaining = clusters.filter((item) => item.id !== value)
@@ -366,36 +408,6 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                       }
                     }}
                   />
-                  {clusters.length > 0 && <section id="namespace-access" aria-label="Cluster namespace access" className="scroll-mt-28">
-                    {errors.bindings !== undefined ? <div className="space-y-4">
-                      <FormField label="Cluster" htmlFor="namespace-error-cluster">
-                        <FormSelect id="namespace-error-cluster" value={clusterId} onValueChange={(value) => {
-                          setErrors((current) => ({ ...current, bindings: undefined }))
-                          setClusterId(value)
-                        }} items={clusters.map((item) => ({ value: item.id, label: item.name }))} />
-                      </FormField>
-                      <LoadErrorNotice error={errors.bindings} title="Could not load namespace access" onRetry={() => retry("bindings")} />
-                    </div> : bindingsLoading ? <SectionSkeleton label="Loading namespace access" /> : <NamespacePanel
-                      key={`${workspaceId}:${clusterId}`}
-                      workspace={workspace}
-                      cluster={clusters.find((item) => item.id === clusterId)}
-                      credentials={namespaceCredentials}
-                      bindings={bindings}
-                      clusters={clusters}
-                      activeClusterId={clusterId}
-                      onClusterChange={(value) => {
-                        setErrors((current) => ({ ...current, bindings: undefined }))
-                        setClusterId(value)
-                      }}
-                      busy={busy}
-                      action={action}
-                      createOpen={namespaceDialogOpen}
-                      onCreateOpenChange={setNamespaceDialogOpen}
-                      onCreated={(binding) => setBindings((items) => [...items, binding].sort((a, b) => a.namespace.localeCompare(b.namespace)))}
-                      onUpdated={(binding) => setBindings((items) => items.map((item) => (item.namespace === binding.namespace ? binding : item)))}
-                      onDeleted={(value) => setBindings((items) => items.filter((item) => item.namespace !== value))}
-                    />}
-                  </section>}
                 </div>}
                 {workspaceScoped && workspace && section === "git-sources" && !scopeLoading && (
                   <GitSourcePanel
@@ -410,7 +422,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                   />
                 )}
                 {workspaceScoped && workspace && section === "shares" && !scopeLoading && (
-                  <WorkspaceConnectionShares workspace={workspace} workspaces={workspaces} clusters={clusters} sources={sources} credentials={credentials} />
+                  <WorkspaceConnectionShares workspace={workspace} workspaces={workspaces} clusters={clusters} sources={sources} credentials={credentials} offerOpen={shareDialogOpen} onOfferOpenChange={setShareDialogOpen} />
                 )}
                 {section === "oidc" && user?.isAdmin && providersPending && <SectionSkeleton rows={2} label="Loading OIDC providers" />}
                 {section === "oidc" && user?.isAdmin && providersLoaded && (
@@ -441,9 +453,11 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
             ? `${workspace?.name ?? "Workspace"} · Repositories, Kubernetes access, credentials, and sharing.`
             : current?.description ?? "Access, maintenance, and accounts for the JustCD instance."
         }
-        actions={headerAction}
+        actions={workspaceScoped ? undefined : headerAction}
       />
-      {workspaceScoped && fixedWorkspaceId ? <ConnectionTabs workspaceId={fixedWorkspaceId} section={section}>{content}</ConnectionTabs> : content}
+      {workspaceScoped && fixedWorkspaceId ? <ConnectionTabs workspaceId={fixedWorkspaceId} section={section}>
+        <Panel surface="flat" title={current?.title} description={workspaceConnectionSections.find((item) => item.id === section)?.description} action={headerAction}>{content}</Panel>
+      </ConnectionTabs> : content}
     </>
   )
 }

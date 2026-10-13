@@ -74,7 +74,7 @@ export function GitSourcePanel({
     <div className="space-y-6">
       <InventoryPanel
         title="Connected repositories"
-        description={isOwner ? undefined : "Only workspace owners can change Git sources."}
+        description={isOwner ? "Repositories available to this workspace. Configure branch discovery below to manage applications from Git." : "Repositories available to this workspace. Only workspace owners can change these connections."}
         count={sources.length}
       >
         {sources.length ? (
@@ -113,7 +113,7 @@ export function GitSourcePanel({
                           disabled={busy}
                           onClick={() => void test(source)}
                         >
-                          Test
+                          Test connection
                         </Button>
                       }
                       items={[

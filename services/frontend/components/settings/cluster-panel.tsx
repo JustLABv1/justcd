@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import Link from "next/link"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { HugeiconsIcon } from "@hugeicons/react"
@@ -9,6 +9,7 @@ import { Badge } from "@/components/reui/badge"
 import { Button } from "@/components/ui/button"
 import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
 import { FormSelect } from "@/components/ui/form-select"
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
@@ -70,6 +71,9 @@ export function ClusterPanel({
   workspaceCredentials,
   busy,
   action,
+  activeClusterId,
+  onManageNamespaces,
+  renderNamespaceAccess,
   onUpdated,
   onDeleted,
 }: {
@@ -80,6 +84,9 @@ export function ClusterPanel({
   workspaceCredentials: Credential[]
   busy: boolean
   action: ActionRunner
+  activeClusterId: string
+  onManageNamespaces: (clusterId: string) => void
+  renderNamespaceAccess: (cluster: Cluster) => ReactNode
   onUpdated: (value: Cluster) => void
   onDeleted: (id: string) => void
 }) {
@@ -151,7 +158,7 @@ export function ClusterPanel({
       {statusError != null && <LoadErrorNotice error={statusError} title="Could not load test results and default credentials" onRetry={retryStatus} />}
       <InventoryPanel
         title="Connected clusters"
-        description={isOwner ? undefined : "Only workspace owners can change cluster connections."}
+        description="Expand a cluster to manage the namespaces this workspace can deploy to."
         count={clusters.length}
         toolbar={<Input aria-label="Search clusters" placeholder="Search clusters or connection type…" value={clusterQuery} onChange={event => setClusterQuery(event.target.value)} className="max-w-sm" />}
       >
@@ -199,7 +206,7 @@ export function ClusterPanel({
                         ? <Badge variant="info-light" radius="full">Shared by {cluster.ownerWorkspaceName ?? "another workspace"}</Badge>
                         : <Badge variant="outline" radius="full">{cluster.workspaceId ? "Private to this workspace" : "Instance-owned"}</Badge>}
                       {credentialId
-                        ? <Badge variant="success-light" radius="full">Default credential: {workspaceCredentials.find((item) => item.id === credentialId)?.name ?? "configured"}</Badge>
+                        ? <Badge variant="success-light" radius="full" className="max-w-full text-left"><span className="min-w-0 whitespace-normal break-words">Default credential: {workspaceCredentials.find((item) => item.id === credentialId)?.name ?? "configured"}</span></Badge>
                         : cluster.connectionMode === "agent"
                           ? <Badge variant="outline" radius="full">Agent local credentials</Badge>
                           : cluster.shared
@@ -227,6 +234,7 @@ export function ClusterPanel({
                     <RowActions
                       label={cluster.name}
                       primary={
+                        <div className="flex flex-col gap-2 sm:flex-row">
                         <Button
                           size="sm"
                           variant="outline"
@@ -237,14 +245,23 @@ export function ClusterPanel({
                           disabled={busy}
                           onClick={() => void test(cluster)}
                         >
-                          Test
+                          Test access
                         </Button>
+                        </div>
                       }
                       items={items}
                     />
                   }
                 >
                   {cluster.connectionMode === "agent" && <ClusterAgentActivity key={`${workspace.id}:${cluster.id}`} cluster={cluster} workspaceId={workspace.id} />}
+                  <Collapsible open={activeClusterId === cluster.id} onOpenChange={(open) => onManageNamespaces(open ? cluster.id : "")} className="mt-4 border-t pt-3">
+                    <CollapsibleTrigger render={<Button type="button" variant="ghost" size="sm" />} aria-label={`Manage namespace access for ${cluster.name}`} className="w-full justify-between" disabled={busy}>
+                      Namespace access
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      {activeClusterId === cluster.id && <div className="pt-4">{renderNamespaceAccess(cluster)}</div>}
+                    </CollapsibleContent>
+                  </Collapsible>
                 </ConnectionRow>
               )
             })}
@@ -253,7 +270,7 @@ export function ClusterPanel({
           <SectionEmpty
             title={clusters.length ? "No matching clusters" : "No clusters connected yet"}
             description={clusters.length ? "Try another cluster name or connection type." : "Connect a cluster, or ask another workspace owner to share one. Credentials stay private to each workspace."}
-            action={!clusters.length && isOwner ? (
+            action={clusters.length > 0 && clusterQuery ? <Button type="button" size="sm" variant="outline" onClick={() => setClusterQuery("")}>Clear search</Button> : !clusters.length && isOwner ? (
               <Button nativeButton={false} render={<Link href={`/workspaces/${workspace.id}/clusters/new`} />}>
                 <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} aria-hidden="true" />
                 Connect cluster

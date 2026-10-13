@@ -120,8 +120,9 @@ export function FieldsSkeleton({ label = "Loading" }: { label?: string }) {
 }
 
 /** Panel with a count badge in the header, an optional toolbar row and primary action. */
-export function InventoryPanel({ title, description, count, action, toolbar, children }: {
+export function InventoryPanel({ title, description, count, action, toolbar, children, surface = "card" }: {
   title: string
+  surface?: "card" | "flat"
   description?: string
   count: number
   action?: ReactNode
@@ -131,9 +132,10 @@ export function InventoryPanel({ title, description, count, action, toolbar, chi
   return (
     <Panel
       title={title}
+      surface={surface}
       description={description}
       action={
-        <div className="flex items-center gap-3">
+        <div className="flex max-w-full flex-wrap items-center gap-3">
           <Badge variant="secondary" radius="full" aria-label={`${count} total`} className="tabular-nums">{count}</Badge>
           {action}
         </div>

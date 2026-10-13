@@ -121,11 +121,11 @@ export function RepositoryConfigurations({
       setOpen(false)
       if (result.lastError)
         toast.error(
-          `Repository connected; discovery needs attention: ${result.lastError}`
+          `Discovery branch added; discovery needs attention: ${result.lastError}`
         )
       else
         toast.success(
-          "Repository connected. Application definitions discovered."
+          "Discovery branch added. Application definitions discovered."
         )
       await load()
     } catch (cause) {
@@ -170,9 +170,9 @@ export function RepositoryConfigurations({
   const nameOf = (item: RepositoryConfiguration) => `${sources.find((source) => source.id === item.sourceId)?.name ?? "Repository"} · ${item.revision}`
   return (
     <Panel
-      title="Applications managed by Git"
-      description="Place a justcd.yaml beside each overlay or chart. JustCD discovers applications and keeps their configuration current."
-      action={owner ? <Button size="sm" variant="outline" disabled={!sources.length || Boolean(busy)} onClick={() => { setSourceId(sources[0]?.id ?? ""); setOpen(true) }}>Connect repository branch</Button> : undefined}
+      title="Application discovery"
+      description="Discover applications from justcd.yaml files on selected repository branches."
+      action={owner ? <Button size="sm" variant="outline" disabled={!sources.length || Boolean(busy)} onClick={() => { setSourceId(sources[0]?.id ?? ""); setOpen(true) }}>Add discovery branch</Button> : undefined}
     >
       {error && (
         <div role="alert" className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 text-sm text-destructive">
@@ -184,8 +184,8 @@ export function RepositoryConfigurations({
         <div role="status" aria-label="Loading repository discovery" className="space-y-3 p-5"><Skeleton className="h-12 rounded-lg" /><Skeleton className="h-12 rounded-lg" /></div>
       ) : !items.length && !error ? (
         <p className="px-5 py-4 text-sm text-muted-foreground">
-          No branches connected for application discovery yet.{" "}
-          {owner ? (sources.length ? "Use “Connect repository branch” to start." : "Connect a Git source first.") : "Ask a workspace owner to connect one."}
+          No discovery branches configured yet.{" "}
+          {owner ? (sources.length ? "Use “Add discovery branch” to start." : "Connect a Git source first.") : "Ask a workspace owner to connect one."}
         </p>
       ) : (
         <ul className="divide-y">
@@ -199,13 +199,13 @@ export function RepositoryConfigurations({
                 {item.prSettings?.enabled && <Badge size="sm" radius="full" variant="info-light">Pull requests on</Badge>}
               </>}
               meta={<>
-                {item.lastCommit && <span className="font-mono">{item.lastCommit.slice(0, 12)}</span>}
+                {item.lastCommit && <span>Commit <code className="font-mono">{item.lastCommit.slice(0, 12)}</code></span>}
                 {item.lastCheckedAt && <>{item.lastCommit ? " · " : ""}Checked {new Date(item.lastCheckedAt).toLocaleString()}</>}
                 {item.lastError && <p role="alert" className="mt-1 break-words text-sm text-destructive">{item.lastError}</p>}
               </>}
               actions={owner ? <RowActions
                 label={nameOf(item)}
-                primary={<Button size="sm" variant="outline" disabled={Boolean(busy) || !item.enabled} loading={busy === item.id} onClick={() => void update(item, "refresh")}>Discover now</Button>}
+                primary={<Button size="sm" variant="outline" disabled={Boolean(busy)} loading={busy === item.id} onClick={() => void update(item, item.enabled ? "refresh" : "toggle")}>{item.enabled ? "Discover now" : "Resume discovery"}</Button>}
                 items={[
                   { label: "PR discovery settings", icon: Settings02Icon, onSelect: () => setSettingsFor(item) },
                   { label: item.enabled ? "Pause discovery" : "Resume discovery", icon: item.enabled ? PauseIcon : PlayIcon, disabled: Boolean(busy), onSelect: () => void update(item, "toggle") },
@@ -226,8 +226,8 @@ export function RepositoryConfigurations({
         open={open}
         onOpenChange={setOpen}
         busy={Boolean(busy)}
-        title="Connect repository branch"
-        description="Connect a branch to this workspace. Existing cluster and namespace access define where its applications can deploy."
+        title="Add discovery branch"
+        description="Choose a connected repository and the branch or revision to scan. Applications use this workspace’s existing cluster and namespace access."
       >
         <form className="space-y-4" onSubmit={(event) => void connect(event)}>
           <FormField label="Repository" htmlFor="discovery-source">
@@ -247,7 +247,7 @@ export function RepositoryConfigurations({
           </p>
           <DialogFooter>
             <DialogCancel disabled={Boolean(busy)} />
-            <Button type="submit" loading={busy === "connect"} loadingText="Discovering applications…" disabled={!sourceId || !revision.trim() || Boolean(busy)}>Connect and discover</Button>
+            <Button type="submit" loading={busy === "connect"} loadingText="Discovering applications…" disabled={!sourceId || !revision.trim() || Boolean(busy)}>Add branch and discover</Button>
           </DialogFooter>
         </form>
       </AppDialog>

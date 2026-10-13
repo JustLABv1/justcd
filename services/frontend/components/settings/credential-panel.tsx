@@ -61,16 +61,23 @@ export function CredentialPanel({
   const isAdmin = user?.isAdmin ?? false
   const isOwner = workspace.role === "owner"
   const canChange = (credential: Credential) => (credential.workspaceId ? isOwner : isAdmin)
+  const groups = [
+    { title: "Git credentials", items: credentials.filter((item) => item.kind.startsWith("git")) },
+    { title: "Kubernetes credentials", items: credentials.filter((item) => !item.kind.startsWith("git")) },
+  ]
   return (
     <div className="space-y-6">
       <InventoryPanel
         title="Available credentials"
-        description={isOwner ? "Encrypted secrets used to reach Git repositories and Kubernetes clusters." : "Only workspace owners can add or change credentials."}
+        description={isOwner ? "Select these credentials when connecting a private repository or configuring cluster access." : "Credentials available to this workspace. Only owners can change workspace credentials; instance credentials require an administrator."}
         count={credentials.length}
       >
         {credentials.length ? (
-          <ul className="divide-y">
-            {credentials.map((credential) => {
+          <div className="divide-y">
+            {groups.filter((group) => group.items.length > 0).map((group) => <section key={group.title} aria-label={group.title}>
+              <h3 className="bg-muted/30 px-5 py-3 text-sm font-medium">{group.title} <span className="ml-2 text-muted-foreground">{group.items.length}</span></h3>
+              <ul className="divide-y">
+            {group.items.map((credential) => {
               const expired = credential.expiresAt ? new Date(credential.expiresAt).getTime() < now : false
               return (
                 <ConnectionRow
@@ -80,7 +87,7 @@ export function CredentialPanel({
                   subtitle={credentialKindLabels[credential.kind]}
                   badges={
                     <>
-                      {!credential.workspaceId && <Badge variant="outline" radius="full">Instance-wide</Badge>}
+                      <Badge variant="outline" radius="full">{credential.workspaceId ? "Private to this workspace" : "Instance-wide"}</Badge>
                       {credential.expiresAt && (
                         <Badge variant={expired ? "destructive-light" : "outline"} radius="full">
                           {expired ? "Expired" : "Expires"} {new Date(credential.expiresAt).toLocaleDateString()}
@@ -111,7 +118,9 @@ export function CredentialPanel({
                 />
               )
             })}
-          </ul>
+              </ul>
+            </section>)}
+          </div>
         ) : (
           <SectionEmpty
             title="No credentials yet"
@@ -131,11 +140,9 @@ export function CredentialPanel({
           <div className="min-w-0">
             <h2 className="text-sm font-semibold">Secrets stay on the server</h2>
             <p className="mt-1 max-w-3xl text-sm leading-5 text-muted-foreground">
-              Secrets are encrypted before they are stored and are never sent back to the browser. SSH credentials need pinned host keys, and kubeconfig credentials cannot run external commands or read token files.
+              Secret values are encrypted and cannot be viewed after saving. Edit a credential to rotate its secret, or reuse it when configuring a connection.
             </p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Operators: encryption uses <code className="font-mono">JUSTCD_ENCRYPTION_KEY</code>; host keys use the <code className="font-mono">known_hosts</code> format.
-            </p>
+            <p className="mt-1 text-sm text-muted-foreground">Workspace credentials stay private when a Git source or cluster is shared with another workspace.</p>
           </div>
           <Badge variant="success-light" radius="full" size="lg">
             <HugeiconsIcon icon={SecurityLockIcon} strokeWidth={2} aria-hidden="true" />
@@ -213,7 +220,7 @@ function CredentialDialog({ workspace, isAdmin, action, editing, onClose, onSave
       onOpenChange={(open) => { if (!open) onClose() }}
       busy={saving}
       title={editing ? "Edit credential" : "Add credential"}
-      description="Credentials are encrypted and their secret values are never shown again."
+      description={editing && !editing.workspaceId ? "This credential is available across the instance. Secret values remain encrypted; leave secret fields blank to keep them." : "This credential belongs to this workspace. Its secret values are encrypted and cannot be viewed after saving."}
     >
       <form className="space-y-5" onSubmit={submit}>
         <div className="grid gap-3 sm:grid-cols-2">

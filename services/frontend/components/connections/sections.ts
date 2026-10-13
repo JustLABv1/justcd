@@ -7,8 +7,8 @@ import {
 
 /** Workspace-level connection sections (route ids under /workspaces/[id]/connections/[id]). */
 export const workspaceConnectionSections = [
-  { id: "git-sources", title: "Git sources", description: "Repositories tracked by this workspace", icon: GitBranchIcon },
-  { id: "clusters", title: "Kubernetes", description: "Clusters and the namespaces this workspace can deploy to", icon: ServerStack01Icon },
-  { id: "credentials", title: "Credentials", description: "Encrypted Git and Kubernetes secrets", icon: Key01Icon },
-  { id: "shares", title: "Sharing", description: "Offers, accepted shares, and access status", icon: Share08Icon },
+  { id: "git-sources", title: "Git sources", description: "Connect repositories and choose branches for automatic application discovery.", icon: GitBranchIcon },
+  { id: "clusters", title: "Kubernetes", description: "Connect clusters, then grant this workspace access to specific namespaces.", icon: ServerStack01Icon },
+  { id: "credentials", title: "Credentials", description: "Manage the Git and Kubernetes credentials available to this workspace.", icon: Key01Icon },
+  { id: "shares", title: "Sharing", description: "Offer connections to other workspaces or accept access offered to this one.", icon: Share08Icon },
 ] as const

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"github.com/justlab/justcd/services/backend/internal/notifications"
 	"github.com/justlab/justcd/services/backend/internal/security"
 	"github.com/justlab/justcd/services/backend/internal/store"
@@ -220,7 +221,7 @@ func (s *Server) getApplicationNotifications(w http.ResponseWriter, r *http.Requ
 		writeStoreError(w, "could not load notification destinations")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"policy": policy, "destinations": dest})
+	writeJSON(w, 200, map[string]any{"policy": policy, "destinations": dest, "managedByGit": policy.ManagedByGit})
 }
 func (s *Server) putApplicationNotifications(w http.ResponseWriter, r *http.Request) {
 	app, ok := s.applicationNotificationScope(w, r)
@@ -237,6 +238,10 @@ func (s *Server) putApplicationNotifications(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := s.Store.SaveApplicationNotificationPolicy(r.Context(), app.ID, app.WorkspaceID, currentUser(r).ID, p); err != nil {
+		if errors.Is(err, store.ErrNotificationPolicyManagedByGit) {
+			writeError(w, 409, err.Error())
+			return
+		}
 		writeError(w, 409, "could not save policy; select destinations in this workspace and refresh before retrying")
 		return
 	}

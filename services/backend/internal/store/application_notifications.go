@@ -8,7 +8,10 @@ import (
 	"github.com/justlab/justcd/services/backend/internal/notifications"
 )
 
+var ErrNotificationPolicyManagedByGit = errors.New("notifications are managed by justcd.yaml; edit spec.notifications in Git")
+
 type ApplicationNotificationPolicy struct {
+	ManagedByGit    bool     `json:"-"`
 	Mode            string   `json:"mode"`
 	DestinationIDs  []string `json:"destinationIds"`
 	Events          []string `json:"events"`
@@ -47,7 +50,7 @@ func (p ApplicationNotificationPolicy) Validate() error {
 func (s *Store) ApplicationNotificationPolicy(ctx context.Context, app string) (ApplicationNotificationPolicy, error) {
 	p := ApplicationNotificationPolicy{Mode: "inherit", DestinationIDs: []string{}, Events: []string{}, MinimumSeverity: "info"}
 	var dest, events []byte
-	err := s.DB.QueryRowContext(ctx, `SELECT mode,destination_ids,events,minimum_severity FROM application_notification_policies WHERE application_id=$1`, app).Scan(&p.Mode, &dest, &events, &p.MinimumSeverity)
+	err := s.DB.QueryRowContext(ctx, `SELECT mode,destination_ids,events,minimum_severity,managed_by_git FROM application_notification_policies WHERE application_id=$1`, app).Scan(&p.Mode, &dest, &events, &p.MinimumSeverity, &p.ManagedByGit)
 	if err == sql.ErrNoRows {
 		return p, nil
 	}
@@ -69,8 +72,6 @@ func (s *Store) SaveApplicationNotificationPolicy(ctx context.Context, app, work
 		p.Events = []string{}
 		p.MinimumSeverity = "info"
 	}
-	dest, _ := json.Marshal(p.DestinationIDs)
-	events, _ := json.Marshal(p.Events)
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -83,6 +84,45 @@ func (s *Store) SaveApplicationNotificationPolicy(ctx context.Context, app, work
 	if scope != workspace {
 		return errors.New("application workspace mismatch")
 	}
+	var managed bool
+	if err = tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT managed_by_git FROM application_notification_policies WHERE application_id=$1),FALSE)`, app).Scan(&managed); err != nil {
+		return err
+	}
+	if managed {
+		return ErrNotificationPolicyManagedByGit
+	}
+	if err = writeApplicationNotificationPolicy(ctx, tx, app, workspace, actor, p, false); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Called in the repository snapshot transaction, so invalid routing rolls back all definitions.
+func reconcileRepositoryNotificationPolicy(ctx context.Context, tx *sql.Tx, app Application) error {
+	if app.RepositoryNotifications != nil {
+		return writeApplicationNotificationPolicy(ctx, tx, app.ID, app.WorkspaceID, "justcd-system", *app.RepositoryNotifications, true)
+	}
+	var managed bool
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT managed_by_git FROM application_notification_policies WHERE application_id=$1),FALSE)`, app.ID).Scan(&managed); err != nil {
+		return err
+	}
+	if !managed {
+		return nil
+	} // Omission preserves policy configured outside Git.
+	return writeApplicationNotificationPolicy(ctx, tx, app.ID, app.WorkspaceID, "justcd-system", ApplicationNotificationPolicy{Mode: "inherit"}, false)
+}
+
+func writeApplicationNotificationPolicy(ctx context.Context, tx *sql.Tx, app, workspace, actor string, p ApplicationNotificationPolicy, managed bool) error {
+	if err := p.Validate(); err != nil {
+		return err
+	}
+	if p.Mode != "custom" {
+		p.DestinationIDs = []string{}
+		p.Events = []string{}
+		p.MinimumSeverity = "info"
+	}
+	dest, _ := json.Marshal(p.DestinationIDs)
+	events, _ := json.Marshal(p.Events)
 	// Lock selected destinations so concurrent deletion cannot leave a new route dangling.
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM notification_destinations WHERE workspace_id=$1 AND $2::jsonb ? id ORDER BY id FOR SHARE`, workspace, dest)
 	if err != nil {
@@ -100,15 +140,20 @@ func (s *Store) SaveApplicationNotificationPolicy(ctx context.Context, app, work
 	if count != len(p.DestinationIDs) {
 		return errors.New("select destinations belonging to this workspace")
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO application_notification_policies(application_id,mode,destination_ids,events,minimum_severity) VALUES($1,$2,$3,$4,$5) ON CONFLICT(application_id) DO UPDATE SET mode=$2,destination_ids=$3,events=$4,minimum_severity=$5`, app, p.Mode, dest, events, p.MinimumSeverity); err != nil {
+	result, err := tx.ExecContext(ctx, `INSERT INTO application_notification_policies(application_id,mode,destination_ids,events,minimum_severity,managed_by_git) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(application_id) DO UPDATE SET mode=$2,destination_ids=$3,events=$4,minimum_severity=$5,managed_by_git=$6 WHERE (application_notification_policies.mode,application_notification_policies.destination_ids,application_notification_policies.events,application_notification_policies.minimum_severity,application_notification_policies.managed_by_git) IS DISTINCT FROM ($2,$3::jsonb,$4::jsonb,$5,$6)`, app, p.Mode, dest, events, p.MinimumSeverity, managed)
+	if err != nil {
 		return err
+	}
+	countChanged, _ := result.RowsAffected()
+	if countChanged == 0 {
+		return nil
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE notification_deliveries q SET status='disabled',result_code='application_routing_changed' FROM notification_events e WHERE q.event_id=e.id AND e.application_id=$1 AND q.status='queued' AND e.event_type<>'test' AND NOT notification_routes_to(q.destination_id,e.id)`, app); err != nil {
 		return err
 	}
-	raw, _ := json.Marshal(p)
+	raw, _ := json.Marshal(map[string]any{"policy": p, "managedByGit": managed})
 	if _, err = tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'notification.application_policy_saved','application',$2,$3)`, actor, app, raw); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }

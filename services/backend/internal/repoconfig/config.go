@@ -25,6 +25,18 @@ const MaxDefinitions = 500
 
 var namePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
+// RepositoryNotificationPolicy holds references, never destination credentials.
+type RepositoryNotificationPolicy struct {
+	Mode            string   `json:"mode"`
+	Destinations    []string `json:"destinations,omitempty"`
+	Events          []string `json:"events,omitempty"`
+	MinimumSeverity string   `json:"minimumSeverity,omitempty"`
+}
+
+func (p RepositoryNotificationPolicy) Validate() error {
+	return (store.ApplicationNotificationPolicy{Mode: p.Mode, DestinationIDs: p.Destinations, Events: p.Events, MinimumSeverity: p.MinimumSeverity}).Validate()
+}
+
 type Definition struct {
 	APIVersion string `json:"apiVersion"`
 	Kind       string `json:"kind"`
@@ -46,11 +58,12 @@ type Definition struct {
 			Cluster          string `json:"cluster"`
 			Namespace        string `json:"namespace"`
 		} `json:"destination"`
-		DeploymentSchedule schedule.Policy           `json:"deploymentSchedule,omitempty"`
-		PullRequests       *store.RepositoryPRConfig `json:"pullRequests,omitempty"`
-		IgnoreResources    []IgnoreResource          `json:"ignoreResources,omitempty"`
-		SyncPolicy         string                    `json:"syncPolicy,omitempty"`
-		PollSeconds        int                       `json:"pollSeconds,omitempty"`
+		Notifications      *RepositoryNotificationPolicy `json:"notifications,omitempty"`
+		DeploymentSchedule schedule.Policy               `json:"deploymentSchedule,omitempty"`
+		PullRequests       *store.RepositoryPRConfig     `json:"pullRequests,omitempty"`
+		IgnoreResources    []IgnoreResource              `json:"ignoreResources,omitempty"`
+		SyncPolicy         string                        `json:"syncPolicy,omitempty"`
+		PollSeconds        int                           `json:"pollSeconds,omitempty"`
 	} `json:"spec"`
 	File string `json:"-"`
 	Hash string `json:"-"`
@@ -193,6 +206,17 @@ func Discover(root string) ([]Definition, error) {
 			}
 			if err := store.ValidatePreviewProfile(profile, store.Application{Renderer: source.Renderer, ManifestPath: source.Path}); err != nil {
 				return fail(fmt.Errorf("pullRequests: %w", err))
+			}
+		}
+		if n := d.Spec.Notifications; n != nil {
+			if n.Mode == "" {
+				n.Mode = "inherit"
+			}
+			if n.MinimumSeverity == "" {
+				n.MinimumSeverity = "info"
+			}
+			if err := n.Validate(); err != nil {
+				return fail(fmt.Errorf("notifications: %w", err))
 			}
 		}
 		if err := d.Spec.DeploymentSchedule.Validate(); err != nil {

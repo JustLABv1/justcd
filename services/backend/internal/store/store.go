@@ -1363,6 +1363,7 @@ func (policy RetryPolicy) Validate() error {
 }
 
 type Application struct {
+	RepositoryNotifications        *ApplicationNotificationPolicy     `json:"-"`
 	RepositoryDeploymentSchedule   schedule.Policy                    `json:"-"`
 	BranchTest                     *BranchTest                        `json:"branchTest,omitempty"`
 	ClusterName                    string                             `json:"clusterName,omitempty"`

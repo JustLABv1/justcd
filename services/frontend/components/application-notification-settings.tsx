@@ -21,7 +21,11 @@ type Policy = {
   events: string[]
   minimumSeverity: string
 }
-type Response = { policy: Policy; destinations: Destination[] }
+type Response = {
+  policy: Policy
+  destinations: Destination[]
+  managedByGit: boolean
+}
 export function ApplicationNotificationSettings({
   applicationId,
   workspaceId,
@@ -59,7 +63,7 @@ export function ApplicationNotificationSettings({
     }
   }, [base, retry])
   function edit() {
-    if (!data) return
+    if (!data || data.managedByGit) return
     setDraft({
       ...data.policy,
       destinationIds: data.policy.destinationIds.filter((id) =>
@@ -122,12 +126,18 @@ export function ApplicationNotificationSettings({
                   variant="outline"
                   size="sm"
                   onClick={edit}
-                  disabled={busy || !data}
+                  disabled={busy || !data || data.managedByGit}
                 >
                   Edit routing
                 </Button>
               }
             />
+            {data?.managedByGit && (
+              <SettingsRow
+                label="Managed by Git"
+                description="Edit spec.notifications in justcd.yaml and commit the change to update this routing."
+              />
+            )}
             {data?.policy.mode === "custom" && (
               <SettingsRow
                 label="Selected destinations"
@@ -158,7 +168,7 @@ export function ApplicationNotificationSettings({
           </SettingsGroup>
           {missing.length > 0 && (
             <p role="status" className="text-sm text-muted-foreground">
-              A selected destination was deleted. Edit routing to choose its
+              A selected destination was deleted. Update its routing to choose a
               replacement.
             </p>
           )}

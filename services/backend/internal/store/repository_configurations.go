@@ -181,6 +181,9 @@ func (s *Store) ApplyRepositoryApplications(ctx context.Context, repository Repo
 			}
 		}
 		if existing.RollbackResumeState == nil {
+			if err := reconcileRepositoryNotificationPolicy(ctx, tx, app); err != nil {
+				return fmt.Errorf("%s: notifications: %w", app.ConfigurationPath, err)
+			}
 			if err := reconcileRepositoryPR(ctx, tx, app); err != nil {
 				return fmt.Errorf("%s: %w", app.ConfigurationPath, err)
 			}

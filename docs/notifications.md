@@ -58,7 +58,7 @@ Each application starts with **Inherit workspace defaults**. Workspace owners ca
 
 A workspace-disabled destination stays disabled even when selected by an application. New policies apply to future events and cancel queued deliveries that no longer match; they do not replay old events or interrupt a request already in flight. Switching back to inheritance restores current workspace defaults. Deleted destinations do not silently fall back to other channels: edit the application's custom routing to select a replacement. Changes require owner authorization and CSRF, and commit an audit event with the policy.
 
-GET/PUT `/api/v1/applications/{applicationID}/notifications` reads or changes `{mode, destinationIds, events, minimumSeverity}`. The read response contains `policy` plus secret-free workspace `destinations`. Mode is `inherit`, `custom`, or `disabled`; custom mode requires at least one valid destination in the same workspace and at least one event. Test delivery remains a destination connectivity test and bypasses application policy.
+GET/PUT `/api/v1/applications/{applicationID}/notifications` reads or changes `{mode, destinationIds, events, minimumSeverity}`. The read response contains `policy`, secret-free workspace `destinations`, and `managedByGit`. Updating a Git-managed policy returns HTTP 409 with instructions to edit `spec.notifications` in Git. Mode is `inherit`, `custom`, or `disabled`; custom mode requires at least one valid destination in the same workspace and at least one event. Test delivery remains a destination connectivity test and bypasses application policy.
 
 ## Telegram
 
@@ -67,3 +67,43 @@ Choose **Telegram** when adding a workspace destination. Create a bot through Bo
 Bot tokens and chat/topic configuration are encrypted and never returned. Delivery uses the fixed HTTPS Telegram [`sendMessage` Bot API](https://core.telegram.org/bots/api#sendmessage); no arbitrary Telegram API host is accepted. Messages contain versioned event metadata and a JustCD link as plain text. API `ok:false` responses are recognized even on HTTP 200; throttling and server failures use the existing bounded retries, and credentials/remote descriptions remain absent from diagnostics. Telegram has no server-side idempotency option for this method, so crash retries can create duplicate messages; the stable event ID is included in the text for identification.
 
 The workspace section uses the shared settings section/group/row layout. Destination actions are in the shared row menu, and **View history** opens delivery attempts in a dialog.
+
+## Routing in justcd.yaml
+
+Applications managed by Git can declare routing in `spec.notifications`:
+
+```yaml
+spec:
+  notifications:
+    mode: custom
+    destinations:
+      - Production Telegram
+    events:
+      - sync_failed
+      - unhealthy
+    minimumSeverity: error
+```
+
+`destinations` accepts existing workspace destination IDs or unique names. Use IDs
+when names are ambiguous. Unknown, ambiguous, duplicate, or cross-workspace
+references reject discovery of the entire repository snapshot without partially
+applying its definitions. Destination connections and credentials stay in workspace
+settings; bot tokens, webhook URLs, SMTP passwords, and headers cannot be declared
+in this YAML. A workspace-disabled destination remains disabled.
+
+Use `mode: disabled` to suppress notifications for a development application, or
+`mode: inherit` to use workspace defaults. Neither mode needs destinations or
+events. `minimumSeverity` defaults to `info`; an empty `notifications: {}` declares
+Git-managed inheritance. Custom routing requires destinations and events, and
+supports the same event names and severity levels as the UI.
+
+Declaring `spec.notifications` makes routing read-only in the UI/API, where it is
+marked **Managed by Git**. Commit changes to the repository's tracked branch to
+update routing. Removing a previously declared policy restores workspace
+inheritance and releases ownership to the UI/API. Omitting the field on an
+application that was never Git-managed preserves its existing UI policy.
+
+Reconciliation applies policy changes transactionally and cancels queued deliveries
+that no longer match. Repeated unchanged snapshots do not create duplicate policy
+audit events. Active rollback and branch-test freezes preserve the current policy
+until normal repository reconciliation resumes.

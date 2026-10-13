@@ -129,6 +129,26 @@ func TestIntegrationApplicationNotificationRouting(t *testing.T) {
 	if count != 4 {
 		t.Fatal("policy audit", count)
 	}
+	// Git ownership is read-only in the API and cannot be forged by a client.
+	_, err = db.DB.ExecContext(ctx, `UPDATE application_notification_policies SET managed_by_git=TRUE WHERE application_id='prod'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	managedResponse := req("GET", "owner", "prod", "", false)
+	expect(managedResponse, 200)
+	var managed struct {
+		ManagedByGit bool `json:"managedByGit"`
+	}
+	_ = json.Unmarshal(managedResponse.Body.Bytes(), &managed)
+	if !managed.ManagedByGit {
+		t.Fatal("missing Git ownership flag")
+	}
+	managedResponse = req("PUT", "owner", "prod", `{"mode":"disabled"}`, true)
+	expect(managedResponse, 409)
+	if !strings.Contains(managedResponse.Body.String(), "justcd.yaml") {
+		t.Fatal("missing Git edit guidance")
+	}
+	expect(req("PUT", "owner", "prod", `{"mode":"disabled","managedByGit":false}`, true), 400)
 	// Native Telegram credentials are write-only, including in the application destination list.
 	token := "123456:abcdefghijklmnopqrstuvwxyz123456789"
 	body := fmt.Sprintf(`{"name":"Telegram","provider":"telegram","enabled":true,"events":["sync_failed"],"minimumSeverity":"error","config":{"botToken":%q,"chatId":"-123456","messageThreadId":42}}`, token)

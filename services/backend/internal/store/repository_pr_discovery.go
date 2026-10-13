@@ -6,15 +6,24 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/justlab/justcd/services/backend/internal/scm"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 type PRDestination struct {
-	ClusterID string `json:"clusterId"`
-	Namespace string `json:"namespace"`
+	ClusterID        string `json:"clusterId"`
+	Namespace        string `json:"namespace"`
+	NamespacePattern string `json:"namespacePattern,omitempty"`
 }
+
+// Match the entire namespace, including for patterns with alternation.
+func namespacePattern(pattern string) (*regexp.Regexp, error) {
+	return regexp.Compile(`\A(?:` + pattern + `)\z`)
+}
+
 type RepositoryPRSettings struct {
 	PipelineStatusReporting bool            `json:"pipelineStatusReporting"`
 	Enabled                 bool            `json:"enabled"`
@@ -22,6 +31,7 @@ type RepositoryPRSettings struct {
 	APIURL                  string          `json:"apiUrl,omitempty"`
 	CredentialID            string          `json:"credentialId"`
 	Mode                    string          `json:"mode"`
+	AllowNamespaceCreation  bool            `json:"allowNamespaceCreation,omitempty"`
 	Destinations            []PRDestination `json:"destinations"`
 	Profile                 PreviewProfile  `json:"profile"`
 }
@@ -89,12 +99,26 @@ func (s *Store) EnabledPRRepositories(ctx context.Context) ([]RepositoryConfigur
 }
 func (p RepositoryPRSettings) Allows(cluster, namespace string) bool {
 	for _, d := range p.Destinations {
-		if d.ClusterID == cluster && d.Namespace == namespace {
+		if d.ClusterID == "" || d.ClusterID != cluster || namespace == "" {
+			continue
+		}
+		if d.NamespacePattern == "" && d.Namespace != "" && d.Namespace == namespace {
 			return true
+		}
+		if d.Namespace == "" && d.NamespacePattern != "" && len(d.NamespacePattern) <= 256 {
+			pattern, err := namespacePattern(d.NamespacePattern)
+			if err == nil && pattern.MatchString(namespace) {
+				return true
+			}
 		}
 	}
 	return false
 }
+
+func (p RepositoryPRSettings) AllowsNamespaceCreation(cluster, namespace string) bool {
+	return p.Enabled && p.Mode == "existing" && p.Profile.ConfirmShared && p.AllowNamespaceCreation && p.Allows(cluster, namespace)
+}
+
 func ValidateRepositoryPRSettings(p RepositoryPRSettings) error {
 	if !p.Enabled {
 		return nil
@@ -102,8 +126,27 @@ func ValidateRepositoryPRSettings(p RepositoryPRSettings) error {
 	if p.Mode != "review-only" && p.Mode != "isolated" && p.Mode != "existing" {
 		return errors.New("mode must be review-only, isolated, or existing")
 	}
+	if p.AllowNamespaceCreation && p.Mode != "existing" {
+		return errors.New("namespace creation is only available when deploying to approved dev namespaces")
+	}
 	if len(p.Destinations) == 0 || len(p.Destinations) > 32 {
 		return errors.New("select 1-32 allowed destinations")
+	}
+	for _, d := range p.Destinations {
+		if d.ClusterID == "" || (d.Namespace == "") == (d.NamespacePattern == "") {
+			return errors.New("each destination requires a cluster and either an exact namespace or a namespace regex")
+		}
+		if d.Namespace != "" && len(validation.IsDNS1123Label(d.Namespace)) != 0 {
+			return errors.New("exact destination namespace must be a valid Kubernetes namespace name")
+		}
+		if d.NamespacePattern != "" {
+			if len(d.NamespacePattern) > 256 {
+				return errors.New("namespace regex must be at most 256 bytes")
+			}
+			if _, err := namespacePattern(d.NamespacePattern); err != nil {
+				return fmt.Errorf("invalid namespace regex: %w", err)
+			}
+		}
 	}
 	if p.Profile.MaxActive < 0 || p.Profile.MaxActive > 100 {
 		return errors.New("maxActive must be 1-100, or zero for the default limit of 10")
@@ -161,11 +204,23 @@ func (s *Store) SaveRepositoryPRSettings(ctx context.Context, id string, p Repos
 		}
 		for _, d := range p.Destinations {
 			var exists bool
-			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM namespace_bindings WHERE workspace_id=$1 AND cluster_id=$2 AND namespace=$3)`, repo.WorkspaceID, d.ClusterID, d.Namespace).Scan(&exists); err != nil {
+			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM clusters c WHERE c.id=$2 AND (c.workspace_id IS NULL OR c.workspace_id=$1 OR EXISTS (
+				SELECT 1 FROM workspace_cluster_shares share WHERE share.cluster_id=c.id AND share.target_workspace_id=$1 AND share.status='accepted'
+			)))`, repo.WorkspaceID, d.ClusterID).Scan(&exists); err != nil {
 				return err
 			}
 			if !exists {
-				return errors.New("allowed destinations require an existing workspace namespace binding")
+				return errors.New("allowed destination cluster is unavailable to this workspace")
+			}
+			// Exact rules need an existing binding unless the owner has allowed
+			// automatic registration. Regex rules may cover future bindings.
+			if d.Namespace != "" && !p.AllowNamespaceCreation {
+				if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM namespace_bindings WHERE workspace_id=$1 AND cluster_id=$2 AND namespace=$3)`, repo.WorkspaceID, d.ClusterID, d.Namespace).Scan(&exists); err != nil {
+					return err
+				}
+				if !exists {
+					return errors.New("exact destinations require a workspace namespace binding or permission to create matching dev namespaces")
+				}
 			}
 		}
 	}
@@ -204,6 +259,22 @@ func (s *Store) UpsertRepositoryPRApplication(ctx context.Context, repo Reposito
 	if !locked.Enabled || !locked.PRSettings.Enabled || string(a) != string(b) {
 		return v, errors.New("repository PR policy changed during discovery")
 	}
+	if v.Mode != locked.PRSettings.Mode || (v.Mode != "isolated" && !locked.PRSettings.Allows(app.ClusterID, app.Namespaces[0].Namespace)) {
+		return v, errors.New("repository PR destination is not allowed by its policy")
+	}
+	if app.CreateNamespaces && !locked.PRSettings.AllowsNamespaceCreation(app.ClusterID, app.Namespaces[0].Namespace) {
+		return v, errors.New("repository PR policy does not permit namespace creation")
+	}
+	if len(validation.IsDNS1123Label(app.Namespaces[0].Namespace)) != 0 {
+		return v, errors.New("PR destination must be a valid Kubernetes namespace name")
+	}
+	// Bindings and application registration commit together. Default credential
+	// validation and inherited credential overrides use tracked discovery's path.
+	binding, err := ensureRepositoryNamespaceBinding(ctx, tx, repo.WorkspaceID, app.ClusterID, app.Namespaces[0].Namespace, app.CreateNamespaces)
+	if err != nil {
+		return v, err
+	}
+	app.Namespaces[0] = binding
 	previous, err := scanRepositoryPR(tx.QueryRowContext(ctx, `SELECT `+repositoryPRColumns+` FROM repository_pr_applications WHERE repository_id=$1 AND number=$2 AND definition_name=$3 FOR UPDATE`, repo.ID, v.Number, v.DefinitionName))
 	if err == nil {
 		v = previous
@@ -227,7 +298,7 @@ func (s *Store) UpsertRepositoryPRApplication(ctx context.Context, repo Reposito
 				return v, err
 			}
 		} else {
-			return v, nil
+			return v, tx.Commit()
 		}
 	} else if errors.Is(err, sql.ErrNoRows) {
 		var count int

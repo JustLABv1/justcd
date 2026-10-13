@@ -175,7 +175,8 @@ export type RepositoryPRSettings = {
   apiUrl?: string
   credentialId: string
   mode: "review-only" | "isolated" | "existing"
-  destinations: { clusterId: string; namespace: string }[]
+  allowNamespaceCreation?: boolean
+  destinations: { clusterId: string; namespace: string; namespacePattern?: string }[]
   profile: { enabled: boolean; confirmShared: boolean; namespacePrefix?: string; hostSuffix?: string; maxActive: number; maxLifetimeHours: number; quotaCpu?: string; quotaMemory?: string; databaseStrategy?: string; approvalActors: Record<string, string> }
 }
 

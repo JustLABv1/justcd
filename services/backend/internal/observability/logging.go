@@ -14,7 +14,8 @@ import (
 )
 
 // NewLogHandler retains redacted error diagnostics. Callers must still avoid
-// logging raw response bodies, manifests, or renderer output as errors.
+// logging raw response bodies or manifests as errors. Renderer stderr is
+// accepted only via LogDiagnostic and redacted before reaching the handler.
 func NewLogHandler(next slog.Handler) slog.Handler {
 	return redactingHandler{next: next}
 }
@@ -102,7 +103,14 @@ func redactAttr(attr slog.Attr) slog.Attr {
 					// user values, or PostgreSQL message/detail fields.
 					return slog.Group(attr.Key, slog.String("type", reflect.TypeOf(err).String()), slog.String("sqlstate", databaseError.Code))
 				}
-				return slog.String(attr.Key, redactErrorMessage(err.Error()))
+				message := err.Error()
+				var diagnostic interface{ LogDiagnostic() string }
+				if errors.As(err, &diagnostic) {
+					if detail := diagnostic.LogDiagnostic(); detail != "" {
+						message += ": " + detail
+					}
+				}
+				return slog.String(attr.Key, redactErrorMessage(message))
 			}
 		}
 		return slog.String(attr.Key, "redacted")

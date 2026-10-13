@@ -190,8 +190,11 @@ func (s *Server) validateRepositoryPRDeployment(ctx context.Context, c store.Sou
 		return err
 	}
 
-	if !repo.Enabled || !repo.PRSettings.Enabled || v.Mode == "review-only" || v.Number != review.Number || v.DefinitionRemoved || v.ApplicationID == nil || *v.ApplicationID != app.ID || v.HeadSHA != review.HeadSHA || app.Revision != review.HeadSHA || review.Fork {
+	if !repo.Enabled || !repo.PRSettings.Enabled || v.Mode != repo.PRSettings.Mode || v.Mode == "review-only" || v.Number != review.Number || v.DefinitionRemoved || v.ApplicationID == nil || *v.ApplicationID != app.ID || v.HeadSHA != review.HeadSHA || app.Revision != review.HeadSHA || review.Fork {
 		return errors.New("repository PR policy does not permit this deployment")
+	}
+	if app.CreateNamespaces && (len(app.Namespaces) != 1 || !repo.PRSettings.AllowsNamespaceCreation(app.ClusterID, app.Namespaces[0].Namespace)) {
+		return errors.New("repository PR policy no longer permits namespace creation")
 	}
 	trusted, err := s.repositoryPRConnection(ctx, repo)
 	if err != nil || trusted.Provider != c.Provider || trusted.APIURL != c.APIURL || trusted.Repository != c.Repository || app.SourceID != repo.SourceID {

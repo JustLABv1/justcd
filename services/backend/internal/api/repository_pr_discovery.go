@@ -179,8 +179,14 @@ func (s *Server) discoverRepositoryPRs(ctx context.Context, repo store.Repositor
 				if tracked[definition.Metadata.Name] {
 					continue
 				}
+				// Branch YAML requests creation; only the owner's repository policy
+				// may authorize it. Resolution never persists a binding itself.
+				definition.Spec.Destination.CreateNamespaces = definition.Spec.Destination.CreateNamespaces && repo.PRSettings.AllowNamespaceCreation && repo.PRSettings.Mode == "existing"
 				app, err := s.Syncer.ResolveRepositoryDefinition(ctx, repo, definition)
 				if err != nil {
+					if strings.Contains(err.Error(), "requires an existing workspace binding") {
+						return fmt.Errorf("PR #%d: %w; automatic PR registration requires Allow creation of matching dev namespaces in repository settings and createNamespaces: true in justcd.yaml", event.Number, err)
+					}
 					return fmt.Errorf("PR #%d: %w", event.Number, err)
 				}
 				if !repo.PRSettings.Allows(app.ClusterID, definition.Spec.Destination.Namespace) {
@@ -204,7 +210,6 @@ func (s *Server) discoverRepositoryPRs(ctx context.Context, repo store.Repositor
 				app.SyncPolicy = "manual"
 				app.AutoSyncPaused = true
 				app.PollSeconds = 86400
-				app.CreateNamespaces = false
 				if repo.PRSettings.Mode != "existing" {
 					app.Name = fmt.Sprintf("%s-mr-%d-%s", app.Name, event.Number, conn.ID[:8])
 					if len(app.Name) > 100 {

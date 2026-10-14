@@ -21,18 +21,9 @@ import { Textarea } from "@/components/ui/textarea"
 import { CheckboxCard, EmptyState, Panel, StatusBadge } from "@/components/ui-kit"
 import type { Change, FieldExclusion, Identity, IgnoreRule, PlanApprovalSummary, PlanRecord } from "@/lib/types"
 
-const changeIdentityKey = (change: Change) => diffId(change.identity)
-
 const kindTone = { create: "success-light", update: "info-light", delete: "destructive-light" } as const
-const countTone = {
-  create: "border-success/15 bg-success/10 text-success-foreground dark:text-success",
-  update: "border-info/15 bg-info/10 text-info-foreground dark:text-info",
-  delete: "border-destructive/15 bg-destructive/10 text-destructive-foreground dark:text-destructive",
-} as const
 
-function ChangeCount({ label, count, kind }: { label: string; count: number; kind: keyof typeof countTone }) {
-  return <div className={`rounded-lg border px-3 py-2 ${countTone[kind]}`}><span className="text-lg font-semibold tabular-nums">{count}</span><span className="ml-2 text-sm font-medium">{label}</span></div>
-}
+const changeIdentityKey = (change: Change) => diffId(change.identity)
 
 function PlanLoading({ label }: { label: string }) {
   return <div role="status" aria-label={label} className="space-y-4 p-5 sm:p-6"><span className="sr-only">{label}…</span><div aria-hidden="true" className="space-y-3"><Skeleton className="h-5 w-2/3 max-w-72 motion-reduce:animate-none" /><Skeleton className="h-4 w-full max-w-lg motion-reduce:animate-none" /><Skeleton className="h-4 w-4/5 max-w-md motion-reduce:animate-none" /></div></div>
@@ -177,7 +168,7 @@ export function ChangesTab({ workspaceId, plans, activePlan, onSelectPlan, plans
           <div className="mb-4 flex flex-wrap items-center gap-2"><StatusBadge status={activePlan.status} /><span className="font-mono text-xs text-muted-foreground">{activePlan.plan.revision.slice(0, 12)}</span><span className="text-sm text-muted-foreground">· expires {new Date(activePlan.expiresAt).toLocaleTimeString()}</span><span className="ml-auto font-mono text-xs text-muted-foreground">{activePlan.plan.digest.slice(0, 16)}</span></div>
           {activePlan.trigger && <p className="mb-4 break-all text-sm text-muted-foreground">Triggered by {activePlan.trigger.provider} push to <code>{activePlan.trigger.ref}</code> · delivery <code>{activePlan.trigger.deliveryId}</code> · reported <code>{activePlan.trigger.reportedCommit.slice(0, 12)}</code>{activePlan.trigger.reportedCommit !== activePlan.plan.revision ? " · branch advanced before planning" : ""}</p>}
           {activePlan.plan.rollback && <section className="mb-5 rounded-lg border bg-muted/30 p-3.5 text-sm leading-6"><div className="flex items-center gap-2 font-semibold"><HugeiconsIcon icon={Alert02Icon} strokeWidth={2} aria-hidden="true" className="size-4 text-warning-foreground dark:text-warning" />Rollback target · {activePlan.plan.rollback.kind === "successful_sync" ? "successful deployment" : activePlan.plan.rollback.kind === "pre_operation" ? "state before an interrupted operation" : "Git revision"}</div><p className="mt-1">{activePlan.plan.rollback.revision ? `Resolved commit ${activePlan.plan.rollback.revision.slice(0, 12)}.` : "This checkpoint has no historical successful commit; the application ref will remain paused."}{activePlan.plan.rollback.createdAt ? ` Captured ${new Date(activePlan.plan.rollback.createdAt).toLocaleString()}.` : ""}{activePlan.plan.rollback.operationId ? ` Operation ${activePlan.plan.rollback.operationId.slice(0, 8)}.` : ""} {activePlan.plan.rollback.resourceCount !== undefined ? `${activePlan.plan.rollback.resourceCount} resources in target.` : ""}</p><p className="mt-2 font-medium">Kubernetes resources cannot be changed atomically. This diff may contain creations, updates, and deletions; a failure can leave a visible partial result.</p>{(activePlan.plan.ignored?.length ?? 0) > 0 && <p className="mt-2">{activePlan.plan.ignored?.length} difference{activePlan.plan.ignored?.length === 1 ? " is" : "s are"} limited by the application&apos;s current ignore rules.</p>}</section>}
-          <div className="mb-5 grid grid-cols-3 gap-2"><ChangeCount label="Create" count={counts?.create ?? 0} kind="create" /><ChangeCount label="Update" count={counts?.update ?? 0} kind="update" /><ChangeCount label="Delete" count={counts?.delete ?? 0} kind="delete" /></div>
+
           {ignoreRules.length > 0 && <Disclosure className="mb-5 rounded-lg border bg-muted/10 px-4 py-3" summary={`Persistent ignore rules (${ignoreRules.length})`}>
             <p className="mb-3 text-sm text-muted-foreground">Applied to manual and Auto-safe plans. Changes invalidate reviewed plans.</p>
             <ul className="divide-y rounded-lg border bg-card">{ignoreRules.map((rule) => <li key={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3"><span className="min-w-0 flex-1 text-sm font-medium">{rule.identity.kind} {rule.identity.namespace ? `${rule.identity.namespace}/` : ""}{rule.identity.name}<span className="ml-2 font-mono text-xs font-normal text-muted-foreground">{rule.path || "entire resource"}</span><span className="mt-1 block text-sm font-normal text-muted-foreground">{rule.reason}</span></span>{rule.managedByGit ? <Badge variant="outline" radius="full">Managed by Git</Badge> : canApprove && <RowActions label={`ignore rule for ${rule.identity.kind} ${rule.identity.name}`} items={[{ label: "Remove ignore rule", destructive: true, disabled: busy, confirm: { title: `Remove ignore rule for ${rule.identity.kind} ${rule.identity.name}?`, description: "The next plan may update or delete this resource again.", confirmLabel: "Remove ignore rule", onConfirm: () => onRemoveRule(rule) } }]} />}</li>)}</ul>

@@ -10,10 +10,14 @@ import {
   type ReactNode,
 } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { FullScreenIcon } from "@hugeicons/core-free-icons"
-import { Badge } from "@/components/reui/badge"
+import { FullScreenIcon, ArrowDown01Icon } from "@hugeicons/core-free-icons"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/toast-provider"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import { Input } from "@/components/ui/input"
 import { FormSelect } from "@/components/ui/form-select"
 import { EmptyState } from "@/components/ui-kit"
@@ -61,12 +65,15 @@ export function PlanReview({
   plan?: Plan
   entries?: ReviewEntry[]
   showApprovalEvidence?: boolean
-  renderApprovalReview?: (review: (identity: Change["identity"]) => void) => ReactNode
+  renderApprovalReview?: (
+    review: (identity: Change["identity"]) => void
+  ) => ReactNode
 }) {
   const [query, setQuery] = useState(""),
     deferred = useDeferredValue(query)
   const [filter, setFilter] = useState("all"),
     [group, setGroup] = useState<ReviewGroup>("risk")
+  const [optionsOpen, setOptionsOpen] = useState(false)
   const toast = useToast(),
     root = useRef<HTMLElement>(null),
     scrollTo = useRef<((index: number) => void) | null>(null),
@@ -146,19 +153,55 @@ export function PlanReview({
             ({entries.length})
           </span>
         </h3>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => void toggleFullscreen()}
-        >
-          <HugeiconsIcon
-            icon={FullScreenIcon}
-            strokeWidth={1.8}
-            aria-hidden="true"
-          />
-          Toggle fullscreen
-        </Button>
+        <Popover open={optionsOpen} onOpenChange={setOptionsOpen}>
+          <PopoverTrigger
+            render={<Button type="button" variant="outline" size="sm" />}
+          >
+            Review options
+            <HugeiconsIcon
+              icon={ArrowDown01Icon}
+              strokeWidth={1.8}
+              aria-hidden="true"
+            />
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-72 gap-3 p-3">
+            {entries.length > 1 && (
+              <FormSelect
+                ariaLabel="Group resources"
+                value={group}
+                onValueChange={(value) => setGroup(value as ReviewGroup)}
+                className="w-full"
+                items={[
+                  { value: "risk", label: "Group by risk" },
+                  { value: "action", label: "Group by action" },
+                  { value: "namespace", label: "Group by namespace" },
+                  { value: "kind", label: "Group by kind" },
+                  { value: "child", label: "Group by application child" },
+                ]}
+              />
+            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setOptionsOpen(false)
+                void toggleFullscreen()
+              }}
+            >
+              <HugeiconsIcon
+                icon={FullScreenIcon}
+                strokeWidth={1.8}
+                aria-hidden="true"
+              />
+              Toggle fullscreen
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              Search, filters, and grouping only change this view. Saved plan
+              counts and approval requirements stay the same.
+            </p>
+          </PopoverContent>
+        </Popover>
       </div>
       <div>
         {plan && <PolicyEvidence plan={plan} />}
@@ -171,27 +214,6 @@ export function PlanReview({
           />
         )}
       </div>
-      <div
-        aria-label="Immutable plan risk counts"
-        className="mb-3 flex flex-wrap gap-2"
-      >
-        {Object.entries(riskLabels).map(([risk, label]) => (
-          <Button
-            key={risk}
-            size="sm"
-            variant={filter === risk ? "secondary" : "outline"}
-            aria-pressed={filter === risk}
-            onClick={() => setFilter(filter === risk ? "all" : risk)}
-          >
-            {label} · {counts[risk as keyof typeof riskLabels]}
-          </Button>
-        ))}
-      </div>
-      <p className="mb-3 text-xs text-muted-foreground">
-        Counts describe the saved plan; risks can overlap. Search, grouping, and
-        filters only change this view. Exclusion drafts do not change these
-        counts or the plan digest.
-      </p>
       <div className="grid min-w-0 gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
         <nav
           aria-label="Plan resources"
@@ -203,37 +225,41 @@ export function PlanReview({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
-          <FormSelect
-            ariaLabel="Filter changes"
-            value={filter}
-            onValueChange={setFilter}
-            className="my-2"
-            items={[
-              { value: "all", label: "All resources" },
-              ...(["create", "update", "delete"] as const).map((value) => ({
-                value,
-                label: value[0].toUpperCase() + value.slice(1),
-              })),
-              { value: "excluded", label: "Excluded resources" },
-              ...Object.entries(riskLabels).map(([value, label]) => ({
-                value,
-                label,
-              })),
-            ]}
-          />
-          <FormSelect
-            ariaLabel="Group resources"
-            value={group}
-            onValueChange={(value) => setGroup(value as ReviewGroup)}
-            className="mb-2"
-            items={[
-              { value: "risk", label: "Group by risk" },
-              { value: "action", label: "Group by action" },
-              { value: "namespace", label: "Group by namespace" },
-              { value: "kind", label: "Group by kind" },
-              { value: "child", label: "Group by application child" },
-            ]}
-          />
+          {entries.length > 1 && (
+            <FormSelect
+              ariaLabel="Filter changes"
+              value={filter}
+              onValueChange={setFilter}
+              className="my-2"
+              items={[
+                { value: "all", label: "All resources" },
+                ...(["create", "update", "delete"] as const)
+                  .filter((kind) =>
+                    entries.some(
+                      (entry) => !entry.ignored && entry.change.kind === kind
+                    )
+                  )
+                  .map((value) => ({
+                    value,
+                    label: value[0].toUpperCase() + value.slice(1),
+                  })),
+                ...(entries.some((entry) => entry.ignored)
+                  ? [{ value: "excluded", label: "Excluded resources" }]
+                  : []),
+                ...Object.entries(riskLabels)
+                  .filter(
+                    ([value]) =>
+                      value !== "deletion" &&
+                      counts[value as keyof typeof riskLabels] > 0
+                  )
+                  .map(([value, label]) => ({
+                    value,
+                    label: `${label} (${counts[value as keyof typeof riskLabels]})`,
+                  })),
+              ]}
+            />
+          )}
+
           <p
             className="mb-2 text-sm text-muted-foreground"
             role="status"
@@ -279,7 +305,7 @@ export function PlanReview({
                 start = i === 0 || groupLabel(matching[i - 1], group) !== label
               return (
                 <>
-                  {start && (
+                  {start && matching.length > 1 && (
                     <h4 className="mt-2 mb-1 px-2 text-xs font-semibold text-muted-foreground uppercase">
                       {label}
                     </h4>
@@ -305,41 +331,31 @@ export function PlanReview({
                         {entry.change.identity.namespace || "cluster"}
                         {entry.child ? ` · ${entry.child}` : ""}
                       </span>
-                      <span className="mt-2 flex flex-wrap items-center gap-1">
-                        <Badge
-                          variant={
+                      <span className="mt-1 block text-xs text-muted-foreground">
+                        <span
+                          className={
                             entry.ignored
-                              ? "secondary"
-                              : entry.change.kind === "delete"
-                                ? "destructive-light"
-                                : "info-light"
+                              ? "text-muted-foreground"
+                              : entry.change.kind === "create"
+                                ? "text-success-foreground dark:text-success"
+                                : entry.change.kind === "delete"
+                                  ? "text-destructive"
+                                  : "text-info-foreground dark:text-info"
                           }
-                          radius="full"
                         >
                           {entry.ignored
                             ? "Excluded · not applied"
                             : entry.change.kind}
-                        </Badge>
+                        </span>
                         {entry.risks
-                          .filter((r) => r !== "ordinary")
-                          .map((r) => (
-                            <Badge
-                              key={r}
-                              variant={
-                                r === "deletion"
-                                  ? "destructive-light"
-                                  : "warning-light"
-                              }
-                              radius="full"
-                            >
-                              {riskLabels[r]}
-                            </Badge>
-                          ))}
-                        {!entry.ignored && isExcluded(entry.change) && (
-                          <Badge variant="outline" radius="full">
-                            Exclusion draft
-                          </Badge>
-                        )}
+                          .filter(
+                            (risk) => risk !== "ordinary" && risk !== "deletion"
+                          )
+                          .map((risk) => ` · ${riskLabels[risk]}`)
+                          .join("")}
+                        {!entry.ignored &&
+                          isExcluded(entry.change) &&
+                          " · Exclusion draft"}
                       </span>
                     </span>
                   </Button>

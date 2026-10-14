@@ -1,12 +1,133 @@
 package syncer
 
 import (
+	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/justlab/justcd/services/backend/internal/core"
+	"github.com/justlab/justcd/services/backend/internal/render"
+	"github.com/justlab/justcd/services/backend/internal/store"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
+
+func TestAdoptionReviewBindsSourceInputs(t *testing.T) {
+	source := store.GitSource{ID: "source", RepositoryURL: "https://example.com/repo.git"}
+	options := render.Options{RepositoryRoot: "/checkout/one", ManifestPath: "chart", Renderer: "helm", ApplicationID: "app", ClusterID: "cluster", Namespaces: []core.Binding{{Namespace: "team"}}}
+	want, err := adoptionReviewFingerprint(source, "main", "commit-a", options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*store.GitSource, *string, *string, *render.Options)
+	}{
+		{"commit", func(_ *store.GitSource, _ *string, commit *string, _ *render.Options) { *commit = "commit-b" }},
+		{"revision", func(_ *store.GitSource, revision *string, _ *string, _ *render.Options) { *revision = "other" }},
+		{"repository", func(s *store.GitSource, _, _ *string, _ *render.Options) { s.RepositoryURL += "/other" }},
+		{"source", func(s *store.GitSource, _, _ *string, _ *render.Options) { s.ID = "other" }},
+		{"values", func(_ *store.GitSource, _, _ *string, o *render.Options) { o.HelmValuesYAML = "replicas: 2" }},
+		{"target values", func(_ *store.GitSource, _, _ *string, o *render.Options) { o.TargetHelmValuesYAML = "replicas: 2" }},
+		{"namespace values", func(_ *store.GitSource, _, _ *string, o *render.Options) {
+			o.NamespaceHelmValues = map[string]core.HelmValuesOverride{"team": {YAML: "replicas: 2"}}
+		}},
+		{"path", func(_ *store.GitSource, _, _ *string, o *render.Options) { o.ManifestPath = "other" }},
+		{"renderer", func(_ *store.GitSource, _, _ *string, o *render.Options) { o.Renderer = "yaml" }},
+		{"release", func(_ *store.GitSource, _, _ *string, o *render.Options) { o.HelmReleaseName = "other" }},
+		{"namespace", func(_ *store.GitSource, _, _ *string, o *render.Options) {
+			o.Namespaces = []core.Binding{{Namespace: "other"}}
+		}},
+		{"ignored resources", func(_ *store.GitSource, _, _ *string, o *render.Options) {
+			o.IgnoredResources = []core.Identity{{Kind: "Secret", Name: "credentials"}}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, revision, commit, o := source, "main", "commit-a", options
+			tc.mutate(&s, &revision, &commit, &o)
+			got, err := adoptionReviewFingerprint(s, revision, commit, o)
+			if err != nil || got == want {
+				t.Fatalf("changed source inputs did not change review: %v", err)
+			}
+			fresh := OwnershipConflict{Identity: core.Identity{Kind: "Deployment", Name: "grafana"}, ReviewFingerprint: got}
+			expected := fresh
+			expected.ReviewFingerprint = want
+			if err := validateAdoptionConflict(&fresh, &expected, "app"); !errors.Is(err, ErrAdoptionStale) {
+				t.Fatalf("source change accepted: %v", err)
+			}
+		})
+	}
+	options.RepositoryRoot = "/checkout/two"
+	options.Mapper = meta.NewDefaultRESTMapper(nil)
+	if got, err := adoptionReviewFingerprint(source, "main", "commit-a", options); err != nil || got != want {
+		t.Fatalf("checkout/discovery changed review fingerprint: %v", err)
+	}
+}
+
+func TestAdoptionAllowsRandomHelmOutputForUnchangedSource(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm is required")
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "templates"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string]string{
+		"Chart.yaml":                "apiVersion: v2\nname: grafana\nversion: 0.1.0\n",
+		"templates/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: grafana\nspec:\n  template:\n    metadata:\n      annotations:\n        checksum/secret: {{ randAlphaNum 40 | sha256sum | quote }}\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gv := schema.GroupVersion{Group: "apps", Version: "v1"}
+	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{gv})
+	mapper.Add(gv.WithKind("Deployment"), meta.RESTScopeNamespace)
+	options := render.Options{RepositoryRoot: root, ManifestPath: ".", Renderer: "helm", ApplicationID: "app", ClusterID: "cluster", Namespaces: []core.Binding{{Namespace: "team"}}, Mapper: mapper}
+	fingerprint, err := adoptionReviewFingerprint(store.GitSource{ID: "source"}, "main", "commit", options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renderConflict := func() OwnershipConflict {
+		t.Helper()
+		resources, err := render.Render(context.Background(), options)
+		if err != nil || len(resources) != 1 {
+			t.Fatalf("render: %v (%d resources)", err, len(resources))
+		}
+		return OwnershipConflict{Identity: resources[0].Identity, UID: "uid", ResourceVersion: "27", DesiredFingerprint: resources[0].Fingerprint, DesiredManifest: resources[0].Manifest, ReviewFingerprint: fingerprint}
+	}
+	expected, fresh := renderConflict(), renderConflict()
+	if expected.DesiredFingerprint == fresh.DesiredFingerprint {
+		t.Fatal("fixture must generate different output on each render")
+	}
+	if _, err := validateAdoptionSelection([]*OwnershipConflict{&fresh}, []OwnershipConflict{expected}, "app"); err != nil {
+		t.Fatalf("random output blocked ownership-only adoption: %v", err)
+	}
+	for name, mutate := range map[string]func(*OwnershipConflict){
+		"replacement": func(c *OwnershipConflict) { c.UID = "other" },
+		"live update": func(c *OwnershipConflict) { c.ResourceVersion = "28" },
+		"owner":       func(c *OwnershipConflict) { c.Owner = "other-app" },
+		"dependent":   func(c *OwnershipConflict) { c.HasOwnerReferences = true },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := fresh
+			mutate(&changed)
+			if err := validateAdoptionConflict(&changed, &expected, "app"); err == nil {
+				t.Fatal("unsafe adoption accepted")
+			}
+		})
+	}
+	legacy := expected
+	legacy.ReviewFingerprint = ""
+	legacy.DesiredFingerprint = fresh.DesiredFingerprint
+	if err := validateAdoptionConflict(&fresh, &legacy, "app"); !errors.Is(err, ErrAdoptionStale) {
+		t.Fatalf("old client must refresh its review: %v", err)
+	}
+}
 
 func TestValidateAdoptionConflict(t *testing.T) {
 	base := OwnershipConflict{Identity: core.Identity{ClusterID: "cluster", APIVersion: "apps/v1", Kind: "Deployment", Namespace: "team", Name: "ntfy"}, UID: "uid-1", ResourceVersion: "27", DesiredFingerprint: "git-hash"}

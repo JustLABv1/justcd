@@ -220,6 +220,12 @@ pauses automatic reconciliation. Refresh and review a new plan before syncing.
 Objects owned by an existing application, including another workspace's
 application, or carrying Kubernetes owner references remain blocked.
 
+The ownership review is bound to the resolved Git commit and renderer settings,
+including Helm values and namespace targets. Randomly generated Helm secrets or
+checksums do not invalidate an otherwise unchanged ownership review. Takeover
+does not apply these generated values or overwrite existing credentials. After
+upgrading JustCD, refresh any ownership review opened before the upgrade.
+
 ## Creating target namespaces
 
 Set `spec.destination.createNamespaces: true` to let JustCD create a missing

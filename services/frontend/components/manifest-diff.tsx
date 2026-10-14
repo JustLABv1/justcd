@@ -45,7 +45,7 @@ export function ManifestDiff({
   const search = useDeferredValue(query)
   const optionsId = useId()
   const singleSide = before == null || after == null
-  const split = mode === "split"
+  const split = !singleSide && mode === "split"
   const rows = useMemo(() => reviewRows(before, after), [before, after])
   const visible = useMemo(() => contextRows(rows), [rows])
   const hunks = useMemo(
@@ -154,16 +154,28 @@ export function ManifestDiff({
   return (
     <section aria-label="Manifest comparison">
       <div className="flex flex-wrap items-center gap-2 border-b p-3">
-        <ToggleGroup
-          aria-label="Diff layout"
-          value={[mode]}
-          onValueChange={(next) => {
-            if (next[0]) setMode(next[0])
-          }}
-        >
-          <ToggleGroupItem value="split">Side by side</ToggleGroupItem>
-          <ToggleGroupItem value="unified">Unified</ToggleGroupItem>
-        </ToggleGroup>
+        {!singleSide && (
+          <ToggleGroup
+            aria-label="Diff layout"
+            value={[mode]}
+            onValueChange={(next) => {
+              if (next[0]) setMode(next[0])
+            }}
+          >
+            <ToggleGroupItem
+              className="data-pressed:bg-muted data-pressed:text-foreground"
+              value="split"
+            >
+              Side by side
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              className="data-pressed:bg-muted data-pressed:text-foreground"
+              value="unified"
+            >
+              Unified
+            </ToggleGroupItem>
+          </ToggleGroup>
+        )}
         <Popover>
           <PopoverTrigger
             render={<Button type="button" variant="outline" size="sm" />}
@@ -173,9 +185,26 @@ export function ManifestDiff({
               strokeWidth={1.8}
               aria-hidden="true"
             />
-            View options
+            Diff options{query ? " · Search active" : ""}
           </PopoverTrigger>
-          <PopoverContent align="start" className="w-80 gap-3 p-3">
+          <PopoverContent
+            align="start"
+            className="w-80 max-w-[calc(100vw-2rem)] gap-3 p-3"
+          >
+            <label
+              htmlFor={`${optionsId}-search`}
+              className="text-sm font-medium"
+            >
+              Search diff text
+            </label>
+            <Input
+              id={`${optionsId}-search`}
+              aria-label="Search manifest diff"
+              placeholder="Search diff text…"
+              className="w-full"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
             <div className="space-y-1.5">
               <p id={`${optionsId}-font`} className="text-sm font-medium">
                 Code font size
@@ -215,13 +244,7 @@ export function ManifestDiff({
             />
           </PopoverContent>
         </Popover>
-        <Input
-          aria-label="Search manifest diff"
-          placeholder="Search diff text…"
-          className="w-48"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
+
         {search && (
           <span role="status" className="text-sm text-muted-foreground">
             {matches.length} matching lines
@@ -235,8 +258,8 @@ export function ManifestDiff({
           </span>
           <Button
             type="button"
-            variant="outline"
-            size="icon"
+            variant="ghost"
+            size="icon-sm"
             aria-label="Previous change"
             disabled={!hunks.length}
             onClick={() => jump(-1)}
@@ -249,8 +272,8 @@ export function ManifestDiff({
           </Button>
           <Button
             type="button"
-            variant="outline"
-            size="icon"
+            variant="ghost"
+            size="icon-sm"
             aria-label="Next change"
             disabled={!hunks.length}
             onClick={() => jump(1)}
@@ -271,7 +294,7 @@ export function ManifestDiff({
           <span>Live before</span>
           <span>{excluded ? "Git reference · excluded" : "Desired after"}</span>
         </div>
-        {singleSide && (
+        {singleSide && excluded && (
           <p className="border-b px-4 py-3 font-sans text-sm text-muted-foreground">
             {before == null
               ? excluded

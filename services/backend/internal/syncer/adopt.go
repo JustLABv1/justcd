@@ -2,6 +2,8 @@ package syncer
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +18,27 @@ import (
 
 var ErrAdoptionStale = errors.New("resource or Git changed; refresh the ownership conflict")
 var ErrAdoptionUnsafe = errors.New("resource cannot be safely adopted")
+
+// Adoption claims only a label, so bind its review to the source inputs rather
+// than generated output (Helm charts can generate random secrets/checksums).
+// Workload changes still require their own freshly reviewed apply plan.
+func adoptionReviewFingerprint(source store.GitSource, revision, commit string, options render.Options) (string, error) {
+	// These vary between checkouts/discovery and are not renderer configuration.
+	options.RepositoryRoot = ""
+	options.Mapper = nil
+	data, err := json.Marshal(struct {
+		SourceID      string
+		RepositoryURL string
+		Revision      string
+		Commit        string
+		Options       render.Options
+	}{source.ID, source.RepositoryURL, revision, commit, options})
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return "source-v1:" + hex.EncodeToString(sum[:]), nil
+}
 
 // AdoptResource claims only the JustCD ownership label. It never applies the
 // desired workload manifest. A fresh, manual plan is required for that step.
@@ -192,7 +215,11 @@ func validateAdoptionConflict(fresh, expected *OwnershipConflict, applicationID 
 	if fresh.ResourceVersion != expected.ResourceVersion {
 		return fmt.Errorf("%w: %s changed in Kubernetes (resource version %s -> %s)", ErrAdoptionStale, target, expected.ResourceVersion, fresh.ResourceVersion)
 	}
-	if fresh.DesiredFingerprint != expected.DesiredFingerprint {
+	if fresh.ReviewFingerprint != "" {
+		if fresh.ReviewFingerprint != expected.ReviewFingerprint {
+			return fmt.Errorf("%w: the Git revision or renderer configuration for %s changed; refresh the ownership review", ErrAdoptionStale, target)
+		}
+	} else if fresh.DesiredFingerprint != expected.DesiredFingerprint {
 		return fmt.Errorf("%w: the rendered Git manifest for %s changed", ErrAdoptionStale, target)
 	}
 	if fresh.Owner != "" && fresh.Owner != applicationID && !fresh.OwnerMissing {

@@ -54,6 +54,21 @@ test("collapsed standalone workloads share a compact band without overlapping", 
   positions.forEach((a, i) => positions.slice(i + 1).forEach(b => assert.ok(a.x + nodeWidth <= b.x || b.x + nodeWidth <= a.x || a.y + nodeHeight <= b.y || b.y + nodeHeight <= a.y)))
 })
 
+test("pod summaries increase only workload height while compact resources stack without overlap", () => {
+  const nodes = [node("web"), node("service", "Service"), node("a", "ConfigMap"), node("b", "Secret")]
+  const graph = { nodes, edges: [edge("service", "web", "selects"), edge("web", "a"), edge("web", "b")] }
+  const heights = new Map([["web", 190]])
+  const layout = topologyLayout(graph, nodes, heights)
+  assert.equal(layout.heights.get("web"), 190)
+  assert.equal(layout.heights.get("service") ?? nodeHeight, 124)
+  const config = layout.positions.get("a"), secret = layout.positions.get("b")
+  assert.equal(secret.y - config.y, nodeHeight + 24)
+  nodes.forEach((a, i) => nodes.slice(i + 1).forEach(b => {
+    const pa = layout.positions.get(a.id), pb = layout.positions.get(b.id)
+    assert.ok(pa.x + nodeWidth <= pb.x || pb.x + nodeWidth <= pa.x || pa.y + (heights.get(a.id) ?? nodeHeight) <= pb.y || pb.y + (heights.get(b.id) ?? nodeHeight) <= pa.y)
+  }))
+})
+
 
 test("application counts exclude generated children but include explicitly tracked Pods and ReplicaSets", () => {
  const graph = { nodes: [node("app", "Deployment", { tracked: true, source: "kubernetes" }), node("generated", "ReplicaSet", { tracked: false, source: "kubernetes" }), node("pod", "Pod", { tracked: false, source: "kubernetes" }), node("declared", "ReplicaSet", { tracked: true, source: "kubernetes" }), node("standalone", "Pod", { tracked: true })], edges: [edge("app", "generated", "owns"), edge("generated", "pod", "owns"), edge("app", "declared", "owns")] }

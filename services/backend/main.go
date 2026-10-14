@@ -112,6 +112,7 @@ func runCommand(logger *slog.Logger, args []string) error {
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stopSignals()
 	lifecycle.Start(func(ctx, _ context.Context) { server.Syncer.RunPoller(ctx, logger) })
+	lifecycle.Start(func(ctx, _ context.Context) { server.Syncer.RunRuntimePoller(ctx, logger) })
 	lifecycle.Start(func(ctx, _ context.Context) { server.Syncer.RunRepositoryPoller(ctx, logger) })
 	lifecycle.Start(func(ctx, executionCtx context.Context) {
 		server.Syncer.RunOperationWorkerWithDrain(ctx, executionCtx, logger)

@@ -54,7 +54,7 @@ func (s *Server) applicationTopology(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	if !hasSample && (r.URL.Query().Get("refresh") == "1" || (r.URL.Query().Get("cached") != "1" && stale)) && len(managed) > 0 {
+	if !hasSample && (r.URL.Query().Get("refresh") == "1" || (r.URL.Query().Get("cached") != "1" && stale)) {
 		if err := s.Syncer.RefreshApplicationHealth(r.Context(), app); err != nil {
 			s.Logger.Warn("topology observation incomplete", "applicationId", app.ID, "error", err)
 			warning = "Live descendants could not be fully observed. Check namespace read permissions or cluster connectivity."
@@ -71,6 +71,9 @@ func (s *Server) applicationTopology(w http.ResponseWriter, r *http.Request) {
 	}
 	if warning != "" {
 		graph.Warnings = append(graph.Warnings, warning)
+	}
+	if len(managed) == 0 && !hasSample {
+		graph.Warnings = append(graph.Warnings, "No managed workloads to observe. Desired resources and adoption conflicts do not include live pods; review and claim the intended existing resources, or deploy this application first.")
 	}
 	writeJSON(w, http.StatusOK, graph)
 }

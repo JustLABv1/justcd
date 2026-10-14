@@ -1936,6 +1936,28 @@ func (s *Store) UpdateApplicationGroup(ctx context.Context, group ApplicationGro
 	return tx.Commit()
 }
 
+func (s *Store) DueRuntimeApplications(ctx context.Context, limit int) ([]Application, error) {
+	if limit < 1 || limit > 100 {
+		limit = 25
+	}
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+applicationColumns+` FROM applications
+		WHERE health_condition_observed_at IS NULL OR health_condition_observed_at <= NOW()-INTERVAL '15 seconds'
+		ORDER BY health_condition_observed_at ASC NULLS FIRST LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Application{}
+	for rows.Next() {
+		app, err := scanApplication(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, app)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) DueApplications(ctx context.Context, limit int) ([]Application, error) {
 	if limit < 1 || limit > 100 {
 		limit = 25

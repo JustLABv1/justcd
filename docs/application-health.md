@@ -57,8 +57,13 @@ are always `Unknown`, never live `Healthy`.
 
 ## Observation and history
 
-The poller refreshes workload health along with application checks, and the
-resource-topology refresh updates it immediately. Observation reads namespaced
+An independent runtime poller checks for observations due every 15 seconds,
+including applications whose auto-sync is paused or whose operations are still
+running. Git polling intervals and reconciliation retry states do not gate it.
+Application checks and resource-topology refreshes also request observations.
+An application-scoped PostgreSQL advisory lock serializes observers across API
+requests and backend replicas; observations less than ten seconds old are reused.
+Observation reads namespaced
 managed resources as well as workload descendants, retaining only bounded
 status fields, labels, and ownership metadata. Kubernetes conditions expose
 type, status, reason, message, and last-transition time; replica/completion
@@ -80,6 +85,20 @@ change time. JustCD retains at most the latest 100 transitions per application.
 ## Application UI
 
 The application heading shows separate Sync and Runtime badges on every tab.
+Runtime freshness uses the health condition's `observedAt`, rather than the Git
+reconciliation check time, and marks observations older than 60 seconds stale.
+The detail page reloads topology and health history every five seconds while
+visible, resumes immediately on tab visibility or network recovery, and retains
+the last topology while retrying failed requests. These updates use polling;
+Kubernetes watches and streamed browser events are not required.
+Workload cards show counts and selectable pod indicators for ready, starting,
+failing, terminating, completed, unknown, and sample states. Starting, failing,
+terminating, and unknown pods remain visible when the workload is collapsed;
+ReplicaSets and healthy pods can be expanded for details. Non-workload cards
+retain their compact height. Connections use thin orthogonal paths.
+Pod details include bounded waiting reasons, container readiness, and restart
+counts. Applications with no managed resources show an explanation that existing
+resources must first be claimed or deployed; observation never adopts resources.
 The health details dialog explains partial assessment; configuration resources
 show "No workload health check" in the resource graph instead of suggesting
 missing workload status.

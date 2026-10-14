@@ -43,7 +43,7 @@ export function relatedNodes(graph: ResourceTopology, selected: string): Set<str
 }
 
 export const nodeWidth = 280, nodeHeight = 124
-export function topologyLayout(graph: ResourceTopology, nodes: TopologyNode[]) {
+export function topologyLayout(graph: ResourceTopology, nodes: TopologyNode[], heights = new Map<string, number>()) {
   const anchors = graph.nodes.filter(workload).sort((a, b) => a.id.localeCompare(b.id))
   const owners = new Map<string, Set<string>>()
   for (const anchor of anchors) for (const id of relatedNodes(graph, anchor.id)) {
@@ -69,19 +69,30 @@ export function topologyLayout(graph: ResourceTopology, nodes: TopologyNode[]) {
   let y = 20, width = 340
   for (const [id, members] of [...groups].sort(([a], [b]) => (a === "unconnected" ? 2 : a === "shared" ? 1 : 0) - (b === "unconnected" ? 2 : b === "shared" ? 1 : 0) || a.localeCompare(b))) {
     const ranks = [...new Set(members.map(rank))].sort((a, b) => a - b)
-    const counts = new Map<number, number>()
-    for (const node of [...members].sort((a, b) => a.identity.kind.localeCompare(b.identity.kind) || a.identity.name.localeCompare(b.identity.name))) {
+    const bottoms = new Map<number, number>()
+    const sorted = [...members].sort((a, b) => a.identity.kind.localeCompare(b.identity.kind) || a.identity.name.localeCompare(b.identity.name))
+    const rowHeights = new Map<number, number>()
+    if (id === "workloads") sorted.forEach((node, index) => {
+      const row = Math.floor(index / 3)
+      rowHeights.set(row, Math.max(rowHeights.get(row) ?? 0, heights.get(node.id) ?? nodeHeight))
+    })
+    sorted.forEach((node, index) => {
       const compact = id === "workloads"
-      const index = members.indexOf(node)
-      const col = compact ? index % 3 : ranks.indexOf(rank(node)), row = compact ? Math.floor(index / 3) : counts.get(col) ?? 0
-      positions.set(node.id, { x: 28 + col * 352, y: y + 44 + row * 148 }); counts.set(col, row + 1)
-    }
-    const height = 44 + Math.max(...counts.values()) * 148
+      const col = compact ? index % 3 : ranks.indexOf(rank(node))
+      const row = Math.floor(index / 3)
+      const offset = compact
+        ? [...rowHeights].filter(([key]) => key < row).reduce((total, [, height]) => total + height + 24, 0)
+        : bottoms.get(col) ?? 0
+      const height = heights.get(node.id) ?? nodeHeight
+      positions.set(node.id, { x: 28 + col * 352, y: y + 44 + offset })
+      bottoms.set(col, offset + height + 24)
+    })
+    const height = 44 + Math.max(...bottoms.values())
     const anchor = graph.nodes.find((node) => node.id === id)
     bands.push({ id, label: id === "shared" ? "Shared resources" : id === "workloads" ? "Workloads" : id === "unconnected" ? "Other resources" : `${anchor?.identity.name} · ${anchor?.identity.namespace || "cluster"}`, y, height })
     width = Math.max(width, 56 + (id === "workloads" ? Math.min(3, members.length) : ranks.length) * 352 - 72); y += height + 16
   }
-  return { positions, bands, width, height: Math.max(320, y) }
+  return { positions, bands, heights, width, height: Math.max(320, y) }
 }
 
 // Tracked resources are declared or managed by JustCD. Runtime descendants stay

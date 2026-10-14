@@ -90,6 +90,24 @@ func TestObservedCustomReadinessGeneration(t *testing.T) {
 	}
 }
 
+func TestObservedPodStartupAndContainerCounters(t *testing.T) {
+	object := unstructured.Unstructured{Object: map[string]any{
+		"kind": "Pod", "metadata": map[string]any{"deletionTimestamp": "2026-10-14T10:00:00Z"},
+		"spec": map[string]any{"containers": []any{map[string]any{"name": "web"}, map[string]any{"name": "sidecar"}}},
+		"status": map[string]any{
+			"initContainerStatuses": []any{map[string]any{"restartCount": int64(2)}},
+			"containerStatuses": []any{
+				map[string]any{"ready": true, "restartCount": int64(1)},
+				map[string]any{"ready": false, "state": map[string]any{"waiting": map[string]any{"reason": "ContainerCreating"}}},
+			},
+		},
+	}}
+	details := observedHealthSummary(object)
+	if details.WaitingReason != "ContainerCreating" || details.FailureReason != "" || !details.Terminating || details.ReadyContainers != 1 || details.TotalContainers != 2 || details.RestartCount != 3 {
+		t.Fatalf("pod details = %#v", details)
+	}
+}
+
 func TestObservedOperatorSummary(t *testing.T) {
 	vault := unstructured.Unstructured{Object: map[string]any{"apiVersion": "secrets.hashicorp.com/v1beta1", "kind": "VaultStaticSecret", "metadata": map[string]any{"generation": int64(4)}, "status": map[string]any{"lastGeneration": int64(4), "secretMAC": "must-not-retain"}}}
 	details := observedHealthSummary(vault)

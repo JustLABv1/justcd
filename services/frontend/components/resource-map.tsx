@@ -10,6 +10,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { EmptyState, StatusBadge } from "@/components/ui-kit"
 import styles from "./resource-map.module.css"
+import { podLabel, podState, podSummary } from "@/lib/runtime-health"
 import { ResourceActions } from "@/components/resource-actions"
 import { DataGridList } from "@/components/data-grid-table"
 import { Input } from "@/components/ui/input"
@@ -30,6 +31,7 @@ const resourceIcons: Record<string, typeof CubeIcon> = {
 }
 const iconFor = (kind: string) => resourceIcons[kind] ?? Settings02Icon
 function health(node: TopologyNode) {
+  if (node.identity.kind === "Pod" && observed(node)) return podLabel(node)
   if (node.source === "sample") return `Sample · ${node.readiness || node.phase || "unknown"}`
   if (node.health) return node.health.message || node.health.status
   const details = node.healthSummary
@@ -48,6 +50,10 @@ function health(node: TopologyNode) {
   return node.uid ? "Health not reported" : "Not observed in cluster"
 }
 function healthTone(node: TopologyNode) {
+  if (node.identity.kind === "Pod" && observed(node)) {
+    const state = podState(node)
+    return state === "ready" || state === "completed" ? "text-success-foreground dark:text-success" : state === "failing" ? "text-destructive" : state === "starting" ? "text-warning-foreground dark:text-warning" : "text-muted-foreground"
+  }
   if (node.source === "sample") return "text-muted-foreground"
   if (node.health) return node.health.status === "Healthy" ? "font-medium text-success-foreground dark:text-success" : node.health.status === "Degraded" || node.health.status === "Missing" ? "font-medium text-destructive" : node.health.status === "Progressing" ? "font-medium text-warning-foreground dark:text-warning" : "text-muted-foreground"
   if (node.readiness === "Ready" || node.phase === "Succeeded") return "font-medium text-success-foreground dark:text-success"
@@ -97,13 +103,14 @@ export function ResourceMap({ view, onViewChange, application, plan, inventory, 
     }
     return result
   }, [graph])
-  const hidden = new Set([...children].flatMap(([id, nodes]) => expanded.has(id) || query.trim() || mode === "observed" ? [] : nodes.filter((node) => node.id !== selectedId).map((node) => node.id)))
+  const hidden = new Set([...children].flatMap(([id, nodes]) => expanded.has(id) || query.trim() || mode === "observed" ? [] : nodes.filter((node) => node.id !== selectedId && (node.identity.kind !== "Pod" || ["ready", "completed", "sample"].includes(podState(node)))).map((node) => node.id)))
   const matches = new Set(graph.nodes.filter((node) => `${node.identity.kind} ${node.identity.namespace} ${node.identity.name}`.toLowerCase().includes(query.toLowerCase())).map((node) => node.id))
   const shown = graph.nodes.filter((node) => !hidden.has(node.id) && (!focus || !selectedId || related.has(node.id)) && (mode === "all" || (mode === "observed" ? observed(node) : ["create", "update", "delete", "failed", "syncing"].includes(stateFor(node)))))
-  const layout = topologyLayout(graph, shown)
+  const heights = new Map([...children].filter(([, nodes]) => nodes.length > 0).map(([id]) => [id, 190]))
+  const layout = topologyLayout(graph, shown, heights)
   function center(id: string, scale = zoom) {
     const point = layout.positions.get(id), el = viewport.current
-    if (point && el) el.scrollTo({ left: Math.max(0, (point.x + nodeWidth / 2) * scale - el.clientWidth / 2), top: Math.max(0, (point.y + nodeHeight / 2) * scale - el.clientHeight / 2) })
+    if (point && el) el.scrollTo({ left: Math.max(0, (point.x + nodeWidth / 2) * scale - el.clientWidth / 2), top: Math.max(0, (point.y + (heights.get(id) ?? nodeHeight) / 2) * scale - el.clientHeight / 2) })
   }
   function fit() {
     const el = viewport.current
@@ -155,6 +162,7 @@ export function ResourceMap({ view, onViewChange, application, plan, inventory, 
     {query && <p role="status" className="px-5 py-2 text-sm text-muted-foreground">{matches.size} matching resources</p>}
     {(running || operation?.status === "failed") && <div role="status" className="border-b bg-muted/30 px-5 py-3 text-sm"><strong>{operation?.type === "rollback" ? "Rollback" : "Sync"} {operation?.status === "failed" ? "stopped" : operation?.status === "queued" ? "queued" : "running"}</strong> · {operation?.progress?.completed?.length ?? 0}/{operation?.progress?.total ?? 0} resource steps completed{operation?.progress?.current ? ` · ${operation.progress.current.kind}/${operation.progress.current.name}` : ""}<span className="mt-1 block text-muted-foreground">Applied does not mean Healthy. {operation?.status === "failed" ? operation.message : ""}</span></div>}
     {(notice || graph.warnings.length > 0) && <p role="status" className="border-b px-5 py-3 text-sm text-warning-foreground dark:text-warning">{[notice, ...graph.warnings].filter(Boolean).join(" · ")}</p>}
+    {inventory.length === 0 && !graph.nodes.some((node) => node.source === "sample") && !graph.warnings.some((warning) => warning.startsWith("No managed workloads")) && <p role="status" className="border-b px-5 py-3 text-sm text-muted-foreground">No managed workloads to observe. Review and claim the intended existing resources, or deploy this application first, to see live pods.</p>}
     <div className={`grid min-w-0 ${selected ? "xl:grid-cols-[minmax(0,1fr)_360px]" : ""}`}>
       {view === "list" ? <div className="min-w-0 p-4"><DataGridList rows={graph.nodes.filter((node) => (!query.trim() || matches.has(node.id)) && (mode === "all" || mode === "observed" && observed(node) || mode === "changes" && ["create", "update", "delete", "failed"].includes(stateFor(node))) && (!focus || !selected || related.has(node.id)))} columns={[
         { id: "resource", title: "Resource", cell: (node) => <Button variant="link" className="h-auto max-w-full justify-start whitespace-normal p-0 text-left" onClick={() => setSelectedId(node.id)} aria-current={selectedId === node.id ? "true" : undefined}>{node.identity.name}</Button> },
@@ -172,43 +180,40 @@ export function ResourceMap({ view, onViewChange, application, plan, inventory, 
         {!shown.length ? <div className="grid min-h-full place-items-center"><EmptyState title={graph.nodes.length ? "No matching resources" : "No resources to show yet"} description={graph.nodes.length ? "Try another filter to see resources in this view." : "Build a plan to discover resources and their relationships."} /></div> : <div style={{ width: layout.width * zoom, height: layout.height * zoom }}><div className="relative origin-top-left" style={{ width: layout.width, height: layout.height, transform: `scale(${zoom})` }}>
           {layout.bands.map((band) => <div key={band.id} className="pointer-events-none absolute" style={{ left: 28, top: band.y, width: layout.width - 56, height: band.height }}><h3 className="inline-flex rounded-full border border-border/70 bg-card/90 px-3 py-1 text-xs font-medium tracking-wide text-muted-foreground">{band.label}</h3></div>)}
           <svg aria-hidden="true" className="pointer-events-none absolute inset-0" width={layout.width} height={layout.height}>
-            <defs><marker id={marker} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0L7 3.5L0 7Z" fill="context-stroke" /></marker></defs>
+            <defs><marker id={marker} markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto"><path d="M1 1L5 3.5L1 6" fill="none" stroke="context-stroke" strokeWidth="1.2" /></marker></defs>
             {graph.edges.map((edge, index) => {
               const a = layout.positions.get(edge.from), b = layout.positions.get(edge.to)
               if (!a || !b) return null
               const forward = b.x > a.x, sameColumn = a.x === b.x
-              const x1 = a.x + (forward || sameColumn ? nodeWidth : 0), x2 = b.x + (forward ? 0 : nodeWidth), y1 = a.y + nodeHeight / 2, y2 = b.y + nodeHeight / 2
-              const siblingFrom = graph.edges.filter((candidate) => candidate.from === edge.from)
-              const siblingTo = graph.edges.filter((candidate) => candidate.to === edge.to)
-              const sourceLane = siblingFrom.indexOf(edge) - (siblingFrom.length - 1) / 2
-              const targetLane = siblingTo.indexOf(edge) - (siblingTo.length - 1) / 2
-              const lane = Math.max(-14, Math.min(14, (sourceLane + targetLane) * 4))
-              const arc = Math.abs(y2 - y1) < 32 ? -10 : 0
-              const controlY1 = y1 + (y2 - y1) * .22 + arc + lane
-              const controlY2 = y2 - (y2 - y1) * .22 + arc + lane
-              const bend = sameColumn ? 28 : Math.min(48, Math.max(12, Math.abs(x2 - x1) * .34))
+              const x1 = a.x + (forward || sameColumn ? nodeWidth : 0), x2 = b.x + (forward ? 0 : nodeWidth)
+              const y1 = a.y + (heights.get(edge.from) ?? nodeHeight) / 2, y2 = b.y + (heights.get(edge.to) ?? nodeHeight) / 2
+              const siblings = graph.edges.filter((candidate) => candidate.from === edge.from && layout.positions.has(candidate.to))
+              const lane = Math.min(16, siblings.indexOf(edge) * 4)
+              const spine = sameColumn ? x1 + 20 + lane : forward ? x1 + 24 + lane : x1 - 24 - lane
               const active = selectedId && (edge.from === selectedId || edge.to === selectedId)
-              const direction = forward || sameColumn ? 1 : -1
-              const path = sameColumn
-                ? `M${x1} ${y1} C${x1 + bend} ${controlY1},${x2 + bend} ${controlY2},${x2} ${y2}`
-                : `M${x1} ${y1} C${x1 + direction * bend} ${controlY1},${x2 - direction * bend} ${controlY2},${x2} ${y2}`
-              return <g key={index} opacity={selectedId && !active ? .15 : 1}><path d={path} fill="none" stroke={active ? "var(--primary)" : "var(--muted-foreground)"} strokeOpacity={active ? .85 : .45} strokeWidth={active ? 2 : 1.4} strokeLinecap="round" markerEnd={`url(#${marker})`} />{active && <><circle cx={x1} cy={y1} r="3" fill="var(--card)" stroke="var(--primary)" strokeWidth="1.5" /><circle cx={x2} cy={y2} r="3" fill="var(--primary)" /></>}{active && <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 8} textAnchor="middle" fontSize="10" fontWeight="500" fill="var(--primary)" stroke="var(--background)" strokeWidth="7" paintOrder="stroke">{edge.relation}</text>}</g>
+              const path = Math.abs(y2 - y1) < 1 && !sameColumn
+                ? `M${x1} ${y1} H${x2}`
+                : `M${x1} ${y1} H${spine} V${y2} H${x2}`
+              return <g key={index} opacity={selectedId && !active ? .15 : 1}><path d={path} fill="none" stroke={active ? "var(--primary)" : "var(--muted-foreground)"} strokeOpacity={active ? .85 : .3} strokeWidth={active ? 1.6 : 1} strokeLinejoin="miter" markerEnd={`url(#${marker})`} />{active && <><circle cx={x1} cy={y1} r="3" fill="var(--card)" stroke="var(--primary)" strokeWidth="1.5" /><circle cx={x2} cy={y2} r="3" fill="var(--primary)" /></>}{active && <text x={(x1 + x2) / 2} y={y2 - 8} textAnchor="middle" fontSize="10" fontWeight="500" fill="var(--primary)" stroke="var(--background)" strokeWidth="7" paintOrder="stroke">{edge.relation}</text>}</g>
             })}
           </svg>
           {shown.map((node) => {
             const point = layout.positions.get(node.id)!, state = stateFor(node)
             const descendants = children.get(node.id) ?? [], pods = descendants.filter((n) => n.identity.kind === "Pod"), replicas = descendants.filter((n) => n.identity.kind === "ReplicaSet")
             const dimmed = (query && !matches.has(node.id)) || (selectedId && !related.has(node.id))
-            return <div key={node.id} style={{ left: point.x, top: point.y, width: nodeWidth, height: nodeHeight }} className={`${styles.card} absolute overflow-hidden rounded-xl border bg-card ${node.id === selectedId ? styles.selected : "border-border hover:border-foreground/25"} ${dimmed ? "opacity-50" : ""}`}>
-              <button type="button" aria-pressed={node.id === selectedId} onClick={() => setSelectedId(node.id === selectedId ? null : node.id)} className={`block w-full rounded-lg px-3.5 py-3 text-left focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary ${descendants.length ? "h-[98px]" : "h-full"}`}>
+            return <div key={node.id} style={{ left: point.x, top: point.y, width: nodeWidth, height: heights.get(node.id) ?? nodeHeight }} className={`${styles.card} absolute overflow-hidden rounded-xl border bg-card ${node.id === selectedId ? styles.selected : "border-border hover:border-foreground/25"} ${dimmed ? "opacity-50" : ""}`}>
+              <Button variant="ghost" type="button" aria-pressed={node.id === selectedId} onClick={() => setSelectedId(node.id === selectedId ? null : node.id)} className={`block w-full whitespace-normal rounded-lg px-3.5 py-3 text-left ${descendants.length ? "h-[98px]" : "h-full"}`}>
                 <span className="flex items-center gap-3">
                   <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/40 text-foreground/65"><HugeiconsIcon icon={iconFor(node.identity.kind)} strokeWidth={1.6} className="size-5" aria-hidden="true" /></span>
                   <span className="min-w-0"><span className="block text-xs leading-4 text-muted-foreground">{node.identity.kind}</span><span className="block truncate text-sm font-semibold leading-5" title={node.identity.name}>{node.identity.name}</span></span>
                 </span>
                 <span className="mt-2.5 flex items-center justify-between gap-1.5 text-xs leading-4 text-muted-foreground"><span className="inline-flex items-center gap-1.5"><span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${stateDot[state]}`} />{labels[state]}</span>
                 <span title={health(node)} className={`truncate text-xs leading-4 ${node.source === "sample" ? "text-muted-foreground" : healthTone(node)}`}>{health(node)}</span></span>
-              </button>
-              {descendants.length > 0 && <button type="button" aria-expanded={expanded.has(node.id)} onClick={() => setExpanded((old) => { const next = new Set(old); if (next.has(node.id)) next.delete(node.id); else next.add(node.id); return next })} className="absolute inset-x-0 bottom-0 border-t bg-muted/25 px-3.5 py-1.5 text-left text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"><HugeiconsIcon icon={expanded.has(node.id) ? MinusSignIcon : PlusSignIcon} strokeWidth={2} aria-hidden="true" className="mr-1 inline size-3 align-[-1px]" />Pods {pods.filter((n) => n.readiness === "Ready" && n.source !== "sample").length}/{pods.filter((n) => n.source !== "sample").length} ready · {replicas.length} ReplicaSets{descendants.some((n) => n.source === "sample") ? " · samples" : ""}</button>}
+              </Button>
+              {descendants.length > 0 && <div className="absolute inset-x-0 bottom-0 space-y-1 border-t bg-muted/25 px-3.5 py-1.5">
+                <p className="truncate text-xs" title={podSummary(pods)}>{podSummary(pods) || "No pods observed"}</p>
+                <div className="flex items-center gap-1" aria-label="Workload pods">{pods.slice(0, 8).map((pod) => <Tooltip key={pod.id}><TooltipTrigger render={<Button variant="ghost" size="icon-xs" aria-label={`${pod.identity.name}: ${podLabel(pod)}`} onClick={() => setSelectedId(pod.id)} />}><span aria-hidden="true" className={`size-2.5 rounded-sm ${podState(pod) === "ready" ? "bg-success" : podState(pod) === "failing" ? "bg-destructive" : podState(pod) === "starting" ? "bg-warning" : "bg-muted-foreground"}`} /></TooltipTrigger><TooltipContent>{pod.identity.name} · {podLabel(pod)}</TooltipContent></Tooltip>)}{pods.length > 8 && <span className="text-xs text-muted-foreground">+{pods.length - 8}</span>}</div>
+                <Button variant="ghost" size="xs" type="button" aria-expanded={expanded.has(node.id)} onClick={() => setExpanded((old) => { const next = new Set(old); if (next.has(node.id)) next.delete(node.id); else next.add(node.id); return next })} className="h-6 w-full justify-start px-0 text-xs text-muted-foreground"><HugeiconsIcon icon={expanded.has(node.id) ? MinusSignIcon : PlusSignIcon} strokeWidth={2} aria-hidden="true" className="mr-1 inline size-3 align-[-1px]" />{expanded.has(node.id) ? "Collapse" : "Show all"} · {pods.length} pods · {replicas.length} ReplicaSets</Button></div>}
             </div>
           })}
         </div></div>}
@@ -226,6 +231,7 @@ export function ResourceMap({ view, onViewChange, application, plan, inventory, 
         <div className="space-y-2 rounded-xl border bg-muted/20 p-3"><p className={`text-sm font-medium ${healthTone(selected)}`}>{health(selected)}</p><div className="flex flex-wrap gap-2"><StatusBadge status={labels[stateFor(selected)]} />{application.autoSyncPaused && <StatusBadge status="Auto-sync paused" />}</div></div>
         {canManageResources && onResourceActionComplete && selectedManagedResource?.identity.namespace && !selectedManagedResource.identity.clusterScoped && <ResourceActions key={selectedManagedResource.uid} applicationID={application.id} resource={selectedManagedResource} disabled={resourceActionsDisabled} onComplete={onResourceActionComplete} />}
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs">{[["Namespace", selected.identity.namespace || "Cluster scope"], ["API version", selected.identity.apiVersion], ["Source", selected.source], ["Last observed", selected.observedAt ? new Date(selected.observedAt).toLocaleString() : "Not available"], ["Resource version", selected.resourceVersion || "Not available"]].map(([key, value]) => <div key={key}><dt className="text-xs text-muted-foreground">{key}</dt><dd className="mt-1 break-words font-medium">{value}</dd></div>)}</dl>
+        {selected.identity.kind === "Pod" && selected.healthSummary && <dl className="grid grid-cols-2 gap-3 border-t pt-4 text-xs"><div><dt className="text-muted-foreground">Container readiness</dt><dd>{selected.healthSummary.readyContainers ?? 0}/{selected.healthSummary.totalContainers ?? 0}</dd></div><div><dt className="text-muted-foreground">Restarts</dt><dd>{selected.healthSummary.restartCount ?? 0}</dd></div></dl>}
         {selected.healthSummary && <section aria-label="Kubernetes health details" className="space-y-3 border-t pt-4">
           <h4 className="text-sm font-semibold">Kubernetes health details</h4>
           <dl className="grid grid-cols-2 gap-2 text-xs [&>div]:rounded-lg [&>div]:border [&>div]:bg-muted/20 [&>div]:p-3 [&_dd]:text-base [&_dd]:tabular-nums">

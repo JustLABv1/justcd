@@ -61,6 +61,7 @@ export default function ApplicationDetailPage() {
   const [selectionDraft, setSelectionDraft] = useState<{ planId: string; resources: Identity[]; fields: FieldExclusion[] } | null>(null)
   const [ignoreReasons, setIgnoreReasons] = useState<Record<string, string>>({})
   const [approvalSummary, setApprovalSummary] = useState<PlanApprovalSummary | null>(null)
+  const [approvalError, setApprovalError] = useState<{ planId: string; cause: unknown } | null>(null)
   const [approvalComment, setApprovalComment] = useState("")
   const [loading, setLoading] = useState(true)
   const [pendingData, setPendingData] = useState({ workspace: true, plans: true, resources: true, operations: true, topology: true, rollback: true, rules: true, selectors: true })
@@ -236,8 +237,8 @@ export default function ApplicationDetailPage() {
     }
     let active = true
     const refreshApprovals = () => api<PlanApprovalSummary>(`/api/v1/plans/${encodeURIComponent(activePlanId)}/approvals`)
-      .then((summary) => { if (active) setApprovalSummary(summary) })
-      .catch(() => { if (active) setApprovalSummary(null) })
+      .then((summary) => { if (active) { setApprovalSummary(summary); setApprovalError(null) } })
+      .catch((cause) => { if (active) { setApprovalSummary(null); setApprovalError({ planId: activePlanId, cause }) } })
     void refreshApprovals()
     const timer = window.setInterval(() => void refreshApprovals(), 5000)
     return () => { active = false; window.clearInterval(timer) }
@@ -756,7 +757,7 @@ export default function ApplicationDetailPage() {
             selectionResources={selectionResources} selectionFields={selectionFields} selectionDirty={selectionDirty} onToggleResource={toggleResourceExclusion} onToggleField={toggleFieldExclusion}
             onResetSelection={() => { setSelectionResources(activePlan?.plan.selection?.resources ?? []); setSelectionFields(activePlan?.plan.selection?.fields ?? []) }} onSaveSelection={() => void savePlanSelection()}
             ignoreRules={ignoreRules} ignoreReasons={ignoreReasons} onIgnoreReasonChange={(key, reason) => setIgnoreReasons((current) => ({ ...current, [key]: reason }))} onSaveIgnore={(identity, path, reason) => void saveIgnoreRule(identity, path, reason)} onRemoveRule={removeIgnoreRule}
-            requiredApprovals={requiredApprovals} approvedApprovals={approvedApprovals} approvalsComplete={approvalsComplete} approverRoles={displayedApproverRoles} approverMembers={displayedApproverMembers} approvalSummary={currentApprovalSummary}
+            requiredApprovals={requiredApprovals} approvedApprovals={approvedApprovals} approvalsComplete={approvalsComplete} approverRoles={displayedApproverRoles} approverMembers={displayedApproverMembers} approvalSummary={currentApprovalSummary} approvalError={approvalError && approvalError.planId === activePlanId ? approvalError.cause : null}
             autoApplyAfterApproval={application.syncPolicy === "auto-safe" && !application.autoSyncPaused && !application.decommissioning && !activePlan?.plan.rollback && !activePlan?.plan.decommission}
             approvalComment={approvalComment} onApprovalCommentChange={setApprovalComment} onApprove={approvePlan} onApply={() => void applyPlan()} onCreatePlan={() => void createPlan()} />
         </TabsContent>

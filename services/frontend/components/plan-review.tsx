@@ -42,6 +42,8 @@ export function PlanReview({
   plan,
   workspaceId,
   entries: supplied,
+  showApprovalEvidence = true,
+  renderApprovalReview,
 }: {
   changes: Change[]
   ignored: Change[]
@@ -58,6 +60,8 @@ export function PlanReview({
   workspaceId?: string
   plan?: Plan
   entries?: ReviewEntry[]
+  showApprovalEvidence?: boolean
+  renderApprovalReview?: (review: (identity: Change["identity"]) => void) => ReactNode
 }) {
   const [query, setQuery] = useState(""),
     deferred = useDeferredValue(query)
@@ -134,6 +138,7 @@ export function PlanReview({
       aria-label="Resource review"
       className="fullscreen:overflow-auto fullscreen:p-5 min-w-0 bg-card"
     >
+      {renderApprovalReview?.(reviewIdentity)}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-base font-semibold">
           Review resources{" "}
@@ -157,7 +162,7 @@ export function PlanReview({
       </div>
       <div>
         {plan && <PolicyEvidence plan={plan} />}
-        {plan && (
+        {plan && showApprovalEvidence && (
           <ApprovalEvidence
             plan={plan}
             workspaceId={workspaceId}

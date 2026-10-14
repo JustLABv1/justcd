@@ -10,11 +10,13 @@ export function ApprovalEvidence({
   onResource,
   prefix,
   workspaceId,
+  embedded = false,
 }: {
   plan: Plan
   onResource: (identity: Identity) => void
   workspaceId?: string
   prefix: string
+  embedded?: boolean
 }) {
   if (!plan.requiresApproval) return null
   const reasons = plan.approvalReasons?.length
@@ -31,32 +33,33 @@ export function ApprovalEvidence({
   return (
     <section
       aria-label="Why approval is required"
-      className="mb-4 rounded-lg border bg-muted/20 p-3"
+      className={embedded ? "" : "mb-4 rounded-lg border bg-muted/20 p-3"}
     >
-      <h4 className="text-sm font-semibold">Why approval is required</h4>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Saved rule: {plan.requiredApprovals ?? 1} distinct approval(s) ·
-        eligible roles: {plan.approverRoles?.join(", ") || "selected members"}
-        {plan.approverUserIds?.length
-          ? ` · ${plan.approverUserIds.length} selected member(s)`
-          : ""}
-        . These requirements apply to the exact plan digest.
-      </p>
+      {!embedded && (
+        <h4 className="text-sm font-semibold">Why approval is required</h4>
+      )}
+      {!embedded && (
+        <p className="mt-1 text-sm text-muted-foreground">
+          Saved rule: {plan.requiredApprovals ?? 1} distinct approval(s) ·
+          eligible roles: {plan.approverRoles?.join(", ") || "selected members"}
+          {plan.approverUserIds?.length
+            ? ` · ${plan.approverUserIds.length} selected member(s)`
+            : ""}
+          . These requirements apply to the exact plan digest.
+        </p>
+      )}
       {reasons.map((reason, i) => (
         <Disclosure
           key={`${reason.rule}-${i}`}
-          className="mt-2 border-t pt-2"
-          summary={`${reason.rule} · ${reason.resources.length} affected resources`}
+          className={embedded ? "py-1 [&+&]:border-t" : "mt-2 border-t pt-2"}
+          summary={`${embedded ? "Policy details: " : ""}${reason.rule} · ${reason.resources.length} affected resource${reason.resources.length === 1 ? "" : "s"}`}
         >
           <p id={`${prefix}-rule-${i}`} className="mb-2 text-sm">
             {reason.description}
           </p>
-          <a
-            href={`#${prefix}-rule-${i}`}
-            className="text-sm text-primary underline"
-          >
-            Governing rule: {reason.rule}
-          </a>
+          <p className="text-xs text-muted-foreground">
+            Governing rule: <code>{reason.rule}</code>
+          </p>
           {reason.resources.length ? (
             <AffectedResources
               key={`${plan.digest}-${reason.rule}`}

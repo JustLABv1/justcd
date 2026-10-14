@@ -41,7 +41,10 @@ func fieldOwnershipConflict(err error) bool {
 func applyWithOwnershipMigration(ctx context.Context, rc dynamic.ResourceInterface, name string, body []byte, options metav1.PatchOptions) (*unstructured.Unstructured, error) {
 	object, err := rc.Patch(ctx, name, types.ApplyPatchType, body, options)
 	if options.Force != nil && *options.Force || !fieldOwnershipConflict(err) {
-		return object, err
+		if err != nil {
+			return object, err
+		}
+		return finishOwnershipMigration(ctx, rc, name, object, options)
 	}
 	var status apierrors.APIStatus
 	if !errors.As(err, &status) {
@@ -55,7 +58,11 @@ func applyWithOwnershipMigration(ctx context.Context, rc dynamic.ResourceInterfa
 	}
 	force := true
 	options.Force = &force
-	return rc.Patch(ctx, name, types.ApplyPatchType, body, options)
+	object, err = rc.Patch(ctx, name, types.ApplyPatchType, body, options)
+	if err != nil {
+		return object, err
+	}
+	return finishOwnershipMigration(ctx, rc, name, object, options)
 }
 
 // reconcileUpdatePlan validates ownership and compares the live snapshot with
@@ -111,7 +118,7 @@ func (s *Service) reconcileUpdatePlan(ctx context.Context, input planInput, plan
 			change.Takeover = true
 			options = applyPatchOptions(*change, "justcd/"+plan.ApplicationID)
 			options.DryRun = []string{metav1.DryRunAll}
-			applied, err = rc.Patch(ctx, change.Identity.Name, types.ApplyPatchType, body, options)
+			applied, err = applyWithOwnershipMigration(ctx, rc, change.Identity.Name, body, options)
 		}
 		if err != nil {
 			return &resourceAccessError{identity: change.Identity, action: "patch (dry-run)", err: err}

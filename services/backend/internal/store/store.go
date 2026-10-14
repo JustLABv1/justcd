@@ -27,6 +27,8 @@ var migrationFiles embed.FS
 
 type Store struct{ DB *sql.DB }
 
+var ErrPlanNotCurrent = errors.New("plan is no longer current or has expired; generate a fresh plan")
+
 func Open(ctx context.Context, connectionString string) (*Store, error) {
 	connectionConfig, err := pgx.ParseConfig(connectionString)
 	if err != nil {
@@ -3252,7 +3254,7 @@ func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actor
 		attemptCount = 1
 	}
 	if status != "current" || storedDigest != planDigest || !time.Now().Before(expires) {
-		return Operation{}, errors.New("plan is no longer current or has expired")
+		return Operation{}, ErrPlanNotCurrent
 	}
 	if err := checkPlanGuardrails(ctx, tx, planID); err != nil {
 		return Operation{}, err

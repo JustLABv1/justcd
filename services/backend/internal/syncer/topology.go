@@ -2,6 +2,7 @@ package syncer
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"net/url"
@@ -21,6 +22,9 @@ import (
 // ObserveTopology caches namespaced managed resources and their controller-created
 // descendants. Reading requires read access, never write access.
 func (s *Service) ObserveTopology(ctx context.Context, app store.Application, managed []store.ManagedResource) error {
+	if len(managed) == 0 {
+		return s.Store.ReplaceObservedResources(ctx, app.ID, nil)
+	}
 	cluster, err := s.Store.ClusterByID(ctx, app.ClusterID)
 	if err != nil {
 		return err
@@ -151,6 +155,34 @@ func (s *Service) ObserveTopology(ctx context.Context, app store.Application, ma
 // are persisted as partial/unknown health instead of leaving a stale Healthy
 // result in place.
 func (s *Service) RefreshApplicationHealth(ctx context.Context, app store.Application) error {
+	// Serialize all observation paths across API requests and backend replicas.
+	conn, err := s.Store.DB.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	var locked bool
+	if err := conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock(7417,hashtext($1))`, app.ID).Scan(&locked); err != nil {
+		return err
+	}
+	if !locked {
+		return nil // Another observer is publishing a fresh snapshot.
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := conn.ExecContext(cleanup, `SELECT pg_advisory_unlock(7417,hashtext($1))`, app.ID); err != nil {
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+	}()
+	// Multiple viewers share an observation rather than each listing the cluster.
+	app, err = s.Store.ApplicationByID(ctx, app.ID)
+	if err != nil {
+		return err
+	}
+	if app.HealthCondition.ObservedAt != nil && time.Since(*app.HealthCondition.ObservedAt) < 10*time.Second {
+		return nil
+	}
 	managed, err := s.Store.ManagedResources(ctx, app.ID)
 	if err != nil {
 		return err
@@ -281,6 +313,27 @@ func observedHealthSummary(object unstructured.Unstructured) apphealth.ResourceD
 		details.Suspended, _, _ = unstructured.NestedBool(object.Object, "spec", "suspend")
 	case "Pod":
 		details.FailureReason, details.FailureMessage = podContainerFailure(object.Object)
+		details.Terminating = object.GetDeletionTimestamp() != nil
+		containers, _, _ := unstructured.NestedSlice(object.Object, "spec", "containers")
+		details.TotalContainers = len(containers)
+		for _, field := range []string{"initContainerStatuses", "containerStatuses"} {
+			statuses, _, _ := unstructured.NestedSlice(object.Object, "status", field)
+			for _, raw := range statuses {
+				status, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				restarts, _, _ := unstructured.NestedInt64(status, "restartCount")
+				details.RestartCount += restarts
+				ready, _, _ := unstructured.NestedBool(status, "ready")
+				if field == "containerStatuses" && ready {
+					details.ReadyContainers++
+				}
+				if reason, found, _ := unstructured.NestedString(status, "state", "waiting", "reason"); found && details.WaitingReason == "" {
+					details.WaitingReason = boundedStatusText(reason, 256)
+				}
+			}
+		}
 	}
 	return details
 }

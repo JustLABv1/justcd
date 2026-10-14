@@ -33,6 +33,11 @@ type KubernetesCondition struct {
 // ResourceDetails contains only bounded, non-secret status fields copied from
 // Kubernetes. It intentionally does not retain the unstructured Status object.
 type ResourceDetails struct {
+	WaitingReason            string                `json:"waitingReason,omitempty"`
+	Terminating              bool                  `json:"terminating,omitempty"`
+	RestartCount             int64                 `json:"restartCount,omitempty"`
+	ReadyContainers          int                   `json:"readyContainers,omitempty"`
+	TotalContainers          int                   `json:"totalContainers,omitempty"`
 	LastReconciledGeneration *int64                `json:"lastReconciledGeneration,omitempty"`
 	DesiredInstances         *int64                `json:"desiredInstances,omitempty"`
 	CurrentInstances         *int64                `json:"currentInstances,omitempty"`

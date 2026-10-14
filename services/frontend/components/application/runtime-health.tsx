@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { runtimeFreshness } from "@/lib/runtime-health"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Alert02Icon, HeartCheckIcon, ArrowRight01Icon } from "@hugeicons/core-free-icons"
 import { Button } from "@/components/ui/button"
@@ -10,12 +11,15 @@ import { StatusBadge } from "@/components/ui-kit"
 import type { Application, ApplicationHealthTransition } from "@/lib/types"
 
 /** Application header metadata with runtime health and the latest check. */
-export function RuntimeHealthStrip({ application, healthHistory }: { application: Application; healthHistory: ApplicationHealthTransition[] }) {
+export function RuntimeHealthStrip({ application, healthHistory, reconnecting = false }: { application: Application; healthHistory: ApplicationHealthTransition[]; reconnecting?: boolean }) {
   const [open, setOpen] = useState(false)
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(timer) }, [])
   const condition = application.healthCondition
+  const freshness = runtimeFreshness(condition?.observedAt, now)
   return <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
     <Button type="button" variant="ghost" size="sm" className="-ml-2" aria-label="Health details" onClick={() => setOpen(true)}><HugeiconsIcon icon={HeartCheckIcon} strokeWidth={1.8} aria-hidden="true" />Runtime health <StatusBadge status={condition?.status ?? "Unknown"} /><HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={1.8} aria-hidden="true" /></Button>
-    <span>{application.lastCheckedAt ? <>Last checked <time dateTime={application.lastCheckedAt}>{new Date(application.lastCheckedAt).toLocaleString()}</time></> : "Application checks pending"}</span>
+    <span className={freshness.stale || reconnecting ? "text-warning-foreground dark:text-warning" : ""} title={condition?.observedAt ? new Date(condition.observedAt).toLocaleString() : undefined}>{freshness.label}{reconnecting ? " · Reconnecting" : freshness.stale && condition?.observedAt ? " · Stale" : " · Auto-updating"}{condition?.status === "Partial" ? " · Partial observation" : ""}</span>
     <AppDialog open={open} onOpenChange={setOpen} variant="info" size="lg" title="Runtime health" description="Runtime readiness is separate from Git sync state. Partial means some runtime resources could not be assessed; configuration objects do not need workload health checks.">
       <div className="space-y-4">
         <StatusBadge status={condition?.status ?? "Unknown"} />

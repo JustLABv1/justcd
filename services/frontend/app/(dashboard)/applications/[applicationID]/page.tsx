@@ -200,11 +200,45 @@ export default function ApplicationDetailPage() {
   useEffect(() => {
     if (!loadedAppID) return
     let active = true
-    void api<ResourceTopology>(`/api/v1/applications/${encodeURIComponent(loadedAppID)}/topology?cached=1`)
-      .then((result) => { if (active) { setTopology(result); setTopologyError(null) } })
-      .catch((cause) => { if (active) setTopologyError(cause) })
-      .finally(() => { if (active) setPendingData((state) => ({ ...state, topology: false })) })
-    return () => { active = false }
+    let inFlight = false
+    let controller: AbortController | null = null
+    const refresh = async () => {
+      if (!active || inFlight || document.visibilityState === "hidden") return
+      inFlight = true
+      controller = new AbortController()
+      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(45000)])
+      try {
+        const result = await api<ResourceTopology>(`/api/v1/applications/${encodeURIComponent(loadedAppID)}/topology`, { signal })
+        if (!active) return
+        setTopology(result)
+        setTopologyError(null)
+        const [app, history] = await Promise.allSettled([
+          api<Application>(`/api/v1/applications/${encodeURIComponent(loadedAppID)}` , { signal }),
+          api<ListResponse<ApplicationHealthTransition>>(`/api/v1/applications/${encodeURIComponent(loadedAppID)}/health-history`, { signal }),
+        ])
+        if (!active) return
+        if (app.status === "fulfilled") setApplication(app.value)
+        else setTopologyError(app.reason)
+        if (history.status === "fulfilled") setHealthHistory(history.value.items)
+      } catch (cause) {
+        if (active) setTopologyError(cause)
+      } finally {
+        inFlight = false
+        if (active) setPendingData((state) => ({ ...state, topology: false }))
+      }
+    }
+    void refresh()
+    const timer = window.setInterval(() => void refresh(), 5000)
+    const resume = () => void refresh()
+    document.addEventListener("visibilitychange", resume)
+    window.addEventListener("online", resume)
+    return () => {
+      active = false
+      controller?.abort()
+      window.clearInterval(timer)
+      document.removeEventListener("visibilitychange", resume)
+      window.removeEventListener("online", resume)
+    }
   }, [loadedAppID])
 
   useEffect(() => {
@@ -681,7 +715,7 @@ export default function ApplicationDetailPage() {
   const planBlockedByNamespace = Boolean(application && namespaceMismatch && !application.kustomizeNamespaceOverride)
 
   return <>
-    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.clusterName || application.clusterId} / ${application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"}${application.autoSyncPaused ? " · Auto-sync paused" : ""}` : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Sync <StatusBadge status={application.health} /></span><DeploymentScheduleNotice key={application.id} layout="chip" scope="applications" id={application.id} onViewSchedule={() => { selectTab("overview"); window.setTimeout(() => document.getElementById("deployment-schedule")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" }), 0) }} /></div>} metadata={application && <RuntimeHealthStrip application={application} healthHistory={healthHistory} />} actions={application && <>
+    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.clusterName || application.clusterId} / ${application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"}${application.autoSyncPaused ? " · Auto-sync paused" : ""}` : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Sync <StatusBadge status={application.health} /></span><DeploymentScheduleNotice key={application.id} layout="chip" scope="applications" id={application.id} onViewSchedule={() => { selectTab("overview"); window.setTimeout(() => document.getElementById("deployment-schedule")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" }), 0) }} /></div>} metadata={application && <RuntimeHealthStrip application={application} healthHistory={healthHistory} reconnecting={Boolean(topologyError)} />} actions={application && <>
       {pendingData.workspace && <span role="status" className="text-sm text-muted-foreground">Loading permissions…</span>}
       {planBlockedByNamespace && !application.configurationMissing && !application.decommissioning && canDeploy
         ? <Tooltip>
@@ -739,7 +773,7 @@ export default function ApplicationDetailPage() {
 
         <TabsContent value="topology" className="outline-none">
       {pendingData.topology || pendingData.resources || pendingData.plans || pendingData.operations ? <SectionLoading label="Loading the resource map" /> : <>
-      {topologyError && <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 p-3 text-sm"><span>Saved topology could not be loaded. The map uses available inventory.</span><ErrorDetailsButton error={topologyError} /></div>}
+      {topologyError && <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 p-3 text-sm"><span>Runtime updates interrupted. Retrying automatically; the map retains the last available observation.</span><ErrorDetailsButton error={topologyError} /></div>}
       <ResourceMap view={topologyView} onViewChange={(view) => { setTopologyView(view); const url = new URL(window.location.href); url.searchParams.set("tab", "topology"); if (view === "list") url.searchParams.set("view", "list"); else url.searchParams.delete("view"); window.history.pushState(null, "", url) }} canManageResources={canApprove} resourceActionsDisabled={busy || hasPendingOperation} onResourceActionComplete={async () => { setApplication(await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`)); await refreshSummary() }} application={application} plan={plans[0]?.status === "current" ? plans[0] : null} inventory={resources} operations={operations} topology={topology} refreshing={topologyRefreshing} onRefresh={() => {
         setTopologyRefreshing(true)
         void api<ResourceTopology>(`/api/v1/applications/${encodeURIComponent(applicationID)}/topology?refresh=1`).then((result) => {

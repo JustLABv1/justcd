@@ -7,6 +7,10 @@ tool (
 	sigs.k8s.io/kustomize/kustomize/v5
 )
 
+// Kustomize 5.8.3 selects a kube-openapi revision using merge-diff/v7.
+// Helm's Kubernetes 0.37 dependencies still require its merge-diff/v6 API.
+replace k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad
+
 require (
 	dario.cat/mergo v1.0.1 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect

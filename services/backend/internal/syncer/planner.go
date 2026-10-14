@@ -364,7 +364,7 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 	if err != nil {
 		return core.Plan{}, nil, err
 	}
-	desired, err := render.Render(ctx, renderOptions)
+	desired, err := s.renderPlanResources(ctx, renderOptions, input.ReviewFingerprint)
 	if err != nil {
 		observability.MarkError(span, err)
 		return core.Plan{}, nil, &planStageError{stage: "render", err: err}

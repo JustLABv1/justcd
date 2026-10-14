@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/justlab/justcd/services/backend/internal/core"
+	"github.com/justlab/justcd/services/backend/internal/repoconfig"
 	"github.com/justlab/justcd/services/backend/internal/security"
 	"github.com/justlab/justcd/services/backend/internal/store"
+	"github.com/justlab/justcd/services/backend/internal/syncer"
 )
 
 func TestIntegrationPRCredentialsAndCommentApprovals(t *testing.T) {
@@ -112,6 +114,7 @@ func TestIntegrationPRCredentialsAndCommentApprovals(t *testing.T) {
 		t.Fatalf("stale PR queued operations: %d %v", operations, err)
 	}
 	testRepositoryPRAPIBoundaries(t, ctx, server)
+	testRepositoryPRDestinationFilter(t, ctx, server)
 }
 
 func testRepositoryPRAPIBoundaries(t *testing.T, ctx context.Context, server *Server) {
@@ -169,5 +172,51 @@ func testRepositoryPRAPIBoundaries(t *testing.T, ctx context.Context, server *Se
 	}
 	if _, err = db.NamespaceBinding(ctx, repo.WorkspaceID, "pr-cluster", "dev"); err != nil {
 		t.Fatal("review-only cleanup removed existing namespace binding", err)
+	}
+}
+
+func testRepositoryPRDestinationFilter(t *testing.T, ctx context.Context, server *Server) {
+	t.Helper()
+	server.Syncer = &syncer.Service{Store: server.Store, EncryptionKey: server.EncryptionKey}
+	if err := server.Store.CreateNamespaceBinding(ctx, "pr-workspace", "pr-cluster", "mimir-dev", nil); err != nil {
+		t.Fatal(err)
+	}
+	repo := store.RepositoryConfiguration{WorkspaceID: "pr-workspace", SourceID: "pr-source", Revision: "main", PRSettings: store.RepositoryPRSettings{Enabled: true, Mode: "existing", Destinations: []store.PRDestination{{ClusterID: "pr-cluster", NamespacePattern: ".*-dev"}}}}
+	var definition repoconfig.Definition
+	definition.Metadata.Name = "mimir"
+	definition.Spec.Destination.Cluster = "Cluster"
+	definition.Spec.Source.Renderer = "yaml"
+	definition.Spec.Source.Path = "manifests"
+	clusters, err := server.Store.ListClusters(ctx, repo.WorkspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clusterID, err := repositoryPRClusterID(clusters, definition.Spec.Destination.Cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, namespace := range []string{"mimir-prd", "mimir-dev", "other-prd"} {
+		definition.Spec.Destination.Namespace = namespace
+		app, eligible, err := server.resolveRepositoryPRDefinition(ctx, repo, definition, clusterID)
+		if err != nil || eligible != (namespace == "mimir-dev") {
+			t.Fatalf("mixed PR snapshot destination %q: eligible=%v err=%v", namespace, eligible, err)
+		}
+		if eligible && (app.ClusterID != "pr-cluster" || len(app.Namespaces) != 1 || app.Namespaces[0].Namespace != namespace) {
+			t.Fatalf("wrong deployment target: %+v", app)
+		}
+	}
+	// Matching namespaces still require access; filtering cannot bypass it.
+	definition.Spec.Destination.Namespace = "unbound-dev"
+	if _, eligible, err := server.resolveRepositoryPRDefinition(ctx, repo, definition, clusterID); !eligible || err == nil {
+		t.Fatalf("matching namespace bypassed binding validation: %v %v", eligible, err)
+	}
+	definition.Spec.Destination.Namespace = "mimir-prd"
+	definition.Spec.Destination.CreateNamespaces = true
+	if _, eligible, err := server.resolveRepositoryPRDefinition(ctx, repo, definition, clusterID); eligible || err != nil {
+		t.Fatalf("excluded namespace requested creation: %v %v", eligible, err)
+	}
+	var count int
+	if err := server.Store.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM namespace_bindings WHERE workspace_id='pr-workspace' AND namespace IN ('mimir-prd','other-prd','unbound-dev')`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("filter persisted bindings: %d %v", count, err)
 	}
 }

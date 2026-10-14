@@ -373,6 +373,12 @@ already be accessible to the workspace. By default, each concrete destination
 must have an existing workspace namespace binding before PR discovery.
 The destination in `justcd.yaml` selects where the application goes; these
 owner-managed rules define where an unmerged branch is permitted to send it.
+Definitions outside these destinations are ignored by new-application PR
+discovery, without creating applications or namespaces or failing reconciliation.
+For example, `.*-dev` permits `mimir-dev` while skipping `mimir-prd`, even when
+both definitions appear in the same PR. Existing applications with PR reporting
+configured can still receive plan comments through their own connections.
+Matching definitions must still pass namespace access and deployment checks.
 
 Choose one of three modes:
 

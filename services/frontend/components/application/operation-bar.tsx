@@ -127,7 +127,11 @@ export function OperationBar({
       >
         <StatusBadge status={operation.status} />
         <span className="text-sm font-medium">
-          {operation.status === "queued" && operation.scheduleDeferred && !operation.scheduleOverrideReason ? "Waiting for deployment schedule" : operationPhaseLabel(operation.progress?.phase, operation.status)}
+          {operation.status === "queued" &&
+          operation.scheduleDeferred &&
+          !operation.scheduleOverrideReason
+            ? "Waiting for deployment schedule"
+            : operationPhaseLabel(operation.progress?.phase, operation.status)}
         </span>
         <span className="min-w-0 truncate text-sm text-muted-foreground">
           {operation.progress?.current
@@ -243,7 +247,12 @@ export function OperationBar({
       )}
       {scheduleActions}
       {Boolean(operation.progress?.resources?.length) && (
-        <RolloutPanel operation={operation} plan={plan} elapsed={elapsed} onReviewResource={onReviewResource} />
+        <RolloutPanel
+          operation={operation}
+          plan={plan}
+          elapsed={elapsed}
+          onReviewResource={onReviewResource}
+        />
       )}
     </section>
   )

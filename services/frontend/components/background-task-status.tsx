@@ -11,24 +11,26 @@ import { Badge } from "@/components/reui/badge"
 import { ErrorDetailsButton } from "@/components/error-details"
 import { errorMessage, taskError } from "@/lib/api"
 import { taskPending } from "@/hooks/background-tasks"
-import type { BackgroundTask } from "@/lib/types"
+import type { BackgroundTask, Operation } from "@/lib/types"
 import { RunProgressStages } from "@/components/application/run-progress"
-import { planRunProgress } from "@/lib/run-progress"
+import { planRunProgress, planTaskHasOperation } from "@/lib/run-progress"
 
 export function BackgroundTaskStatus({
   tasks,
   error,
   onRefresh,
   showApplication = false,
+  operations = [],
 }: {
   tasks: BackgroundTask[]
   error: unknown
   onRefresh: () => void
   showApplication?: boolean
+  operations?: Operation[]
 }) {
   const { isDismissed, dismiss } = useProgressDismissals()
   const active = tasks.filter(taskPending)
-  const displayed = active.length ? active : tasks.slice(0, 1).filter((task) => !isDismissed(`task:${task.id}`))
+  const displayed = active.length ? active : tasks.slice(0, 1).filter((task) => !isDismissed(`task:${task.id}`) && !planTaskHasOperation(task, operations))
   if (!displayed.length && !error) return null
   return (
     <section

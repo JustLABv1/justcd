@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { planRunProgress, syncRunProgress } from "./run-progress.ts"
+import { planRunProgress, syncRunProgress, planTaskHasOperation } from "./run-progress.ts"
 
 const identity = (name) => ({ clusterId: "cluster", apiVersion: "v1", kind: "ConfigMap", namespace: "demo", name })
 const change = (kind, name) => ({ kind, identity: identity(name) })
@@ -88,4 +88,25 @@ test("schedule-deferred syncs explain their wait, while overrides return to work
   assert.match(syncRunProgress(queued).summary, /deployment schedule/)
   assert.match(syncRunProgress({ ...queued, scheduleOverrideReason: "Incident recovery" }).summary, /sync worker/)
   assert.match(syncRunProgress({ ...queued, status: "running", progress: { phase: "applying", completed: [], total: 3 } }).summary, /resource changes/)
+})
+
+
+test("a generated plan notice is superseded throughout its sync lifecycle", () => {
+  const task = { id: "generation", applicationId: "app", kind: "plan", status: "succeeded", result: { id: "plan" } }
+  assert.equal(planTaskHasOperation(task, []), false)
+  for (const status of ["queued", "running", "succeeded", "failed", "cancelled"]) {
+    assert.equal(planTaskHasOperation(task, [{ applicationId: "app", planId: "plan", status, type: "sync" }]), true)
+  }
+})
+
+test("unrelated syncs cannot hide new, failed, or incomplete plan work", () => {
+  const task = { id: "generation", applicationId: "app", kind: "plan", status: "succeeded", result: { id: "new-plan" } }
+  const operations = [{ applicationId: "app", planId: "old-plan", status: "running", type: "sync" }]
+  assert.equal(planTaskHasOperation(task, operations), false)
+  const matching = [{ ...operations[0], planId: "new-plan" }]
+  for (const status of ["queued", "running", "failed"]) assert.equal(planTaskHasOperation({ ...task, status }, matching), false)
+  for (const result of [undefined, null, {}, { id: 42 }]) assert.equal(planTaskHasOperation({ ...task, result }, matching), false)
+  assert.equal(planTaskHasOperation({ ...task, kind: "approval" }, matching), false)
+  assert.equal(planTaskHasOperation(task, [{ ...matching[0], applicationId: "other-app" }]), false)
+  assert.equal(planTaskHasOperation(task, [{ ...matching[0], type: "resource_action" }]), false)
 })

@@ -1,5 +1,27 @@
 import type { BackgroundTask, Identity, Operation, PlanRecord } from "./types"
 
+/** A generated plan stops needing a review notice once its sync is queued. */
+export function planTaskHasOperation(
+  task: BackgroundTask,
+  operations: readonly Operation[]
+) {
+  if (task.kind !== "plan" || task.status !== "succeeded") return false
+  const result = task.result
+  if (
+    !result ||
+    typeof result !== "object" ||
+    !("id" in result) ||
+    typeof result.id !== "string"
+  )
+    return false
+  return operations.some(
+    (operation) =>
+      operation.applicationId === task.applicationId &&
+      operation.planId === result.id &&
+      operation.type !== "resource_action"
+  )
+}
+
 export type StageStatus =
   | "pending"
   | "queued"
@@ -190,18 +212,23 @@ export function syncRunProgress(
   return {
     current,
     stages: stagesWithStatus(definitions, current, status),
-    summary: operation.status === "queued" && operation.scheduleDeferred && !operation.scheduleOverrideReason
-      ? "Sync is queued until the deployment schedule allows it to start. No resource changes have started."
-      : done
-      ? "Changes applied. Runtime readiness is checked separately."
-      : operation.status === "failed" || operation.status === "cancelled"
-        ? operation.message || "Sync stopped before completion."
-        : phase === "deleting"
-          ? "Applying the plan's approved deletions."
-          : phase === "applying"
-            ? "Applying the plan's resource changes."
-            : phase === "validating"
-              ? "Rechecking Git, cluster state, and approval before applying."
-              : "Waiting for a sync worker to report progress.",
+    summary:
+      operation.status === "queued" &&
+      operation.scheduleDeferred &&
+      !operation.scheduleOverrideReason
+        ? "Sync is queued until the deployment schedule allows it to start. No resource changes have started."
+        : done
+          ? "Changes applied. Runtime readiness is checked separately."
+          : operation.status === "failed" || operation.status === "cancelled"
+            ? operation.message || "Sync stopped before completion."
+            : phase === "complete"
+              ? "Resource changes have finished. Waiting for the sync worker to finalize the operation."
+              : phase === "deleting"
+                ? "Applying the plan's approved deletions."
+                : phase === "applying"
+                  ? "Applying the plan's resource changes."
+                  : phase === "validating"
+                    ? "Rechecking Git, cluster state, and approval before applying."
+                    : "Waiting for a sync worker to report progress.",
   }
 }

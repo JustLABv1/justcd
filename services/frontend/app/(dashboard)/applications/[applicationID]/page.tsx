@@ -674,7 +674,7 @@ export default function ApplicationDetailPage() {
   const planBlockedByNamespace = Boolean(application && namespaceMismatch && !application.kustomizeNamespaceOverride)
 
   return <>
-    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.clusterName || application.clusterId} / ${application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"}${application.autoSyncPaused ? " · Auto-sync paused" : ""}` : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Sync <StatusBadge status={application.health} /></span></div>} metadata={application && <RuntimeHealthStrip application={application} healthHistory={healthHistory} />} actions={application && <>
+    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.clusterName || application.clusterId} / ${application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"}${application.autoSyncPaused ? " · Auto-sync paused" : ""}` : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Sync <StatusBadge status={application.health} /></span><DeploymentScheduleNotice key={application.id} layout="chip" scope="applications" id={application.id} onViewSchedule={() => { selectTab("overview"); window.setTimeout(() => document.getElementById("deployment-schedule")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" }), 0) }} /></div>} metadata={application && <RuntimeHealthStrip application={application} healthHistory={healthHistory} />} actions={application && <>
       {pendingData.workspace && <span role="status" className="text-sm text-muted-foreground">Loading permissions…</span>}
       {planBlockedByNamespace && !application.configurationMissing && !application.decommissioning && canDeploy
         ? <Tooltip>
@@ -688,8 +688,7 @@ export default function ApplicationDetailPage() {
         ...(!application.autoSyncPaused ? [{ label: "Pause auto-sync", icon: PauseIcon, separatorBefore: true, disabled: busy || hasPendingOperation, onSelect: () => void pauseSync() }] : []),
       ]} />}
     </>} />
-    {application && !(visibleOperation?.status === "queued" && visibleOperation.scheduleDeferred && !visibleOperation.scheduleOverrideReason) && <DeploymentScheduleNotice key={application.id} scope="applications" id={application.id} onViewSchedule={() => { selectTab("overview"); window.setTimeout(() => document.getElementById("deployment-schedule")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" }), 0) }} />}
-    <BackgroundTaskStatus tasks={backgroundTasks.tasks} error={backgroundTasks.error} onRefresh={() => void backgroundTasks.refresh()} />
+    <BackgroundTaskStatus tasks={backgroundTasks.tasks} operations={operations} error={backgroundTasks.error} onRefresh={() => void backgroundTasks.refresh()} />
     {error != null && <ErrorNotice error={error} />}
     {application && <AttentionBar application={application} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} plansError={plansError} retryingPlans={retryingPlans} onRetryPlans={() => void retryPlans()}
         conflictCount={ownershipConflict ? ownershipConflicts.length : 0} onReviewConflicts={() => setConflictOpen(true)}

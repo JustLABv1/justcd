@@ -19,7 +19,7 @@ export default function RootLayout({
       <body>
         <ThemeProvider>
           <ToastProvider>
-            {children}
+            <ServiceAvailability>{children}</ServiceAvailability>
           </ToastProvider>
         </ThemeProvider>
       </body>

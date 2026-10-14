@@ -129,13 +129,19 @@ func (s *Server) discoverRepositoryPRs(ctx context.Context, repo store.Repositor
 	if err != nil {
 		return err
 	}
+	clusters, err := s.Store.ListClusters(ctx, repo.WorkspaceID)
+	if err != nil {
+		return err
+	}
 	tracked := map[string]bool{}
 	for _, d := range baseline {
-		app, err := s.Syncer.ResolveRepositoryDefinition(ctx, repo, d)
+		clusterID, err := repositoryPRClusterID(clusters, d.Spec.Destination.Cluster)
 		if err != nil {
 			return err
 		}
-		tracked[app.ClusterID+"\x00"+app.Name] = true
+		if clusterID != "" {
+			tracked[clusterID+"\x00"+d.Metadata.Name] = true
+		}
 	}
 	known, err := s.Store.ListRepositoryPRApplications(ctx, repo.ID)
 	if err != nil {
@@ -179,33 +185,27 @@ func (s *Server) discoverRepositoryPRs(ctx context.Context, repo store.Repositor
 			}
 			present := map[string]bool{}
 			for _, definition := range definitions {
-				// Branch YAML requests creation; only the owner's repository policy
-				// may authorize it. Resolution never persists a binding itself.
-				app, err := s.Syncer.ResolveRepositoryDefinition(ctx, repo, definition)
+				clusterID, err := repositoryPRClusterID(clusters, definition.Spec.Destination.Cluster)
 				if err != nil {
-					if strings.Contains(err.Error(), "requires an existing workspace binding") {
-						return repositoryPRBindingError(repo.PRSettings.Mode, definition.File, definition.Spec.Destination.Namespace)
-					}
 					return err
 				}
-				key := app.ClusterID + "\x00" + app.Name
+				if clusterID == "" {
+					continue
+				}
+				key := clusterID + "\x00" + definition.Metadata.Name
 				if present[key] {
-					return fmt.Errorf("duplicate application name %q for cluster %q", app.Name, app.ClusterID)
+					return fmt.Errorf("duplicate application name %q for cluster %q", definition.Metadata.Name, clusterID)
 				}
 				present[key] = true
 				if tracked[key] {
 					continue
 				}
-				definition.Spec.Destination.CreateNamespaces = definition.Spec.Destination.CreateNamespaces && repo.PRSettings.AllowNamespaceCreation && repo.PRSettings.Mode == "existing"
-				app, err = s.Syncer.ResolveRepositoryDefinition(ctx, repo, definition)
+				app, eligible, err := s.resolveRepositoryPRDefinition(ctx, repo, definition, clusterID)
 				if err != nil {
-					if strings.Contains(err.Error(), "requires an existing workspace binding") {
-						return repositoryPRBindingError(repo.PRSettings.Mode, definition.File, definition.Spec.Destination.Namespace)
-					}
 					return err
 				}
-				if !repo.PRSettings.Allows(app.ClusterID, definition.Spec.Destination.Namespace) {
-					return fmt.Errorf("application %q destination is not allowed by repository settings", app.Name)
+				if !eligible {
+					continue
 				}
 				conn := c
 				conn.ID = store.NewID()
@@ -320,4 +320,37 @@ func repositoryPRHasDefinitions(paths []string) bool {
 		}
 	}
 	return false
+}
+
+// Destination rules select PR applications to discover. Excluded definitions
+// must not require namespace bindings or create application/namespace records.
+func (s *Server) resolveRepositoryPRDefinition(ctx context.Context, repo store.RepositoryConfiguration, definition repoconfig.Definition, clusterID string) (store.Application, bool, error) {
+	if !repo.PRSettings.Allows(clusterID, definition.Spec.Destination.Namespace) {
+		return store.Application{}, false, nil
+	}
+	// Branch YAML may request creation only within the owner's policy.
+	definition.Spec.Destination.CreateNamespaces = definition.Spec.Destination.CreateNamespaces && repo.PRSettings.AllowNamespaceCreation && repo.PRSettings.Mode == "existing"
+	app, err := s.Syncer.ResolveRepositoryDefinition(ctx, repo, definition)
+	if err != nil {
+		if strings.Contains(err.Error(), "requires an existing workspace binding") {
+			return store.Application{}, true, repositoryPRBindingError(repo.PRSettings.Mode, definition.File, definition.Spec.Destination.Namespace)
+		}
+		return store.Application{}, true, err
+	}
+	return app, true, nil
+}
+
+// Resolve identity without requiring deployment access to every namespace in a
+// PR's complete snapshot. An unavailable cluster cannot match an allowed rule.
+func repositoryPRClusterID(clusters []store.Cluster, reference string) (string, error) {
+	clusterID := ""
+	for _, cluster := range clusters {
+		if cluster.ID == reference || cluster.Name == reference {
+			if clusterID != "" && clusterID != cluster.ID {
+				return "", fmt.Errorf("cluster reference %q is ambiguous; use its ID", reference)
+			}
+			clusterID = cluster.ID
+		}
+	}
+	return clusterID, nil
 }

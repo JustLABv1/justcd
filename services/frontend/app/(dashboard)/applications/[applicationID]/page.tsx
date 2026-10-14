@@ -600,7 +600,9 @@ export default function ApplicationDetailPage() {
       setOperations((current) => [result.operation, ...current.filter((operation) => operation.id !== result.operation.id)])
       toast.success(result.operation.message || "Sync queued.")
       setApprovalSummary(null)
-      await loadData()
+      // The durable operation is already queued. Refresh page data independently
+      // so unrelated reads cannot keep the sync button spinning or report failure.
+      void loadData().catch(setError)
     } catch (cause) {
       if (!acceptRefreshedPlan(cause)) toast.error(errorMessage(cause), cause)
     } finally { setBusy(false); setPendingAction(""); await refreshSummary() }

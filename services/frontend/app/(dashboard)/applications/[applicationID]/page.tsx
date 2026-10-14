@@ -297,7 +297,9 @@ export default function ApplicationDetailPage() {
       setPlansError(null)
       setActivePlan(plan)
       setPlans((current) => [plan, ...current.filter((item) => item.id !== plan.id)])
-      toast.success(plan.plan.changes.length ? `Plan ready: ${plan.plan.changes.length} change${plan.plan.changes.length === 1 ? "" : "s"} to review.` : "The application already matches its Git revision.")
+      toast.success(plan.plan.decommission
+        ? `Deletion plan ready: ${plan.plan.changes.length} resource${plan.plan.changes.length === 1 ? "" : "s"} remaining to delete.`
+        : plan.plan.changes.length ? `Plan ready: ${plan.plan.changes.length} change${plan.plan.changes.length === 1 ? "" : "s"} to review.` : "The application already matches its Git revision.")
       selectTab("changes")
       await refreshSummary()
     } catch (cause) {
@@ -673,7 +675,9 @@ export default function ApplicationDetailPage() {
   const namespaceMismatch = Boolean(application?.renderer === "kustomize" && kustomization?.namespace && application.namespaces.length === 1 && kustomization.namespace !== application.namespaces[0].namespace)
   if (loading && !application) return <ApplicationDetailSkeleton />
 
-  const createPlanDisabled = Boolean(application && (application.configurationMissing || application.decommissioning || !canDeploy || busy || (namespaceMismatch && !application.kustomizeNamespaceOverride)))
+  const createPlanDisabled = Boolean(application && (busy || hasPendingOperation || (application.decommissioning
+    ? !canApprove
+    : application.configurationMissing || !canDeploy || (namespaceMismatch && !application.kustomizeNamespaceOverride))))
   const planBlockedByNamespace = Boolean(application && namespaceMismatch && !application.kustomizeNamespaceOverride)
 
   return <>
@@ -729,7 +733,7 @@ export default function ApplicationDetailPage() {
     </>}
     {!loading && application && <>
         <TabsContent value="overview" className="outline-none">
-          <OverviewTab application={application} latestPlan={latestPlan} plansError={plansError} retryingPlans={retryingPlans} topology={topology} topologyError={topologyError} pending={{ topology: pendingData.topology, plans: pendingData.plans, operations: pendingData.operations }} operations={operations} operationsError={operationsError} canDeploy={canDeploy} busy={busy} hasPendingOperation={hasPendingOperation} creatingPlan={pendingAction === "create-plan"} planBlockedByNamespace={planBlockedByNamespace} onCreatePlan={() => void createPlan()} onRetryPlans={() => void retryPlans()} onSelectTab={selectTab} />
+          <OverviewTab application={application} latestPlan={latestPlan} plansError={plansError} retryingPlans={retryingPlans} topology={topology} topologyError={topologyError} pending={{ topology: pendingData.topology, plans: pendingData.plans, operations: pendingData.operations }} operations={operations} operationsError={operationsError} canRefreshPlan={!createPlanDisabled} creatingPlan={pendingAction === "create-plan"} onCreatePlan={() => void createPlan()} onRetryPlans={() => void retryPlans()} onSelectTab={selectTab} />
           <div id="deployment-schedule" className="mt-5 scroll-mt-5"><DeploymentSchedulePanel key={application.id} scope="applications" id={application.id} canEdit={canApprove} /></div>
         </TabsContent>
 

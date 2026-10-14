@@ -208,12 +208,9 @@ func (s *Service) BuildPlanWithSelection(ctx context.Context, app store.Applicat
 }
 
 func (s *Service) BuildDecommissionPlan(ctx context.Context, app store.Application, actorID string) (store.PlanRecord, error) {
-	if app.Decommissioning {
-		current, err := s.Store.ListPlans(ctx, app.ID, 1)
-		if err == nil && len(current) > 0 && current[0].Plan.Decommission && current[0].Status == "current" && time.Now().Before(current[0].ExpiresAt) {
-			return current[0], nil
-		}
-	}
+	// Re-read live state before reusing a plan. A current, unexpired deletion
+	// plan may still be stale after a partial operation or controller update.
+	// SavePlanOrReuse only reuses a snapshot with the same freshly computed digest.
 	plan, err := s.CalculateDecommissionPlan(ctx, app)
 	if err != nil {
 		return store.PlanRecord{}, err

@@ -19,7 +19,11 @@ func (s *Server) createPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "application not found")
 		return
 	}
-	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "deployer") {
+	role := "deployer"
+	if app.Decommissioning {
+		role = "owner"
+	}
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, role) {
 		return
 	}
 	s.enqueueBackgroundTask(w, r, app.ID, "plan", "", json.RawMessage(`{}`))

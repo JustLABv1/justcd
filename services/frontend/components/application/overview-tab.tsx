@@ -51,11 +51,8 @@ export function OverviewTab({
   pending,
   operations,
   operationsError,
-  canDeploy,
-  busy,
-  hasPendingOperation,
   creatingPlan,
-  planBlockedByNamespace,
+  canRefreshPlan,
   onCreatePlan,
   onRetryPlans,
   onSelectTab,
@@ -69,11 +66,8 @@ export function OverviewTab({
   pending: { topology: boolean; plans: boolean; operations: boolean }
   operations: Operation[]
   operationsError: unknown | null
-  canDeploy: boolean
-  busy: boolean
-  hasPendingOperation: boolean
   creatingPlan: boolean
-  planBlockedByNamespace: boolean
+  canRefreshPlan: boolean
   onCreatePlan: () => void
   onRetryPlans: () => void
   onSelectTab: (tab: string) => void
@@ -193,14 +187,7 @@ export function OverviewTab({
                   ) : (
                     <Button
                       loading={creatingPlan}
-                      disabled={
-                        busy ||
-                        hasPendingOperation ||
-                        !canDeploy ||
-                        application.configurationMissing ||
-                        application.decommissioning ||
-                        planBlockedByNamespace
-                      }
+                      disabled={!canRefreshPlan}
                       onClick={onCreatePlan}
                     >
                       Create plan{trailingArrow}

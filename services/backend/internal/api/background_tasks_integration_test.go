@@ -16,12 +16,15 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/justlab/justcd/services/backend/internal/render"
 	"github.com/justlab/justcd/services/backend/internal/security"
 	"github.com/justlab/justcd/services/backend/internal/store"
 	"github.com/justlab/justcd/services/backend/internal/syncer"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func TestIntegrationBackgroundTasks(t *testing.T) {
@@ -137,6 +140,7 @@ func TestIntegrationBackgroundTasks(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan struct{}, 1)
 	var once sync.Once
+	var liveVersion atomic.Int64
 	kube := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/version" {
@@ -157,8 +161,16 @@ func TestIntegrationBackgroundTasks(t *testing.T) {
 		case "/api/v1":
 			fmt.Fprint(w, `{"kind":"APIResourceList","groupVersion":"v1","resources":[{"name":"configmaps","kind":"ConfigMap","namespaced":true,"verbs":["get","list","create","patch"]}]}`)
 		default:
+			version := liveVersion.Load()
+			object := fmt.Sprintf(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"remaining","namespace":"dev","uid":"remaining-uid","resourceVersion":"%d","labels":{"justcd.io/application-id":"task-app"}},"data":{"value":"keep"}}`, version)
 			if strings.HasSuffix(r.URL.Path, "/configmaps") {
-				fmt.Fprint(w, `{"apiVersion":"v1","kind":"ConfigMapList","items":[]}`)
+				if version > 0 {
+					fmt.Fprintf(w, `{"apiVersion":"v1","kind":"ConfigMapList","items":[%s]}`, object)
+				} else {
+					fmt.Fprint(w, `{"apiVersion":"v1","kind":"ConfigMapList","items":[]}`)
+				}
+			} else if strings.HasSuffix(r.URL.Path, "/configmaps/remaining") && version > 0 {
+				fmt.Fprint(w, object)
 			} else {
 				w.WriteHeader(404)
 				fmt.Fprint(w, `{"apiVersion":"v1","kind":"Status","reason":"NotFound","code":404}`)
@@ -237,6 +249,54 @@ func TestIntegrationBackgroundTasks(t *testing.T) {
 	var approvalCount int
 	if err := db.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM deletion_approvals`).Scan(&approvalCount); err != nil || approvalCount != 1 {
 		t.Fatalf("stale plan recorded approval: %d %v", approvalCount, err)
+	}
+
+	// Refresh during deletion must read remaining live resources, even when the
+	// previous deletion plan is current and unexpired. Never build a Git sync.
+	liveVersion.Store(1)
+	object := &unstructured.Unstructured{}
+	if err := object.UnmarshalJSON([]byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"remaining","namespace":"dev","uid":"remaining-uid","resourceVersion":"1","labels":{"justcd.io/application-id":"task-app"}},"data":{"value":"keep"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	resource, err := render.CanonicalLive(object, "task-cluster", "task-app", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertManagedResource(ctx, "task-app", resource); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB.ExecContext(ctx, `UPDATE applications SET decommissioning=TRUE,configuration_missing=TRUE WHERE id='task-app'`); err != nil {
+		t.Fatal(err)
+	}
+	refreshDeletion := func(key string) planView {
+		t.Helper()
+		task := enqueue(s.createPlan, key, "task-app", `{}`)
+		outcome := waitTaskFixture(t, db, task.ID)
+		var view planView
+		if outcome.Status != "succeeded" {
+			t.Fatalf("deletion refresh failed: %s", outcome.Result)
+		}
+		if err := json.Unmarshal(outcome.Result, &view); err != nil {
+			t.Fatal(err)
+		}
+		if !view.Plan.Decommission {
+			t.Fatal("deletion refresh created a normal sync plan")
+		}
+		return view
+	}
+	deletion := refreshDeletion("deletion-refresh")
+	if len(deletion.Plan.Changes) != 1 {
+		t.Fatalf("expected remaining resource, got %+v", deletion.Plan.Changes)
+	}
+	liveVersion.Store(2)
+	refreshed := refreshDeletion("deletion-version-refresh")
+	if refreshed.ID == deletion.ID || refreshed.Plan.Changes[0].LiveResourceVersion != "2" {
+		t.Fatal("refresh reused a stale unexpired deletion plan")
+	}
+	liveVersion.Store(0)
+	remaining := refreshDeletion("deletion-partial-refresh")
+	if len(remaining.Plan.Changes) != 0 {
+		t.Fatal("refresh retained a resource already deleted by a partial operation")
 	}
 
 	// Authorization changes after enqueue must be checked by the worker.

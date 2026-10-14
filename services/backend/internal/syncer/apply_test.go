@@ -28,7 +28,7 @@ func TestGroupVersionResolvesCoreAndGroupedResources(t *testing.T) {
 func TestPartialSyncFailureExplainsNoAutomaticRollback(t *testing.T) {
 	progress := store.OperationProgress{Total: 4, Completed: []core.Identity{{Kind: "Deployment", Namespace: "apps", Name: "api"}}}
 	message := safeApplyFailure(errors.New("update target changed after plan review"), progress, "sync")
-	for _, fragment := range []string{"1 of 4", "not rolled back", "rebuild the plan"} {
+	for _, fragment := range []string{"1 of 4", "not rolled back", "Live state or ownership changed after review", "rebuild the plan"} {
 		if !strings.Contains(message, fragment) {
 			t.Errorf("partial failure message %q does not contain %q", message, fragment)
 		}

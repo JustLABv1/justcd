@@ -104,10 +104,19 @@ func (s *Server) createPlanNow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "deployer") {
+	role := "deployer"
+	if app.Decommissioning {
+		role = "owner"
+	}
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, role) {
 		return
 	}
-	record, err := s.Syncer.BuildPlan(r.Context(), app.ID, currentUser(r).ID)
+	var record store.PlanRecord
+	if app.Decommissioning {
+		record, err = s.Syncer.BuildDecommissionPlan(r.Context(), app, currentUser(r).ID)
+	} else {
+		record, err = s.Syncer.BuildPlan(r.Context(), app.ID, currentUser(r).ID)
+	}
 	if err != nil {
 		var conflicts *syncer.OwnershipConflicts
 		if errors.As(err, &conflicts) {

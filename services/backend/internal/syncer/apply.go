@@ -460,7 +460,11 @@ func safeApplyFailure(cause error, progress store.OperationProgress, operationTy
 		name = "Rollback"
 	}
 	if len(progress.Completed) > 0 {
-		return fmt.Sprintf("%s stopped after %d of %d resources; completed resources remain applied and were not rolled back. Review cluster state and rebuild the plan before retrying.", name, len(progress.Completed), progress.Total)
+		reason := ""
+		if cause != nil && strings.Contains(cause.Error(), "changed after") {
+			reason = " Live state or ownership changed after review."
+		}
+		return fmt.Sprintf("%s stopped after %d of %d resources; completed resources remain applied and were not rolled back.%s Review cluster state and rebuild the plan before retrying.", name, len(progress.Completed), progress.Total, reason)
 	}
 	if apierrors.IsConflict(cause) && strings.Contains(cause.Error(), "conflict with") {
 		return fmt.Sprintf("%s stopped because Kubernetes field ownership conflicts with another manager. Review the affected fields and create a fresh plan before retrying. No automatic rollback was attempted.", name)
@@ -602,11 +606,15 @@ func (s *Service) deleteResource(ctx context.Context, input planInput, applicati
 	if err != nil {
 		return err
 	}
-	if canonical.Fingerprint != change.LiveFingerprint || canonical.ResourceVersion != change.LiveResourceVersion {
+	if canonical.Fingerprint != change.LiveFingerprint {
 		return errors.New("delete target changed after approval; create a new plan")
 	}
 	uid := types.UID(change.LiveUID)
-	resourceVersion := change.LiveResourceVersion
+	// Controllers can update status while earlier resources are being deleted
+	// (notably PDBs after workloads disappear). CanonicalLive excludes status and
+	// server metadata, so unchanged reviewed content remains safe to delete. Use
+	// the version just checked to reject any race between this GET and DELETE.
+	resourceVersion := canonical.ResourceVersion
 	err = resourceClient.Delete(ctx, change.Identity.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &resourceVersion}})
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete failed for %s %s/%s: %w", change.Identity.Kind, change.Identity.Namespace, change.Identity.Name, err)

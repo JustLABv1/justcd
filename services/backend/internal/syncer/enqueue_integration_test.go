@@ -18,23 +18,24 @@ import (
 // An isolated schema keeps this regression independent of workers and clusters.
 // No credential exists: synchronous plan recalculation would reject this fixture,
 // whereas enqueue must accept it and let the worker report validation failure.
-func TestIntegrationEnqueueWithoutExternalValidation(t *testing.T) {
+func isolatedPlannerStore(t *testing.T) (context.Context, *store.Store) {
+	t.Helper()
 	dsn := os.Getenv("JUSTCD_E2E_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("set JUSTCD_E2E_DATABASE_URL to PostgreSQL")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
+	t.Cleanup(cancel)
 	admin, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer admin.Close()
+	t.Cleanup(func() { admin.Close() })
 	schema := "enqueue_test_" + store.NewID()
 	if _, err := admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
 		t.Fatal(err)
 	}
-	defer admin.ExecContext(context.Background(), `DROP SCHEMA `+schema+` CASCADE`)
+	t.Cleanup(func() { admin.ExecContext(context.Background(), `DROP SCHEMA `+schema+` CASCADE`) })
 	parsed, err := url.Parse(dsn)
 	if err != nil {
 		t.Fatal(err)
@@ -46,7 +47,7 @@ func TestIntegrationEnqueueWithoutExternalValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.DB.Close()
+	t.Cleanup(func() { db.DB.Close() })
 	for _, statement := range []string{
 		`INSERT INTO users(id,email,display_name) VALUES('owner','enqueue@example.invalid','Owner')`,
 		`INSERT INTO workspaces(id,name) VALUES('workspace','Enqueue regression')`,
@@ -58,6 +59,11 @@ func TestIntegrationEnqueueWithoutExternalValidation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	return ctx, db
+}
+
+func TestIntegrationEnqueueWithoutExternalValidation(t *testing.T) {
+	ctx, db := isolatedPlannerStore(t)
 	svc := &Service{Store: db}
 	for _, required := range []bool{false, true} {
 		t.Run(map[bool]string{false: "ordinary", true: "approved"}[required], func(t *testing.T) {

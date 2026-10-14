@@ -18,6 +18,12 @@ After changing dependencies, build both binaries, scan them with
 `govulncheck -mode=binary`, and run the backend tests with the rebuilt tools
 on PATH. Preserve the Helm version using the linker flag in the Dockerfile.
 
+The `kube-openapi` replacement keeps Kustomize 5.8.3 compatible with Helm's
+Kubernetes 0.37 dependencies in this shared module. Kustomize selects a newer
+revision whose schema types use `structured-merge-diff/v7`, while Kubernetes
+0.37 expects v6. Remove the replacement once both tools use compatible schema
+types, and rebuild both binaries before doing so.
+
 ## Remaining upstream findings (2026-10-12)
 
 - The module-wide GO-2026-5932 advisory for deprecated

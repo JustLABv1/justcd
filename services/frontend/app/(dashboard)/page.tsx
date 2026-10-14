@@ -1,5 +1,6 @@
 "use client"
 
+import { DeploymentScheduleNotice } from "@/components/deployment-schedule-notice"
 import Link from "next/link"
 import { useEffect, useMemo, useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
@@ -143,6 +144,7 @@ export default function OverviewPage() {
           </>
         }
       />
+      {workspaceId && <DeploymentScheduleNotice key={workspaceId} scope="workspaces" id={workspaceId} />}
       {error ? (
         <LoadError error={error} retry={refresh} />
       ) : loading && !total ? (

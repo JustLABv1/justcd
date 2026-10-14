@@ -1,5 +1,6 @@
 "use client"
 
+import { DeploymentScheduleNotice } from "@/components/deployment-schedule-notice"
 import { DeploymentSchedulePanel, ScheduledOperationActions } from "@/components/deployment-schedule"
 import { useParams, useRouter } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
@@ -60,6 +61,7 @@ export default function ApplicationDetailPage() {
   const [selectionDraft, setSelectionDraft] = useState<{ planId: string; resources: Identity[]; fields: FieldExclusion[] } | null>(null)
   const [ignoreReasons, setIgnoreReasons] = useState<Record<string, string>>({})
   const [approvalSummary, setApprovalSummary] = useState<PlanApprovalSummary | null>(null)
+  const [approvalError, setApprovalError] = useState<{ planId: string; cause: unknown } | null>(null)
   const [approvalComment, setApprovalComment] = useState("")
   const [loading, setLoading] = useState(true)
   const [pendingData, setPendingData] = useState({ workspace: true, plans: true, resources: true, operations: true, topology: true, rollback: true, rules: true, selectors: true })
@@ -235,8 +237,8 @@ export default function ApplicationDetailPage() {
     }
     let active = true
     const refreshApprovals = () => api<PlanApprovalSummary>(`/api/v1/plans/${encodeURIComponent(activePlanId)}/approvals`)
-      .then((summary) => { if (active) setApprovalSummary(summary) })
-      .catch(() => { if (active) setApprovalSummary(null) })
+      .then((summary) => { if (active) { setApprovalSummary(summary); setApprovalError(null) } })
+      .catch((cause) => { if (active) { setApprovalSummary(null); setApprovalError({ planId: activePlanId, cause }) } })
     void refreshApprovals()
     const timer = window.setInterval(() => void refreshApprovals(), 5000)
     return () => { active = false; window.clearInterval(timer) }
@@ -673,7 +675,7 @@ export default function ApplicationDetailPage() {
   const planBlockedByNamespace = Boolean(application && namespaceMismatch && !application.kustomizeNamespaceOverride)
 
   return <>
-    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.clusterName || application.clusterId} / ${application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"}${application.autoSyncPaused ? " · Auto-sync paused" : ""}` : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Sync <StatusBadge status={application.health} /></span></div>} metadata={application && <RuntimeHealthStrip application={application} healthHistory={healthHistory} />} actions={application && <>
+    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.clusterName || application.clusterId} / ${application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"}${application.autoSyncPaused ? " · Auto-sync paused" : ""}` : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Sync <StatusBadge status={application.health} /></span><DeploymentScheduleNotice key={application.id} layout="chip" scope="applications" id={application.id} onViewSchedule={() => { selectTab("overview"); window.setTimeout(() => document.getElementById("deployment-schedule")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" }), 0) }} /></div>} metadata={application && <RuntimeHealthStrip application={application} healthHistory={healthHistory} />} actions={application && <>
       {pendingData.workspace && <span role="status" className="text-sm text-muted-foreground">Loading permissions…</span>}
       {planBlockedByNamespace && !application.configurationMissing && !application.decommissioning && canDeploy
         ? <Tooltip>
@@ -687,7 +689,7 @@ export default function ApplicationDetailPage() {
         ...(!application.autoSyncPaused ? [{ label: "Pause auto-sync", icon: PauseIcon, separatorBefore: true, disabled: busy || hasPendingOperation, onSelect: () => void pauseSync() }] : []),
       ]} />}
     </>} />
-    <BackgroundTaskStatus tasks={backgroundTasks.tasks} error={backgroundTasks.error} onRefresh={() => void backgroundTasks.refresh()} />
+    <BackgroundTaskStatus tasks={backgroundTasks.tasks} operations={operations} error={backgroundTasks.error} onRefresh={() => void backgroundTasks.refresh()} />
     {error != null && <ErrorNotice error={error} />}
     {application && <AttentionBar application={application} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} plansError={plansError} retryingPlans={retryingPlans} onRetryPlans={() => void retryPlans()}
         conflictCount={ownershipConflict ? ownershipConflicts.length : 0} onReviewConflicts={() => setConflictOpen(true)}
@@ -696,9 +698,8 @@ export default function ApplicationDetailPage() {
         onConfigureExclusion={(issue) => configureIgnore({ mode: "kind", ...(issue.resource ? { version: issue.resource.apiVersion, kind: issue.resource.kind } : {}) })}
         resumeRevision={resumeRevision} onResumeRevisionChange={setResumeRevision} onKeepPin={() => void updateRollbackTracking("keep")} onResume={() => void updateRollbackTracking("resume")} />}
     {!loading && application && <>
-      {visibleOperation && <OperationBar key={visibleOperation.id} operation={visibleOperation} plan={plans.find((plan) => plan.id === visibleOperation.planId)} checkpointId={visibleOperationCheckpoint} canRestore={canApprove} disabled={busy || hasPendingOperation} onRestore={(target) => void createRollbackPlan(target)} canCancel={canDeploy && !busy} onUpdated={loadData} onReviewResource={(identity) => { const operationPlan = plans.find((plan) => plan.id === visibleOperation.planId); if (operationPlan) setActivePlan(operationPlan); setReviewResource(diffId(identity)); selectTab("changes") }} />}
+      {visibleOperation && <OperationBar key={visibleOperation.id} operation={visibleOperation} plan={plans.find((plan) => plan.id === visibleOperation.planId)} checkpointId={visibleOperationCheckpoint} canRestore={canApprove} disabled={busy || hasPendingOperation} onRestore={(target) => void createRollbackPlan(target)} canCancel={canDeploy && !busy} scheduleActions={visibleOperation.status === "queued" ? <ScheduledOperationActions operation={visibleOperation} canOverride={canApprove} canCancel={canDeploy} onUpdated={loadData} /> : undefined} onUpdated={loadData} onReviewResource={(identity) => { const operationPlan = plans.find((plan) => plan.id === visibleOperation.planId); if (operationPlan) setActivePlan(operationPlan); setReviewResource(diffId(identity)); selectTab("changes") }} />}
 
-        {visibleOperation?.status === "queued" && <div className="mb-5 rounded-xl border bg-card p-4"><ScheduledOperationActions operation={visibleOperation} canOverride={canApprove} canCancel={canDeploy} onUpdated={loadData} /></div>}
     </>}
       <Tabs value={activeTab} onValueChange={(value) => selectTab(String(value))} className="min-w-0">
         {application && <TabsList aria-label="Application views">
@@ -727,7 +728,7 @@ export default function ApplicationDetailPage() {
     {!loading && application && <>
         <TabsContent value="overview" className="outline-none">
           <OverviewTab application={application} latestPlan={latestPlan} plansError={plansError} retryingPlans={retryingPlans} topology={topology} topologyError={topologyError} pending={{ topology: pendingData.topology, plans: pendingData.plans, operations: pendingData.operations }} operations={operations} operationsError={operationsError} canDeploy={canDeploy} busy={busy} hasPendingOperation={hasPendingOperation} creatingPlan={pendingAction === "create-plan"} planBlockedByNamespace={planBlockedByNamespace} onCreatePlan={() => void createPlan()} onRetryPlans={() => void retryPlans()} onSelectTab={selectTab} />
-          <div className="mt-5"><DeploymentSchedulePanel key={application.id} scope="applications" id={application.id} canEdit={canApprove} /></div>
+          <div id="deployment-schedule" className="mt-5 scroll-mt-5"><DeploymentSchedulePanel key={application.id} scope="applications" id={application.id} canEdit={canApprove} /></div>
         </TabsContent>
 
         <TabsContent value="topology" className="outline-none">
@@ -756,7 +757,7 @@ export default function ApplicationDetailPage() {
             selectionResources={selectionResources} selectionFields={selectionFields} selectionDirty={selectionDirty} onToggleResource={toggleResourceExclusion} onToggleField={toggleFieldExclusion}
             onResetSelection={() => { setSelectionResources(activePlan?.plan.selection?.resources ?? []); setSelectionFields(activePlan?.plan.selection?.fields ?? []) }} onSaveSelection={() => void savePlanSelection()}
             ignoreRules={ignoreRules} ignoreReasons={ignoreReasons} onIgnoreReasonChange={(key, reason) => setIgnoreReasons((current) => ({ ...current, [key]: reason }))} onSaveIgnore={(identity, path, reason) => void saveIgnoreRule(identity, path, reason)} onRemoveRule={removeIgnoreRule}
-            requiredApprovals={requiredApprovals} approvedApprovals={approvedApprovals} approvalsComplete={approvalsComplete} approverRoles={displayedApproverRoles} approverMembers={displayedApproverMembers} approvalSummary={currentApprovalSummary}
+            requiredApprovals={requiredApprovals} approvedApprovals={approvedApprovals} approvalsComplete={approvalsComplete} approverRoles={displayedApproverRoles} approverMembers={displayedApproverMembers} approvalSummary={currentApprovalSummary} approvalError={approvalError && approvalError.planId === activePlanId ? approvalError.cause : null}
             autoApplyAfterApproval={application.syncPolicy === "auto-safe" && !application.autoSyncPaused && !application.decommissioning && !activePlan?.plan.rollback && !activePlan?.plan.decommission}
             approvalComment={approvalComment} onApprovalCommentChange={setApprovalComment} onApprove={approvePlan} onApply={() => void applyPlan()} onCreatePlan={() => void createPlan()} />
         </TabsContent>

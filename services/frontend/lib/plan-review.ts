@@ -1,4 +1,9 @@
-import type { Change, Plan } from "./types.ts"
+import type { Change, Plan, PlanRecord } from "./types.ts"
+
+/** Stored plan status does not change when its review deadline passes. */
+export function planReviewStatus(record: Pick<PlanRecord, "status" | "expiresAt">, now: number): string {
+  return record.status === "current" && Date.parse(record.expiresAt) <= now ? "expired" : record.status
+}
 
 export const riskLabels = {
   deletion: "Deletion",

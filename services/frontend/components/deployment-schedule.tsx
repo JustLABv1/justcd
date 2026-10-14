@@ -13,6 +13,7 @@ import { Badge } from "@/components/reui/badge"
 import { SettingsGroup, SettingsRow } from "@/components/settings/settings-section"
 import { FormField, Panel } from "@/components/ui-kit"
 import { ErrorDetailsButton } from "@/components/error-details"
+import { ScheduleWarning } from "@/components/deployment-schedule-notice"
 import { useToast } from "@/components/toast-provider"
 
 const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -164,12 +165,14 @@ export function ScheduledOperationActions({ operation, canOverride, canCancel, o
     catch (cause) { setError(cause) } finally { setBusy(false) }
   }
   if (operation.status !== "queued") return null
-  return <div className="space-y-2 text-sm">
-    {operation.waitingReasons?.map((value, index) => <p key={`${index}-${value}`} className="text-muted-foreground">{value}</p>)}
-    {operation.nextAllowedAt && <p className="text-muted-foreground">Next allowed start: {new Date(operation.nextAllowedAt).toLocaleString()} ({Intl.DateTimeFormat().resolvedOptions().timeZone})</p>}
+  const restricted = Boolean(operation.scheduleDeferred && !operation.scheduleOverrideReason)
+  return <div className="space-y-3 text-sm">
+    {restricted && <ScheduleWarning reasons={operation.waitingReasons ?? []} nextAllowedAt={operation.nextAllowedAt} />}
+    {!restricted && operation.waitingReasons?.map((value, index) => <p key={`${index}-${value}`} className="text-muted-foreground">{value}</p>)}
+    {!restricted && operation.nextAllowedAt && <p className="text-muted-foreground">Next allowed start: {new Date(operation.nextAllowedAt).toLocaleString()} ({Intl.DateTimeFormat().resolvedOptions().timeZone})</p>}
     {operation.scheduleOverrideReason && <p className="text-muted-foreground">Emergency override: {operation.scheduleOverrideReason}</p>}
     <div className="flex flex-wrap gap-2">
-      {canCancel && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void cancel()}>Cancel queued apply</Button>}
+      {canCancel && <Button type="button" size="sm" variant="destructive" disabled={busy} onClick={() => void cancel()}>Cancel queued apply</Button>}
       {canOverride && !operation.scheduleOverrideReason && Boolean(operation.waitingReasons?.length) && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => { setError(null); setOpen(true) }}>Emergency override</Button>}
     </div>
     {error !== null && !open && <p role="alert" className="text-destructive">{errorMessage(error)}</p>}

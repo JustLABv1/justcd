@@ -119,6 +119,7 @@ type OwnershipConflict struct {
 	Owner              string        `json:"owner,omitempty"`
 	OwnerMissing       bool          `json:"ownerMissing,omitempty"`
 	DesiredFingerprint string        `json:"desiredFingerprint"`
+	ReviewFingerprint  string        `json:"reviewFingerprint,omitempty"`
 	HasOwnerReferences bool          `json:"hasOwnerReferences"`
 	DesiredManifest    []byte        `json:"-"`
 }
@@ -154,6 +155,7 @@ type planInput struct {
 	IgnoreRules        []store.ApplicationIgnoreRule
 	IgnoreSelectors    []core.IgnoreSelector
 	Selection          core.PlanSelection
+	ReviewFingerprint  string
 }
 
 func (s *Service) BuildPlan(ctx context.Context, applicationID, actorID string) (store.PlanRecord, error) {
@@ -357,7 +359,12 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 			ignoredResources = append(ignoredResources, rule.Identity)
 		}
 	}
-	desired, err := render.Render(ctx, render.Options{RepositoryRoot: checkout.Root, ManifestPath: app.ManifestPath, TargetManifestPath: app.TargetManifestPath, NamespaceManifestPaths: app.NamespaceManifestPaths, Renderer: app.Renderer, KustomizeHelmEnabled: app.KustomizeHelmEnabled, KustomizeNamespaceOverride: app.KustomizeNamespaceOverride, HelmReleaseName: app.HelmReleaseName, HelmValuesFiles: app.HelmValuesFiles, HelmValuesYAML: app.HelmValuesYAML, TargetHelmValuesFiles: app.TargetHelmValuesFiles, TargetHelmValuesYAML: app.TargetHelmValuesYAML, NamespaceHelmValues: app.NamespaceHelmValues, ApplicationID: app.ID, ClusterID: app.ClusterID, Namespaces: namespaceBindings, Mapper: input.Mapper.Mapper, IgnoredResources: ignoredResources, IgnoredSelectors: selectors})
+	renderOptions := render.Options{RepositoryRoot: checkout.Root, ManifestPath: app.ManifestPath, TargetManifestPath: app.TargetManifestPath, NamespaceManifestPaths: app.NamespaceManifestPaths, Renderer: app.Renderer, KustomizeHelmEnabled: app.KustomizeHelmEnabled, KustomizeNamespaceOverride: app.KustomizeNamespaceOverride, HelmReleaseName: app.HelmReleaseName, HelmValuesFiles: app.HelmValuesFiles, HelmValuesYAML: app.HelmValuesYAML, TargetHelmValuesFiles: app.TargetHelmValuesFiles, TargetHelmValuesYAML: app.TargetHelmValuesYAML, NamespaceHelmValues: app.NamespaceHelmValues, ApplicationID: app.ID, ClusterID: app.ClusterID, Namespaces: namespaceBindings, Mapper: input.Mapper.Mapper, IgnoredResources: ignoredResources, IgnoredSelectors: selectors}
+	input.ReviewFingerprint, err = adoptionReviewFingerprint(source, app.Revision, checkout.Commit, renderOptions)
+	if err != nil {
+		return core.Plan{}, nil, err
+	}
+	desired, err := render.Render(ctx, renderOptions)
 	if err != nil {
 		observability.MarkError(span, err)
 		return core.Plan{}, nil, &planStageError{stage: "render", err: err}
@@ -1015,7 +1022,7 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 			if err != nil {
 				return nil, nil, err
 			}
-			conflicts = append(conflicts, &OwnershipConflict{Identity: identity, UID: string(object.GetUID()), ResourceVersion: object.GetResourceVersion(), Owner: owner, OwnerMissing: ownerMissing, DesiredFingerprint: desired[desiredIndex[key]].Fingerprint, DesiredManifest: desired[desiredIndex[key]].Manifest, HasOwnerReferences: len(object.GetOwnerReferences()) > 0})
+			conflicts = append(conflicts, &OwnershipConflict{Identity: identity, UID: string(object.GetUID()), ResourceVersion: object.GetResourceVersion(), Owner: owner, OwnerMissing: ownerMissing, DesiredFingerprint: desired[desiredIndex[key]].Fingerprint, ReviewFingerprint: input.ReviewFingerprint, DesiredManifest: desired[desiredIndex[key]].Manifest, HasOwnerReferences: len(object.GetOwnerReferences()) > 0})
 			continue
 		}
 		if object.GetLabels()["justcd.io/application-id"] != input.Application.ID || string(object.GetUID()) != tracked.UID {

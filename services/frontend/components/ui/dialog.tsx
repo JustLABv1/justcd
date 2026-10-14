@@ -26,7 +26,8 @@ function AppDialog({ open, onOpenChange, title, description, busy = false, varia
 }) {
   return <DialogPrimitive.Root open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next) }}>
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Backdrop className="fixed inset-0 z-50 bg-black/55 backdrop-blur-[2px] data-open:animate-in data-open:fade-in-0 motion-reduce:animate-none" />
+      {/* Base UI otherwise omits backdrops for dialogs opened inside a dialog. */}
+      <DialogPrimitive.Backdrop forceRender className="fixed inset-0 z-50 bg-black/55 backdrop-blur-[2px] data-open:animate-in data-open:fade-in-0 motion-reduce:animate-none" />
       <DialogPrimitive.Popup className={cn("fixed left-1/2 top-1/2 z-50 max-h-[min(88dvh,900px)] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border bg-card p-5 text-card-foreground shadow-2xl outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 motion-reduce:animate-none sm:p-6", sizes[size])}>
         <div className="flex items-start justify-between gap-4 border-b pb-4">
           <div className="min-w-0">

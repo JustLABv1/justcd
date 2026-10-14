@@ -448,6 +448,13 @@ func (s *Server) applyPlan(w http.ResponseWriter, r *http.Request) {
 	}
 	operation, err := s.Syncer.ApplyWithApprovals(r.Context(), record.ID, currentUser(r).ID, approvalIDs)
 	if err != nil {
+		if errors.Is(err, store.ErrPlanNotCurrent) {
+			writeClassifiedError(w, http.StatusConflict, err.Error(), apiErrorMetadata{
+				code: "plan.unavailable", category: "plan", retryable: false,
+				remediation: "Generate and review a fresh plan before syncing.",
+			}, nil)
+			return
+		}
 		var stale *syncer.StalePlanError
 		if errors.As(err, &stale) {
 			writeClassifiedError(w, http.StatusConflict, "plan is stale; review the refreshed plan", apiErrorMetadata{

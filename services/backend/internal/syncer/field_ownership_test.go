@@ -9,12 +9,14 @@ import (
 	"github.com/justlab/justcd/services/backend/internal/core"
 	"github.com/justlab/justcd/services/backend/internal/kube"
 	"github.com/justlab/justcd/services/backend/internal/render"
+	jsonpatch "gopkg.in/evanphx/json-patch.v4"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/managedfields"
 	"k8s.io/apimachinery/pkg/util/managedfields/managedfieldstest"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
@@ -41,9 +43,26 @@ func TestImageTagUpdateMigratesOwnFieldOwnershipWithoutTakeover(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	calls := 0
 	wantDryRun := true
+	var lastApplied *unstructured.Unstructured
+	client.PrependReactor("get", "deployments", func(action ktesting.Action) (bool, runtime.Object, error) { return true, live.DeepCopy(), nil })
 	client.PrependReactor("patch", "deployments", func(action ktesting.Action) (bool, runtime.Object, error) {
-		calls++
 		patch := action.(ktesting.PatchAction)
+		if patch.GetPatchType() == types.MergePatchType {
+			raw, _ := live.MarshalJSON()
+			if !wantDryRun {
+				raw, _ = lastApplied.MarshalJSON()
+			}
+			merged, err := jsonpatch.MergePatch(raw, patch.GetPatch())
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := &unstructured.Unstructured{}
+			if err := result.UnmarshalJSON(merged); err != nil {
+				t.Fatal(err)
+			}
+			return true, result, nil
+		}
+		calls++
 		options := action.(interface{ GetPatchOptions() metav1.PatchOptions }).GetPatchOptions()
 		if (len(options.DryRun) == 1 && options.DryRun[0] == metav1.DryRunAll) != wantDryRun {
 			t.Fatalf("unexpected dry-run options: %+v", options)
@@ -58,6 +77,9 @@ func TestImageTagUpdateMigratesOwnFieldOwnershipWithoutTakeover(t *testing.T) {
 		applied, err := manager.Apply(live.DeepCopy(), object, options.FieldManager, options.Force != nil && *options.Force)
 		if calls%2 == 1 && !fieldOwnershipConflict(err) {
 			t.Fatalf("expected real Kubernetes Update/Apply conflict, got %v", err)
+		}
+		if err == nil {
+			lastApplied = applied.(*unstructured.Unstructured)
 		}
 		return true, applied, err
 	})

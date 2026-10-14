@@ -52,16 +52,11 @@ func (s *Service) ApplyWithApprovals(ctx context.Context, planID, actorID string
 			return store.Operation{}, errors.New("rollback can only be applied by a workspace owner")
 		}
 	}
-	fresh, err := s.RecheckPlan(ctx, app, record)
-	if err != nil {
-		return store.Operation{}, err
-	}
-	if record.Status != "current" || !time.Now().Before(record.ExpiresAt) || fresh.Digest != record.Plan.Digest {
-		newRecord, err := s.RefreshPlan(ctx, app, actorID, record)
-		if err != nil {
-			return store.Operation{}, err
-		}
-		return store.Operation{}, &StalePlanError{Fresh: newRecord}
+	// Enqueue must not wait for Git rendering or Kubernetes discovery/dry runs.
+	// The worker rechecks the exact reviewed digest before any resource mutation
+	// and records validation failures in the operation's visible progress.
+	if record.Status != "current" || !time.Now().Before(record.ExpiresAt) {
+		return store.Operation{}, store.ErrPlanNotCurrent
 	}
 	if err := s.Store.CheckPlanGuardrails(ctx, record.ID); err != nil {
 		return store.Operation{}, err

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {
+  planReviewStatus,
   makeEntry,
   matchesEntry,
   riskCounts,
@@ -96,4 +97,14 @@ test("redacted immutable Secret changes retain reviewed path evidence", () => {
     changedPaths: ["/data/password"],
   })
   assert.deepEqual(immutablePaths(secret), ["/data"])
+})
+
+
+test("current plans stop being actionable at their expiry deadline", () => {
+  const record = { status: "current", expiresAt: "2026-10-14T10:00:00Z" }
+  const deadline = Date.parse(record.expiresAt)
+  assert.equal(planReviewStatus(record, deadline - 1), "current")
+  assert.equal(planReviewStatus(record, deadline), "expired")
+  assert.equal(planReviewStatus(record, deadline + 1), "expired")
+  for (const status of ["applied", "stale", "failed"]) assert.equal(planReviewStatus({ ...record, status }, deadline + 1), status)
 })

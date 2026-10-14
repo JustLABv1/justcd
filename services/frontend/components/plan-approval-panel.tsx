@@ -48,9 +48,17 @@ export function ApproverAvatar({
 }) {
   return (
     <Avatar aria-hidden="true">
-      <AvatarFallback>{initials(name)}</AvatarFallback>
+      <AvatarFallback
+        className={
+          approved
+            ? "bg-success/10 text-success-foreground dark:text-success"
+            : ""
+        }
+      >
+        {initials(name)}
+      </AvatarFallback>
       {approved && (
-        <AvatarBadge className="bg-foreground text-background">
+        <AvatarBadge className="bg-success text-white">
           <HugeiconsIcon icon={Tick02Icon} strokeWidth={2} />
         </AvatarBadge>
       )}
@@ -76,7 +84,9 @@ export function RecordedApprovals({
               <span className="text-sm font-medium break-words">
                 {approval.displayName || approval.email || "Former member"}
               </span>
-              <span className="text-xs text-muted-foreground">
+              <span
+                className={`text-xs ${approval.eligible ? "text-success-foreground dark:text-success" : "text-muted-foreground"}`}
+              >
                 {approval.eligible ? "Approved" : "Not counted"}
               </span>
             </div>
@@ -108,6 +118,7 @@ export function PlanApprovalPanel({
   actions,
   blockedReason,
   error,
+  readOnly = false,
 }: {
   record: PlanRecord
   summary: PlanApprovalSummary | null
@@ -120,6 +131,7 @@ export function PlanApprovalPanel({
   actions?: ReactNode
   blockedReason?: string | null
   error?: unknown
+  readOnly?: boolean
 }) {
   const prefix = useId()
   const [now, setNow] = useState(() => Date.now())
@@ -129,7 +141,7 @@ export function PlanApprovalPanel({
   }, [])
   const plan = record.plan
   const complete = Boolean(summary && approved >= required)
-  const current = record.status === "current"
+  const current = record.status === "current" && !readOnly
   const expired = Date.parse(record.expiresAt) <= now
   const deletions = plan.changes.filter(
     (change) => change.kind === "delete"
@@ -158,7 +170,10 @@ export function PlanApprovalPanel({
             <h3 className="text-sm font-semibold">
               {current ? "Approvals" : "Saved approval policy"}
             </h3>
-            <span role="status" className="text-sm text-muted-foreground">
+            <span
+              role="status"
+              className={`text-sm ${current && summary && !expired && !error && approved > 0 ? "text-success-foreground dark:text-success" : "text-muted-foreground"}`}
+            >
               {!current
                 ? "Historical plan"
                 : error
@@ -215,7 +230,7 @@ export function PlanApprovalPanel({
           </p>
         </div>
         {current && summary?.currentUserApproved ? (
-          <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-success-foreground dark:text-success">
             <HugeiconsIcon
               icon={Tick02Icon}
               strokeWidth={2}

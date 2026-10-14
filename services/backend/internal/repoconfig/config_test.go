@@ -234,3 +234,13 @@ func TestPullRequestCommitStatusesDefaultOffAndExplicitOptIn(t *testing.T) {
 		}
 	}
 }
+
+func TestDiscoverSameNameOnDifferentClusters(t *testing.T) {
+	root := t.TempDir()
+	writeDefinition(t, root, "a/justcd.yaml", validDefinition)
+	writeDefinition(t, root, "b/justcd.yaml", strings.Replace(validDefinition, "cluster: production", "cluster: staging", 1))
+	definitions, err := Discover(root)
+	if err != nil || len(definitions) != 2 {
+		t.Fatalf("cross-cluster names rejected: %+v %v", definitions, err)
+	}
+}

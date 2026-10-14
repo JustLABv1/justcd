@@ -134,7 +134,8 @@ application. Operational rollback pins defer Git rule updates until resumed.
 
 Each file contains exactly one `justcd.io/v1alpha1` `Application`. Multiple
 applications use separate files in separate directories. Names must be unique
-within the workspace and remain stable when moving files. Renaming an
+within each workspace and destination cluster, and remain stable when moving files.
+The same application name can be used on different clusters in one workspace. Renaming an
 application creates a new application and marks the old definition missing.
 Existing manual applications are never implicitly adopted or overwritten.
 
@@ -156,7 +157,7 @@ Existing manual applications are never implicitly adopted or overwritten.
 
 The Git source and revision are inherited from the repository connection. This
 initial format targets one cluster and namespace per definition. Unknown fields,
-duplicate keys or names, multiple YAML documents, and invalid paths are rejected.
+duplicate keys or names for the same cluster, multiple YAML documents, and invalid paths are rejected.
 Paths may reference shared content elsewhere within the same repository, but
 cannot escape it, including through symlinks. Configuration files themselves
 cannot be symlinks. At most 500 definitions are accepted per repository snapshot,

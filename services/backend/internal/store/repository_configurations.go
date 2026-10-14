@@ -107,14 +107,24 @@ func (s *Store) ApplyRepositoryApplications(ctx context.Context, repository Repo
 	if err != nil {
 		return err
 	}
+	// Resolve aliases before checking identity so a cluster name and its ID
+	// cannot make two definitions update the same application in one snapshot.
+	seen := map[[2]string]bool{}
+	for _, app := range apps {
+		key := [2]string{app.ClusterID, app.Name}
+		if seen[key] {
+			return fmt.Errorf("duplicate application name %q for cluster %q", app.Name, app.ClusterID)
+		}
+		seen[key] = true
+	}
 	ids := []string{}
 	for _, app := range apps {
-		existing, err := scanApplication(tx.QueryRowContext(ctx, `SELECT `+applicationColumns+` FROM applications WHERE repository_configuration_id=$1 AND name=$2 FOR UPDATE`, repository.ID, app.Name))
+		existing, err := repositoryApplication(ctx, tx, repository.ID, app, apps)
 		changed := errors.Is(err, sql.ErrNoRows) || (err == nil && existing.ConfigurationHash != app.ConfigurationHash && existing.RollbackResumeState == nil && existing.BranchTest == nil)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			var conflict bool
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM applications WHERE workspace_id=$1 AND name=$2)`, app.WorkspaceID, app.Name).Scan(&conflict); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM applications WHERE workspace_id=$1 AND cluster_id=$2 AND name=$3)`, app.WorkspaceID, app.ClusterID, app.Name).Scan(&conflict); err != nil {
 				return err
 			}
 			if conflict {
@@ -274,4 +284,52 @@ func ensureRepositoryNamespaceBinding(ctx context.Context, tx *sql.Tx, workspace
 	// Read back to preserve an override if another discovery registered it first.
 	err = tx.QueryRowContext(ctx, `SELECT namespace,credential_id FROM namespace_bindings WHERE workspace_id=$1 AND cluster_id=$2 AND namespace=$3`, workspaceID, clusterID, namespace).Scan(&binding.Namespace, &binding.CredentialID)
 	return binding, err
+}
+
+// Match by destination first. A file move preserves identity; a destination edit
+// may reuse the same definition only when its old destination is not also in the
+// snapshot. This retains the existing managed-resource target-change guard.
+func repositoryApplication(ctx context.Context, tx *sql.Tx, repositoryID string, app Application, snapshot []Application) (Application, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT `+applicationColumns+` FROM applications WHERE repository_configuration_id=$1 AND name=$2 ORDER BY id FOR UPDATE`, repositoryID, app.Name)
+	if err != nil {
+		return Application{}, err
+	}
+	defer rows.Close()
+	var candidates []Application
+	for rows.Next() {
+		existing, err := scanApplication(rows)
+		if err != nil {
+			return Application{}, err
+		}
+		candidates = append(candidates, existing)
+	}
+	if err := rows.Err(); err != nil {
+		return Application{}, err
+	}
+	for _, existing := range candidates {
+		if existing.ClusterID == app.ClusterID {
+			return existing, nil
+		}
+	}
+	nameCount := 0
+	for _, incoming := range snapshot {
+		if incoming.Name == app.Name {
+			nameCount++
+		}
+	}
+	for _, existing := range candidates {
+		if existing.ConfigurationPath != app.ConfigurationPath && !(len(candidates) == 1 && nameCount == 1) {
+			continue
+		}
+		retained := false
+		for _, incoming := range snapshot {
+			if incoming.Name == existing.Name && incoming.ClusterID == existing.ClusterID {
+				retained = true
+			}
+		}
+		if !retained {
+			return existing, nil
+		}
+	}
+	return Application{}, sql.ErrNoRows
 }

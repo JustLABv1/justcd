@@ -39,6 +39,7 @@ type RepositoryPRApplication struct {
 	ID                string          `json:"id"`
 	RepositoryID      string          `json:"repositoryId"`
 	Number            int             `json:"number"`
+	ClusterID         string          `json:"clusterId"`
 	DefinitionName    string          `json:"definitionName"`
 	ConfigurationPath string          `json:"configurationPath"`
 	HeadSHA           string          `json:"headSha"`
@@ -53,12 +54,12 @@ type RepositoryPRApplication struct {
 	UpdatedAt         time.Time       `json:"updatedAt"`
 }
 
-const repositoryPRColumns = `id,repository_id,number,definition_name,configuration_path,head_sha,mode,application_id,connection_id,definition_removed,merged,phase,error,plan,updated_at`
+const repositoryPRColumns = `id,repository_id,number,definition_name,configuration_path,head_sha,mode,application_id,connection_id,definition_removed,merged,phase,error,plan,updated_at,COALESCE(cluster_id,'')`
 
 func scanRepositoryPR(row interface{ Scan(...any) error }) (RepositoryPRApplication, error) {
 	var v RepositoryPRApplication
 	var plan []byte
-	err := row.Scan(&v.ID, &v.RepositoryID, &v.Number, &v.DefinitionName, &v.ConfigurationPath, &v.HeadSHA, &v.Mode, &v.ApplicationID, &v.ConnectionID, &v.DefinitionRemoved, &v.Merged, &v.Phase, &v.Error, &plan, &v.UpdatedAt)
+	err := row.Scan(&v.ID, &v.RepositoryID, &v.Number, &v.DefinitionName, &v.ConfigurationPath, &v.HeadSHA, &v.Mode, &v.ApplicationID, &v.ConnectionID, &v.DefinitionRemoved, &v.Merged, &v.Phase, &v.Error, &plan, &v.UpdatedAt, &v.ClusterID)
 	v.Plan = plan
 	return v, err
 }
@@ -275,7 +276,7 @@ func (s *Store) UpsertRepositoryPRApplication(ctx context.Context, repo Reposito
 		return v, err
 	}
 	app.Namespaces[0] = binding
-	previous, err := scanRepositoryPR(tx.QueryRowContext(ctx, `SELECT `+repositoryPRColumns+` FROM repository_pr_applications WHERE repository_id=$1 AND number=$2 AND definition_name=$3 FOR UPDATE`, repo.ID, v.Number, v.DefinitionName))
+	previous, err := scanRepositoryPR(tx.QueryRowContext(ctx, `SELECT `+repositoryPRColumns+` FROM repository_pr_applications WHERE repository_id=$1 AND number=$2 AND definition_name=$3 AND cluster_id=$4 FOR UPDATE`, repo.ID, v.Number, v.DefinitionName, app.ClusterID))
 	if err == nil {
 		v = previous
 		if v.ApplicationID == nil || v.Phase == "promoted" {
@@ -313,6 +314,7 @@ func (s *Store) UpsertRepositoryPRApplication(ctx context.Context, repo Reposito
 			return v, errors.New("repository PR application limit reached")
 		}
 		v.ID = NewID()
+		v.ClusterID = app.ClusterID
 		app.ID = NewID()
 		c.ApplicationID = app.ID
 		v.ApplicationID = &app.ID
@@ -320,7 +322,7 @@ func (s *Store) UpsertRepositoryPRApplication(ctx context.Context, repo Reposito
 		if err = createApplication(ctx, tx, app); err != nil {
 			return v, fmt.Errorf("new PR application: %w", err)
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO repository_pr_applications(id,repository_id,number,definition_name,configuration_path,head_sha,mode,application_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, v.ID, repo.ID, v.Number, v.DefinitionName, v.ConfigurationPath, app.Revision, v.Mode, app.ID)
+		_, err = tx.ExecContext(ctx, `INSERT INTO repository_pr_applications(id,repository_id,number,definition_name,configuration_path,head_sha,mode,application_id,cluster_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, v.ID, repo.ID, v.Number, v.DefinitionName, v.ConfigurationPath, app.Revision, v.Mode, app.ID, app.ClusterID)
 		if err != nil {
 			return v, err
 		}
@@ -359,7 +361,7 @@ func (s *Store) UpdateRepositoryPRResult(ctx context.Context, id string, r PullR
 // promoteRepositoryPR preserves application IDs and managed resource ownership.
 // Only an explicit, merged repository PR record may adopt an existing app.
 func promoteRepositoryPR(ctx context.Context, tx *sql.Tx, repo RepositoryConfiguration, app Application) (string, error) {
-	v, err := scanRepositoryPR(tx.QueryRowContext(ctx, `SELECT `+repositoryPRColumns+` FROM repository_pr_applications WHERE repository_id=$1 AND definition_name=$2 AND mode='existing' AND application_id IS NOT NULL AND phase<>'promoted' FOR UPDATE`, repo.ID, app.Name))
+	v, err := scanRepositoryPR(tx.QueryRowContext(ctx, `SELECT `+repositoryPRColumns+` FROM repository_pr_applications WHERE repository_id=$1 AND definition_name=$2 AND cluster_id=$3 AND mode='existing' AND application_id IS NOT NULL AND phase<>'promoted' FOR UPDATE`, repo.ID, app.Name, app.ClusterID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}

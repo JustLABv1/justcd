@@ -134,6 +134,12 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 	if err := seed(`INSERT INTO applications(id,project_id,name,source_id,revision,manifest_path,renderer,cluster_id) VALUES('integration-app','integration-workspace','Due application','integration-git','main','.','yaml','integration-cluster')`); err != nil {
 		t.Fatal(err)
 	}
+	// Seed an existing PR before the new migration so its cluster identity must
+	// be backfilled without replacing either the PR or application record.
+	if _, err := db.ExecContext(ctx, `INSERT INTO repository_configurations(id,workspace_id,source_id,revision,enabled) VALUES('upgrade-pr-repo','integration-workspace','integration-git','upgrade-pr',FALSE);
+ INSERT INTO repository_pr_applications(id,repository_id,number,definition_name,configuration_path,head_sha,mode,application_id) VALUES('upgrade-pr','upgrade-pr-repo',1,'Due application','justcd.yaml','old-head','review-only','integration-app')`); err != nil {
+		t.Fatal(err)
+	}
 	s := &Store{DB: db}
 	if files[len(files)-pending] == "migrations/033_repair_plan_namespace_creations.sql" {
 		// Reproduce an installation whose ledger contains 032 but whose
@@ -152,6 +158,14 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 		t.Fatalf("list plans after schema repair: %v", err)
 	}
 
+	upgradedPR, err := s.RepositoryPRByID(ctx, "upgrade-pr")
+	if err != nil || upgradedPR.ClusterID != "integration-cluster" || upgradedPR.ApplicationID == nil || *upgradedPR.ApplicationID != "integration-app" || upgradedPR.HeadSHA != "old-head" {
+		t.Fatalf("existing PR identity lost during upgrade: %+v %v", upgradedPR, err)
+	}
+	// Keep this migration fixture from affecting later lifecycle checks.
+	if _, err := db.ExecContext(ctx, `DELETE FROM repository_pr_applications WHERE id='upgrade-pr'; DELETE FROM repository_configurations WHERE id='upgrade-pr-repo'`); err != nil {
+		t.Fatal(err)
+	}
 	testPlanReviewPersistence(t, ctx, s)
 	testGuardrailPolicies(t, ctx, s)
 
@@ -369,4 +383,5 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 	testDeploymentSchedules(t, ctx, s)
 	testRepositoryConfigurationSafety(t, ctx, s)
 	testConnectionDeletionSafety(t, ctx, s)
+	testClusterScopedApplicationNames(t, ctx, s)
 }

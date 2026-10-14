@@ -131,7 +131,11 @@ func (s *Server) discoverRepositoryPRs(ctx context.Context, repo store.Repositor
 	}
 	tracked := map[string]bool{}
 	for _, d := range baseline {
-		tracked[d.Metadata.Name] = true
+		app, err := s.Syncer.ResolveRepositoryDefinition(ctx, repo, d)
+		if err != nil {
+			return err
+		}
+		tracked[app.ClusterID+"\x00"+app.Name] = true
 	}
 	known, err := s.Store.ListRepositoryPRApplications(ctx, repo.ID)
 	if err != nil {
@@ -175,14 +179,25 @@ func (s *Server) discoverRepositoryPRs(ctx context.Context, repo store.Repositor
 			}
 			present := map[string]bool{}
 			for _, definition := range definitions {
-				present[definition.Metadata.Name] = true
-				if tracked[definition.Metadata.Name] {
-					continue
-				}
 				// Branch YAML requests creation; only the owner's repository policy
 				// may authorize it. Resolution never persists a binding itself.
-				definition.Spec.Destination.CreateNamespaces = definition.Spec.Destination.CreateNamespaces && repo.PRSettings.AllowNamespaceCreation && repo.PRSettings.Mode == "existing"
 				app, err := s.Syncer.ResolveRepositoryDefinition(ctx, repo, definition)
+				if err != nil {
+					if strings.Contains(err.Error(), "requires an existing workspace binding") {
+						return repositoryPRBindingError(repo.PRSettings.Mode, definition.File, definition.Spec.Destination.Namespace)
+					}
+					return err
+				}
+				key := app.ClusterID + "\x00" + app.Name
+				if present[key] {
+					return fmt.Errorf("duplicate application name %q for cluster %q", app.Name, app.ClusterID)
+				}
+				present[key] = true
+				if tracked[key] {
+					continue
+				}
+				definition.Spec.Destination.CreateNamespaces = definition.Spec.Destination.CreateNamespaces && repo.PRSettings.AllowNamespaceCreation && repo.PRSettings.Mode == "existing"
+				app, err = s.Syncer.ResolveRepositoryDefinition(ctx, repo, definition)
 				if err != nil {
 					if strings.Contains(err.Error(), "requires an existing workspace binding") {
 						return repositoryPRBindingError(repo.PRSettings.Mode, definition.File, definition.Spec.Destination.Namespace)
@@ -195,7 +210,7 @@ func (s *Server) discoverRepositoryPRs(ctx context.Context, repo store.Repositor
 				conn := c
 				conn.ID = store.NewID()
 				for _, v := range known {
-					if v.Number == event.Number && v.DefinitionName == app.Name && v.ConnectionID != nil {
+					if v.Number == event.Number && v.DefinitionName == app.Name && v.ClusterID == app.ClusterID && v.ConnectionID != nil {
 						conn.ID = *v.ConnectionID
 					}
 				}
@@ -249,7 +264,7 @@ func (s *Server) discoverRepositoryPRs(ctx context.Context, repo store.Repositor
 			}
 			// Removed definitions enter the same reviewed cleanup flow as a closed MR.
 			for _, v := range known {
-				if v.Number == event.Number && v.ConnectionID != nil && v.ApplicationID != nil && !present[v.DefinitionName] {
+				if v.Number == event.Number && v.ConnectionID != nil && v.ApplicationID != nil && !present[v.ClusterID+"\x00"+v.DefinitionName] {
 					_, _ = s.Store.DB.ExecContext(ctx, `UPDATE repository_pr_applications SET definition_removed=TRUE,phase='definition_removed' WHERE id=$1`, v.ID)
 					_, _ = s.Store.DB.ExecContext(ctx, `UPDATE pull_request_reviews SET phase='pending',updated_at=NOW() WHERE connection_id=$1`, *v.ConnectionID)
 				}

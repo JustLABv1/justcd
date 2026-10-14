@@ -136,10 +136,11 @@ func Discover(root string) ([]Definition, error) {
 		if len(d.Metadata.Name) > 63 || !namePattern.MatchString(d.Metadata.Name) {
 			return fail(fmt.Errorf("name must be a lowercase Kubernetes-style name, at most 63 characters"))
 		}
-		if names[d.Metadata.Name] {
-			return fail(fmt.Errorf("duplicate application name %q", d.Metadata.Name))
+		identity := d.Spec.Destination.Cluster + "\x00" + d.Metadata.Name
+		if names[identity] {
+			return fail(fmt.Errorf("duplicate application name %q for cluster %q", d.Metadata.Name, d.Spec.Destination.Cluster))
 		}
-		names[d.Metadata.Name] = true
+		names[identity] = true
 		source := &d.Spec.Source
 		if source.Renderer != "yaml" && source.Renderer != "kustomize" && source.Renderer != "helm" {
 			return fail(fmt.Errorf("renderer must be yaml, kustomize, or helm"))

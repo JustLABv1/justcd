@@ -154,6 +154,9 @@ func TestIntegrationDeliveryAgainstKind(t *testing.T) {
 			}
 		})
 	}
+	t.Run("resource-dependency-order", func(t *testing.T) {
+		verifyIntegrationDependencyOrder(t, ctx, svc, db, repo, workspaceID, clusterID, sourceID, credentialID, ownerID, namespace)
+	})
 	verifyIntegrationPartialFailure(t, ctx, svc, db, kubeClient, repo, workspaceID, clusterID, sourceID, credentialID, ownerID)
 	verifyIntegrationConnectionFailures(t, ctx, svc, db, repo, workspaceID, clusterID, credentialID, ownerID, namespace)
 	verifyIntegrationReadOnlyCredential(t, ctx, svc, db, kubeClient, repo, key, workspaceID, sourceID, ownerID, namespace, config.Host, config.CAData)
@@ -175,6 +178,71 @@ func TestIntegrationDeliveryAgainstKind(t *testing.T) {
 			t.Errorf("audit event %s missing", action)
 		}
 	}
+}
+
+func verifyIntegrationDependencyOrder(t *testing.T, ctx context.Context, svc *Service, db *store.Store, repo *integrationGitRepo, workspaceID, clusterID, sourceID, credentialID, ownerID, namespace string) {
+	t.Helper()
+	// Alphabetical filenames and API identity ordering both put the Deployment
+	// first. Zero replicas avoids image pulls: this verifies mutation sequencing,
+	// not pod readiness or external registry availability.
+	manifests := map[string]string{
+		"00-deployment": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: ordered-api\nspec:\n  replicas: 0\n  selector:\n    matchLabels: {app: ordered-api}\n  template:\n    metadata:\n      labels: {app: ordered-api}\n    spec:\n      serviceAccountName: ordered-runner\n      containers:\n        - name: api\n          image: busybox:1.37\n          envFrom:\n            - configMapRef: {name: ordered-settings}\n",
+		"10-account":    "apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: ordered-runner\n",
+		"20-config":     "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: ordered-settings\ndata:\n  MODE: test\n",
+		"30-role":       "apiVersion: rbac.authorization.k8s.io/v1\nkind: Role\nmetadata:\n  name: ordered-reader\nrules:\n  - apiGroups: ['']\n    resources: [configmaps]\n    verbs: [get]\n",
+		"40-binding":    "apiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\nmetadata:\n  name: ordered-reader\nroleRef:\n  apiGroup: rbac.authorization.k8s.io\n  kind: Role\n  name: ordered-reader\nsubjects:\n  - kind: ServiceAccount\n    name: ordered-runner\n",
+	}
+	for name, manifest := range manifests {
+		repo.write(t, "ordering/"+name+".yaml", manifest)
+	}
+	repo.commit(t, "dependency ordering fixture")
+	app := store.Application{ID: store.NewID(), WorkspaceID: workspaceID, Name: "Dependency order", SourceID: sourceID, Revision: "main", ManifestPath: "ordering", Renderer: "yaml", ClusterID: clusterID, Namespaces: []store.NamespaceBinding{{Namespace: namespace, CredentialID: &credentialID}}, SyncPolicy: "manual", PollSeconds: 300}
+	if err := db.CreateApplication(ctx, app); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := svc.BuildPlan(ctx, app.ID, ownerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := svc.Apply(ctx, plan.ID, ownerID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := waitIntegrationOperationStatus(t, ctx, db, op.ID, "succeeded")
+	assertOrder := func(result store.Operation, deleting bool) {
+		t.Helper()
+		if len(result.Progress.Completed) != 5 || len(result.Progress.Resources) != 5 {
+			t.Fatalf("missing resource results: %+v", result.Progress)
+		}
+		positions := map[string]int{}
+		for i, id := range result.Progress.Completed {
+			positions[id.Kind] = i
+			if id != result.Progress.Resources[i].Identity {
+				t.Fatal("timeline differs from recorded mutation order")
+			}
+		}
+		for _, pair := range [][2]string{{"ServiceAccount", "RoleBinding"}, {"Role", "RoleBinding"}, {"RoleBinding", "Deployment"}, {"ConfigMap", "Deployment"}} {
+			a, b := positions[pair[0]], positions[pair[1]]
+			if (!deleting && a >= b) || (deleting && a <= b) {
+				t.Fatalf("incorrect dependency order: %+v", result.Progress.Completed)
+			}
+		}
+	}
+	assertOrder(result, false)
+	app, err = db.ApplicationByID(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	removal, err := svc.BuildDecommissionPlan(ctx, app, ownerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approvalID := createIntegrationApproval(t, ctx, db, removal, ownerID)
+	op, err = svc.Apply(ctx, removal.ID, ownerID, approvalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertOrder(waitIntegrationOperationStatus(t, ctx, db, op.ID, "succeeded"), true)
 }
 
 func verifyIntegrationPartialFailure(t *testing.T, ctx context.Context, svc *Service, db *store.Store, kubeClient *kubernetes.Clientset, repo *integrationGitRepo, workspaceID, clusterID, sourceID, credentialID, ownerID string) {

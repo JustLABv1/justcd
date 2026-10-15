@@ -15,6 +15,41 @@ resource elapsed time starts when its step begins. Automatic retry timing is
 reported on the failed operation: the retry builds a fresh plan and creates a
 new operation, retaining the previous attempt's results.
 
+## Resource execution order
+
+Sync and rollback apply namespace prerequisites first, followed by creates and
+updates in dependency order. The durable resource timeline uses that same order.
+For example, a Deployment referencing a ServiceAccount is applied after that
+account and any RoleBindings or ClusterRoleBindings granting it permissions.
+Bindings follow their referenced Role or ClusterRole and ServiceAccount subjects.
+
+Pod, Deployment, StatefulSet, DaemonSet, ReplicaSet, ReplicationController, Job,
+and CronJob references are recognized. Prerequisites include ServiceAccounts,
+image pull Secrets, container environment Secrets and ConfigMaps, mounted and
+projected Secrets and ConfigMaps, CSI volume Secrets, and persistent volume
+claims. StatefulSets also follow their governing Service. ServiceAccount image
+pull Secrets, service account token Secret annotations, PVC storage class and
+volume references, namespaces, and Kubernetes owner references are considered.
+References are scoped to the resource's cluster and namespace as appropriate.
+
+Only resources changing in the plan participate in the graph. External or
+unchanged prerequisites remain Kubernetes' responsibility. Unrelated resources
+use a deterministic kind priority and identity order; namespace, infrastructure,
+account, configuration, and RBAC kinds generally precede workloads. Arbitrary
+custom-resource dependency fields and sync-wave annotations are not interpreted.
+This ordering does not provision missing CRDs or wait for CRD discovery.
+
+All creates and updates finish before deletions begin. Deletions reverse the
+dependency order using the previous manifests, removing dependents before their
+prerequisites. Cyclic dependencies reject the operation before resource mutations.
+Execution ordering leaves the reviewed plan and its approval digest unchanged.
+An older queued operation's resource rows are reordered when its worker starts;
+historical completed operations retain their recorded order.
+
+A resource succeeds when its Kubernetes mutation and managed-resource record
+complete. Ordering does not wait for pod readiness, PVC binding, Job completion,
+or controller health; runtime health is reported separately.
+
 ## Cancellation boundaries
 
 `POST /api/v1/operations/{id}/cancel` requires workspace deploy permission.

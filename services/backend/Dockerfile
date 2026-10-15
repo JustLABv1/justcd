@@ -33,7 +33,7 @@ FROM alpine:3.24.2 AS runtime
 COPY --from=expat /out/keys/ /etc/apk/keys/
 COPY --from=expat /out/libexpat-*.apk /tmp/expat/
 RUN apk upgrade --no-cache \
-    && apk add --no-cache ca-certificates git openssh-client 'libexpat>=2.9.0-r0' /tmp/expat/*.apk \
+    && apk add --no-cache ca-certificates git openssh-client tini 'libexpat>=2.9.0-r0' /tmp/expat/*.apk \
     && rm -rf /tmp/expat
 WORKDIR /app
 COPY --from=build /out/justcd-api /usr/local/bin/justcd-api
@@ -42,4 +42,6 @@ COPY --from=tools /out/helm /usr/local/bin/helm
 ENV HOME=/tmp
 USER 10001:10001
 EXPOSE 8080
+# Adopt and reap orphaned Git/renderer children; forward shutdown to the API.
+ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["/usr/local/bin/justcd-api"]

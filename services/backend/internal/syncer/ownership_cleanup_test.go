@@ -9,6 +9,7 @@ import (
 	"github.com/justlab/justcd/services/backend/internal/core"
 	"github.com/justlab/justcd/services/backend/internal/kube"
 	jsonpatch "gopkg.in/evanphx/json-patch.v5"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -20,7 +21,110 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes/scheme"
 	ktesting "k8s.io/client-go/testing"
+	"k8s.io/client-go/util/retry"
 )
+
+func TestOwnershipCleanupConflictAfterSuccessfulApply(t *testing.T) {
+	for _, kind := range []string{"Ingress", "Deployment"} {
+		for _, concurrent := range []string{"status", "spec", "labels", "replacement", "ownership", "persistent conflict", "forbidden"} {
+			t.Run(kind+"/"+concurrent, func(t *testing.T) {
+				apiVersion, group, plural := "networking.k8s.io/v1", "networking.k8s.io", "ingresses"
+				spec := map[string]interface{}{"tls": []interface{}{map[string]interface{}{"secretName": "new-tls"}}}
+				if kind == "Deployment" {
+					apiVersion, group, plural = "apps/v1", "apps", "deployments"
+					spec = map[string]interface{}{"replicas": int64(2)}
+				}
+				applied := &unstructured.Unstructured{Object: map[string]interface{}{
+					"apiVersion": apiVersion, "kind": kind,
+					"metadata": map[string]interface{}{"name": "gateway", "namespace": "team", "uid": "uid", "resourceVersion": "2", "annotations": map[string]interface{}{"obsolete": "remove"}},
+					"spec":     spec,
+				}}
+				applied.SetManagedFields([]metav1.ManagedFieldsEntry{
+					{Manager: "justcd/app", Operation: metav1.ManagedFieldsOperationUpdate, APIVersion: apiVersion, FieldsType: "FieldsV1", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:metadata":{"f:annotations":{"f:obsolete":{}}}}`)}},
+					{Manager: "justcd/app", Operation: metav1.ManagedFieldsOperationApply, APIVersion: apiVersion, FieldsType: "FieldsV1", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:spec":{}}`)}},
+				})
+				fresh := applied.DeepCopy()
+				fresh.SetResourceVersion("3")
+				fresh.Object["status"] = map[string]interface{}{"observedGeneration": int64(2)}
+				fresh.SetManagedFields(append(fresh.GetManagedFields(), metav1.ManagedFieldsEntry{Manager: "controller", Operation: metav1.ManagedFieldsOperationUpdate, Subresource: "status", APIVersion: apiVersion, FieldsType: "FieldsV1", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:status":{}}`)}}))
+				switch concurrent {
+				case "spec":
+					fresh.Object["spec"] = map[string]interface{}{"changed": "concurrently"}
+				case "labels":
+					fresh.SetLabels(map[string]string{"concurrent": "change"})
+				case "replacement":
+					fresh.SetUID("replacement")
+				case "ownership":
+					fresh.SetManagedFields(append(fresh.GetManagedFields(), metav1.ManagedFieldsEntry{Manager: "another-manager", Operation: metav1.ManagedFieldsOperationApply, APIVersion: apiVersion, FieldsType: "FieldsV1", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:spec":{}}`)}}))
+				}
+				client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+				applyCalls, cleanupCalls, getCalls := 0, 0, 0
+				client.PrependReactor("get", plural, func(action ktesting.Action) (bool, runtime.Object, error) {
+					getCalls++
+					return true, fresh.DeepCopy(), nil
+				})
+				client.PrependReactor("patch", plural, func(action ktesting.Action) (bool, runtime.Object, error) {
+					patch := action.(ktesting.PatchAction)
+					if patch.GetPatchType() == types.ApplyPatchType {
+						applyCalls++
+						return true, applied.DeepCopy(), nil
+					}
+					cleanupCalls++
+					resource := schema.GroupResource{Group: group, Resource: plural}
+					if concurrent == "forbidden" {
+						return true, nil, apierrors.NewForbidden(resource, "gateway", nil)
+					}
+					if cleanupCalls == 1 || concurrent == "persistent conflict" {
+						return true, nil, apierrors.NewConflict(resource, "gateway", nil)
+					}
+					options := action.(interface{ GetPatchOptions() metav1.PatchOptions }).GetPatchOptions()
+					if options.Force != nil || len(options.DryRun) > 0 || options.FieldManager != "justcd/app" {
+						t.Fatalf("unsafe cleanup options: %+v", options)
+					}
+					raw, _ := fresh.MarshalJSON()
+					merged, err := jsonpatch.MergePatch(raw, patch.GetPatch())
+					if err != nil {
+						t.Fatal(err)
+					}
+					result := &unstructured.Unstructured{}
+					if err := result.UnmarshalJSON(merged); err != nil {
+						t.Fatal(err)
+					}
+					if result.GetResourceVersion() != "3" || result.GetUID() != "uid" || result.GetAnnotations()["obsolete"] != "" || !reflect.DeepEqual(result.Object["status"], fresh.Object["status"]) || !reflect.DeepEqual(result.Object["spec"], applied.Object["spec"]) {
+						t.Fatalf("cleanup lost preconditions or concurrent status: %+v", result.Object)
+					}
+					for _, entry := range result.GetManagedFields() {
+						if entry.Manager == "justcd/app" && entry.Operation == metav1.ManagedFieldsOperationUpdate {
+							t.Fatal("stale ownership survived")
+						}
+					}
+					return true, result, nil
+				})
+				rc := client.Resource(schema.GroupVersionResource{Group: group, Version: "v1", Resource: plural}).Namespace("team")
+				_, err := applyWithOwnershipMigration(context.Background(), rc, "gateway", []byte(`{}`), metav1.PatchOptions{FieldManager: "justcd/app"})
+				if applyCalls != 1 {
+					t.Fatalf("Apply was replayed %d times", applyCalls)
+				}
+				if concurrent == "status" {
+					if err != nil || cleanupCalls != 2 || getCalls != 1 {
+						t.Fatalf("status-only update was not recovered: %v (%d patches, %d gets)", err, cleanupCalls, getCalls)
+					}
+				} else {
+					if err == nil {
+						t.Fatal("unsafe or failed cleanup reported success")
+					}
+					if concurrent == "persistent conflict" {
+						if !apierrors.IsConflict(err) || cleanupCalls != retry.DefaultRetry.Steps {
+							t.Fatalf("unbounded or incorrect retry: %v (%d calls)", err, cleanupCalls)
+						}
+					} else if cleanupCalls != 1 {
+						t.Fatalf("unsafe cleanup was retried %d times", cleanupCalls)
+					}
+				}
+			})
+		}
+	}
+}
 
 func TestMountReplacementMigratesUpdateOwnership(t *testing.T) {
 	for _, samePath := range []bool{false, true} {

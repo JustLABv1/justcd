@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v7
       - name: Build backend and run Expat upstream tests
         run: docker build --pull -t justcd-backend:local -f services/backend/Dockerfile services/backend
-      - name: Check patched library and Git HTTP clone
+      - name: Check process reaping, shutdown signals, patched library and Git HTTP clone
         run: sh scripts/check-backend-runtime.sh docker justcd-backend:local
       - name: Build frontend for Compose installation
         run: docker build --pull -t justcd-frontend:local -f services/frontend/Dockerfile services/frontend

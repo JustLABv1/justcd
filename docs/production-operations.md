@@ -307,6 +307,7 @@ setting is implied; do not prune audit tables ad hoc.
 | Decryption failure | Confirm exact key version and credential ID/purpose. Restore the key; distinguish this from upstream token expiry. Never generate a replacement as a fix. |
 | Kubernetes forbidden | Safe connection test plus exact resource/verb/namespace `auth can-i` and admission policy. Grant only needed permissions to the correct identity. |
 | Git/OIDC TLS failure | Verify hostname/expiry/CA bundle. Restart backend after trust rotation to reload CA roots; do not disable verification. |
+| Git `cannot fork()` / many `Z` processes | Check container PID usage and zombie processes. The backend image uses Tini as PID 1 to reap orphaned Git/renderer children; preserve its image entrypoint when deploying. Roll out the fixed image to replace affected Pods and clear existing zombies. A restart of an older image only provides temporary recovery. |
 | Queue/backoff growth | Inspect operation progress, target throttling, cluster rate/concurrency and plan size. Resolve error, then review fresh plans; avoid live SQL status edits. |
 | Ownership conflicts after restore | Compare UID/labels/inventory/timeline. Adopt only verified resources with a fresh plan; do not force-delete. |
 

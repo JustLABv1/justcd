@@ -3,6 +3,7 @@ package syncer
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/structured-merge-diff/v7/fieldpath"
 	"sigs.k8s.io/structured-merge-diff/v7/value"
 )
@@ -21,6 +23,52 @@ import (
 // Planning submits the complete predicted result as one dry-run merge patch:
 // separate dry-run requests cannot see each other's ownership changes.
 func finishOwnershipMigration(ctx context.Context, rc dynamic.ResourceInterface, name string, applied *unstructured.Unstructured, options metav1.PatchOptions) (*unstructured.Unstructured, error) {
+	if applied == nil || len(options.DryRun) > 0 {
+		return finishOwnershipMigrationStep(ctx, rc, name, applied, options)
+	}
+	current := applied
+	var result *unstructured.Unstructured
+	attempt := 0
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if attempt > 0 {
+			fresh, err := rc.Get(ctx, name, metav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+			// Controllers can update status immediately after the successful Apply.
+			// Retry only cleanup, and only if desired state and field ownership
+			// are unchanged. Never replay Apply against a new resource version.
+			if !reflect.DeepEqual(ownershipMigrationState(applied), ownershipMigrationState(fresh)) {
+				return fmt.Errorf("ownership migration target %s changed after apply; create a new plan", name)
+			}
+			current = fresh
+		}
+		attempt++
+		var err error
+		result, err = finishOwnershipMigrationStep(ctx, rc, name, current, options)
+		return err
+	})
+	return result, err
+}
+
+// Status and its ownership may change without invalidating the reviewed spec.
+// Everything else, including UID, labels and other managers, remains guarded.
+func ownershipMigrationState(object *unstructured.Unstructured) map[string]interface{} {
+	state := object.DeepCopy()
+	delete(state.Object, "status")
+	state.SetResourceVersion("")
+	entries := state.GetManagedFields()
+	retained := make([]metav1.ManagedFieldsEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Subresource != "status" {
+			retained = append(retained, entry)
+		}
+	}
+	state.SetManagedFields(retained)
+	return state.Object
+}
+
+func finishOwnershipMigrationStep(ctx context.Context, rc dynamic.ResourceInterface, name string, applied *unstructured.Unstructured, options metav1.PatchOptions) (*unstructured.Unstructured, error) {
 	if applied == nil {
 		return applied, nil
 	}

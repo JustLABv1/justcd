@@ -1,8 +1,13 @@
 import type { Change, Plan, PlanRecord } from "./types.ts"
 
 /** Stored plan status does not change when its review deadline passes. */
-export function planReviewStatus(record: Pick<PlanRecord, "status" | "expiresAt">, now: number): string {
-  return record.status === "current" && Date.parse(record.expiresAt) <= now ? "expired" : record.status
+export function planReviewStatus(
+  record: Pick<PlanRecord, "status" | "expiresAt">,
+  now: number
+): string {
+  return record.status === "current" && Date.parse(record.expiresAt) <= now
+    ? "expired"
+    : record.status
 }
 
 export const riskLabels = {
@@ -29,6 +34,38 @@ export type ReviewGroup = "risk" | "action" | "namespace" | "kind" | "child"
 export function resourceKey(change: Change) {
   const id = change.identity
   return [id.clusterId, id.apiVersion, id.kind, id.namespace, id.name].join("/")
+}
+
+/** Retain server change evidence when redaction hides a field or its parent. */
+export function hiddenChangedPaths(
+  before: unknown,
+  after: unknown,
+  paths: string[] = []
+): string[] {
+  const containsRedaction = (value: unknown): boolean => {
+    if (value === "[redacted]") return true
+    return (
+      value !== null &&
+      typeof value === "object" &&
+      Object.values(value).some(containsRedaction)
+    )
+  }
+  const hiddenAt = (value: unknown, path: string): boolean => {
+    if (path !== "" && !path.startsWith("/")) return false
+    const parts = path === "" ? [] : path.slice(1).split("/")
+    for (const part of parts) {
+      if (value === "[redacted]") return true
+      if (value === null || typeof value !== "object") return false
+      const key = part.replace(/~1/g, "/").replace(/~0/g, "~")
+      value = Object.hasOwn(value, key)
+        ? (value as Record<string, unknown>)[key]
+        : undefined
+    }
+    return containsRedaction(value)
+  }
+  return [...new Set(paths)].filter(
+    (path) => hiddenAt(before, path) || hiddenAt(after, path)
+  )
 }
 
 // Evidence only: Kubernetes rejects these well-known immutable updates. JustCD

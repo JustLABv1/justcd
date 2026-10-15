@@ -9,6 +9,11 @@ redacted manifest text. Neither filtering nor searching edits the plan or digest
 Exclusion drafts are labelled separately and block approval/apply until saved as
 a new plan or reset.
 
+Sensitive values are redacted on both sides of the manifest diff. When those
+values change, the review shows a **Sensitive fields changed** notice listing
+the saved changed-field paths, even if the displayed manifests look identical.
+Ownership-only updates are labelled separately from text changes.
+
 The group page reads each child's current plan with a maximum of four concurrent
 requests. It reports missing plans and read failures, and links to that child's
 independent approval/apply flow. It does not create plans or combine approvals.

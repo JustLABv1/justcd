@@ -58,6 +58,26 @@ func TestRedactManifestMasksSecretMaterial(t *testing.T) {
 	}
 }
 
+func TestPlanViewPreservesChangedPathsWhenRedactionMakesManifestsIdentical(t *testing.T) {
+	for _, tc := range []struct {
+		name, before, after, path string
+	}{
+		{"Secret data", `{"kind":"Secret","data":{"admin-password":"old"}}`, `{"kind":"Secret","data":{"admin-password":"new"}}`, "/data/admin-password"},
+		{"Deployment checksum", `{"kind":"Deployment","spec":{"template":{"metadata":{"annotations":{"checksum/secret":"old"}}}}}`, `{"kind":"Deployment","spec":{"template":{"metadata":{"annotations":{"checksum/secret":"new"}}}}}`, "/spec/template/metadata/annotations/checksum~1secret"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			view := toPlanView(store.PlanRecord{Plan: core.Plan{Changes: []core.Change{{Kind: core.Update, Before: json.RawMessage(tc.before), After: json.RawMessage(tc.after), ChangedPaths: []string{tc.path}}}}})
+			change := view.Plan.Changes[0]
+			if string(change.Before) != string(change.After) || !strings.Contains(string(change.Before), "[redacted]") {
+				t.Fatal("expected identical redacted review manifests")
+			}
+			if len(change.ChangedPaths) != 1 || change.ChangedPaths[0] != tc.path {
+				t.Fatalf("change evidence lost during redaction: %+v", change)
+			}
+		})
+	}
+}
+
 func TestRedactManifestMasksSensitiveKeysInOtherKinds(t *testing.T) {
 	manifest := json.RawMessage(`{"apiVersion":"v1","kind":"ConfigMap","data":{"ordinary":"value"},"spec":{"clientToken":"sensitive-value","replicas":2}}`)
 	redacted := string(redactManifest(manifest))

@@ -194,6 +194,8 @@ export function ApplicationGroupPlanReview({
                     before={change.before}
                     after={change.after}
                     excluded={ignored}
+                    changedPaths={change.changedPaths}
+                    takeover={change.takeover}
                   />
                 </article>
               )}

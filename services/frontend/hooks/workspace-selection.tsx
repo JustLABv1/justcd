@@ -4,6 +4,7 @@ import { createContext, useContext } from "react"
 import type { Workspace } from "@/lib/types"
 
 type WorkspaceSelection = {
+  isAdmin: boolean
   workspaces: Workspace[]
   workspaceId: string
   workspace: Workspace | null

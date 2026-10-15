@@ -91,6 +91,9 @@ func runCommand(logger *slog.Logger, args []string) error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				if err := db.PruneAuditEvents(ctx); err != nil {
+					logger.WarnContext(ctx, "could not prune audit events")
+				}
 				if err := db.PruneSecurityLimits(ctx); err != nil {
 					logger.WarnContext(ctx, "could not prune security rate limits")
 				}

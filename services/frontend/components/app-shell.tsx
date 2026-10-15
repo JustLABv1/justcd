@@ -146,6 +146,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const workspaceNavigation: NavItem[] = [
     { href: `/workspaces/${selectedWorkspaceId}/connections`, label: "Connections", icon: Link01Icon },
     { href: `/workspaces/${selectedWorkspaceId}`, label: "Workspace settings", icon: Settings02Icon },
+    ...(!user?.isAdmin ? [{ href: "/audit", label: "Audit trail", icon: Audit01Icon }] : []),
   ]
   const administration = adminNavigation.filter((item) => item.href !== "/onboarding" || onboardingIncomplete)
   const mobileGroups = [
@@ -215,7 +216,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </li>)}
             </ol>
           </nav>}
-          <WorkspaceSelectionProvider value={{ workspaces, workspaceId: selectedWorkspaceId, workspace: workspaces.find((item) => item.id === selectedWorkspaceId) ?? null, selectWorkspace }}>
+          <WorkspaceSelectionProvider value={{ isAdmin: user.isAdmin, workspaces, workspaceId: selectedWorkspaceId, workspace: workspaces.find((item) => item.id === selectedWorkspaceId) ?? null, selectWorkspace }}>
             {children}
           </WorkspaceSelectionProvider>
         </main>

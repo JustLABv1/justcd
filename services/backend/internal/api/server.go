@@ -9,7 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -194,6 +193,10 @@ func (s *Server) routes() {
 	s.Mux.Handle("POST /api/v1/plans/{planID}/selections", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createPlanSelection))))
 	s.Mux.Handle("POST /api/v1/plans/{planID}/apply", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.applyPlan))))
 	s.Mux.Handle("GET /api/v1/audit", s.requireAuth(http.HandlerFunc(s.listAudit)))
+	s.Mux.Handle("GET /api/v1/audit/export", s.requireAuth(http.HandlerFunc(s.exportAudit)))
+	s.Mux.Handle("GET /api/v1/audit/{eventID}", s.requireAuth(http.HandlerFunc(s.auditDetail)))
+	s.Mux.Handle("GET /api/v1/workspaces/{workspaceID}/audit-retention", s.requireAuth(http.HandlerFunc(s.getAuditRetention)))
+	s.Mux.Handle("PUT /api/v1/workspaces/{workspaceID}/audit-retention", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.setAuditRetention))))
 	s.Mux.Handle("GET /api/v1/admin/users", s.requireAuth(s.requireAdmin(http.HandlerFunc(s.listUsers))))
 	s.Mux.Handle("POST /api/v1/admin/users", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.createUser)))))
 	s.Mux.Handle("PUT /api/v1/admin/users/{userID}", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.updateUser)))))
@@ -399,32 +402,6 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, workspace)
 }
 
-func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
-	user := currentUser(r)
-	if !user.IsAdmin {
-		writeError(w, http.StatusForbidden, "instance administrator role required")
-		return
-	}
-	before := int64(0)
-	if raw := r.URL.Query().Get("before"); raw != "" {
-		parsed, parseErr := strconv.ParseInt(raw, 10, 64)
-		if parseErr != nil || parsed <= 0 {
-			writeError(w, http.StatusBadRequest, "before must be a positive audit event ID")
-			return
-		}
-		before = parsed
-	}
-	items, err := s.Store.ListAuditEvents(r.Context(), 51, before)
-	if err != nil {
-		writeStoreError(w, "could not load audit events")
-		return
-	}
-	hasMore := len(items) > 50
-	if hasMore {
-		items = items[:50]
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "hasMore": hasMore})
-}
 func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 	items, err := s.Store.ListUsers(r.Context())
 	if err != nil {

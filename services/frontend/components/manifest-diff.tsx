@@ -172,16 +172,10 @@ export function ManifestDiff({
               if (next[0]) setMode(next[0])
             }}
           >
-            <ToggleGroupItem
-              className="data-pressed:bg-muted data-pressed:text-foreground"
-              value="split"
-            >
+            <ToggleGroupItem value="split">
               Side by side
             </ToggleGroupItem>
-            <ToggleGroupItem
-              className="data-pressed:bg-muted data-pressed:text-foreground"
-              value="unified"
-            >
+            <ToggleGroupItem value="unified">
               Unified
             </ToggleGroupItem>
           </ToggleGroup>

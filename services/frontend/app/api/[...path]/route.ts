@@ -1,17 +1,30 @@
 import type { NextRequest } from "next/server"
 
-const backendURL = (process.env.JUSTCD_API_URL ?? "http://localhost:8080").replace(/\/$/, "")
+const backendURL = (
+  process.env.JUSTCD_API_URL ?? "http://localhost:8080"
+).replace(/\/$/, "")
 
 async function proxy(
   request: NextRequest,
-  context: { params: Promise<{ path: string[] }> },
+  context: { params: Promise<{ path: string[] }> }
 ) {
   const { path } = await context.params
-  const target = new URL(`/api/${path.map(encodeURIComponent).join("/")}`, backendURL)
+  const target = new URL(
+    `/api/${path.map(encodeURIComponent).join("/")}`,
+    backendURL
+  )
   target.search = request.nextUrl.search
 
   const headers = new Headers()
-  for (const name of ["accept", "content-type", "cookie", "x-csrf-token", "idempotency-key", "origin", "sec-fetch-site"]) {
+  for (const name of [
+    "accept",
+    "content-type",
+    "cookie",
+    "x-csrf-token",
+    "idempotency-key",
+    "origin",
+    "sec-fetch-site",
+  ]) {
     const value = request.headers.get(name)
     if (value) headers.set(name, value)
   }
@@ -26,13 +39,24 @@ async function proxy(
   const response = await fetch(target, {
     method: request.method,
     headers,
-    body: request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer(),
+    body:
+      request.method === "GET" || request.method === "HEAD"
+        ? undefined
+        : await request.arrayBuffer(),
     cache: "no-store",
     redirect: "manual",
   })
 
   const responseHeaders = new Headers()
-  for (const name of ["content-type", "cache-control", "location", "www-authenticate", "retry-after"]) {
+  for (const name of [
+    "content-type",
+    "cache-control",
+    "location",
+    "www-authenticate",
+    "retry-after",
+    "content-disposition",
+    "x-content-type-options",
+  ]) {
     const value = response.headers.get(name)
     if (value) responseHeaders.set(name, value)
   }

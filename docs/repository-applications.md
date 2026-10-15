@@ -248,7 +248,10 @@ the configured cluster-scope credential, or otherwise the resolved credential
 for that namespace (including a cluster-wide ServiceAccount token). The token
 needs `get` and `create` on `namespaces` plus the workload permissions. Planning
 performs a dry-run creation to validate RBAC and admission without creating the
-namespace. A missing namespace appears as a cluster-scoped Create change and
+namespace. This check runs before workload reads; workloads in a confirmed
+missing namespace are planned as new resources without reading or listing them.
+Access denials for existing namespaces or namespace provisioning still fail the
+plan. A missing namespace appears as a cluster-scoped Create change and
 requires the existing owner approval, including with `auto-safe` sync.
 
 Existing namespaces are left untouched. Automatically created namespaces are

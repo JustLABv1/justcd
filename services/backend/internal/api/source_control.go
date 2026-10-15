@@ -18,6 +18,8 @@ import (
 )
 
 type sourceControlInput struct {
+	CommentMode             string               `json:"commentMode"`
+	CommentOnDrafts         bool                 `json:"commentOnDrafts"`
 	PipelineStatusReporting bool                 `json:"pipelineStatusReporting"`
 	StatusCredentialID      string               `json:"statusCredentialId"`
 	Provider                string               `json:"provider"`
@@ -29,6 +31,9 @@ type sourceControlInput struct {
 }
 
 func validateSourceControlInput(input *sourceControlInput, source store.GitSource, app store.Application, previous *store.SourceControlConnection) error {
+	if err := store.ValidateCommentMode(input.CommentMode); err != nil {
+		return err
+	}
 	input.Provider = strings.TrimSpace(input.Provider)
 	input.APIURL = strings.TrimRight(strings.TrimSpace(input.APIURL), "/")
 	details, err := sourceControlDetails(source, input.Provider, input.APIURL)
@@ -131,7 +136,7 @@ func (s *Server) putSourceControl(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	enabled := previous == nil || previous.Enabled
-	c := store.SourceControlConnection{PipelineStatusReporting: input.PipelineStatusReporting, ID: id, Enabled: enabled, WorkspaceID: app.WorkspaceID, ApplicationID: app.ID, Provider: input.Provider, APIURL: input.APIURL, Repository: input.Repository, WebhookSecretCipher: webhookCipher, StatusTokenCipher: statusCipher, StatusCredentialID: statusCredentialID, PreviewProfile: input.PreviewProfile}
+	c := store.SourceControlConnection{CommentMode: input.CommentMode, CommentOnDrafts: input.CommentOnDrafts, PipelineStatusReporting: input.PipelineStatusReporting, ID: id, Enabled: enabled, WorkspaceID: app.WorkspaceID, ApplicationID: app.ID, Provider: input.Provider, APIURL: input.APIURL, Repository: input.Repository, WebhookSecretCipher: webhookCipher, StatusTokenCipher: statusCipher, StatusCredentialID: statusCredentialID, PreviewProfile: input.PreviewProfile}
 	if err := s.Store.SaveSourceControlConnection(r.Context(), c); err != nil {
 		if errors.Is(err, store.ErrGitManagedPR) {
 			writeError(w, http.StatusConflict, err.Error())
@@ -377,7 +382,7 @@ func (s *Server) sourceControlWebhook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusAccepted, map[string]any{"accepted": accepted, "matchedApplications": count})
 		return
 	}
-	v := store.PullRequestReview{ID: store.NewID(), ConnectionID: c.ID, Number: event.Number, HeadSHA: event.HeadSHA, SourceURL: event.URL, Fork: event.Fork, Closed: event.Closed, EventAt: event.EventAt}
+	v := store.PullRequestReview{ID: store.NewID(), ConnectionID: c.ID, Number: event.Number, HeadSHA: event.HeadSHA, SourceURL: event.URL, Draft: event.Draft, Fork: event.Fork, Closed: event.Closed, EventAt: event.EventAt}
 	accepted, err := s.Store.RecordReviewEvent(r.Context(), c.ID, event.DeliveryID, v)
 	if err != nil {
 		writeStoreError(w, "could not record pull request event")

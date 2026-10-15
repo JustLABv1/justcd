@@ -340,6 +340,7 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 	if err := s.SaveSourceControlConnection(ctx, connection); err != nil {
 		t.Fatal(err)
 	}
+	testPRSummaryComments(t, ctx, s)
 	if _, err := db.ExecContext(ctx, `INSERT INTO pull_request_reviews(id,connection_id,number,head_sha,source_url,event_at) VALUES('integration-review','integration-pr-connection',1,$1,'https://example.invalid/review/1',NOW())`, strings.Repeat("a", 40)); err != nil {
 		t.Fatal(err)
 	}

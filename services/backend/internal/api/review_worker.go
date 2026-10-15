@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"html"
 	"log/slog"
 	"net/url"
 	"strconv"
@@ -103,7 +106,7 @@ func (s *Server) pollConnection(ctx context.Context, client scm.Client, connecti
 	seen := make(map[int]bool, len(open))
 	for _, item := range open {
 		seen[item.Number] = true
-		if old, ok := previous[item.Number]; ok && old.HeadSHA == item.HeadSHA && old.Fork == item.Fork && old.HeadBranch == item.HeadBranch {
+		if old, ok := previous[item.Number]; ok && old.HeadSHA == item.HeadSHA && old.Fork == item.Fork && old.HeadBranch == item.HeadBranch && old.Draft == item.Draft {
 			continue
 		}
 		if err := s.recordPolledReview(ctx, connection.ID, item); err != nil {
@@ -120,7 +123,7 @@ func (s *Server) pollConnection(ctx context.Context, client scm.Client, connecti
 		if err != nil {
 			return err
 		}
-		if current.Closed || current.HeadSHA != old.HeadSHA || current.Fork != old.Fork {
+		if current.Closed || current.HeadSHA != old.HeadSHA || current.Fork != old.Fork || current.Draft != old.Draft {
 			if err := s.recordPolledReview(ctx, connection.ID, current); err != nil {
 				return err
 			}
@@ -132,8 +135,8 @@ func (s *Server) pollConnection(ctx context.Context, client scm.Client, connecti
 func (s *Server) recordPolledReview(ctx context.Context, connectionID string, item scm.Event) error {
 	// The stable ID deduplicates concurrent workers; changed provider timestamps
 	// allow a reopened PR at the same SHA to be recorded again.
-	id := "poll:" + strconv.Itoa(item.Number) + ":" + item.HeadSHA + ":" + strconv.FormatBool(item.Closed) + ":" + strconv.FormatInt(item.EventAt.UnixNano(), 10)
-	review := store.PullRequestReview{ID: store.NewID(), ConnectionID: connectionID, Number: item.Number, HeadSHA: item.HeadSHA, SourceURL: item.URL, Fork: item.Fork, Closed: item.Closed, HeadBranch: item.HeadBranch, EventAt: item.EventAt}
+	id := "poll:" + strconv.Itoa(item.Number) + ":" + item.HeadSHA + ":" + strconv.FormatBool(item.Closed) + ":" + strconv.FormatBool(item.Draft) + ":" + strconv.FormatInt(item.EventAt.UnixNano(), 10)
+	review := store.PullRequestReview{ID: store.NewID(), ConnectionID: connectionID, Number: item.Number, HeadSHA: item.HeadSHA, SourceURL: item.URL, Draft: item.Draft, Fork: item.Fork, Closed: item.Closed, HeadBranch: item.HeadBranch, EventAt: item.EventAt}
 	_, err := s.Store.RecordReviewEvent(ctx, connectionID, id, review)
 	return err
 }
@@ -161,10 +164,10 @@ func (s *Server) processReview(ctx context.Context, review store.PullRequestRevi
 			_ = s.Store.SetReviewWorkerError(ctx, review.ID, "could not read current pull request state: "+err.Error())
 			return err
 		}
-		if current.HeadSHA != review.HeadSHA || current.Closed != review.Closed || current.Fork != review.Fork || current.HeadBranch != review.HeadBranch {
+		if current.HeadSHA != review.HeadSHA || current.Closed != review.Closed || current.Fork != review.Fork || current.HeadBranch != review.HeadBranch || current.Draft != review.Draft {
 			// The provider is authoritative; webhook deliveries may be delayed or reordered.
-			fresh := store.PullRequestReview{ID: store.NewID(), ConnectionID: review.ConnectionID, Number: review.Number, HeadSHA: current.HeadSHA, SourceURL: current.URL, Fork: current.Fork, Closed: current.Closed, HeadBranch: current.HeadBranch, EventAt: time.Now().UTC()}
-			_, err = s.Store.RecordReviewEvent(ctx, review.ConnectionID, "provider-refresh:"+review.ID+":"+current.HeadSHA+":"+strconv.FormatBool(current.Closed), fresh)
+			fresh := store.PullRequestReview{ID: store.NewID(), ConnectionID: review.ConnectionID, Number: review.Number, HeadSHA: current.HeadSHA, SourceURL: current.URL, Draft: current.Draft, Fork: current.Fork, Closed: current.Closed, HeadBranch: current.HeadBranch, EventAt: time.Now().UTC()}
+			_, err = s.Store.RecordReviewEvent(ctx, review.ConnectionID, "provider-refresh:"+review.ID+":"+current.HeadSHA+":"+strconv.FormatBool(current.Closed)+":"+strconv.FormatBool(current.Draft)+":"+strconv.FormatInt(current.EventAt.UnixNano(), 10), fresh)
 			return err
 		}
 	}
@@ -211,7 +214,10 @@ func (s *Server) processReview(ctx context.Context, review store.PullRequestRevi
 				ignored.Error = ""
 				ignored.Plan = nil
 				ignored.ProcessedSHA = review.HeadSHA
-				_, err := s.Store.UpdateReviewResult(ctx, ignored, review.HeadSHA, review.Closed)
+				changed, err := s.Store.UpdateReviewResult(ctx, ignored, review.HeadSHA, review.Closed)
+				if err == nil && changed && reviewCommentsEnabled(connection, ignored) {
+					return s.Store.UpdatePRComment(ctx, scm.Client{}, connection, review.Number, string(token), "application:"+connection.ApplicationID, "", false)
+				}
 				return err
 			}
 		}
@@ -546,20 +552,39 @@ func (s *Server) reportReview(ctx context.Context, connection store.SourceContro
 		_ = s.Store.SetReviewReportError(ctx, review.ID, "could not update provider commit status: "+err.Error())
 		return err
 	}
-	reportKey, body, err := reviewComment(review, description, target)
+	if reviewCommentsEnabled(connection, review) {
+		app, err := s.Store.ApplicationByID(ctx, connection.ApplicationID)
+		if err != nil {
+			return err
+		}
+		if err := s.reportReviewSummary(ctx, connection, review, token, description, app.Name); err != nil {
+			_ = s.Store.SetReviewReportError(ctx, review.ID, "could not update PR summary: "+err.Error())
+			return err
+		}
+	}
+
+	return s.Store.MarkReviewReported(ctx, review.ID, review.Phase)
+}
+
+// Summary reporting also runs before repository PR applications are removed or
+// promoted, since deleting their connections cascades the review history.
+func (s *Server) reportReviewSummary(ctx context.Context, connection store.SourceControlConnection, review store.PullRequestReview, token, description, appName string) error {
+	if !reviewCommentsEnabled(connection, review) {
+		return nil
+	}
+	target := s.Config.FrontendURL + "/applications/" + connection.ApplicationID + "/pull-requests#review-" + strconv.Itoa(review.Number)
+	if review.Phase == "removed" {
+		target = ""
+	}
+	if review.Phase == "promoted" {
+		target = s.Config.FrontendURL + "/applications/" + connection.ApplicationID
+	}
+	_, body, err := reviewComment(review, description, target)
 	if err != nil {
 		return err
 	}
-	if reportKey != review.ReportedPlanID {
-		if err := (scm.Client{}).PostComment(ctx, connection.Provider, connection.APIURL, connection.Repository, token, review.Number, body); err != nil {
-			_ = s.Store.SetReviewReportError(ctx, review.ID, "could not post PR comment: "+err.Error())
-			return err
-		}
-		if _, err := s.Store.DB.ExecContext(ctx, `UPDATE pull_request_reviews SET reported_plan_id=$2 WHERE id=$1`, review.ID, reportKey); err != nil {
-			return err
-		}
-	}
-	return s.Store.MarkReviewReported(ctx, review.ID, review.Phase)
+	body = "### " + html.EscapeString(appName) + "\n\n" + body
+	return s.Store.UpdatePRComment(ctx, scm.Client{}, connection, review.Number, token, "application:"+connection.ApplicationID, body, connection.CommentMode != "action-required" || reviewNeedsAction(review.Phase))
 }
 
 // Commit statuses affect CI pipelines and merge gates, so require explicit consent.
@@ -570,16 +595,40 @@ func reportReviewCommitStatus(ctx context.Context, client scm.Client, connection
 	return client.Report(ctx, connection.Provider, connection.APIURL, connection.Repository, token, review.HeadSHA, state, description, target, connection.ApplicationID)
 }
 
+func reviewCommentsEnabled(c store.SourceControlConnection, review store.PullRequestReview) bool {
+	return c.CommentMode != "off" && (!review.Draft || c.CommentOnDrafts)
+}
+
+func reviewNeedsAction(phase string) bool {
+	switch phase {
+	case "adoption_available", "approval_required", "cleanup_pending", "blocked", "failed", "degraded":
+		return true
+	}
+	return false
+}
+
 func reviewComment(review store.PullRequestReview, description, target string) (string, string, error) {
-	key := review.HeadSHA + ":" + review.Phase
-	body := "### JustCD review\n\n" + description + "\n\nCommit: `" + review.HeadSHA + "`\n\n[Open review in JustCD](" + target + ")\n"
+	sha := review.HeadSHA
+	if len(sha) > 8 {
+		sha = sha[:8]
+	}
+	body := "**" + description + "** · `" + sha + "`\n"
+	if target != "" {
+		body += "\n[Open review in JustCD](" + target + ")\n"
+	}
+	if review.Draft {
+		body += "\nDraft pull request.\n"
+	}
+	if review.Error != "" {
+		body += "\n<details>\n<summary>Error details</summary>\n\n<pre>" + html.EscapeString(review.Error) + "</pre>\n\n</details>\n"
+	}
 	if len(review.Plan) > 0 {
 		var view planView
 		if err := json.Unmarshal(review.Plan, &view); err != nil {
 			return "", "", err
 		}
-		key += ":" + view.ID + ":" + view.Plan.Digest
 		body += "\n" + prPlanComment(review, view, target)
 	}
-	return key, body, nil
+	key := sha256.Sum256([]byte(body))
+	return fmt.Sprintf("%x", key), body, nil
 }

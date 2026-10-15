@@ -13,6 +13,8 @@ var prPreviewDNSName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,39}[a-z0-9]$`)
 var prNamespaceName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
 type RepositoryPRConfig struct {
+	CommentMode             string         `json:"commentMode"`
+	CommentOnDrafts         bool           `json:"commentOnDrafts"`
 	PipelineStatusReporting bool           `json:"pipelineStatusReporting"`
 	Enabled                 bool           `json:"enabled"`
 	Provider                string         `json:"provider,omitempty"`

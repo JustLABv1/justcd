@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"strconv"
 	"strings"
 	"time"
@@ -119,8 +120,13 @@ func (s *Server) applyPRCommentApprovals(ctx context.Context, connection store.S
 
 func prPlanComment(review store.PullRequestReview, view planView, target string) string {
 	var body strings.Builder
-	fmt.Fprintf(&body, "### JustCD deployment plan\n\nCommit: `%s`\n\nPlan: `%s`\n\nDigest: `%s`\n\n", review.HeadSHA, view.ID, view.Plan.Digest)
-	fmt.Fprintf(&body, "[Review the full plan](%s)\n\n", target)
+	counts := map[core.ChangeKind]int{}
+	for _, change := range view.Plan.Changes {
+		counts[change.Kind]++
+	}
+	fmt.Fprintf(&body, "**Changes:** %d create · %d update · %d delete\n\n", counts[core.Create], counts[core.Update], counts[core.Delete])
+	body.WriteString("<details>\n<summary>Deployment plan details</summary>\n\n")
+	fmt.Fprintf(&body, "Plan: `%s`\n\nDigest: `%s`\n\n", html.EscapeString(view.ID), html.EscapeString(view.Plan.Digest))
 	for i, change := range view.Plan.Changes {
 		if i >= 50 {
 			fmt.Fprintf(&body, "\n… %d more changes in JustCD.\n", len(view.Plan.Changes)-50)
@@ -128,10 +134,13 @@ func prPlanComment(review store.PullRequestReview, view planView, target string)
 		}
 		fmt.Fprintf(&body, "- %s: `%s` `%s/%s` (`%s`)\n", change.Kind, change.Identity.Kind, change.Identity.Namespace, change.Identity.Name, change.Identity.APIVersion)
 	}
-	if view.Status != "review-only" && core.RequiredApprovalCount(view.Plan) > 0 {
+	body.WriteString("\n</details>\n")
+	if view.Status != "review-only" && core.RequiredApprovalCount(view.Plan) > 0 && (review.Phase == "approval_required" || review.Phase == "cleanup_pending") {
 		fmt.Fprintf(&body, "\nApproval required. A mapped, eligible JustCD user can post:\n\n```text\n/justcd approve %s %s\n```\n\nApprovals apply only to this plan and digest, and expire with the plan.\n", view.ID, view.Plan.Digest)
 	} else if view.Status == "review-only" {
 		body.WriteString("\nReview only — this plan cannot be deployed.\n")
+	} else if core.RequiredApprovalCount(view.Plan) > 0 {
+		body.WriteString("\nDeployment plan approved.\n")
 	} else {
 		body.WriteString("\nAutomatic deployment is allowed by the deployment policy.\n")
 	}

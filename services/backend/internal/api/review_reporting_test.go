@@ -51,7 +51,7 @@ func TestReviewCommitStatusesRequireOptIn(t *testing.T) {
 func TestReviewCommentsIncludeFailureWithoutPlan(t *testing.T) {
 	review := store.PullRequestReview{HeadSHA: strings.Repeat("a", 40), Phase: "failed"}
 	key, body, err := reviewComment(review, "JustCD could not prepare a healthy preview", "https://justcd.example/review")
-	if err != nil || !strings.Contains(body, "healthy preview") || !strings.Contains(body, review.HeadSHA) || !strings.Contains(body, "https://justcd.example/review") {
+	if err != nil || !strings.Contains(body, "healthy preview") || !strings.Contains(body, review.HeadSHA[:8]) || !strings.Contains(body, "https://justcd.example/review") {
 		t.Fatalf("missing review feedback: %q, %v", body, err)
 	}
 	repeatKey, _, _ := reviewComment(review, "JustCD could not prepare a healthy preview", "https://justcd.example/review")
@@ -65,7 +65,43 @@ func TestReviewCommentsIncludeFailureWithoutPlan(t *testing.T) {
 	}
 	review.Plan = json.RawMessage(`{"id":"plan-1","status":"review-only","plan":{"digest":"digest-1"}}`)
 	_, body, err = reviewComment(review, "JustCD preview is healthy", "https://justcd.example/review")
-	if err != nil || !strings.Contains(body, "plan-1") || !strings.Contains(body, "digest-1") || !strings.Contains(body, "JustCD deployment plan") {
+	if err != nil || !strings.Contains(body, "plan-1") || !strings.Contains(body, "digest-1") || !strings.Contains(body, "Deployment plan details") {
 		t.Fatalf("missing plan summary: %q, %v", body, err)
+	}
+}
+
+func TestReviewCommentPolicies(t *testing.T) {
+	for _, tt := range []struct {
+		mode               string
+		draft, optIn, want bool
+	}{
+		{"", false, false, true}, {"summary", true, false, false}, {"summary", true, true, true}, {"off", false, true, false}, {"action-required", false, false, true},
+	} {
+		if got := reviewCommentsEnabled(store.SourceControlConnection{CommentMode: tt.mode, CommentOnDrafts: tt.optIn}, store.PullRequestReview{Draft: tt.draft}); got != tt.want {
+			t.Fatalf("%+v: %v", tt, got)
+		}
+	}
+	for _, phase := range []string{"failed", "degraded", "blocked", "approval_required", "cleanup_pending", "adoption_available"} {
+		if !reviewNeedsAction(phase) {
+			t.Fatal(phase)
+		}
+	}
+	for _, phase := range []string{"pending", "syncing", "ready", "planned", "removed", "closed"} {
+		if reviewNeedsAction(phase) {
+			t.Fatal(phase)
+		}
+	}
+}
+
+func TestReviewCommentErrorChangesAreReported(t *testing.T) {
+	review := store.PullRequestReview{HeadSHA: strings.Repeat("a", 40), Phase: "failed", Error: "failed <resource>"}
+	key, body, err := reviewComment(review, "Preview failed", "https://justcd.example/review")
+	if err != nil || !strings.Contains(body, "&lt;resource&gt;") {
+		t.Fatal(body, err)
+	}
+	review.Error = "another failure"
+	next, _, _ := reviewComment(review, "Preview failed", "https://justcd.example/review")
+	if key == next {
+		t.Fatal("changed error must update summary")
 	}
 }

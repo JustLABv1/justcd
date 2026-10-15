@@ -2,10 +2,8 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"html"
-	"strings"
 
 	"github.com/justlab/justcd/services/backend/internal/scm"
 	"github.com/justlab/justcd/services/backend/internal/store"
@@ -23,22 +21,22 @@ func repositoryPRBindingError(mode, file, namespace string) error {
 
 // Discovery can fail before an application or review exists. Report directly
 // through the repository's trusted provider connection, deduplicating retries.
-func reportRepositoryPRDiscoveryFailure(ctx context.Context, client scm.Client, connection store.SourceControlConnection, repo store.RepositoryConfiguration, event scm.Event, token string, failure error) error {
-	key := sha256.Sum256([]byte(repo.ID + "\x00" + event.HeadSHA + "\x00" + failure.Error()))
-	marker := fmt.Sprintf("<!-- justcd-discovery-failure:%x -->", key)
-	comments, err := client.Comments(ctx, connection.Provider, connection.APIURL, connection.Repository, token, event.Number)
-	if err != nil {
-		return err
+func (s *Server) reportRepositoryPRDiscoveryFailure(ctx context.Context, client scm.Client, connection store.SourceControlConnection, repo store.RepositoryConfiguration, event scm.Event, token string, failure error) error {
+	if connection.CommentMode == "off" || (event.Draft && !connection.CommentOnDrafts) {
+		return nil
 	}
-	for _, comment := range comments {
-		if strings.Contains(comment.Body, marker) {
-			return nil
-		}
-	}
+	return s.Store.UpdatePRComment(ctx, client, connection, event.Number, token, "discovery:"+repo.ID, discoveryFailureComment(event, failure), true)
+}
+
+func discoveryFailureComment(event scm.Event, failure error) string {
 	message := []rune(failure.Error())
 	if len(message) > 6000 {
 		message = append(message[:6000], []rune("… (see repository discovery settings for the complete error)")...)
 	}
-	body := marker + "\n### JustCD application discovery blocked\n\nCommit: `" + event.HeadSHA + "`\n\nJustCD could not register an application for review from this PR/MR.\n\n<pre>" + html.EscapeString(string(message)) + "</pre>\n\nCorrect the definition or repository/workspace settings, then run **Discover now**. No deployment was attempted by this discovery scan.\n"
-	return client.PostComment(ctx, connection.Provider, connection.APIURL, connection.Repository, token, event.Number, body)
+	sha := event.HeadSHA
+	if len(sha) > 8 {
+		sha = sha[:8]
+	}
+	body := "### Application discovery blocked\n\nCommit: `" + sha + "`\n\nJustCD could not register an application for review from this PR/MR.\n\n<details>\n<summary>Discovery error details</summary>\n\n<pre>" + html.EscapeString(string(message)) + "</pre>\n\n</details>\n\nCorrect the definition or repository/workspace settings, then run **Discover now**. No deployment was attempted by this discovery scan.\n"
+	return body
 }

@@ -135,7 +135,24 @@ func testRepositoryPRAPIBoundaries(t *testing.T, ctx context.Context, server *Se
 		t.Fatal(err)
 	}
 	head := strings.Repeat("c", 40)
+	var removedSummary string
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/user" {
+			_, _ = w.Write([]byte(`{"id":42}`))
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/comments") {
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			var payload struct{ Body string }
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			removedSummary = payload.Body
+			w.WriteHeader(201)
+			_, _ = w.Write([]byte(`{"id":77}`))
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"state": "closed", "head": map[string]any{"sha": head, "ref": "new-app", "repo": map[string]string{"full_name": "org/app"}}, "base": map[string]any{"ref": "main", "repo": map[string]string{"full_name": "org/app"}}})
 	}))
 	defer provider.Close()
@@ -165,6 +182,9 @@ func testRepositoryPRAPIBoundaries(t *testing.T, ctx context.Context, server *Se
 		if err = server.processReview(ctx, review); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if !strings.Contains(removedSummary, "Preview has been removed") || strings.Contains(removedSummary, "/pull-requests") {
+		t.Fatal("cleanup summary is stale", removedSummary)
 	}
 	history, err := db.RepositoryPRByID(ctx, v.ID)
 	if err != nil || history.Phase != "removed" || history.ApplicationID != nil || history.ConnectionID != nil {

@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import { PRCommentSettings } from "@/components/pr-comment-settings"
 import { useEffect, useState } from "react"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { HugeiconsIcon } from "@hugeicons/react"
@@ -26,6 +27,8 @@ import type {
 const defaults: RepositoryPRSettings = {
   enabled: false,
   pipelineStatusReporting: false,
+  commentMode: "summary",
+  commentOnDrafts: false,
   credentialId: "",
   mode: "review-only",
   allowNamespaceCreation: false,
@@ -435,10 +438,17 @@ function SettingsDialogContent({
                       }))}
                     />
                   </FormField>
+                  <PRCommentSettings
+                    id="repo-pr-comments"
+                    mode={settings.commentMode || "summary"}
+                    onModeChange={(commentMode) => setSettings((s) => ({ ...s, commentMode }))}
+                    commentOnDrafts={settings.commentOnDrafts ?? false}
+                    onDraftsChange={(commentOnDrafts) => setSettings((s) => ({ ...s, commentOnDrafts }))}
+                  />
                   <SwitchField
                     id="repo-pr-pipeline-status-reporting"
                     label="Report commit statuses"
-                    description="Off by default; JustCD reports through PR/MR comments. Enabling this can block merges. GitLab adds an external job to a pipeline for the commit, and JustCD failures can fail that pipeline."
+                    description="Off by default; independent of PR comments. Enabling this can block merges. GitLab adds an external job to a pipeline for the commit, and JustCD failures can fail that pipeline."
                     checked={settings.pipelineStatusReporting ?? false}
                     onCheckedChange={(pipelineStatusReporting) =>
                       setSettings((s) => ({ ...s, pipelineStatusReporting }))

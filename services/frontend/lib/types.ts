@@ -169,6 +169,8 @@ export type WorkspaceConnectionShare = {
 }
 
 export type RepositoryPRSettings = {
+  commentMode?: "" | "summary" | "action-required" | "off"
+  commentOnDrafts?: boolean
   pipelineStatusReporting?: boolean
   enabled: boolean
   provider?: string

@@ -20,6 +20,7 @@ import (
 )
 
 type Event struct {
+	Draft           bool
 	TargetBranch    string
 	Merged          bool
 	BaseSHA         string
@@ -80,6 +81,7 @@ func VerifyAndParse(provider, secret string, header http.Header, body []byte, no
 				FullName string `json:"full_name"`
 			} `json:"repository"`
 			PullRequest struct {
+				Draft     bool      `json:"draft"`
 				HTMLURL   string    `json:"html_url"`
 				UpdatedAt time.Time `json:"updated_at"`
 				Head      struct {
@@ -94,10 +96,10 @@ func VerifyAndParse(provider, secret string, header http.Header, body []byte, no
 		if err := json.Unmarshal(body, &p); err != nil {
 			return Event{}, err
 		}
-		if p.Action != "opened" && p.Action != "reopened" && p.Action != "synchronize" && p.Action != "closed" {
+		if p.Action != "opened" && p.Action != "reopened" && p.Action != "synchronize" && p.Action != "closed" && p.Action != "ready_for_review" && p.Action != "converted_to_draft" {
 			return Event{}, errors.New("event ignored")
 		}
-		e := Event{DeliveryID: header.Get("X-GitHub-Delivery"), Repository: p.Repository.FullName, Number: p.Number, HeadSHA: p.PullRequest.Head.SHA, URL: p.PullRequest.HTMLURL, Fork: p.PullRequest.Head.Repo.FullName != p.Repository.FullName, Closed: p.Action == "closed", EventAt: p.PullRequest.UpdatedAt}
+		e := Event{Draft: p.PullRequest.Draft, HeadBranch: p.PullRequest.Head.Ref, DeliveryID: header.Get("X-GitHub-Delivery"), Repository: p.Repository.FullName, Number: p.Number, HeadSHA: p.PullRequest.Head.SHA, URL: p.PullRequest.HTMLURL, Fork: p.PullRequest.Head.Repo.FullName != p.Repository.FullName, Closed: p.Action == "closed", EventAt: p.PullRequest.UpdatedAt}
 		return validateEvent(e)
 	case "gitlab":
 		if sig := header.Get("webhook-signature"); sig != "" {
@@ -166,6 +168,8 @@ func VerifyAndParse(provider, secret string, header http.Header, body []byte, no
 				PathWithNamespace string `json:"path_with_namespace"`
 			} `json:"project"`
 			ObjectAttributes struct {
+				Draft           bool      `json:"draft"`
+				WorkInProgress  bool      `json:"work_in_progress"`
 				Action          string    `json:"action"`
 				State           string    `json:"state"`
 				IID             int       `json:"iid"`
@@ -187,7 +191,7 @@ func VerifyAndParse(provider, secret string, header http.Header, body []byte, no
 		if p.ObjectAttributes.Action != "open" && p.ObjectAttributes.Action != "reopen" && p.ObjectAttributes.Action != "update" && p.ObjectAttributes.Action != "close" && p.ObjectAttributes.Action != "merge" {
 			return Event{}, errors.New("event ignored")
 		}
-		e := Event{DeliveryID: header.Get("webhook-id"), Repository: p.Project.PathWithNamespace, Number: p.ObjectAttributes.IID, HeadSHA: p.ObjectAttributes.LastCommit.ID, URL: p.ObjectAttributes.URL, Fork: p.ObjectAttributes.SourceProjectID == 0 || p.ObjectAttributes.TargetProjectID == 0 || p.ObjectAttributes.SourceProjectID != p.ObjectAttributes.TargetProjectID, Closed: p.ObjectAttributes.State == "closed" || p.ObjectAttributes.State == "merged", EventAt: p.ObjectAttributes.UpdatedAt}
+		e := Event{Draft: p.ObjectAttributes.Draft || p.ObjectAttributes.WorkInProgress, DeliveryID: header.Get("webhook-id"), Repository: p.Project.PathWithNamespace, Number: p.ObjectAttributes.IID, HeadSHA: p.ObjectAttributes.LastCommit.ID, URL: p.ObjectAttributes.URL, Fork: p.ObjectAttributes.SourceProjectID == 0 || p.ObjectAttributes.TargetProjectID == 0 || p.ObjectAttributes.SourceProjectID != p.ObjectAttributes.TargetProjectID, Closed: p.ObjectAttributes.State == "closed" || p.ObjectAttributes.State == "merged", EventAt: p.ObjectAttributes.UpdatedAt}
 		if e.DeliveryID == "" {
 			e.DeliveryID = header.Get("X-Gitlab-Event-UUID")
 		}
@@ -294,13 +298,15 @@ func (c Client) ListOpen(ctx context.Context, provider, apiURL, repository, toke
 			return nil, fmt.Errorf("provider pull request list API returned HTTP %d", res.StatusCode)
 		}
 		var raw []struct {
-			Number    int       `json:"number"`
-			IID       int       `json:"iid"`
-			HTMLURL   string    `json:"html_url"`
-			WebURL    string    `json:"web_url"`
-			SHA       string    `json:"sha"`
-			UpdatedAt time.Time `json:"updated_at"`
-			Head      struct {
+			Draft          bool      `json:"draft"`
+			WorkInProgress bool      `json:"work_in_progress"`
+			Number         int       `json:"number"`
+			IID            int       `json:"iid"`
+			HTMLURL        string    `json:"html_url"`
+			WebURL         string    `json:"web_url"`
+			SHA            string    `json:"sha"`
+			UpdatedAt      time.Time `json:"updated_at"`
+			Head           struct {
 				SHA  string `json:"sha"`
 				Ref  string `json:"ref"`
 				Repo struct {
@@ -324,7 +330,7 @@ func (c Client) ListOpen(ctx context.Context, provider, apiURL, repository, toke
 			return nil, err
 		}
 		for _, v := range raw {
-			e := Event{Repository: repository, EventAt: v.UpdatedAt}
+			e := Event{Draft: v.Draft || v.WorkInProgress, Repository: repository, EventAt: v.UpdatedAt}
 			if provider == "github" {
 				e.HeadBranch = v.Head.Ref
 				e.TargetBranch = v.Base.Ref
@@ -380,13 +386,15 @@ func (c Client) Current(ctx context.Context, provider, apiURL, repository, token
 		return Event{}, fmt.Errorf("provider pull request API returned HTTP %d", res.StatusCode)
 	}
 	var raw struct {
-		State     string     `json:"state"`
-		MergedAt  *time.Time `json:"merged_at"`
-		HTMLURL   string     `json:"html_url"`
-		SHA       string     `json:"sha"`
-		WebURL    string     `json:"web_url"`
-		UpdatedAt time.Time  `json:"updated_at"`
-		Head      struct {
+		Draft          bool       `json:"draft"`
+		WorkInProgress bool       `json:"work_in_progress"`
+		State          string     `json:"state"`
+		MergedAt       *time.Time `json:"merged_at"`
+		HTMLURL        string     `json:"html_url"`
+		SHA            string     `json:"sha"`
+		WebURL         string     `json:"web_url"`
+		UpdatedAt      time.Time  `json:"updated_at"`
+		Head           struct {
 			SHA  string `json:"sha"`
 			Ref  string `json:"ref"`
 			Repo struct {
@@ -412,7 +420,7 @@ func (c Client) Current(ctx context.Context, provider, apiURL, repository, token
 	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&raw); err != nil {
 		return Event{}, err
 	}
-	e := Event{Number: number, Repository: repository, EventAt: raw.UpdatedAt}
+	e := Event{Draft: raw.Draft || raw.WorkInProgress, Number: number, Repository: repository, EventAt: raw.UpdatedAt}
 	if provider == "github" {
 		e.HeadBranch = raw.Head.Ref
 		e.TargetBranch = raw.Base.Ref

@@ -248,6 +248,7 @@ export function OperationBar({
       {scheduleActions}
       {Boolean(operation.progress?.resources?.length) && (
         <RolloutPanel
+          key={operation.id}
           operation={operation}
           plan={plan}
           elapsed={elapsed}

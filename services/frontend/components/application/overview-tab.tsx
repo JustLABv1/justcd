@@ -1,7 +1,5 @@
 "use client"
 
-import { applicationResourceNodes } from "@/lib/topology-view"
-
 import Link from "next/link"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { ArrowRight01Icon } from "@hugeicons/core-free-icons"
@@ -85,13 +83,6 @@ export function OverviewTab({
         : latestPlan
           ? `Plan ${latestPlan.status}`
           : "No plan yet"
-  const resourcesNote = pending.topology
-    ? "Loading resources…"
-    : topologyError
-      ? "Resource count unavailable"
-      : topology
-        ? `${applicationResourceNodes(topology).length} application resources`
-        : "Resources not observed yet"
 
   return (
     <div className="space-y-5">
@@ -106,28 +97,18 @@ export function OverviewTab({
       )}
       <OverviewMetrics
         application={application}
-        latestPlan={latestPlan}
         topology={topology}
         pending={pending}
-        plansError={plansError}
         topologyError={topologyError}
         onSelectTab={onSelectTab}
       />
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)]">
         <section
-          aria-label="Status and plan"
+          aria-label="Deployment plan"
           className="min-w-0 rounded-xl border bg-card"
         >
           <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
-            <h2 className="text-sm font-semibold">Plan and sync</h2>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => onSelectTab("topology")}
-            >
-              {resourcesNote}
-              {trailingArrow}
-            </Button>
+            <h2 className="text-sm font-semibold">Deployment plan</h2>
           </div>
           <div className="space-y-4 p-5">
             {pending.plans ? (

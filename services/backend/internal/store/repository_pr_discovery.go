@@ -25,6 +25,8 @@ func namespacePattern(pattern string) (*regexp.Regexp, error) {
 }
 
 type RepositoryPRSettings struct {
+	CommentMode             string          `json:"commentMode"`
+	CommentOnDrafts         bool            `json:"commentOnDrafts"`
 	PipelineStatusReporting bool            `json:"pipelineStatusReporting"`
 	Enabled                 bool            `json:"enabled"`
 	Provider                string          `json:"provider,omitempty"`
@@ -121,6 +123,9 @@ func (p RepositoryPRSettings) AllowsNamespaceCreation(cluster, namespace string)
 }
 
 func ValidateRepositoryPRSettings(p RepositoryPRSettings) error {
+	if err := ValidateCommentMode(p.CommentMode); err != nil {
+		return err
+	}
 	if !p.Enabled {
 		return nil
 	}
@@ -182,6 +187,8 @@ func (s *Store) SaveRepositoryPRSettings(ctx context.Context, id string, p Repos
 	}
 	oldPolicy := repo.PRSettings
 	oldPolicy.PipelineStatusReporting = p.PipelineStatusReporting
+	oldPolicy.CommentMode = p.CommentMode
+	oldPolicy.CommentOnDrafts = p.CommentOnDrafts
 	old, _ := json.Marshal(oldPolicy)
 	raw, _ := json.Marshal(p)
 	var active bool
@@ -229,11 +236,11 @@ func (s *Store) SaveRepositoryPRSettings(ctx context.Context, id string, p Repos
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE source_control_connections c SET pipeline_status_reporting=$2,updated_at=NOW() FROM repository_pr_applications p WHERE c.repository_pr_id=p.id AND p.repository_id=$1`, id, p.PipelineStatusReporting)
+	_, err = tx.ExecContext(ctx, `UPDATE source_control_connections c SET pipeline_status_reporting=$2,comment_mode=$3,comment_on_drafts=$4,updated_at=NOW() FROM repository_pr_applications p WHERE c.repository_pr_id=p.id AND p.repository_id=$1`, id, p.PipelineStatusReporting, p.CommentMode, p.CommentOnDrafts)
 	if err != nil {
 		return err
 	}
-	if repo.PRSettings.PipelineStatusReporting != p.PipelineStatusReporting {
+	if repo.PRSettings.PipelineStatusReporting != p.PipelineStatusReporting || repo.PRSettings.CommentMode != p.CommentMode || repo.PRSettings.CommentOnDrafts != p.CommentOnDrafts {
 		if _, err := tx.ExecContext(ctx, `UPDATE pull_request_reviews r SET reported_phase='' FROM source_control_connections c JOIN repository_pr_applications p ON c.repository_pr_id=p.id WHERE r.connection_id=c.id AND p.repository_id=$1`, id); err != nil {
 			return err
 		}
@@ -327,7 +334,7 @@ func (s *Store) UpsertRepositoryPRApplication(ctx context.Context, repo Reposito
 			return v, err
 		}
 		profile, _ := json.Marshal(c.PreviewProfile)
-		_, err = tx.ExecContext(ctx, `INSERT INTO source_control_connections(id,workspace_id,application_id,provider,api_url,repository,status_token_cipher,status_credential_id,preview_profile,managed_by_git,repository_pr_id,pipeline_status_reporting) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE,$10,$11)`, c.ID, app.WorkspaceID, app.ID, c.Provider, c.APIURL, c.Repository, []byte{}, c.StatusCredentialID, profile, v.ID, c.PipelineStatusReporting)
+		_, err = tx.ExecContext(ctx, `INSERT INTO source_control_connections(id,workspace_id,application_id,provider,api_url,repository,status_token_cipher,status_credential_id,preview_profile,managed_by_git,repository_pr_id,pipeline_status_reporting,comment_mode,comment_on_drafts) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE,$10,$11,$12,$13)`, c.ID, app.WorkspaceID, app.ID, c.Provider, c.APIURL, c.Repository, []byte{}, c.StatusCredentialID, profile, v.ID, c.PipelineStatusReporting, c.CommentMode, c.CommentOnDrafts)
 		if err != nil {
 			return v, err
 		}

@@ -30,6 +30,8 @@ type PreviewProfile struct {
 }
 
 type SourceControlConnection struct {
+	CommentMode             string         `json:"commentMode"`
+	CommentOnDrafts         bool           `json:"commentOnDrafts"`
 	PipelineStatusReporting bool           `json:"pipelineStatusReporting"`
 	RepositoryPRID          *string        `json:"repositoryPrId,omitempty"`
 	ManagedByGit            bool           `json:"managedByGit"`
@@ -47,12 +49,12 @@ type SourceControlConnection struct {
 	CreatedAt               time.Time      `json:"createdAt"`
 }
 
-const connectionColumns = `id,enabled,workspace_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile,created_at,status_credential_id,managed_by_git,repository_pr_id,pipeline_status_reporting`
+const connectionColumns = `id,enabled,workspace_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile,created_at,status_credential_id,managed_by_git,repository_pr_id,pipeline_status_reporting,comment_mode,comment_on_drafts`
 
 func scanSourceControlConnection(row interface{ Scan(...any) error }) (SourceControlConnection, error) {
 	var c SourceControlConnection
 	var profile []byte
-	err := row.Scan(&c.ID, &c.Enabled, &c.WorkspaceID, &c.ApplicationID, &c.Provider, &c.APIURL, &c.Repository, &c.WebhookSecretCipher, &c.StatusTokenCipher, &profile, &c.CreatedAt, &c.StatusCredentialID, &c.ManagedByGit, &c.RepositoryPRID, &c.PipelineStatusReporting)
+	err := row.Scan(&c.ID, &c.Enabled, &c.WorkspaceID, &c.ApplicationID, &c.Provider, &c.APIURL, &c.Repository, &c.WebhookSecretCipher, &c.StatusTokenCipher, &profile, &c.CreatedAt, &c.StatusCredentialID, &c.ManagedByGit, &c.RepositoryPRID, &c.PipelineStatusReporting, &c.CommentMode, &c.CommentOnDrafts)
 	if err == nil {
 		err = json.Unmarshal(profile, &c.PreviewProfile)
 	}
@@ -60,6 +62,9 @@ func scanSourceControlConnection(row interface{ Scan(...any) error }) (SourceCon
 }
 
 func (s *Store) SaveSourceControlConnection(ctx context.Context, c SourceControlConnection) error {
+	if err := ValidateCommentMode(c.CommentMode); err != nil {
+		return err
+	}
 	profile, err := json.Marshal(c.PreviewProfile)
 	if err != nil {
 		return err
@@ -85,16 +90,16 @@ func (s *Store) SaveSourceControlConnection(ctx context.Context, c SourceControl
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO source_control_connections(id,workspace_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile,status_credential_id,pipeline_status_reporting)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11)
+	_, err = tx.ExecContext(ctx, `INSERT INTO source_control_connections(id,workspace_id,application_id,provider,api_url,repository,webhook_secret_cipher,status_token_cipher,preview_profile,status_credential_id,pipeline_status_reporting,comment_mode,comment_on_drafts)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13)
 		ON CONFLICT(application_id) DO UPDATE SET provider=EXCLUDED.provider,api_url=EXCLUDED.api_url,repository=EXCLUDED.repository,
 		webhook_secret_cipher=EXCLUDED.webhook_secret_cipher,status_token_cipher=EXCLUDED.status_token_cipher,
-		preview_profile=EXCLUDED.preview_profile,status_credential_id=EXCLUDED.status_credential_id,pipeline_status_reporting=EXCLUDED.pipeline_status_reporting,updated_at=NOW()`,
-		c.ID, c.WorkspaceID, c.ApplicationID, c.Provider, c.APIURL, c.Repository, c.WebhookSecretCipher, c.StatusTokenCipher, string(profile), c.StatusCredentialID, c.PipelineStatusReporting)
+		preview_profile=EXCLUDED.preview_profile,status_credential_id=EXCLUDED.status_credential_id,pipeline_status_reporting=EXCLUDED.pipeline_status_reporting,comment_mode=EXCLUDED.comment_mode,comment_on_drafts=EXCLUDED.comment_on_drafts,updated_at=NOW()`,
+		c.ID, c.WorkspaceID, c.ApplicationID, c.Provider, c.APIURL, c.Repository, c.WebhookSecretCipher, c.StatusTokenCipher, string(profile), c.StatusCredentialID, c.PipelineStatusReporting, c.CommentMode, c.CommentOnDrafts)
 	if err != nil {
 		return err
 	}
-	if previous.ID != "" && previous.PipelineStatusReporting != c.PipelineStatusReporting {
+	if previous.ID != "" && (previous.PipelineStatusReporting != c.PipelineStatusReporting || previous.CommentMode != c.CommentMode || previous.CommentOnDrafts != c.CommentOnDrafts) {
 		if _, err := tx.ExecContext(ctx, `UPDATE pull_request_reviews SET reported_phase='' WHERE connection_id=$1`, previous.ID); err != nil {
 			return err
 		}
@@ -201,6 +206,7 @@ func (s *Store) DeleteSourceControlConnection(ctx context.Context, applicationID
 }
 
 type PullRequestReview struct {
+	Draft                 bool            `json:"draft"`
 	ScopeNote             string          `json:"scopeNote,omitempty"`
 	ReportedPlanID        string          `json:"-"`
 	BranchPreviewDeclined bool            `json:"-"`
@@ -227,12 +233,12 @@ type PullRequestReview struct {
 	UpdatedAt             time.Time       `json:"updatedAt"`
 }
 
-const reviewColumns = `id,connection_id,number,head_sha,source_url,fork,closed,phase,plan,error,report_error,preview_application_id,expires_at,processed_sha,reported_phase,event_at,updated_at,head_branch,adopted_branch_preview,shared_environment,branch_preview_declined,reported_plan_id,scope_note`
+const reviewColumns = `id,connection_id,number,head_sha,source_url,fork,closed,phase,plan,error,report_error,preview_application_id,expires_at,processed_sha,reported_phase,event_at,updated_at,head_branch,adopted_branch_preview,shared_environment,branch_preview_declined,reported_plan_id,scope_note,draft`
 
 func scanReview(row interface{ Scan(...any) error }) (PullRequestReview, error) {
 	var v PullRequestReview
 	var plan []byte
-	err := row.Scan(&v.ID, &v.ConnectionID, &v.Number, &v.HeadSHA, &v.SourceURL, &v.Fork, &v.Closed, &v.Phase, &plan, &v.Error, &v.ReportError, &v.PreviewApplicationID, &v.ExpiresAt, &v.ProcessedSHA, &v.ReportedPhase, &v.EventAt, &v.UpdatedAt, &v.HeadBranch, &v.AdoptedBranchPreview, &v.SharedEnvironment, &v.BranchPreviewDeclined, &v.ReportedPlanID, &v.ScopeNote)
+	err := row.Scan(&v.ID, &v.ConnectionID, &v.Number, &v.HeadSHA, &v.SourceURL, &v.Fork, &v.Closed, &v.Phase, &plan, &v.Error, &v.ReportError, &v.PreviewApplicationID, &v.ExpiresAt, &v.ProcessedSHA, &v.ReportedPhase, &v.EventAt, &v.UpdatedAt, &v.HeadBranch, &v.AdoptedBranchPreview, &v.SharedEnvironment, &v.BranchPreviewDeclined, &v.ReportedPlanID, &v.ScopeNote, &v.Draft)
 	if err == nil {
 		v.Plan = plan
 	}
@@ -305,12 +311,24 @@ func (s *Store) RecordReviewEvent(ctx context.Context, connectionID, deliveryID 
 	if inserted == 0 {
 		return false, tx.Commit()
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO pull_request_reviews(id,connection_id,number,head_sha,source_url,fork,closed,phase,event_at,head_branch)
-		VALUES($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9)
+	// A draft transition changes reporting only; retain the current plan and errors.
+	result, err = tx.ExecContext(ctx, `UPDATE pull_request_reviews SET draft=$3,source_url=$4,event_at=$5,reported_phase='',updated_at=NOW()
+ WHERE connection_id=$1 AND number=$2 AND draft<>$3 AND head_sha=$6 AND closed=$7 AND fork=$8 AND ($9='' OR head_branch=$9) AND event_at<=$5`,
+		connectionID, v.Number, v.Draft, v.SourceURL, v.EventAt, v.HeadSHA, v.Closed, v.Fork, v.HeadBranch)
+	if err != nil {
+		return false, err
+	}
+	if n, err := result.RowsAffected(); err != nil {
+		return false, err
+	} else if n > 0 {
+		return true, tx.Commit()
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO pull_request_reviews(id,connection_id,number,head_sha,source_url,fork,closed,phase,event_at,head_branch,draft)
+		VALUES($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9,$10)
 		ON CONFLICT(connection_id,number) DO UPDATE SET head_sha=EXCLUDED.head_sha,source_url=EXCLUDED.source_url,
-		head_branch=CASE WHEN EXCLUDED.head_branch<>'' THEN EXCLUDED.head_branch ELSE pull_request_reviews.head_branch END,fork=EXCLUDED.fork,closed=EXCLUDED.closed,phase='pending',plan=NULL,error='',report_error='',reported_phase='',event_at=EXCLUDED.event_at,updated_at=NOW()
+		head_branch=CASE WHEN EXCLUDED.head_branch<>'' THEN EXCLUDED.head_branch ELSE pull_request_reviews.head_branch END,fork=EXCLUDED.fork,closed=EXCLUDED.closed,draft=EXCLUDED.draft,phase='pending',plan=NULL,error='',report_error='',reported_phase='',event_at=EXCLUDED.event_at,updated_at=NOW()
 		WHERE pull_request_reviews.event_at <= EXCLUDED.event_at`,
-		v.ID, connectionID, v.Number, v.HeadSHA, v.SourceURL, v.Fork, v.Closed, v.EventAt, v.HeadBranch)
+		v.ID, connectionID, v.Number, v.HeadSHA, v.SourceURL, v.Fork, v.Closed, v.EventAt, v.HeadBranch, v.Draft)
 	if err != nil {
 		return false, err
 	}

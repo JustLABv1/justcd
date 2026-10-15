@@ -186,6 +186,9 @@ func Discover(root string) ([]Definition, error) {
 			return fail(err)
 		}
 		if pr := d.Spec.PullRequests; pr != nil {
+			if err := store.ValidateCommentMode(pr.CommentMode); err != nil {
+				return fail(err)
+			}
 			if pr.CredentialID == "" {
 				return fail(fmt.Errorf("pullRequests.credentialId must reference an existing HTTPS credential"))
 			}

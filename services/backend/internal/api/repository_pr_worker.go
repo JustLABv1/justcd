@@ -32,6 +32,7 @@ func (s *Server) processRepositoryPRReview(ctx context.Context, c store.SourceCo
 		return err
 	}
 	c.PipelineStatusReporting = repo.PRSettings.PipelineStatusReporting
+	c.CommentMode, c.CommentOnDrafts = repo.PRSettings.CommentMode, repo.PRSettings.CommentOnDrafts
 	token, err := s.sourceControlToken(ctx, c)
 	if err != nil {
 		_ = s.Store.SetReviewWorkerError(ctx, review.ID, err.Error())
@@ -48,7 +49,7 @@ func (s *Server) processRepositoryPRReview(ctx context.Context, c store.SourceCo
 		_ = s.Store.UpdateRepositoryPRResult(ctx, v.ID, review)
 		return err
 	}
-	if current.HeadSHA != review.HeadSHA || current.Closed != review.Closed || current.HeadBranch != review.HeadBranch || current.Fork != review.Fork {
+	if current.HeadSHA != review.HeadSHA || current.Closed != review.Closed || current.HeadBranch != review.HeadBranch || current.Draft != review.Draft || current.Fork != review.Fork {
 		if err = s.refreshRepositoryPREvent(ctx, c.ID, current); err != nil {
 			return err
 		}
@@ -78,13 +79,16 @@ func (s *Server) processRepositoryPRReview(ctx context.Context, c store.SourceCo
 				return e
 			}
 			if fresh.Phase == "promoted" {
-				return nil
+				result.Phase = "promoted"
+				result.Plan = nil
+				result.Error = ""
+				return s.reportReviewSummary(ctx, c, result, string(token), "Changes merged; application follows the tracked branch", app.Name)
 			}
 			result.Phase = "cleanup_pending"
 			result.Error = "Waiting for the merged definition on the tracked branch"
 		}
 	} else if current.Closed || expired || v.DefinitionRemoved {
-		removed, e := s.cleanupRepositoryPRApplication(ctx, c, v, app, &result)
+		removed, e := s.cleanupRepositoryPRApplication(ctx, c, v, app, &result, string(token))
 		if e != nil {
 			return e
 		}
@@ -141,7 +145,7 @@ func (s *Server) processRepositoryPRReview(ctx context.Context, c store.SourceCo
 	return s.reportReview(ctx, c, result, string(token))
 }
 
-func (s *Server) cleanupRepositoryPRApplication(ctx context.Context, c store.SourceControlConnection, v store.RepositoryPRApplication, app store.Application, result *store.PullRequestReview) (bool, error) {
+func (s *Server) cleanupRepositoryPRApplication(ctx context.Context, c store.SourceControlConnection, v store.RepositoryPRApplication, app store.Application, result *store.PullRequestReview, token string) (bool, error) {
 	result.Phase = "cleanup_pending"
 	active, err := s.Store.ApplicationHasActiveOperation(ctx, app.ID)
 	if err != nil {
@@ -164,6 +168,11 @@ func (s *Server) cleanupRepositoryPRApplication(ctx context.Context, c store.Sou
 		}
 		result.Phase = "removed"
 		result.PreviewApplicationID = nil
+		result.Plan = nil
+		result.Error = ""
+		if err = s.reportReviewSummary(ctx, c, *result, token, "Preview has been removed", app.Name); err != nil {
+			return false, err
+		}
 		_ = s.Store.UpdateRepositoryPRResult(ctx, v.ID, *result)
 		// Retain the independent repository record; deleting the app cascades its connection/review.
 		if _, err = s.Store.DeleteApplicationKeepingResources(ctx, app.ID, true); err != nil {

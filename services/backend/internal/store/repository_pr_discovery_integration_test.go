@@ -76,11 +76,13 @@ func testRepositoryPRDiscovery(t *testing.T, ctx context.Context, s *Store) {
 	// Reporting can be changed without closing active previews.
 	for _, enabled := range []bool{true, false} {
 		policy.PipelineStatusReporting = enabled
+		policy.CommentMode = "action-required"
+		policy.CommentOnDrafts = enabled
 		if err := s.SaveRepositoryPRSettings(ctx, repo.ID, policy); err != nil {
 			t.Fatal(err)
 		}
 		updated, err := s.SourceControlConnectionByID(ctx, connection.ID)
-		if err != nil || updated.PipelineStatusReporting != enabled {
+		if err != nil || updated.PipelineStatusReporting != enabled || updated.CommentMode != "action-required" || updated.CommentOnDrafts != enabled {
 			t.Fatalf("active preview reporting not updated: %+v, %v", updated, err)
 		}
 	}

@@ -22,7 +22,7 @@ func (s *Server) repositoryPRConnection(ctx context.Context, repo store.Reposito
 		return store.SourceControlConnection{}, err
 	}
 	d, err := scm.Details(source.RepositoryURL, repo.PRSettings.Provider, repo.PRSettings.APIURL)
-	return store.SourceControlConnection{PipelineStatusReporting: repo.PRSettings.PipelineStatusReporting, Provider: d.Provider, APIURL: d.APIURL, Repository: d.Repository, WorkspaceID: repo.WorkspaceID, StatusCredentialID: &repo.PRSettings.CredentialID, Enabled: true, ManagedByGit: true}, err
+	return store.SourceControlConnection{CommentMode: repo.PRSettings.CommentMode, CommentOnDrafts: repo.PRSettings.CommentOnDrafts, PipelineStatusReporting: repo.PRSettings.PipelineStatusReporting, Provider: d.Provider, APIURL: d.APIURL, Repository: d.Repository, WorkspaceID: repo.WorkspaceID, StatusCredentialID: &repo.PRSettings.CredentialID, Enabled: true, ManagedByGit: true}, err
 }
 func (s *Server) listRepositoryPRApplications(w http.ResponseWriter, r *http.Request) {
 	repo, err := s.Store.RepositoryConfigurationByID(r.Context(), r.PathValue("repositoryID"))
@@ -273,8 +273,12 @@ func (s *Server) discoverRepositoryPRs(ctx context.Context, repo store.Repositor
 		}()
 		if err != nil {
 			scanErrors = append(scanErrors, fmt.Errorf("PR #%d: %w", event.Number, err))
-			if reportErr := reportRepositoryPRDiscoveryFailure(ctx, client, c, repo, event, string(token), err); reportErr != nil {
+			if reportErr := s.reportRepositoryPRDiscoveryFailure(ctx, client, c, repo, event, string(token), err); reportErr != nil {
 				scanErrors = append(scanErrors, fmt.Errorf("PR #%d: could not post discovery failure comment: %w", event.Number, reportErr))
+			}
+		} else if c.CommentMode != "off" && (!event.Draft || c.CommentOnDrafts) {
+			if reportErr := s.Store.UpdatePRComment(ctx, client, c, event.Number, string(token), "discovery:"+repo.ID, "", false); reportErr != nil {
+				scanErrors = append(scanErrors, reportErr)
 			}
 		}
 	}
@@ -302,7 +306,7 @@ func (s *Server) refreshRepositoryPREvent(ctx context.Context, connectionID stri
 		return err
 	}
 	for _, r := range reviews {
-		if r.Number == event.Number && r.HeadSHA == event.HeadSHA && r.Closed == event.Closed && r.HeadBranch == event.HeadBranch && r.Fork == event.Fork {
+		if r.Number == event.Number && r.HeadSHA == event.HeadSHA && r.Closed == event.Closed && r.HeadBranch == event.HeadBranch && r.Fork == event.Fork && r.Draft == event.Draft {
 			return nil
 		}
 	}

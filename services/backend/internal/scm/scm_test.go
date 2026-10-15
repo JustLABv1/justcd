@@ -183,3 +183,28 @@ func TestListOpenPullRequests(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestDraftWebhookTransitions(t *testing.T) {
+	secret := "example-webhook-secret-123"
+	for _, tt := range []struct {
+		action string
+		draft  bool
+	}{{"converted_to_draft", true}, {"ready_for_review", false}} {
+		body, _ := json.Marshal(map[string]any{"action": tt.action, "number": 42, "repository": map[string]string{"full_name": "org/app"}, "pull_request": map[string]any{"html_url": "https://github.com/org/app/pull/42", "draft": tt.draft, "updated_at": time.Now().UTC(), "head": map[string]any{"sha": strings.Repeat("a", 40), "ref": "feature", "repo": map[string]string{"full_name": "org/app"}}}})
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write(body)
+		header := http.Header{"X-Hub-Signature-256": {"sha256=" + hex.EncodeToString(mac.Sum(nil))}, "X-Github-Event": {"pull_request"}, "X-Github-Delivery": {tt.action}}
+		event, err := VerifyAndParse("github", secret, header, body, time.Now())
+		if err != nil || event.Draft != tt.draft || event.HeadBranch != "feature" {
+			t.Fatal(event, err)
+		}
+	}
+	for _, field := range []string{"draft", "work_in_progress"} {
+		body, _ := json.Marshal(map[string]any{"object_kind": "merge_request", "project": map[string]string{"path_with_namespace": "org/app"}, "object_attributes": map[string]any{"url": "https://gitlab.com/org/app/-/merge_requests/42", "action": "update", "state": "opened", "iid": 42, "updated_at": time.Now().UTC(), field: true, "source_project_id": 1, "target_project_id": 1, "last_commit": map[string]string{"id": strings.Repeat("a", 40)}}})
+		header := http.Header{"X-Gitlab-Token": {secret}, "X-Gitlab-Event": {"Merge Request Hook"}, "X-Gitlab-Event-Uuid": {field}}
+		event, err := VerifyAndParse("gitlab", secret, header, body, time.Now())
+		if err != nil || !event.Draft {
+			t.Fatal(event, err)
+		}
+	}
+}

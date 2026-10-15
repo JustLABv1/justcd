@@ -275,12 +275,25 @@ connections also default to comments only after upgrading. Git fetches continue
 to use the Git source credential. Reporting uses polling; existing webhook configuration is
 preserved.
 
+JustCD maintains one updated summary per workspace/repository PR or MR, combining
+application results and discovery errors. `commentMode` defaults to `summary`;
+`action-required` creates a summary only for failures, blocked reviews, approvals,
+or cleanup decisions, and updates an existing summary when the issue resolves.
+`off` disables comments independently of commit statuses. `commentOnDrafts`
+defaults to `false`: previews still follow the configured deployment policy, but
+comments wait until the PR is ready for review. These settings are also available
+in application reporting and repository PR discovery settings, and can be changed
+while previews are active. Application connections sharing a summary must use the
+same provider account. Existing historical comments are left in place.
+
 Review-only example (add this block under `spec`):
 
 ```yaml
 pullRequests:
   enabled: true
   pipelineStatusReporting: false # Opt in only to make JustCD affect commit checks.
+  commentMode: summary # summary, action-required, or off
+  commentOnDrafts: false
   credentialId: existing-https-credential-id
   # Required for a custom GitLab host; omitted for github.com or gitlab.com:
   provider: gitlab
@@ -297,6 +310,8 @@ For isolated deployments, including draft PRs:
 pullRequests:
   enabled: true
   pipelineStatusReporting: false # Opt in only to make JustCD affect commit checks.
+  commentMode: summary # summary, action-required, or off
+  commentOnDrafts: false
   credentialId: existing-https-credential-id
   previewProfile:
     enabled: true

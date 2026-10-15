@@ -188,7 +188,16 @@ func (s *Service) RefreshApplicationHealth(ctx context.Context, app store.Applic
 		return err
 	}
 	observeErr := s.ObserveTopology(ctx, app, managed)
-	observed, err := s.Store.ObservedResources(ctx, app.ID)
+	// An observation deadline must not also prevent publishing its failure.
+	// Persist the partial/unknown condition with a short, separate DB-only budget.
+	publicationCtx := ctx
+	if ctx.Err() != nil {
+		var cancel context.CancelFunc
+		publicationCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		observeErr = errors.Join(observeErr, ctx.Err())
+	}
+	observed, err := s.Store.ObservedResources(publicationCtx, app.ID)
 	if err != nil {
 		return err
 	}
@@ -211,7 +220,7 @@ func (s *Service) RefreshApplicationHealth(ctx context.Context, app store.Applic
 		warnings = append(warnings, "Some Kubernetes resources could not be read; health may be partial.")
 	}
 	condition := apphealth.Evaluate(identities, resources, warnings, app.AutoSyncPaused || app.Decommissioning, time.Now().UTC())
-	if err := s.Store.RecordApplicationHealthCondition(ctx, app.ID, condition); err != nil {
+	if err := s.Store.RecordApplicationHealthCondition(publicationCtx, app.ID, condition); err != nil {
 		return err
 	}
 	return observeErr

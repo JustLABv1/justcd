@@ -43,7 +43,7 @@ func ForWorkspaceBinding(ctx context.Context, db *store.Store, key []byte, c sto
 	if a.Revoked || a.LastSeenAt == nil || time.Since(*a.LastSeenAt) > time.Minute {
 		return nil, &AgentError{Code: "cluster.agent_unavailable", Message: "cluster agent is offline; reconnect the agent and refresh the plan", Transient: true}
 	}
-	return clientsForConfig(&rest.Config{Host: "https://justcd-agent.invalid", Timeout: 30 * time.Second, Transport: &agentTransport{db: db, key: key, cluster: c.ID, workspace: workspace, namespace: namespace, profile: profile, clusterScope: clusterScope}})
+	return clientsForConfig(&rest.Config{Host: "https://justcd-agent.invalid", Timeout: 30 * time.Second, Transport: &agentTransport{ctx: ctx, db: db, key: key, cluster: c.ID, workspace: workspace, namespace: namespace, profile: profile, clusterScope: clusterScope}})
 }
 func AgentEnabled(ctx context.Context, db *store.Store, id string) bool {
 	_, err := db.ClusterAgent(ctx, id)
@@ -55,6 +55,7 @@ func AgentClusterScope(ctx context.Context, db *store.Store, id string) bool {
 }
 
 type agentTransport struct {
+	ctx                                    context.Context
 	db                                     *store.Store
 	key                                    []byte
 	cluster, workspace, namespace, profile string
@@ -62,7 +63,21 @@ type agentTransport struct {
 }
 
 func (t *agentTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	// client-go discovery methods have no context argument. Tie their requests
+	// to the observation/test that created this client as well as the HTTP call.
+	if t.ctx != nil {
+		ctx, cancel := context.WithCancel(r.Context())
+		stop := context.AfterFunc(t.ctx, cancel)
+		defer stop()
+		defer cancel()
+		r = r.Clone(ctx)
+	}
 	deadline := time.Now().Add(30 * time.Second)
+	if t.ctx != nil {
+		if d, ok := t.ctx.Deadline(); ok && d.Before(deadline) {
+			deadline = d
+		}
+	}
 	if d, ok := r.Context().Deadline(); ok && d.Before(deadline) {
 		deadline = d
 	}

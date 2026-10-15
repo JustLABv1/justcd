@@ -53,7 +53,9 @@ func (s *Server) beginAgentPoll(id string) bool {
 	if s.agentPolls == nil {
 		s.agentPolls = map[string]bool{}
 	}
-	if s.agentPolls[id] || !s.allowAgentRequestLocked("poll:"+id, 120, time.Minute) {
+	// API discovery fans out into a request per API group/version. The task
+	// budget must accommodate that burst alongside health and permission checks.
+	if s.agentPolls[id] || !s.allowAgentRequestLocked("poll:"+id, 1200, time.Minute) {
 		return false
 	}
 	s.agentPolls[id] = true

@@ -303,9 +303,8 @@ func (a *Agent) Run(ctx context.Context) error {
 		return err
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	var wg sync.WaitGroup
-	defer wg.Wait()
+	defer func() { cancel(); wg.Wait() }()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -333,10 +332,19 @@ func (a *Agent) Run(ctx context.Context) error {
 			}
 		}
 	}()
+	// Keep a single task poll, but do not let a slow Kubernetes read or result
+	// delivery block discovery, health observations, and access reviews behind it.
+	workers := make(chan struct{}, 8)
 	for ctx.Err() == nil {
+		select {
+		case workers <- struct{}{}:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 		var task agentprotocol.Request
 		status, err := a.call(ctx, "GET", "/tasks", a.token(), nil, &task)
 		if err != nil {
+			<-workers
 			if status == 401 {
 				if err := a.enroll(ctx); err == nil {
 					continue
@@ -351,20 +359,33 @@ func (a *Agent) Run(ctx context.Context) error {
 			continue
 		}
 		if status == 204 {
+			<-workers
 			continue
 		}
-		result := a.Execute(ctx, task)
-		// Retry delivery only. A leased Kubernetes operation is never executed twice.
-		for ctx.Err() == nil && task.Deadline.After(time.Now()) {
-			status, err = a.call(ctx, "POST", "/tasks/"+url.PathEscape(task.ID)+"/result", a.token(), result, nil)
-			if err == nil || status == 410 {
-				break
-			}
-			select {
-			case <-ctx.Done():
-			case <-time.After(time.Second):
-			}
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-workers }()
+			a.executeAndDeliver(ctx, task)
+		}()
 	}
 	return ctx.Err()
+}
+
+func (a *Agent) executeAndDeliver(ctx context.Context, task agentprotocol.Request) {
+	ctx, cancel := context.WithDeadline(ctx, task.Deadline)
+	defer cancel()
+	result := a.Execute(ctx, task)
+	// Retry delivery only. A leased Kubernetes operation is never executed twice.
+	for ctx.Err() == nil {
+		status, err := a.call(ctx, "POST", "/tasks/"+url.PathEscape(task.ID)+"/result", a.token(), result, nil)
+		if err == nil || status == 410 {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
+	}
 }

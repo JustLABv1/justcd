@@ -19,7 +19,7 @@ func TestAgentPollLimits(t *testing.T) {
 		t.Fatal("released poll blocked")
 	}
 	s.endAgentPoll("a")
-	for i := 0; i < 118; i++ {
+	for i := 0; i < 1198; i++ {
 		if !s.beginAgentPoll("a") {
 			t.Fatal("early rate limit")
 		}

@@ -186,8 +186,11 @@ func (s *Server) agentTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	deadline := time.NewTimer(20 * time.Second)
 	defer deadline.Stop()
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
+	// Sequential requests often arrive just after a result is delivered. Start
+	// responsive, then back off idle polls to avoid hammering the database.
+	pollDelay := 50 * time.Millisecond
+	poll := time.NewTimer(pollDelay)
+	defer poll.Stop()
 	for {
 		if _, ok = s.authenticatedAgent(w, r); !ok {
 			return
@@ -219,7 +222,9 @@ func (s *Server) agentTasks(w http.ResponseWriter, r *http.Request) {
 		case <-deadline.C:
 			w.WriteHeader(204)
 			return
-		case <-ticker.C:
+		case <-poll.C:
+			pollDelay = min(2*pollDelay, time.Second)
+			poll.Reset(pollDelay)
 		}
 	}
 }

@@ -7,6 +7,7 @@ import {
   riskCounts,
   immutablePaths,
   groupLabel,
+  hiddenChangedPaths,
 } from "./plan-review.ts"
 const change = (kind = "update", extra = {}) => ({
   kind,
@@ -19,6 +20,48 @@ const change = (kind = "update", extra = {}) => ({
   before: { data: { image: "v1" } },
   after: { data: { image: "v2" } },
   ...extra,
+})
+test("changed Secret data remains visible as evidence after parent redaction", () => {
+  const manifest = { kind: "Secret", data: "[redacted]" }
+  assert.deepEqual(
+    hiddenChangedPaths(manifest, manifest, ["/data/admin-password"]),
+    ["/data/admin-password"]
+  )
+  assert.deepEqual(hiddenChangedPaths(manifest, manifest), [])
+})
+test("hidden checksums resolve escaped JSON pointer names without hiding ordinary fields", () => {
+  const before = {
+    metadata: {
+      annotations: { "checksum/secret": "[redacted]", "a~b/c": "[redacted]" },
+    },
+    spec: { replicas: 1 },
+  }
+  const after = { ...before, spec: { replicas: 2 } }
+  const paths = [
+    "/metadata/annotations/checksum~1secret",
+    "/metadata/annotations/a~0b~1c",
+    "/spec/replicas",
+  ]
+  assert.deepEqual(hiddenChangedPaths(before, after, paths), paths.slice(0, 2))
+})
+test("redacted changes can be added, removed, nested in lists, or reported at their parent", () => {
+  const manifest = {
+    spec: { containers: [{ token: "[redacted]", image: "v1" }] },
+  }
+  const path = "/spec/containers/0/token"
+  assert.deepEqual(hiddenChangedPaths({}, manifest, [path]), [path])
+  assert.deepEqual(hiddenChangedPaths(manifest, {}, [path]), [path])
+  assert.deepEqual(
+    hiddenChangedPaths(manifest, manifest, ["/spec/containers"]),
+    ["/spec/containers"]
+  )
+  assert.deepEqual(
+    hiddenChangedPaths(manifest, manifest, [
+      "/spec/containers/0/image",
+      "/missing",
+    ]),
+    []
+  )
 })
 test("risk counts and filters exactly reflect the immutable applied and ignored payload", () => {
   const changes = [
@@ -99,12 +142,12 @@ test("redacted immutable Secret changes retain reviewed path evidence", () => {
   assert.deepEqual(immutablePaths(secret), ["/data"])
 })
 
-
 test("current plans stop being actionable at their expiry deadline", () => {
   const record = { status: "current", expiresAt: "2026-10-14T10:00:00Z" }
   const deadline = Date.parse(record.expiresAt)
   assert.equal(planReviewStatus(record, deadline - 1), "current")
   assert.equal(planReviewStatus(record, deadline), "expired")
   assert.equal(planReviewStatus(record, deadline + 1), "expired")
-  for (const status of ["applied", "stale", "failed"]) assert.equal(planReviewStatus({ ...record, status }, deadline + 1), status)
+  for (const status of ["applied", "stale", "failed"])
+    assert.equal(planReviewStatus({ ...record, status }, deadline + 1), status)
 })

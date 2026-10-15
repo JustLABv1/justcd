@@ -15,6 +15,7 @@ import {
   Settings02Icon,
 } from "@hugeicons/core-free-icons"
 import { Input } from "@/components/ui/input"
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import { VirtualReviewList } from "@/components/virtual-review-list"
 import { Button } from "@/components/ui/button"
 import {
@@ -25,15 +26,20 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { SwitchField } from "@/components/ui-kit"
 import { contextRows, reviewRows } from "@/lib/line-diff"
+import { hiddenChangedPaths } from "@/lib/plan-review"
 
 export function ManifestDiff({
   before,
   after,
   excluded = false,
+  changedPaths,
+  takeover = false,
 }: {
   before: unknown
   after: unknown
   excluded?: boolean
+  changedPaths?: string[]
+  takeover?: boolean
 }) {
   const [mode, setMode] = useState("split")
   const [fontSize, setFontSize] = useState("14")
@@ -47,6 +53,10 @@ export function ManifestDiff({
   const singleSide = before == null || after == null
   const split = !singleSide && mode === "split"
   const rows = useMemo(() => reviewRows(before, after), [before, after])
+  const hiddenPaths = useMemo(
+    () => hiddenChangedPaths(before, after, changedPaths),
+    [before, after, changedPaths]
+  )
   const visible = useMemo(() => contextRows(rows), [rows])
   const hunks = useMemo(
     () =>
@@ -254,7 +264,11 @@ export function ManifestDiff({
           <span className="text-sm text-muted-foreground" aria-live="polite">
             {hunks.length
               ? `${position < 0 ? "–" : position + 1} / ${hunks.length} changes`
-              : "No text changes"}
+              : hiddenPaths.length
+                ? `${hiddenPaths.length} hidden field ${hiddenPaths.length === 1 ? "change" : "changes"}`
+                : takeover
+                  ? "Ownership change only"
+                  : "No text changes"}
           </span>
           <Button
             type="button"
@@ -286,6 +300,29 @@ export function ManifestDiff({
           </Button>
         </div>
       </div>
+      {hiddenPaths.length > 0 && (
+        <div className="border-b p-3">
+          <Alert role="status">
+            <AlertTitle>Sensitive fields changed</AlertTitle>
+            <AlertDescription>
+              <p>
+                Values are hidden for security, so both sides may look
+                identical.
+                {excluded
+                  ? " These differences are excluded and will not be applied."
+                  : " These field changes are included in the plan."}
+              </p>
+              <ul className="list-disc space-y-1 pl-5">
+                {hiddenPaths.map((path) => (
+                  <li key={path}>
+                    <code className="break-all">{path || "/"}</code>
+                  </li>
+                ))}
+              </ul>
+            </AlertDescription>
+          </Alert>
+        </div>
+      )}
       <div
         className="bg-card font-mono leading-6"
         style={{ fontSize: Number(fontSize) }}

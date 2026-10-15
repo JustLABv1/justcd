@@ -156,6 +156,8 @@ type planInput struct {
 	IgnoreSelectors    []core.IgnoreSelector
 	Selection          core.PlanSelection
 	ReviewFingerprint  string
+	// Only namespaces confirmed absent and validated for reviewed creation.
+	MissingNamespaces map[string]bool
 }
 
 func (s *Service) BuildPlan(ctx context.Context, applicationID, actorID string) (store.PlanRecord, error) {
@@ -374,6 +376,16 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 			return core.Plan{}, nil, clusterScopeRequired(&resource.Identity)
 		}
 	}
+	// Validate prerequisites before workload reads: a credential may not have
+	// workload access until the namespace exists. Planning must not create it.
+	prerequisites := core.Plan{}
+	if err := addNamespaceCreations(ctx, input, &prerequisites, desired); err != nil {
+		return core.Plan{}, nil, &planStageError{stage: "cluster", err: err}
+	}
+	input.MissingNamespaces = make(map[string]bool, len(prerequisites.NamespaceCreations))
+	for _, namespace := range prerequisites.NamespaceCreations {
+		input.MissingNamespaces[namespace.Name] = true
+	}
 	live, changedIgnoredFields, err := s.liveSnapshot(ctx, input, desired)
 	if err != nil {
 		return core.Plan{}, nil, &planStageError{stage: "cluster", err: err}
@@ -523,9 +535,8 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 	if err := s.reconcileUpdatePlan(ctx, input, &plan, desired, live); err != nil {
 		return core.Plan{}, nil, &planStageError{stage: "cluster", err: err}
 	}
-	if err := addNamespaceCreations(ctx, input, &plan, desired); err != nil {
-		return core.Plan{}, nil, &planStageError{stage: "cluster", err: err}
-	}
+	plan.NamespaceCreations = prerequisites.NamespaceCreations
+	plan.Changes = append(plan.Changes, prerequisites.Changes...)
 	policy, err := s.Store.EffectiveApprovalPolicy(ctx, app)
 	if err != nil {
 		return core.Plan{}, nil, err
@@ -979,6 +990,17 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 	conflicts := make([]*OwnershipConflict, 0)
 	for _, key := range keys {
 		identity := identities[key]
+		if identity.Namespace != "" && input.MissingNamespaces[identity.Namespace] {
+			// A missing namespace contains no live workloads. Match the normal
+			// NotFound bookkeeping without issuing a potentially forbidden read.
+			if _, tracked := managedByKey[identity.Key()]; tracked {
+				if err := s.Store.DeleteManagedResource(ctx, input.Application.ID, identity); err != nil {
+					return nil, nil, err
+				}
+				delete(managedByKey, identity.Key())
+			}
+			continue
+		}
 		mapping, err := input.Mapper.Mapper.RESTMapping(groupKind(identity), groupVersion(identity))
 		if err != nil {
 			return nil, nil, fmt.Errorf("resource kind %s %s is not discoverable: %w", identity.APIVersion, identity.Kind, err)
@@ -1085,6 +1107,9 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 			namespaces = []string{""}
 		}
 		for _, namespace := range namespaces {
+			if namespace != "" && input.MissingNamespaces[namespace] {
+				continue
+			}
 			id := identity
 			id.Namespace = namespace
 			id.ClusterScoped = mapping.Scope.Name() != "namespace"

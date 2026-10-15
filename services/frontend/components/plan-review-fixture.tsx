@@ -63,6 +63,36 @@ export function PlanReviewFixture() {
         },
       },
     }
+    changes[2] = {
+      ...changes[2],
+      identity: { ...changes[2].identity, kind: "Secret" },
+      before: { kind: "Secret", data: "[redacted]" },
+      after: { kind: "Secret", data: "[redacted]" },
+      changedPaths: ["/data/admin-password"],
+    }
+    changes[4] = {
+      ...changes[4],
+      identity: {
+        ...changes[4].identity,
+        apiVersion: "apps/v1",
+        kind: "Deployment",
+      },
+      before: {
+        spec: {
+          template: {
+            metadata: { annotations: { "checksum/secret": "[redacted]" } },
+          },
+        },
+      },
+      after: {
+        spec: {
+          template: {
+            metadata: { annotations: { "checksum/secret": "[redacted]" } },
+          },
+        },
+      },
+      changedPaths: ["/spec/template/metadata/annotations/checksum~1secret"],
+    }
     const ignored = changes
       .slice(0, 1000)
       .map((c) => ({ ...c, ignoreReason: "Synthetic exclusion" }))
@@ -175,6 +205,8 @@ export function PlanReviewFixture() {
                 before={c.before}
                 after={c.after}
                 excluded={ignored}
+                changedPaths={c.changedPaths}
+                takeover={c.takeover}
               />
             </article>
           )}

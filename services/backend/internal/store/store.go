@@ -3712,34 +3712,22 @@ func (s *Store) ListOperationsFilteredPage(ctx context.Context, applicationID st
 }
 
 type AuditEvent struct {
-	ID           int64           `json:"id"`
-	ActorID      *string         `json:"actorId,omitempty"`
-	ActorName    string          `json:"actorName"`
-	Action       string          `json:"action"`
-	ResourceType string          `json:"resourceType"`
-	ResourceID   string          `json:"resourceId"`
-	Details      json.RawMessage `json:"details"`
-	CreatedAt    time.Time       `json:"createdAt"`
+	SchemaVersion    int             `json:"schemaVersion"`
+	WorkspaceID      string          `json:"workspaceId"`
+	ResourceName     string          `json:"resourceName"`
+	DeploymentRecord json.RawMessage `json:"deploymentRecord"`
+	ID               int64           `json:"id"`
+	ActorID          *string         `json:"actorId,omitempty"`
+	ActorName        string          `json:"actorName"`
+	Action           string          `json:"action"`
+	ResourceType     string          `json:"resourceType"`
+	ResourceID       string          `json:"resourceId"`
+	Details          json.RawMessage `json:"details"`
+	CreatedAt        time.Time       `json:"createdAt"`
 }
 
 func (s *Store) ListAuditEvents(ctx context.Context, limit int, before int64) ([]AuditEvent, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT e.id,e.actor_id,COALESCE(NULLIF(u.display_name,''),u.email,''),e.action,e.resource_type,e.resource_id,e.details,e.created_at
-		FROM audit_events e LEFT JOIN users u ON u.id=e.actor_id
-		WHERE ($2 = 0 OR e.id < $2) ORDER BY e.id DESC LIMIT $1`, limit, before)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make([]AuditEvent, 0)
-	for rows.Next() {
-		var e AuditEvent
-		if err := rows.Scan(&e.ID, &e.ActorID, &e.ActorName, &e.Action, &e.ResourceType, &e.ResourceID, &e.Details, &e.CreatedAt); err != nil {
-			return nil, err
-		}
-		e.Details = safeAuditDetails(e.Details)
-		out = append(out, e)
-	}
-	return out, rows.Err()
+	return s.QueryAuditEvents(ctx, AuditFilter{Before: before}, limit)
 }
 
 // Older rollback events included settings that may contain Helm values.

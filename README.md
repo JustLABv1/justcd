@@ -454,3 +454,5 @@ operations.
 
 See [notification integrations](docs/notifications.md) for event routing, providers and delivery troubleshooting.
 See [security hardening](docs/security-hardening.md) for production settings, sessions, MFA, rate limits and encryption-key rotation.
+
+Audit exports, deployment evidence, schema versioning, and workspace retention are documented in [Audit compliance](docs/audit-compliance.md).

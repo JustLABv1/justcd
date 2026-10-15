@@ -13,7 +13,8 @@ import { DataGridList, type GridColumn } from "@/components/data-grid-table"
 import { RowActions, type ActionItem } from "@/components/action-menu"
 import { Badge } from "@/components/reui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { ApplicationClusterFilter } from "@/components/application-cluster-filter"
+import { ToggleGroup, ToggleGroupItem, ToggleGroupCount } from "@/components/ui/toggle-group"
 import { Delete02Icon, Edit02Icon, ViewIcon } from "@hugeicons/core-free-icons"
 import { EmptyState, StatusBadge } from "@/components/ui-kit"
 import { WorkspaceIcon } from "@/components/workspace-ui"
@@ -364,33 +365,25 @@ export function ApplicationCollection({
     <div>
       <section aria-label="Filter applications" className="mb-3 rounded-xl border bg-card">
         <div className="overflow-x-auto border-b px-4 py-3 sm:px-5">
-          <ToggleGroup className="w-max gap-1 border-0 bg-transparent p-0" aria-label="Filter by health" value={[filter]} onValueChange={(value) => { if (value[0]) setFilter(value[0]) }}>
+          <ToggleGroup className="w-max" aria-label="Filter by health" value={[filter]} onValueChange={(value) => { if (value[0]) setFilter(value[0]) }}>
             {([["all", "All apps"], ["attention", "Needs attention"], ["synced", "In sync"], ["other", "Other"], ["paused", "Reconciliation paused"]] as const).map(([value, label]) => (
-              <ToggleGroupItem key={value} value={value} className="h-8 shrink-0 gap-2">
+              <ToggleGroupItem key={value} value={value}>
                 {label}
-                <span className="rounded bg-background/60 px-1.5 py-0.5 text-xs leading-none tabular-nums">{counts[value]}</span>
+                <ToggleGroupCount>{counts[value]}</ToggleGroupCount>
               </ToggleGroupItem>
             ))}
           </ToggleGroup>
         </div>
-        {clusters.size > 1 && (
-          <div className="overflow-x-auto border-b px-4 py-3 sm:px-5">
-            <ToggleGroup className="w-max gap-1 border-0 bg-transparent p-0" aria-label="Filter by cluster" value={[clusterFilter]} onValueChange={(value) => setClusterFilter(value[0] ?? "")}>
-              {[...clusters.values()].sort((a, b) => levelRank[a.health.level] - levelRank[b.health.level] || a.name.localeCompare(b.name)).map((cluster) => (
-                <ToggleGroupItem key={cluster.id} value={cluster.id} className="h-8 shrink-0 gap-2" title={`${cluster.health.label}. ${cluster.health.detail}`}>
-                  <Dot level={cluster.health.level} /><span className="sr-only">{cluster.health.level}: </span>
-                  {cluster.name}
-                  <span className="rounded bg-background/60 px-1.5 py-0.5 text-xs leading-none tabular-nums">{cluster.count}</span>
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-          </div>
-        )}
         <div className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5">
           <div className="relative w-full min-w-0 sm:w-auto sm:min-w-56 sm:flex-1 lg:max-w-sm">
             <WorkspaceIcon name="search" className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted-foreground" />
             <Input aria-label="Search applications" placeholder="Search applications, clusters, namespaces, revisions…" value={query} onChange={(event) => setQuery(event.target.value)} className="h-9 bg-background pl-9" />
           </div>
+          {clusters.size > 1 && <ApplicationClusterFilter
+            clusters={[...clusters.values()].sort((a, b) => levelRank[a.health.level] - levelRank[b.health.level] || a.name.localeCompare(b.name))}
+            value={clusterFilter}
+            onValueChange={setClusterFilter}
+          />}
           <Filters fields={filterFields} query={filterQuery} onQueryChange={setFilterQuery} size="sm" className="min-w-0 flex-1" />
           <FormSelect
             ariaLabel="Group applications"

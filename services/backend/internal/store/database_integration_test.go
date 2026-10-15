@@ -136,9 +136,19 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 	}
 	// Seed an existing PR before the new migration so its cluster identity must
 	// be backfilled without replacing either the PR or application record.
+	// Once 053 is already applied, new records must provide their cluster identity.
+	var prClusterScoped bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='repository_pr_applications' AND column_name='cluster_id')`).Scan(&prClusterScoped); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO repository_configurations(id,workspace_id,source_id,revision,enabled) VALUES('upgrade-pr-repo','integration-workspace','integration-git','upgrade-pr',FALSE);
  INSERT INTO repository_pr_applications(id,repository_id,number,definition_name,configuration_path,head_sha,mode,application_id) VALUES('upgrade-pr','upgrade-pr-repo',1,'Due application','justcd.yaml','old-head','review-only','integration-app')`); err != nil {
 		t.Fatal(err)
+	}
+	if prClusterScoped {
+		if _, err := db.ExecContext(ctx, `UPDATE repository_pr_applications SET cluster_id='integration-cluster' WHERE id='upgrade-pr'`); err != nil {
+			t.Fatal(err)
+		}
 	}
 	s := &Store{DB: db}
 	if files[len(files)-pending] == "migrations/033_repair_plan_namespace_creations.sql" {

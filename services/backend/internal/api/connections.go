@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -397,7 +398,11 @@ func (s *Server) testCluster(w http.ResponseWriter, r *http.Request) {
 	if namespace == "" {
 		namespace = "default"
 	}
-	client, clientErr := kube.ForWorkspaceBinding(r.Context(), s.Store, s.EncryptionKey, cluster, credentialID, false, input.WorkspaceID, namespace)
+	// Leave time to return a structured permission report before a gateway's
+	// request deadline. Persist it using the original HTTP context below.
+	testCtx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	client, clientErr := kube.ForWorkspaceBinding(testCtx, s.Store, s.EncryptionKey, cluster, credentialID, false, input.WorkspaceID, namespace)
 	var clusterClient *kube.Clients
 	var clusterScopeFailure *kube.PermissionFailure
 	clusterScopeStatus := ""
@@ -411,7 +416,7 @@ func (s *Server) testCluster(w http.ResponseWriter, r *http.Request) {
 				clusterScopeFailure = &failure
 			}
 		} else {
-			clusterClient, err = kube.ForWorkspaceBinding(r.Context(), s.Store, s.EncryptionKey, cluster, cluster.ClusterScopeCredential, true, input.WorkspaceID, "")
+			clusterClient, err = kube.ForWorkspaceBinding(testCtx, s.Store, s.EncryptionKey, cluster, cluster.ClusterScopeCredential, true, input.WorkspaceID, "")
 			if err != nil {
 				failure := kube.ClassifyPermissionTestError(err)
 				clusterScopeFailure = &failure
@@ -422,11 +427,11 @@ func (s *Server) testCluster(w http.ResponseWriter, r *http.Request) {
 	if clientErr != nil {
 		report = kube.FailedPermissionReport(namespace, clientErr)
 		if clusterClient != nil {
-			clusterScope := kube.CheckClusterScopePermissions(r.Context(), clusterClient)
+			clusterScope := kube.CheckClusterScopePermissions(testCtx, clusterClient)
 			report.ClusterScope = &clusterScope
 		}
 	} else {
-		report = kube.CheckPermissions(r.Context(), client, namespace, clusterClient)
+		report = kube.CheckPermissions(testCtx, client, namespace, clusterClient)
 	}
 	if input.IncludeClusterScope && report.ClusterScope == nil {
 		switch {

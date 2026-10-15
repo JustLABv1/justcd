@@ -145,11 +145,21 @@ heartbeat the connection reports offline and no new task is queued. Agent mode
 never automatically falls back to direct credentials. An owner can explicitly
 switch back to direct API access and refresh plans.
 
-This first implementation uses bounded HTTPS polling and one sequential execution
-stream per cluster agent. It does not support streaming Kubernetes APIs, agent HA,
+The agent uses one HTTPS task poll and up to eight concurrent Kubernetes requests.
+Slow requests and result delivery retries do not block unrelated work. Each task
+is executed once; only result delivery is retried, within the task deadline.
+It does not support streaming Kubernetes APIs, agent HA,
 or local Git rendering. Central JustCD and its deployment authorization are the
 trusted task issuer; the agent enforces local cluster, workspace, namespace, API,
 and RBAC bounds rather than independently issuing deployment approvals.
+
+Namespace access tests read the server version and API groups, then submit
+access reviews without fetching every API group's resource schema. Agent-backed
+tests have a 20-second overall budget and return a permission report when that
+budget expires. Discovery requests inherit their caller's cancellation and
+deadline. A runtime observation that times out publishes partial/unknown health
+using a separate five-second database-only budget instead of leaving the previous
+condition timestamp unchanged.
 
 ## Existing Kubernetes token Secret
 
@@ -320,8 +330,9 @@ and [Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-se
 Agent token rotation preserves the original five-minute old-token grace deadline.
 Task claims recheck token validity and revocation under a database row lock; tasks
 already claimed before revocation may still finish. Each backend process permits
-one active poll per cluster and 120 poll starts/minute, with one-second database
-poll intervals. Enrollment is limited to ten attempts/minute per direct peer IP.
+one active poll per cluster and 1,200 poll starts/minute to accommodate API
+discovery bursts. Database poll intervals start at 50 ms and back off to one
+second while idle. Enrollment is limited to ten attempts/minute per direct peer IP.
 Rate/concurrency limits are process-local; deployments with multiple replicas
 should additionally enforce shared ingress limits. Password-login throttling uses
 normalized account names rather than the frontend proxy's shared address; it still

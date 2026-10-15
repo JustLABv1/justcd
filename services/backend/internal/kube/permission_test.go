@@ -31,8 +31,8 @@ func (d permissionTestDiscovery) ServerVersion() (*version.Info, error) {
 	return &version.Info{GitVersion: "v1.31.0"}, nil
 }
 
-func (d permissionTestDiscovery) ServerGroupsAndResources() ([]*metav1.APIGroup, []*metav1.APIResourceList, error) {
-	return nil, nil, d.groupsErr
+func (d permissionTestDiscovery) ServerGroups() (*metav1.APIGroupList, error) {
+	return &metav1.APIGroupList{}, d.groupsErr
 }
 
 func permissionTestClients(t *testing.T, allowed func(namespace, apiGroup, resource, verb string) bool) *Clients {
@@ -153,6 +153,8 @@ func TestClassifyPermissionTestError(t *testing.T) {
 		err  error
 		code string
 	}{
+		{name: "agent timeout", err: &AgentError{Code: "cluster.agent_unavailable", Message: "sensitive upstream diagnostic", Transient: true}, code: "cluster.agent_unavailable"},
+		{name: "agent profile", err: &AgentError{Code: "cluster.agent_scope_denied"}, code: "cluster.agent_scope_denied"},
 		{name: "rejected credential", err: apierrors.NewUnauthorized("invalid token: super-secret"), code: "kubernetes.credential_rejected"},
 		{name: "forbidden discovery", err: apierrors.NewForbidden(schema.GroupResource{}, "", errors.New("forbidden")), code: "kubernetes.discovery_forbidden"},
 		{name: "TLS", err: errors.New("x509: certificate signed by unknown authority"), code: "kubernetes.tls_failed"},
@@ -166,7 +168,7 @@ func TestClassifyPermissionTestError(t *testing.T) {
 			if failure.Code != test.code {
 				t.Fatalf("code = %q, want %q", failure.Code, test.code)
 			}
-			if strings.Contains(failure.Message, "super-secret") {
+			if strings.Contains(failure.Message, "super-secret") || strings.Contains(failure.Message, "sensitive upstream diagnostic") {
 				t.Fatalf("failure message leaked credential material: %q", failure.Message)
 			}
 		})

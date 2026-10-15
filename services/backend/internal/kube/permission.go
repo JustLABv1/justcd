@@ -119,7 +119,9 @@ func CheckPermissions(ctx context.Context, namespaceClient *Clients, namespace s
 		return report
 	}
 	report.ServerVersion = version.GitVersion
-	if _, _, err := namespaceClient.Discovery.ServerGroupsAndResources(); err != nil {
+	// Access reviews use explicit resource names, so fetching every group's
+	// resource schema adds a large agent queue burst without validating RBAC.
+	if _, err := namespaceClient.Discovery.ServerGroups(); err != nil {
 		failure := ClassifyPermissionTestError(err)
 		report.Failure = &failure
 		report.Checks = append(report.Checks, PermissionCheck{ID: "api-discovery", Title: "Kubernetes API discovery", Scope: "cluster", Status: "failed"})
@@ -345,6 +347,13 @@ func slicesSort(values []string) {
 func ClassifyPermissionTestError(err error) PermissionFailure {
 	if err == nil {
 		return PermissionFailure{}
+	}
+	var agent *AgentError
+	if errors.As(err, &agent) {
+		if agent.ErrorCode() == "cluster.agent_scope_denied" {
+			return PermissionFailure{Code: agent.ErrorCode(), Category: "authorization", Message: "The cluster agent's local profile does not allow this access test.", Remediation: "Check the agent profile's workspace, namespace, and API permissions, then rerun the self-test."}
+		}
+		return PermissionFailure{Code: agent.ErrorCode(), Category: "dependency", Message: "The cluster agent could not complete the Kubernetes access test.", Remediation: "Check agent connectivity, queue activity, and local Kubernetes access, then rerun the self-test.", Retryable: agent.Retryable()}
 	}
 	if apierrors.IsUnauthorized(err) {
 		return PermissionFailure{Code: "kubernetes.credential_rejected", Category: "authentication", Message: "The Kubernetes API rejected the configured credential.", Remediation: "Replace or rotate the Kubernetes credential, then run the self-test again."}

@@ -20,6 +20,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -31,6 +32,9 @@ func TestIntegrationClusterAgent(t *testing.T) {
 		t.Skip("set JUSTCD_E2E_DATABASE_URL")
 	}
 	db := openWorkspaceAuthorizationDB(t, dsn)
+	// Match production's bounded pool while keeping this burst below the
+	// disposable database's connection budget (the helper has no default cap).
+	db.DB.SetMaxOpenConns(16)
 	ctx := context.Background()
 	key := []byte("0123456789abcdef0123456789abcdef")
 	_, err := db.DB.ExecContext(ctx, `INSERT INTO users(id,email) VALUES('agent-owner','agent@example.invalid'); INSERT INTO workspaces(id,name) VALUES('agent-w','Agents'),('agent-other','Other'); INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES('agent-w','agent-owner','owner'); INSERT INTO clusters(id,workspace_id,name,api_server) VALUES('agent-cluster','agent-w','Private','https://unreachable.invalid')`)
@@ -42,6 +46,7 @@ func TestIntegrationClusterAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	var writes atomic.Int32
+	var blockDiscovery atomic.Bool
 	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer local-only-token" {
 			t.Error("local credential missing")
@@ -51,6 +56,10 @@ func TestIntegrationClusterAgent(t *testing.T) {
 		case "/api/v1/namespaces/kube-system":
 			_, _ = w.Write([]byte(`{"metadata":{"uid":"physical-cluster"}}`))
 		case "/version":
+			if blockDiscovery.Load() {
+				<-r.Context().Done()
+				return
+			}
 			_, _ = w.Write([]byte(`{"gitVersion":"v1.35.0"}`))
 		case "/api/v1/namespaces/dev/configmaps/large":
 			_ = json.NewEncoder(w).Encode(map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]string{"name": "large", "namespace": "dev"}, "data": map[string]string{"blob": strings.Repeat("a", 3<<20)}})
@@ -125,6 +134,39 @@ func TestIntegrationClusterAgent(t *testing.T) {
 	}
 	if version, err := clients.Discovery.ServerVersion(); err != nil || version.GitVersion != "v1.35.0" {
 		t.Fatalf("discovery failed: %v", err)
+	}
+	// Discovery has no context parameter; it must inherit the client's caller
+	// deadline rather than waiting for the transport's thirty-second timeout.
+	blockDiscovery.Store(true)
+	discoveryCtx, stopDiscovery := context.WithTimeout(ctx, 300*time.Millisecond)
+	shortClient, err := kube.ForWorkspaceBinding(discoveryCtx, db, key, cluster, nil, false, "agent-w", "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	_, discoveryErr := shortClient.Discovery.ServerVersion()
+	stopDiscovery()
+	blockDiscovery.Store(false)
+	if discoveryErr == nil || time.Since(started) > 2*time.Second {
+		t.Fatalf("discovery ignored caller deadline: %v (%s)", discoveryErr, time.Since(started))
+	}
+	// One discovery burst on a CRD-heavy cluster can exceed the old 120/minute
+	// poll limit. All tasks must still be delivered, with a single poll active.
+	var burst sync.WaitGroup
+	var burstFailures atomic.Int32
+	for range 130 {
+		burst.Add(1)
+		go func() {
+			defer burst.Done()
+			if _, err := clients.Discovery.ServerVersion(); err != nil {
+				t.Logf("discovery burst request failed: %v", err)
+				burstFailures.Add(1)
+			}
+		}()
+	}
+	burst.Wait()
+	if burstFailures.Load() != 0 {
+		t.Fatalf("agent discovery burst lost %d requests", burstFailures.Load())
 	}
 	resource := clients.Dynamic.Resource(schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}).Namespace("dev")
 	object, err := resource.Get(ctx, "test", metav1.GetOptions{})

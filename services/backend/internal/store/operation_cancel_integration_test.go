@@ -30,7 +30,7 @@ func testOperationCancellation(t *testing.T, ctx context.Context, s *Store) {
 		if _, err := s.DB.ExecContext(ctx, `INSERT INTO plans(id,application_id,revision,digest,changes,desired,created_by,expires_at) VALUES($1,$2,'fixture','cancel-digest','[]','[]','integration-owner',NOW()+INTERVAL '1 hour')`, planID, app.ID); err != nil {
 			t.Fatal(err)
 		}
-		progress := NewOperationProgress(core.Plan{Changes: []core.Change{{Kind: core.Create, Identity: identities[0]}, {Kind: core.Update, Identity: identities[1]}, {Kind: core.Delete, Identity: identities[2]}}})
+		progress := mustOperationProgress(t, core.Plan{Changes: []core.Change{{Kind: core.Create, Identity: identities[0]}, {Kind: core.Update, Identity: identities[1]}, {Kind: core.Delete, Identity: identities[2]}}})
 		op, err := s.QueueOperation(ctx, app.ID, planID, "integration-owner", nil, "cancel-digest", "", time.Minute, progress)
 		if err != nil {
 			t.Fatal(err)

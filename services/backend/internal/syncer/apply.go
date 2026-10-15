@@ -98,7 +98,10 @@ func (s *Service) ApplyWithApprovals(ctx context.Context, planID, actorID string
 	} else if len(approvalIDs) > 0 {
 		return store.Operation{}, errors.New("this plan does not require an approval")
 	}
-	progress := store.NewOperationProgress(record.Plan)
+	progress, err := store.NewOperationProgress(record.Plan)
+	if err != nil {
+		return store.Operation{}, err
+	}
 	return s.Store.QueueOperation(ctx, app.ID, record.ID, actorID, approvalIDs, record.Plan.Digest, observability.TraceParent(ctx), 90*time.Second, progress)
 }
 
@@ -256,6 +259,34 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 	if err != nil {
 		return finishFailure(err, "failed")
 	}
+	orderedChanges, err := core.OrderChanges(record.Plan.Changes)
+	if err != nil {
+		return finishFailure(err, "failed")
+	}
+	// Queued operations created by older executors may have a different row
+	// order. Preserve their results while aligning the timeline with execution.
+	orderedProgress, err := store.NewOperationProgress(record.Plan)
+	if err != nil {
+		return finishFailure(err, "failed")
+	}
+	rank := make(map[string]int, len(orderedProgress.Resources))
+	for i, resource := range orderedProgress.Resources {
+		rank[resource.Identity.Key()] = i
+	}
+	sort.SliceStable(operation.Progress.Resources, func(i, j int) bool {
+		return rank[operation.Progress.Resources[i].Identity.Key()] < rank[operation.Progress.Resources[j].Identity.Key()]
+	})
+	desired := make(map[string]core.Resource, len(record.Desired))
+	for _, resource := range record.Desired {
+		desired[resource.Identity.Key()] = resource
+	}
+	for _, change := range orderedChanges {
+		if change.Kind != core.Delete {
+			if _, exists := desired[change.Identity.Key()]; !exists {
+				return finishFailure(fmt.Errorf("desired resource missing for %s %s/%s", change.Identity.Kind, change.Identity.Namespace, change.Identity.Name), "failed")
+			}
+		}
+	}
 	if len(record.Plan.Changes) > 0 && !record.Plan.Decommission {
 		checkpoint, err := s.SavePreOperationCheckpoint(ctx, app, operationID, input)
 		if err != nil {
@@ -326,20 +357,11 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 			return finishFailure(err, "failed")
 		}
 	}
-	resources := append([]core.Resource(nil), record.Desired...)
-	sort.Slice(resources, func(i, j int) bool {
-		left, right := resources[i].Identity, resources[j].Identity
-		leftNamespace, rightNamespace := left.APIVersion == "v1" && left.Kind == "Namespace", right.APIVersion == "v1" && right.Kind == "Namespace"
-		if leftNamespace != rightNamespace {
-			return leftNamespace
-		}
-		return left.Key() < right.Key()
-	})
-	for _, resource := range resources {
-		change, exists := changeFor(record.Plan.Changes, resource.Identity)
-		if !exists || change.Kind == core.Delete {
+	for _, change := range orderedChanges {
+		if change.Kind == core.Delete {
 			continue
 		}
+		resource := desired[change.Identity.Key()]
 		if err := s.Store.RenewOperationLease(ctx, operationID, 90*time.Second); err != nil {
 			return finishFailure(err, "failed")
 		}
@@ -359,7 +381,7 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 			return finishFailure(err, "failed")
 		}
 	}
-	for _, change := range record.Plan.Changes {
+	for _, change := range orderedChanges {
 		if change.Kind != core.Delete {
 			continue
 		}
@@ -473,15 +495,6 @@ func safeApplyFailure(cause error, progress store.OperationProgress, operationTy
 		return fmt.Sprintf("%s stopped because live state changed after review. No automatic rollback was attempted. Rebuild and review the plan.", name)
 	}
 	return fmt.Sprintf("%s did not complete. No automatic rollback was attempted; review cluster state and server logs before retrying.", name)
-}
-
-func changeFor(changes []core.Change, identity core.Identity) (core.Change, bool) {
-	for _, change := range changes {
-		if change.Identity.Key() == identity.Key() {
-			return change, true
-		}
-	}
-	return core.Change{}, false
 }
 
 func (s *Service) applyResource(ctx context.Context, input planInput, applicationID string, resource core.Resource, change core.Change) error {

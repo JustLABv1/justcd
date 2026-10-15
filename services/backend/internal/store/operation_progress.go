@@ -18,21 +18,25 @@ type ResourceProgress struct {
 	Message      string        `json:"message,omitempty"`
 }
 
-func NewOperationProgress(plan core.Plan) OperationProgress {
+func NewOperationProgress(plan core.Plan) (OperationProgress, error) {
+	changes, err := core.OrderChanges(plan.Changes)
+	if err != nil {
+		return OperationProgress{}, err
+	}
 	p := OperationProgress{Phase: "queued", Completed: []core.Identity{}, Resources: []ResourceProgress{}}
 	seen := map[string]bool{}
 	for _, identity := range plan.NamespaceCreations {
 		seen[identity.Key()] = true
 		p.Resources = append(p.Resources, ResourceProgress{Identity: identity, Action: "create_namespace", Status: "queued"})
 	}
-	for _, change := range plan.Changes {
+	for _, change := range changes {
 		if !seen[change.Identity.Key()] {
 			p.Resources = append(p.Resources, ResourceProgress{Identity: change.Identity, Action: string(change.Kind), Status: "queued"})
 			seen[change.Identity.Key()] = true
 		}
 	}
 	p.Total = len(p.Resources)
-	return p
+	return p, nil
 }
 
 func (p *OperationProgress) BeginResource(identity core.Identity, attempt int) {

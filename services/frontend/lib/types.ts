@@ -337,6 +337,8 @@ export type OwnershipConflict = {
   identity: Identity
   uid: string
   resourceVersion: string
+  liveFingerprint?: string
+  reviewFingerprint?: string
   owner?: string
   ownerMissing?: boolean
   desiredFingerprint: string

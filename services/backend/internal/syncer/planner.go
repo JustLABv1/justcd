@@ -158,6 +158,7 @@ type OwnershipConflict struct {
 	Identity           core.Identity `json:"identity"`
 	UID                string        `json:"uid"`
 	ResourceVersion    string        `json:"resourceVersion"`
+	LiveFingerprint    string        `json:"liveFingerprint,omitempty"`
 	Owner              string        `json:"owner,omitempty"`
 	OwnerMissing       bool          `json:"ownerMissing,omitempty"`
 	DesiredFingerprint string        `json:"desiredFingerprint"`
@@ -1083,7 +1084,11 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 			if err != nil {
 				return nil, nil, err
 			}
-			conflicts = append(conflicts, &OwnershipConflict{Identity: identity, UID: string(object.GetUID()), ResourceVersion: object.GetResourceVersion(), Owner: owner, OwnerMissing: ownerMissing, DesiredFingerprint: desired[desiredIndex[key]].Fingerprint, ReviewFingerprint: input.ReviewFingerprint, DesiredManifest: desired[desiredIndex[key]].Manifest, HasOwnerReferences: len(object.GetOwnerReferences()) > 0})
+			live, err := render.CanonicalLive(object, identity.ClusterID, input.Application.ID, identity.ClusterScoped)
+			if err != nil {
+				return nil, nil, err
+			}
+			conflicts = append(conflicts, &OwnershipConflict{Identity: identity, UID: string(object.GetUID()), ResourceVersion: object.GetResourceVersion(), LiveFingerprint: live.Fingerprint, Owner: owner, OwnerMissing: ownerMissing, DesiredFingerprint: desired[desiredIndex[key]].Fingerprint, ReviewFingerprint: input.ReviewFingerprint, DesiredManifest: desired[desiredIndex[key]].Manifest, HasOwnerReferences: len(object.GetOwnerReferences()) > 0})
 			continue
 		}
 		if object.GetLabels()["justcd.io/application-id"] != input.Application.ID || string(object.GetUID()) != tracked.UID {

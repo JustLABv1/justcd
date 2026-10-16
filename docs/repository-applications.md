@@ -215,8 +215,12 @@ longer exists, the objects are eligible for a reviewed takeover: select the
 resources (or **Select all eligible**), choose **Take over selected**, and confirm
 that the previous controller has stopped reconciling.
 
-JustCD rechecks the old application ID and each object's UID/resource version
-before claiming it. The claim only updates ownership labels and inventory, then
+JustCD rechecks the old application ID, each object's UID, and the reviewed live
+configuration before claiming it. Status updates and server-maintained metadata
+do not invalidate that review. Each label claim still uses the latest resource
+version as an atomic precondition, with up to three attempts if status updates
+race with the claim. Configuration or ownership changes require a fresh review.
+The claim only updates ownership labels and inventory, then
 pauses automatic reconciliation. Refresh and review a new plan before syncing.
 Objects owned by an existing application, including another workspace's
 application, or carrying Kubernetes owner references remain blocked.

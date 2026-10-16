@@ -22,8 +22,17 @@ const worst = (a: HealthLevel, b: HealthLevel): HealthLevel => {
 
 /** Issues that point at the connection itself, not at the application's own content. */
 function connectionIssues(apps: Application[], source: "cluster" | "git") {
-  return apps.filter((app) => !app.decommissioning && app.statusIssues?.some((issue) => issue.source === source && issue.code !== "kubernetes.ownership_conflict"))
+  return apps.filter((app) => !app.decommissioning && app.statusIssues?.some((issue) => issue.source === source && (source !== "cluster" || isClusterConnectionIssue(issue.code))))
 }
+
+const applicationClusterIssues = new Set([
+  "kubernetes.ownership_conflict", "kubernetes.cluster_scope_required", "kubernetes.namespace_credential_missing",
+  "kubernetes.plan_check_failed", "kubernetes.validation_failed", "kubernetes.conflict",
+  "kubernetes.request_timeout", "kubernetes.request_failed",
+])
+const unreachableClusterIssues = new Set(["kubernetes.connection_failed", "cluster.agent_unavailable"])
+const credentialClusterIssues = new Set(["kubernetes.permission_denied", "kubernetes.authentication_failed"])
+const isClusterConnectionIssue = (code?: string) => !applicationClusterIssues.has(code ?? "")
 
 export function clusterHealth(cluster: Pick<Cluster, "id" | "connectionMode">, agent: AgentSnapshot | undefined, apps: Application[], now = Date.now()): ConnectionHealth {
   const affected = connectionIssues(apps.filter((app) => app.clusterId === cluster.id), "cluster")
@@ -46,11 +55,13 @@ export function clusterHealth(cluster: Pick<Cluster, "id" | "connectionMode">, a
     }
   }
   if (affected.length) {
-    const unreachable = affected.some((app) => app.statusIssues.some((issue) => issue.source === "cluster" && issue.code !== "kubernetes.permission_denied"))
+    const issues = affected.flatMap((app) => app.statusIssues.filter((issue) => issue.source === "cluster" && isClusterConnectionIssue(issue.code)))
+    const unreachable = issues.some((issue) => unreachableClusterIssues.has(issue.code ?? ""))
+    const credentials = issues.some((issue) => credentialClusterIssues.has(issue.code ?? ""))
     level = worst(level, unreachable ? "critical" : "warning")
     if (level !== "healthy" && (label === "Connected" || label === "Agent online")) {
-      label = unreachable ? "Cluster unreachable" : "Permissions missing"
-      detail = affected[0].statusIssues.find((issue) => issue.source === "cluster")?.summary ?? detail
+      label = unreachable ? "Cluster unreachable" : credentials ? "Credentials or permissions missing" : "Cluster checks failed"
+      detail = issues.find((issue) => unreachableClusterIssues.has(issue.code ?? ""))?.summary ?? issues[0]?.summary ?? detail
     }
   }
   return { level, label, detail, affectedApplications: affected }

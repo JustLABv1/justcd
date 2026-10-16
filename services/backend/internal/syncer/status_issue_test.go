@@ -26,7 +26,7 @@ func TestOwnershipConflictStatusDoesNotReportConnectivityFailure(t *testing.T) {
 
 func TestClusterStatusRetainsConnectivityAndPermissionFailures(t *testing.T) {
 	issue := statusIssue("cluster", errors.New("connection refused"), time.Now())
-	if !strings.Contains(issue.Summary, "could not be reached") {
+	if issue.Code != "kubernetes.connection_failed" || !strings.Contains(issue.Summary, "connection failed") {
 		t.Fatalf("connectivity issue changed: %+v", issue)
 	}
 	issue = statusIssue("cluster", apierrors.NewForbidden(schema.GroupResource{Resource: "deployments"}, "web", errors.New("denied")), time.Now())

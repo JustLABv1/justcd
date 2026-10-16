@@ -4,7 +4,7 @@ import { useState } from "react"
 import Link from "next/link"
 import { AppDialog } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
-import { APIError } from "@/lib/api"
+import { APIError, planFailureDetail } from "@/lib/api"
 
 const sensitiveKey =
   /token|secret|password|authorization|cookie|private.?key|api.?key|credential|kubeconfig|known.?hosts|certificate|csrf|session/i
@@ -133,6 +133,7 @@ export function ErrorGuidance({ error }: { error: unknown }) {
 function ErrorDetailsBody({ error }: { error: unknown }) {
   const [details] = useState(() => diagnosticSnapshot(error))
   const [copied, setCopied] = useState(false)
+  const issue = planFailureDetail(error)
 
   async function copyDetails() {
     try {
@@ -145,6 +146,33 @@ function ErrorDetailsBody({ error }: { error: unknown }) {
 
   return (
     <div className="space-y-3">
+      {issue && (
+        <section aria-label="Plan failure" className="space-y-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
+          <p className="font-medium break-words">{redactText(issue.summary)}</p>
+          {(issue.resource || issue.action) && (
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+              {issue.resource && <>
+                <dt className="text-muted-foreground">Resource</dt>
+                <dd className="break-words">{redactText(`${issue.resource.kind} ${issue.resource.namespace ? `${issue.resource.namespace}/` : ""}${issue.resource.name} (${issue.resource.apiVersion})`)}</dd>
+              </>}
+              {issue.action && <>
+                <dt className="text-muted-foreground">Operation</dt>
+                <dd className="break-words">{redactText(issue.action)}</dd>
+              </>}
+            </dl>
+          )}
+          {issue.causes.length > 0 && (
+            <ul className="space-y-2" aria-label="Kubernetes causes">
+              {issue.causes.map((cause, index) => (
+                <li key={index} className="space-y-1">
+                  {cause.field && <code className="block break-all text-xs">{redactText(cause.field)}</code>}
+                  <p>{redactText(cause.message)}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
       <ErrorGuidance error={error} />
       <div className="flex justify-end">
         <Button type="button" size="sm" variant="outline" onClick={() => void copyDetails()} aria-live="polite">

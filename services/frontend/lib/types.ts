@@ -235,7 +235,7 @@ export type Application = {
   lastSyncedRevision?: string
   health: string
   healthCondition?: ApplicationHealthCondition
-  statusIssues: { source: string; summary: string; observedAt: string; code?: string; action?: string; resource?: Identity; remediation?: string }[]
+  statusIssues: { source: string; summary: string; observedAt: string; code?: string; action?: string; resource?: Identity; remediation?: string; causes?: { field?: string; reason: string; message: string }[] }[]
   decommissioning: boolean
   autoSyncPaused?: boolean
   rollbackResumeAvailable?: boolean

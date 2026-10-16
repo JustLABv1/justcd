@@ -1420,13 +1420,22 @@ type Application struct {
 }
 
 type ApplicationStatusIssue struct {
-	Code        string         `json:"code,omitempty"`
-	Action      string         `json:"action,omitempty"`
-	Resource    *core.Identity `json:"resource,omitempty"`
-	Remediation string         `json:"remediation,omitempty"`
-	Source      string         `json:"source"`
-	Summary     string         `json:"summary"`
-	ObservedAt  time.Time      `json:"observedAt"`
+	Causes      []ApplicationStatusCause `json:"causes,omitempty"`
+	Code        string                   `json:"code,omitempty"`
+	Action      string                   `json:"action,omitempty"`
+	Resource    *core.Identity           `json:"resource,omitempty"`
+	Remediation string                   `json:"remediation,omitempty"`
+	Source      string                   `json:"source"`
+	Summary     string                   `json:"summary"`
+	ObservedAt  time.Time                `json:"observedAt"`
+}
+
+// ApplicationStatusCause contains field metadata and a safe explanation, never
+// rejected field values or raw admission/provider responses.
+type ApplicationStatusCause struct {
+	Field   string `json:"field,omitempty"`
+	Reason  string `json:"reason"`
+	Message string `json:"message"`
 }
 
 type ApplicationGroup struct {

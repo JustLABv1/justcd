@@ -63,5 +63,6 @@ export function useWorkspace({ includeAllApplications = false }: { includeAllApp
     }, 5000)
     return () => { controller.abort(); window.clearInterval(timer) }
   }, [version, workspaceId, includeAllApplications])
-  return { workspaces, applications, loading, error, refresh }
+  const updateApplication = useCallback((app: WorkspaceApplication) => { setApplications(current => current.map(item => item.id === app.id ? { ...item, ...app } : item)) }, [])
+  return { workspaces, applications, loading, error, refresh, updateApplication }
 }

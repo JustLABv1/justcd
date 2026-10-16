@@ -23,7 +23,7 @@ func testRepositoryConfigurationSafety(t *testing.T, ctx context.Context, s *Sto
 	if err != nil {
 		t.Fatal(err)
 	}
-	app := Application{WorkspaceID: repository.WorkspaceID, Name: "git-managed", SourceID: repository.SourceID, Revision: repository.Revision, ManifestPath: "manifests", Renderer: "yaml", ClusterID: "integration-cluster", Namespaces: []NamespaceBinding{binding}, SyncPolicy: "manual", PollSeconds: 300, RetryPolicy: DefaultRetryPolicy(), ConfigurationPath: "manifests/justcd.yaml", ConfigurationHash: "first", CreateNamespaces: true, RepositoryDeploymentSchedule: schedule.Policy{Freezes: []schedule.Freeze{{Reason: "Git freeze"}}}}
+	app := Application{Labels: map[string]string{"team": "platform"}, WorkspaceID: repository.WorkspaceID, Name: "git-managed", SourceID: repository.SourceID, Revision: repository.Revision, ManifestPath: "manifests", Renderer: "yaml", ClusterID: "integration-cluster", Namespaces: []NamespaceBinding{binding}, SyncPolicy: "manual", PollSeconds: 300, RetryPolicy: DefaultRetryPolicy(), ConfigurationPath: "manifests/justcd.yaml", ConfigurationHash: "first", CreateNamespaces: true, RepositoryDeploymentSchedule: schedule.Policy{Freezes: []schedule.Freeze{{Reason: "Git freeze"}}}}
 	if err := s.ApplyRepositoryApplications(ctx, repository, "commit-1", []Application{app}); err != nil {
 		t.Fatal(err)
 	}
@@ -46,6 +46,25 @@ func testRepositoryConfigurationSafety(t *testing.T, ctx context.Context, s *Sto
 	}
 	if err := s.SetDeploymentPolicy(ctx, "application", stored.ID, "integration-owner", schedule.Policy{}); err == nil {
 		t.Fatal("Git policy editable outside Git")
+	}
+	if stored.Labels["team"] != "platform" {
+		t.Fatal("Git app labels were not stored")
+	}
+	app.Labels = map[string]string{"team": "payments", "environment": "production"}
+	if err := s.ApplyRepositoryApplications(ctx, repository, "label-change", []Application{app}); err != nil {
+		t.Fatal(err)
+	}
+	labeled, err := s.ApplicationByID(ctx, stored.ID)
+	if err != nil || labeled.Labels["team"] != "payments" {
+		t.Fatalf("Git labels did not reconcile: %+v %v", labeled, err)
+	}
+	app.Labels = nil
+	if err := s.ApplyRepositoryApplications(ctx, repository, "labels-removed", []Application{app}); err != nil {
+		t.Fatal(err)
+	}
+	labeled, err = s.ApplicationByID(ctx, stored.ID)
+	if err != nil || len(labeled.Labels) != 0 {
+		t.Fatalf("removed Git labels remain: %+v %v", labeled.Labels, err)
 	}
 	originalID := stored.ID
 	prerequisite := core.Identity{ClusterID: app.ClusterID, APIVersion: "v1", Kind: "Namespace", Name: "default", ClusterScoped: true}

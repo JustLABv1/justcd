@@ -1,8 +1,16 @@
 "use client"
 
 import Link from "next/link"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { StarIcon, Tag01Icon, ViewIcon as SavedViewIcon, Tick02Icon, Add01Icon } from "@hugeicons/core-free-icons"
+import { ApplicationLabelsDialog } from "@/components/application-labels-dialog"
+import { ConnectionDialog } from "@/components/connection-dialog"
+import { DialogCancel, DialogFooter } from "@/components/ui/dialog"
+import { FormField } from "@/components/ui-kit"
+import { applicationViewSignature } from "@/lib/application-views"
+import type { ApplicationPreferences, ApplicationSavedView, ApplicationViewConfig } from "@/lib/application-views"
 import { useRouter } from "next/navigation"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { FormSelect } from "@/components/ui/form-select"
@@ -10,14 +18,14 @@ import { Filters } from "@/components/reui/filters/filters"
 import { createFilterQuery, flattenFilterConditions } from "@/components/reui/filters/filters-query"
 import type { FilterField, FilterQuery } from "@/components/reui/filters/filters-types"
 import { DataGridList, type GridColumn } from "@/components/data-grid-table"
-import { RowActions, type ActionItem } from "@/components/action-menu"
+import { ActionMenu, RowActions, type ActionItem } from "@/components/action-menu"
 import { Badge } from "@/components/reui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { ApplicationClusterFilter } from "@/components/application-cluster-filter"
 import { ToggleGroup, ToggleGroupItem, ToggleGroupCount } from "@/components/ui/toggle-group"
 import { Delete02Icon, Edit02Icon, ViewIcon } from "@hugeicons/core-free-icons"
 import { EmptyState, StatusBadge } from "@/components/ui-kit"
-import { WorkspaceIcon } from "@/components/workspace-ui"
+import { WorkspaceIcon, CollectionSkeleton } from "@/components/workspace-ui"
 import { tone } from "@/components/health-tone"
 import { useToast } from "@/components/toast-provider"
 import {
@@ -31,9 +39,9 @@ import { groupApplications, type ApplicationBucket, type GroupMode, type StatusB
 import { clusterHealth, isCheckStalled, type ConnectionHealth, type HealthLevel } from "@/lib/connection-health"
 import { ago } from "@/lib/relative-time"
 import type { Workspace } from "@/lib/types"
-import { api } from "@/lib/api"
+import { api, errorMessage } from "@/lib/api"
 
-function ApplicationActions({ app, canManage, onDeleted }: { app: WorkspaceApplication; canManage: boolean; onDeleted?: (id: string) => void }) {
+function ApplicationActions({ app, canManage, onDeleted, onEditLabels }: { app: WorkspaceApplication; canManage: boolean; onDeleted?: (id: string) => void; onEditLabels?: () => void }) {
   const router = useRouter()
   const toast = useToast()
   const [policy, setPolicy] = useState("keep")
@@ -48,6 +56,7 @@ function ApplicationActions({ app, canManage, onDeleted }: { app: WorkspaceAppli
     }
   }
   const items: ActionItem[] = [{ label: "View application", icon: ViewIcon, href: `/applications/${app.id}` }]
+  if (onEditLabels) items.push({ label: app.repositoryConfigurationId ? "View labels in Git" : "Edit labels", icon: Tag01Icon, onSelect: onEditLabels })
   if (canManage) {
     items.push({ label: "Edit application", icon: Edit02Icon, href: `/applications/${app.id}/edit` })
     items.push({
@@ -69,6 +78,10 @@ function ApplicationActions({ app, canManage, onDeleted }: { app: WorkspaceAppli
   return <RowActions label={app.name} items={items} />
 }
 
+function FavoriteButton({ name, favorite, busy, onClick }: { name: string; favorite: boolean; busy?: boolean; onClick: () => void }) {
+  return <Button type="button" variant="ghost" size="icon-sm" aria-label={`${favorite ? "Remove" : "Add"} ${name} ${favorite ? "from" : "to"} favorites`} aria-pressed={favorite} disabled={busy} onClick={onClick} title={favorite ? "Remove from favorites" : "Add to favorites"}><HugeiconsIcon icon={StarIcon} strokeWidth={1.8} aria-hidden="true" className={favorite ? "fill-warning text-warning-foreground dark:text-warning" : "text-muted-foreground"} /></Button>
+}
+
 const checkSources = (app: WorkspaceApplication) => app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")
 
 const classify = (app: WorkspaceApplication): StatusBucket => needsAttention(app) ? "attention" : isApplicationHealthy(app) ? "synced" : "other"
@@ -87,9 +100,10 @@ function reasonFor(app: WorkspaceApplication, blockedBy?: ConnectionHealth) {
 }
 
 export function ApplicationCard({
-  app, canManage, onDeleted, showCluster = true, clusterLevel, blockedBy, now,
+  app, canManage, onDeleted, showCluster = true, clusterLevel, blockedBy, now, favorite, favoriteBusy, onFavorite, onEditLabels,
 }: {
   app: WorkspaceApplication; canManage?: boolean; onDeleted?: (id: string) => void
+  favorite?: boolean; favoriteBusy?: boolean; onFavorite?: () => void; onEditLabels?: () => void
   showCluster?: boolean; clusterLevel?: HealthLevel; blockedBy?: ConnectionHealth; now?: number
 }) {
   const namespaces = app.namespaces.map((item) => item.namespace).join(", ") || "No namespace"
@@ -108,7 +122,7 @@ export function ApplicationCard({
             <span className="truncate" title={namespaces}>{namespaces}</span>
           </p>
         </div>
-        <ApplicationActions app={app} canManage={Boolean(canManage)} onDeleted={onDeleted} />
+        <div className="flex shrink-0 items-center gap-1">{onFavorite && <FavoriteButton name={app.name} favorite={Boolean(favorite)} busy={favoriteBusy} onClick={onFavorite} />}<ApplicationActions app={app} canManage={Boolean(canManage)} onDeleted={onDeleted} onEditLabels={onEditLabels} /></div>
       </header>
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         <span title="Delivery state"><StatusBadge status={app.health} /></span>
@@ -116,6 +130,7 @@ export function ApplicationCard({
         {app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}
         {app.configurationMissing && <Badge variant="destructive-light" radius="full">Definition missing</Badge>}
       </div>
+      {Object.keys(app.labels ?? {}).length > 0 && <div aria-label="Application labels" className="mt-2 flex flex-wrap gap-1">{Object.entries(app.labels ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => <Badge key={key} variant="outline" className="max-w-full truncate text-xs" title={`${key}=${value}`}>{key}{value && <>: {value}</>}</Badge>)}</div>}
       {reason && (
         <p className={`mt-2 line-clamp-2 text-sm ${reason.blocked ? "text-muted-foreground" : "text-warning-foreground dark:text-warning"}`} title={app.statusIssues?.map((issue) => issue.summary).join("\n") || reason.text}>
           {reason.text}{app.statusIssues?.length > 0 && !reason.blocked && <> · <span className="text-muted-foreground">{checkSources(app)} check failed</span></>}
@@ -174,6 +189,8 @@ export function ApplicationCollection({
   canCreate = true,
   workspaceRole,
   onDeleted,
+  onApplicationUpdated,
+  renderHeader,
 }: {
   applications: WorkspaceApplication[]
   workspaces?: Workspace[]
@@ -183,6 +200,8 @@ export function ApplicationCollection({
   canCreate?: boolean
   workspaceRole?: Workspace["role"]
   onDeleted?: (id: string) => void
+  onApplicationUpdated?: (app: WorkspaceApplication) => void
+  renderHeader?: (viewMenu?: ReactNode) => ReactNode
 }) {
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState(initialFilter)
@@ -191,6 +210,88 @@ export function ApplicationCollection({
   const [view, setView] = useState<"cards" | "list">("cards")
   const [sort, setSort] = useState("attention")
   const [groupBy, setGroupBy] = useState<GroupMode>("cluster")
+  const toast = useToast()
+  const [labelKey, setLabelKey] = useState("")
+  const [favoritesOnly, setFavoritesOnly] = useState(false)
+  const [favoriteIds, setFavoriteIds] = useState<string[]>([])
+  const [favoriteBusy, setFavoriteBusy] = useState<string[]>([])
+  const [savedViews, setSavedViews] = useState<ApplicationSavedView[]>([])
+  const [activeViewId, setActiveViewId] = useState("")
+  const [preferencesReady, setPreferencesReady] = useState(false)
+  const [preferencesError, setPreferencesError] = useState("")
+  const [preferencesVersion, setPreferencesVersion] = useState(0)
+  const [viewBusy, setViewBusy] = useState(false)
+  const [saveDialog, setSaveDialog] = useState(false)
+  const [viewName, setViewName] = useState("")
+  const [viewError, setViewError] = useState("")
+  const [editingLabels, setEditingLabels] = useState<WorkspaceApplication | null>(null)
+  function applyView(config?: ApplicationViewConfig) {
+    setGroupBy(config?.groupBy ?? "cluster"); setLabelKey(config?.labelKey ?? "")
+    setQuery(config?.query ?? ""); setFilter(config?.status ?? initialFilter)
+    setClusterFilter(config?.clusterId ?? ""); setView(config?.layout ?? "cards")
+    setSort(config?.sort ?? "attention"); setFavoritesOnly(config?.favoritesOnly ?? false)
+    setFilterQuery(config?.filters ?? createFilterQuery()); setOpenGroups({})
+  }
+  useEffect(() => {
+    const controller = new AbortController()
+    void api<ApplicationPreferences>("/api/v1/application-preferences", { signal: controller.signal }).then(result => {
+      if (controller.signal.aborted) return
+      setFavoriteIds(result.favoriteApplicationIds); setSavedViews(result.views)
+      const selected = result.views.find(view => view.isDefault)
+      if (selected) {
+        const config = selected.configuration
+        setActiveViewId(selected.id); setGroupBy(config.groupBy); setLabelKey(config.labelKey ?? "")
+        setQuery(config.query); setFilter(initialFilter !== "all" ? initialFilter : config.status)
+        setClusterFilter(config.clusterId); setView(config.layout); setSort(config.sort)
+        setFavoritesOnly(config.favoritesOnly); setFilterQuery(config.filters ?? createFilterQuery())
+      }
+      setPreferencesError(""); setPreferencesReady(true)
+    }).catch(cause => { if (!controller.signal.aborted) setPreferencesError(errorMessage(cause)) })
+    return () => controller.abort()
+  }, [initialFilter, preferencesVersion])
+  async function toggleFavorite(app: WorkspaceApplication) {
+    if (favoriteBusy.includes(app.id)) return
+    const favorite = !favoriteIds.includes(app.id)
+    setFavoriteBusy(current => [...current, app.id])
+    try {
+      await api(`/api/v1/applications/${encodeURIComponent(app.id)}/favorite`, { method: "PUT", body: JSON.stringify({ favorite }) })
+      setFavoriteIds(current => favorite ? [...new Set([...current, app.id])] : current.filter(id => id !== app.id))
+    } catch (cause) { toast.error(errorMessage(cause), cause) }
+    finally { setFavoriteBusy(current => current.filter(id => id !== app.id)) }
+  }
+  async function selectSavedView(id: string) {
+    setViewBusy(true)
+    try {
+      await api("/api/v1/application-views/default", { method: "PUT", body: JSON.stringify({ viewId: id === "default" ? "" : id }) })
+      setActiveViewId(id === "default" ? "" : id)
+      applyView(savedViews.find(view => view.id === id)?.configuration)
+      setSavedViews(current => current.map(view => ({ ...view, isDefault: view.id === id })))
+    } catch (cause) { toast.error(errorMessage(cause), cause) }
+    finally { setViewBusy(false) }
+  }
+  const currentViewConfig: ApplicationViewConfig = { groupBy, labelKey, query, status: filter, clusterId: clusterFilter, layout: view, sort, favoritesOnly, filters: filterQuery }
+  const activeSavedView = savedViews.find(view => view.id === activeViewId)
+  const viewChanged = Boolean(activeSavedView && applicationViewSignature(activeSavedView.configuration) !== applicationViewSignature(currentViewConfig))
+  async function saveView(asNew: boolean) {
+    if (groupBy === "label" && !labelKey) { setViewError("Choose a label key before saving."); return }
+    setViewBusy(true); setViewError("")
+    try {
+      const result = await api<ApplicationSavedView>(asNew ? "/api/v1/application-views" : `/api/v1/application-views/${encodeURIComponent(activeViewId)}`, { method: asNew ? "POST" : "PUT", body: JSON.stringify({ name: asNew ? viewName : activeSavedView?.name, configuration: currentViewConfig }) })
+      setSavedViews(current => [...current.filter(view => view.id !== result.id).map(view => ({ ...view, isDefault: false })), result])
+      setActiveViewId(result.id); setSaveDialog(false); toast.success(`View “${result.name}” saved. It will reopen next time.`)
+    } catch (cause) { setViewError(errorMessage(cause)); if (!asNew) toast.error(errorMessage(cause), cause) }
+    finally { setViewBusy(false) }
+  }
+  async function deleteView() {
+    if (!activeSavedView) return
+    setViewBusy(true)
+    try {
+      await api(`/api/v1/application-views/${encodeURIComponent(activeViewId)}`, { method: "DELETE" })
+      setSavedViews(current => current.filter(view => view.id !== activeViewId)); setActiveViewId(""); applyView()
+      toast.success("Saved view deleted.")
+    } catch (cause) { toast.error(errorMessage(cause), cause) }
+    finally { setViewBusy(false) }
+  }
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
   const [removedIds, setRemovedIds] = useState<string[]>([])
   const [now, setNow] = useState(() => Date.now())
@@ -217,6 +318,7 @@ export function ApplicationCollection({
     return byId
   }, [available, clusterStatuses, now])
 
+  const labelKeys = [...new Set([...available.flatMap(app => Object.keys(app.labels ?? {})), ...(labelKey ? [labelKey] : [])])].sort()
   const filterFields: FilterField[] = [
     ...(workspaces ? [{ id: "workspace", label: "Workspace", type: "select" as const, options: workspaces.map((item) => ({ value: item.id, label: item.name })), operators: [{ value: "is", label: "is" }] }] : []),
     { id: "namespace", label: "Namespace", type: "select", options: [...new Set(available.flatMap((app) => app.namespaces.map((item) => item.namespace)))].sort().map((value) => ({ value, label: value })), operators: [{ value: "is", label: "is" }] },
@@ -226,6 +328,7 @@ export function ApplicationCollection({
   const conditions = flattenFilterConditions(filterQuery)
   const counts = {
     all: available.length,
+    favorites: available.filter(app => favoriteIds.includes(app.id)).length,
     attention: available.filter(needsAttention).length,
     synced: available.filter(isApplicationHealthy).length,
     paused: available.filter((app) => app.autoSyncPaused).length,
@@ -241,6 +344,7 @@ export function ApplicationCollection({
           : !needsAttention(app) && !isApplicationHealthy(app))
       return (
         matchesStatus &&
+        (!favoritesOnly || favoriteIds.includes(app.id)) &&
         (!clusterFilter || app.clusterId === clusterFilter) &&
         conditions.every((condition) => {
           const rawValue = String(condition.values[0] ?? "")
@@ -254,7 +358,7 @@ export function ApplicationCollection({
             default: return true
           }
         }) &&
-        `${app.name} ${app.workspaceName ?? ""} ${app.clusterName ?? ""} ${app.clusterId} ${app.namespaces.map((item) => item.namespace).join(" ")} ${app.revision} ${app.autoSyncPaused ? "reconciliation paused disabled" : "reconciliation active"}`
+        `${app.name} ${app.workspaceName ?? ""} ${app.clusterName ?? ""} ${app.clusterId} ${app.namespaces.map((item) => item.namespace).join(" ")} ${app.revision} ${Object.entries(app.labels ?? {}).map(([key, value]) => `${key} ${value} ${key}=${value}`).join(" ")} ${app.autoSyncPaused ? "reconciliation paused disabled" : "reconciliation active"}`
           .toLowerCase()
           .includes(query.trim().toLowerCase())
       )
@@ -268,31 +372,51 @@ export function ApplicationCollection({
     )
 
   const buckets = useMemo(() => {
-    const groups = groupApplications(visible, groupBy, classify)
+    const groups = groupApplications(visible, groupBy, classify, labelKey)
     // Broken clusters first so a single outage is the first thing on the page.
     if (groupBy === "cluster") groups.sort((a, b) => levelRank[clusters.get(a.key)?.health.level ?? "unknown"] - levelRank[clusters.get(b.key)?.health.level ?? "unknown"] || a.label.localeCompare(b.label))
     return groups
-  }, [visible, groupBy, clusters])
+  }, [visible, groupBy, labelKey, clusters])
 
   const canManageApp = (app: WorkspaceApplication) => workspaceRole === "owner" || Boolean(workspaces?.some((workspace) => workspace.id === app.workspaceId && workspace.role === "owner"))
-  const filtering = Boolean(query.trim() || clusterFilter || conditions.length || filter !== "all")
+  const filtering = Boolean(query.trim() || clusterFilter || conditions.length || filter !== "all" || favoritesOnly)
   const defaultOpen = (bucket: ApplicationBucket<WorkspaceApplication>) =>
     groupBy === "none" || filtering || buckets.length === 1 || (groupBy === "status" ? bucket.key !== "synced" : bucket.applications.some(needsAttention) || (clusters.get(bucket.key)?.health.level ?? "healthy") !== "healthy")
-  const resetFilters = () => { setQuery(""); setFilter("all"); setClusterFilter(""); setFilterQuery(createFilterQuery()) }
+  const resetFilters = () => { setQuery(""); setFilter("all"); setClusterFilter(""); setFilterQuery(createFilterQuery()); setFavoritesOnly(false) }
+
+  const viewMenu = <ActionMenu
+    variant="outline"
+    icon={SavedViewIcon}
+    label={<><span className="sr-only">Saved views: </span><span className="max-w-40 truncate">{activeSavedView?.name ?? "Views"}</span>{viewChanged && <span role="status" aria-label="Unsaved view changes" className="size-1.5 rounded-full bg-primary" />}</>}
+    items={[
+      { label: "Default view", icon: activeViewId ? undefined : Tick02Icon, disabled: !preferencesReady || viewBusy, onSelect: () => void selectSavedView("default") },
+      ...savedViews.map(saved => ({ label: `View: ${saved.name}`, icon: saved.id === activeViewId ? Tick02Icon : undefined, disabled: viewBusy, onSelect: () => void selectSavedView(saved.id) })),
+      { label: "Save as new view…", icon: Add01Icon, separatorBefore: true, disabled: !preferencesReady || viewBusy || (groupBy === "label" && !labelKey), onSelect: () => { setViewName(""); setViewError(""); setSaveDialog(true) } },
+      ...(activeSavedView ? [
+        { label: "Update current view", disabled: viewBusy || !viewChanged, onSelect: () => void saveView(false) },
+        { label: "Discard view changes", disabled: viewBusy || !viewChanged, onSelect: () => applyView(activeSavedView.configuration) },
+        { label: "Delete saved view", disabled: viewBusy, destructive: true, confirm: { title: `Delete view “${activeSavedView.name}”?`, description: "Your applications and favorites will be kept.", confirmLabel: "Delete view", onConfirm: deleteView } },
+      ] : []),
+    ]}
+  />
+
+  if (!preferencesReady && !preferencesError) return <>{renderHeader?.()}<CollectionSkeleton /></>
 
   if (!available.length)
     return (
-      <div className="rounded-xl border border-dashed bg-card">
+      <>{renderHeader?.()}<div className="rounded-xl border border-dashed bg-card">
         <EmptyState
           title="Your next deployment starts here"
           description={`Connect a Git repository and a Kubernetes target to bring your first application online.${canCreate ? "" : " Ask a workspace owner to create one."}`}
           href={canCreate ? createHref : undefined}
           action="Create application"
         />
-      </div>
+      </div></>
     )
 
+  const editLabelsFor = (app: WorkspaceApplication) => canManageApp(app) ? () => setEditingLabels(app) : undefined
   const listColumns = (showCluster: boolean): GridColumn<WorkspaceApplication>[] => [
+    { id: "favorite", title: "Favorite", size: 64, cell: app => <FavoriteButton name={app.name} favorite={favoriteIds.includes(app.id)} busy={!preferencesReady || favoriteBusy.includes(app.id)} onClick={() => void toggleFavorite(app)} /> },
     {
       id: "name", title: "Application", size: 220,
       cell: (app) => (
@@ -323,6 +447,7 @@ export function ApplicationCollection({
       id: "cluster", title: "Cluster", size: 160,
       cell: (app: WorkspaceApplication) => <span className="flex items-center gap-1.5 truncate text-xs font-medium" title={`${app.clusterName || app.clusterId} (${app.clusterId})`}><Dot level={clusters.get(app.clusterId)?.health.level ?? "unknown"} />{app.clusterName || app.clusterId}</span>,
     }] : []),
+    { id: "labels", title: "Labels", size: 200, cell: app => { const text = Object.entries(app.labels ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}=${value}`).join(" · "); return <span className="block truncate text-xs text-muted-foreground" title={text}>{text || "—"}</span> } },
     { id: "target", title: "Namespace", size: 150, cell: (app) => <span className="block truncate text-xs">{app.namespaces.map((item) => item.namespace).join(", ") || "—"}</span> },
     { id: "revision", title: "Revision", size: 120, cell: (app) => <span className="block truncate font-mono text-xs">{app.revision}</span> },
     {
@@ -330,7 +455,7 @@ export function ApplicationCollection({
       cell: (app) => <span className={`text-xs ${isCheckStalled(app, now) ? "font-medium text-warning-foreground dark:text-warning" : "text-muted-foreground"}`} title={app.lastCheckedAt ? new Date(app.lastCheckedAt).toLocaleString() : undefined}>{ago(app.lastCheckedAt, now)}</span>,
     },
     { id: "policy", title: "Sync policy", size: 110, cell: (app) => <span className="text-xs">{app.autoSyncPaused ? "paused" : app.syncPolicy}</span> },
-    { id: "actions", title: "", size: 64, cell: (app) => <ApplicationActions app={app} canManage={canManageApp(app)} onDeleted={handleDeleted} /> },
+    { id: "actions", title: "", size: 64, cell: (app) => <ApplicationActions app={app} canManage={canManageApp(app)} onDeleted={handleDeleted} onEditLabels={editLabelsFor(app)} /> },
   ]
 
   const renderBucket = (bucket: ApplicationBucket<WorkspaceApplication>) => {
@@ -341,6 +466,7 @@ export function ApplicationCollection({
         {bucket.applications.map((app) => (
           <ApplicationCard
             key={app.id} app={app} canManage={canManageApp(app)} onDeleted={handleDeleted} now={now}
+            favorite={favoriteIds.includes(app.id)} favoriteBusy={!preferencesReady || favoriteBusy.includes(app.id)} onFavorite={() => void toggleFavorite(app)} onEditLabels={editLabelsFor(app)}
             showCluster={groupBy !== "cluster"} clusterLevel={clusters.get(app.clusterId)?.health.level}
             blockedBy={blockedIds.has(app.id) ? health : undefined}
           />
@@ -362,9 +488,17 @@ export function ApplicationCollection({
   }
 
   return (
-    <div>
+    <>
+      {renderHeader?.(viewMenu)}
+      <div>
+      {preferencesError && <div role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warning/30 p-3 text-sm"><p>Favorites and saved views could not be loaded.</p><Button variant="outline" size="sm" onClick={() => setPreferencesVersion(current => current + 1)}>Retry preferences</Button></div>}
+      <ConnectionDialog open={saveDialog} onOpenChange={setSaveDialog} title="Save application view" description="Save your grouping, filters, sort order and layout. This view is personal and will reopen when you return." busy={viewBusy} size="sm">
+        <form className="space-y-4" onSubmit={event => { event.preventDefault(); void saveView(true) }}><FormField label="View name" htmlFor="application-view-name"><Input id="application-view-name" value={viewName} maxLength={80} placeholder="Production by team" autoFocus required disabled={viewBusy} onChange={event => setViewName(event.target.value)} /></FormField>{viewError && <p role="alert" className="text-sm text-destructive">{viewError}</p>}<DialogFooter><DialogCancel disabled={viewBusy} /><Button type="submit" loading={viewBusy} disabled={!viewName.trim()}>Save view</Button></DialogFooter></form>
+      </ConnectionDialog>
+      {editingLabels && <ApplicationLabelsDialog key={editingLabels.id} application={editingLabels} onClose={() => setEditingLabels(null)} onSaved={labels => onApplicationUpdated?.({ ...editingLabels, labels })} />}
       <section aria-label="Filter applications" className="mb-3 rounded-xl border bg-card">
-        <div className="overflow-x-auto border-b px-4 py-3 sm:px-5">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3 sm:px-5">
+          <div className="max-w-full overflow-x-auto">
           <ToggleGroup className="w-max" aria-label="Filter by health" value={[filter]} onValueChange={(value) => { if (value[0]) setFilter(value[0]) }}>
             {([["all", "All apps"], ["attention", "Needs attention"], ["synced", "In sync"], ["other", "Other"], ["paused", "Reconciliation paused"]] as const).map(([value, label]) => (
               <ToggleGroupItem key={value} value={value}>
@@ -373,11 +507,13 @@ export function ApplicationCollection({
               </ToggleGroupItem>
             ))}
           </ToggleGroup>
+          </div>
+          <Button variant={favoritesOnly ? "secondary" : "ghost"} size="sm" aria-pressed={favoritesOnly} disabled={!preferencesReady} onClick={() => setFavoritesOnly(current => !current)}><HugeiconsIcon icon={StarIcon} aria-hidden="true" className={favoritesOnly ? "fill-current" : ""} />Favorites <span className="tabular-nums">{counts.favorites}</span></Button>
         </div>
         <div className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5">
           <div className="relative w-full min-w-0 sm:w-auto sm:min-w-56 sm:flex-1 lg:max-w-sm">
             <WorkspaceIcon name="search" className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted-foreground" />
-            <Input aria-label="Search applications" placeholder="Search applications, clusters, namespaces, revisions…" value={query} onChange={(event) => setQuery(event.target.value)} className="h-9 bg-background pl-9" />
+            <Input aria-label="Search applications" placeholder="Search applications, labels, clusters…" value={query} onChange={(event) => setQuery(event.target.value)} className="h-9 bg-background pl-9" />
           </div>
           {clusters.size > 1 && <ApplicationClusterFilter
             clusters={[...clusters.values()].sort((a, b) => levelRank[a.health.level] - levelRank[b.health.level] || a.name.localeCompare(b.name))}
@@ -388,15 +524,17 @@ export function ApplicationCollection({
           <FormSelect
             ariaLabel="Group applications"
             value={groupBy}
-            onValueChange={(value) => setGroupBy(value as GroupMode)}
+            onValueChange={(value) => { setGroupBy(value as GroupMode); setOpenGroups({}); if (value === "label" && !labelKey) setLabelKey(labelKeys[0] ?? "") }}
             className="w-44 shrink-0"
             items={[
               { value: "cluster", label: "Group: Cluster" },
               { value: "namespace", label: "Group: Namespace" },
               { value: "status", label: "Group: Status" },
+              { value: "label", label: "Group: Label" },
               { value: "none", label: "No grouping" },
             ]}
           />
+          {groupBy === "label" && <FormSelect ariaLabel="Group by label key" value={labelKey} onValueChange={value => { setLabelKey(value); setOpenGroups({}) }} placeholder="Choose a label key" className="w-44" items={labelKeys.map(key => ({ value: key, label: key }))} />}
           <FormSelect
             ariaLabel="Sort applications"
             value={sort}
@@ -426,5 +564,6 @@ export function ApplicationCollection({
         </div>
       )}
     </div>
+    </>
   )
 }

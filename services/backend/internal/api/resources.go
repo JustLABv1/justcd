@@ -835,6 +835,7 @@ func (s *Server) updateApplicationRenderSettings(w http.ResponseWriter, r *http.
 
 func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 	var input struct {
+		Labels                     map[string]string                  `json:"labels"`
 		WorkspaceID                string                             `json:"workspaceId"`
 		Name                       string                             `json:"name"`
 		SourceID                   string                             `json:"sourceId"`
@@ -862,6 +863,10 @@ func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.requireWorkspaceRole(w, r, input.WorkspaceID, "owner") {
+		return
+	}
+	if err := store.ValidateApplicationLabels(input.Labels); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	input.Name = strings.TrimSpace(input.Name)
@@ -960,7 +965,7 @@ func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 		}
 		bindings = append(bindings, binding)
 	}
-	app := store.Application{ID: store.NewID(), WorkspaceID: input.WorkspaceID, Name: input.Name, SourceID: input.SourceID, Revision: input.Revision, ManifestPath: input.ManifestPath, TargetManifestPath: input.TargetManifestPath, NamespaceManifestPaths: input.NamespaceManifestPaths, Renderer: input.Renderer, KustomizeHelmEnabled: input.KustomizeHelmEnabled, KustomizeNamespaceOverride: input.KustomizeNamespaceOverride, CreateNamespaces: input.CreateNamespaces, HelmValuesFiles: input.HelmValuesFiles, HelmValuesYAML: input.HelmValuesYAML, TargetHelmValuesFiles: input.TargetHelmValuesFiles, TargetHelmValuesYAML: input.TargetHelmValuesYAML, NamespaceHelmValues: input.NamespaceHelmValues, ClusterID: input.ClusterID, Namespaces: bindings, SyncPolicy: input.SyncPolicy, PollSeconds: input.PollSeconds, RetryPolicy: retryPolicy, Health: "unknown"}
+	app := store.Application{Labels: input.Labels, ID: store.NewID(), WorkspaceID: input.WorkspaceID, Name: input.Name, SourceID: input.SourceID, Revision: input.Revision, ManifestPath: input.ManifestPath, TargetManifestPath: input.TargetManifestPath, NamespaceManifestPaths: input.NamespaceManifestPaths, Renderer: input.Renderer, KustomizeHelmEnabled: input.KustomizeHelmEnabled, KustomizeNamespaceOverride: input.KustomizeNamespaceOverride, CreateNamespaces: input.CreateNamespaces, HelmValuesFiles: input.HelmValuesFiles, HelmValuesYAML: input.HelmValuesYAML, TargetHelmValuesFiles: input.TargetHelmValuesFiles, TargetHelmValuesYAML: input.TargetHelmValuesYAML, NamespaceHelmValues: input.NamespaceHelmValues, ClusterID: input.ClusterID, Namespaces: bindings, SyncPolicy: input.SyncPolicy, PollSeconds: input.PollSeconds, RetryPolicy: retryPolicy, Health: "unknown"}
 	if err := s.Store.CreateApplication(r.Context(), app); err != nil {
 		writeError(w, http.StatusConflict, "could not create application")
 		return

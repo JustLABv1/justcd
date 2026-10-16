@@ -41,7 +41,8 @@ type Definition struct {
 	APIVersion string `json:"apiVersion"`
 	Kind       string `json:"kind"`
 	Metadata   struct {
-		Name string `json:"name"`
+		Name   string            `json:"name"`
+		Labels map[string]string `json:"labels,omitempty"`
 	} `json:"metadata"`
 	Spec struct {
 		Source struct {
@@ -135,6 +136,9 @@ func Discover(root string) ([]Definition, error) {
 		}
 		if len(d.Metadata.Name) > 63 || !namePattern.MatchString(d.Metadata.Name) {
 			return fail(fmt.Errorf("name must be a lowercase Kubernetes-style name, at most 63 characters"))
+		}
+		if err := store.ValidateApplicationLabels(d.Metadata.Labels); err != nil {
+			return fail(fmt.Errorf("metadata.labels: %w", err))
 		}
 		identity := d.Spec.Destination.Cluster + "\x00" + d.Metadata.Name
 		if names[identity] {

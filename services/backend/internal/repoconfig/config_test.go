@@ -244,3 +244,26 @@ func TestDiscoverSameNameOnDifferentClusters(t *testing.T) {
 		t.Fatalf("cross-cluster names rejected: %+v %v", definitions, err)
 	}
 }
+
+func TestDiscoverApplicationLabels(t *testing.T) {
+	root := t.TempDir()
+	labeled := strings.Replace(validDefinition, "  name: shop", "  name: shop\n  labels:\n    team: platform\n    example.com/environment: production", 1)
+	writeDefinition(t, root, "justcd.yaml", labeled)
+	definitions, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if definitions[0].Metadata.Labels["team"] != "platform" || definitions[0].Metadata.Labels["example.com/environment"] != "production" {
+		t.Fatalf("labels not parsed: %+v", definitions[0].Metadata)
+	}
+	hash := definitions[0].Hash
+	writeDefinition(t, root, "justcd.yaml", strings.Replace(labeled, "team: platform", "team: payments", 1))
+	changed, err := Discover(root)
+	if err != nil || changed[0].Hash == hash {
+		t.Fatalf("label changes must update configuration hash: %v", err)
+	}
+	writeDefinition(t, root, "justcd.yaml", strings.Replace(labeled, "team: platform", "bad key: platform", 1))
+	if _, err := Discover(root); err == nil {
+		t.Fatal("invalid metadata.labels accepted")
+	}
+}

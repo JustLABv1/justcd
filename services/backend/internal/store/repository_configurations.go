@@ -198,6 +198,13 @@ func (s *Store) ApplyRepositoryApplications(ctx context.Context, repository Repo
 				return fmt.Errorf("%s: %w", app.ConfigurationPath, err)
 			}
 		}
+		labels, err := applicationLabelsJSON(app.Labels)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE applications SET labels=$2 WHERE id=$1`, app.ID, labels); err != nil {
+			return err
+		}
 		ids = append(ids, app.ID)
 		if _, err := tx.ExecContext(ctx, `UPDATE applications SET repository_configuration_id=$2,configuration_path=$3,configuration_commit=$4,configuration_hash=$5,last_checked_at=CASE WHEN configuration_missing THEN NULL ELSE last_checked_at END,configuration_missing=FALSE,helm_release_name=$6 WHERE id=$1`, app.ID, repository.ID, app.ConfigurationPath, commit, app.ConfigurationHash, app.HelmReleaseName); err != nil {
 			return err

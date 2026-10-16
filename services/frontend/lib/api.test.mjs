@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { APIError, api } from "./api.ts"
+import { APIError, api, planFailureDetail } from "./api.ts"
 
 async function withFetch(responseOrError, run) {
   const previousFetch = globalThis.fetch
@@ -104,4 +104,29 @@ test("network failures explain that mutation state must be refreshed", async () 
       return true
     })
   })
+})
+
+
+test("plan failures retain resource, operation and causes through background task errors", async () => {
+  const field = '.spec.template.spec.containers[name="alloy"].securityContext.fsGroup'
+  const issue = {
+    summary: 'Kubernetes dry-run rejected Deployment loki-prd/alloy.',
+    action: 'patch (dry-run)',
+    resource: { kind: 'Deployment', namespace: 'loki-prd', name: 'alloy', apiVersion: 'apps/v1' },
+    causes: [{ field, reason: 'FieldNotDeclared', message: 'This field is not declared in the Kubernetes schema.' }],
+  }
+  await withFetch(Response.json({ error: issue.summary, code: 'kubernetes.validation_failed', details: { issue } }, { status: 422 }), async () => {
+    await assert.rejects(api('/api/v1/tasks/task-1'), (error) => {
+      assert.deepEqual(planFailureDetail(error), issue)
+      return true
+    })
+  })
+})
+
+test("plan details accept older responses and ignore malformed causes", () => {
+  const error = (payload) => new APIError('failed', 422, payload, { method: 'GET', path: '/api/v1/tasks/task-1' })
+  assert.equal(planFailureDetail(error({ error: 'failed' })), null)
+  assert.equal(planFailureDetail(error({ details: { issue: [] } })), null)
+  assert.equal(planFailureDetail(new Error('failed')), null)
+  assert.deepEqual(planFailureDetail(error({ details: { issue: { summary: 'failed', causes: [null, { message: {} }, { field: {}, message: 'invalid field' }] } } })).causes, [{ field: '', reason: '', message: 'invalid field' }])
 })

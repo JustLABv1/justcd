@@ -63,6 +63,36 @@ export class APIError extends Error {
   readonly remediationUrl: string | null
 }
 
+export type PlanFailureDetail = {
+  summary: string
+  action?: string
+  resource?: { kind: string; namespace: string; name: string; apiVersion: string }
+  causes: { field: string; reason: string; message: string }[]
+}
+
+/** Read the versioned plan diagnostic; older and malformed responses remain usable. */
+export function planFailureDetail(error: unknown): PlanFailureDetail | null {
+  if (!(error instanceof APIError)) return null
+  const record = (value: unknown): Record<string, unknown> | null =>
+    value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null
+  const payload = record(error.payload)
+  const issue = record(record(payload?.details)?.issue)
+  if (!issue || typeof issue.summary !== "string") return null
+  const text = (value: unknown) => typeof value === "string" ? value.slice(0, 4000) : ""
+  const resource = record(issue.resource)
+  return {
+    summary: text(issue.summary),
+    action: text(issue.action) || undefined,
+    resource: resource && typeof resource.kind === "string" && typeof resource.name === "string" ? {
+      kind: text(resource.kind), name: text(resource.name), namespace: text(resource.namespace), apiVersion: text(resource.apiVersion),
+    } : undefined,
+    causes: Array.isArray(issue.causes) ? issue.causes.slice(0, 20).flatMap((value) => {
+      const cause = record(value)
+      return cause && typeof cause.message === "string" ? [{ field: text(cause.field), reason: text(cause.reason), message: text(cause.message) }] : []
+    }) : [],
+  }
+}
+
 function fallbackErrorMetadata(status: number): APIErrorMetadata {
   if (status === 0) {
     return {

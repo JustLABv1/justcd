@@ -14,8 +14,38 @@ import (
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
+
+type clusterDiagnosticTestError struct{ error }
+
+func (e clusterDiagnosticTestError) ErrorStage() string { return "cluster" }
+func (e clusterDiagnosticTestError) Unwrap() error      { return e.error }
+
+func TestPlanFailureExposesSafeKubernetesCauses(t *testing.T) {
+	for _, err := range []error{
+		fmt.Errorf(`failed to create typed patch object: .spec.template.spec.containers[name="alloy"].securityContext.fsGroup: field not declared in schema`),
+		&apierrors.StatusError{ErrStatus: metav1.Status{Reason: metav1.StatusReasonInvalid, Details: &metav1.StatusDetails{Causes: []metav1.StatusCause{{Type: metav1.CauseTypeFieldValueInvalid, Field: "spec.selector", Message: "private-value: field is immutable"}}}}},
+	} {
+		response := httptest.NewRecorder()
+		writePlanFailure(response, 422, "could not calculate a safe plan", "app-1", clusterDiagnosticTestError{err})
+		var body struct {
+			Code    string `json:"code"`
+			Details struct {
+				Issue struct {
+					Causes []struct {
+						Field   string `json:"field"`
+						Message string `json:"message"`
+					} `json:"causes"`
+				} `json:"issue"`
+			} `json:"details"`
+		}
+		if json.Unmarshal(response.Body.Bytes(), &body) != nil || body.Code != "kubernetes.validation_failed" || len(body.Details.Issue.Causes) != 1 || body.Details.Issue.Causes[0].Field == "" || body.Details.Issue.Causes[0].Message == "" || strings.Contains(response.Body.String(), "private-value") {
+			t.Fatalf("API lost safe cause: %s", response.Body.String())
+		}
+	}
+}
 
 func TestPlanFailureKeepsConfigurationCause(t *testing.T) {
 	identity := core.Identity{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "mimir-rollout-operator-webhook-clusterrole", ClusterScoped: true}
@@ -152,7 +182,7 @@ func TestWritePlanFailureClassifiesStageAndAddsContextualRemediation(t *testing.
 	}{
 		{stage: "git", code: "git.fetch_failed", category: "git", url: "/settings/connections"},
 		{stage: "render", code: "render.failed", category: "render", url: "/applications/app-1/edit"},
-		{stage: "cluster", code: "kubernetes.plan_check_failed", category: "kubernetes", url: "/settings/connections"},
+		{stage: "cluster", code: "kubernetes.plan_check_failed", category: "kubernetes", url: "/applications/app-1?tab=settings"},
 	}
 	for _, test := range tests {
 		t.Run(test.stage, func(t *testing.T) {

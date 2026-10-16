@@ -75,15 +75,52 @@ func statusIssue(stage string, err error, at time.Time) store.ApplicationStatusI
 	case "git":
 		summary = "Git source could not be reached or read. Check the repository URL, credentials, and revision."
 	case "cluster":
-		summary = "Kubernetes API could not be reached or read. Check cluster connectivity and credentials."
+		summary = "A Kubernetes plan check failed. Review the backend logs for the underlying error."
 	case "render":
 		summary = "Manifests could not be rendered. Check the source configuration."
 	}
 	issue := store.ApplicationStatusIssue{Source: stage, Summary: summary, ObservedAt: at}
-	if stage == "cluster" && strings.Contains(err.Error(), "agent") {
-		issue.Code = "cluster.agent_unavailable"
-		issue.Summary = err.Error()
-		issue.Remediation = "Check the target cluster agent, its local access profiles, and its outbound HTTPS connection to JustCD, then refresh the plan."
+	if stage == "cluster" {
+		issue.Causes = kubernetesFailureCauses(err)
+		issue.Code = "kubernetes.plan_check_failed"
+		issue.Remediation = "Inspect the failed resource and operation and the backend logs, correct the cause, then refresh the plan."
+		var access *resourceAccessError
+		if errors.As(err, &access) {
+			issue.Resource = &access.identity
+			issue.Action = access.action
+			issue.Summary = fmt.Sprintf("Kubernetes %s failed for %s %s/%s (%s).", access.action, access.identity.Kind, access.identity.Namespace, access.identity.Name, access.identity.APIVersion)
+		}
+		switch {
+		case strings.Contains(err.Error(), "field not declared in schema"), strings.Contains(err.Error(), "unknown field \""):
+			issue.Code = "kubernetes.validation_failed"
+			issue.Summary += " The resource contains a field not declared in the Kubernetes schema."
+			issue.Remediation = "Check the rendered manifest for unknown or misplaced fields and correct the source configuration, then refresh the plan."
+		case apierrors.IsInvalid(err), apierrors.IsBadRequest(err):
+			issue.Code = "kubernetes.validation_failed"
+			issue.Summary += " Kubernetes rejected the resource or request as invalid."
+			issue.Remediation = "Check the resource schema, immutable fields, and admission policies against the existing resource. Correct the manifest and refresh the plan."
+		case apierrors.IsConflict(err):
+			issue.Code = "kubernetes.conflict"
+			issue.Summary += " Kubernetes reported a resource or field ownership conflict."
+			issue.Remediation = "Refresh the plan against current cluster state and review resource and field ownership."
+		default:
+			var agent *kube.AgentError
+			if errors.As(err, &agent) {
+				issue.Code = agent.ErrorCode()
+				issue.Summary = "The cluster agent could not complete the Kubernetes plan check."
+				issue.Remediation = "Check the target cluster agent and its access profiles, then refresh the plan."
+			} else if ClassifyRetryError(err).ErrorCode == "dependency.connection_failed" {
+				issue.Code = "kubernetes.connection_failed"
+				issue.Summary = "The Kubernetes API connection failed. Check cluster connectivity."
+				issue.Remediation = "Check cluster connectivity and the Kubernetes API endpoint, then refresh the plan."
+			} else if errors.Is(err, context.DeadlineExceeded) || apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) {
+				issue.Code = "kubernetes.request_timeout"
+				issue.Summary += " The plan check timed out."
+			} else if apierrors.IsTooManyRequests(err) || apierrors.IsServiceUnavailable(err) || apierrors.IsInternalError(err) {
+				issue.Code = "kubernetes.request_failed"
+				issue.Summary += " Kubernetes could not complete the request."
+			}
+		}
 	}
 	if apierrors.IsForbidden(err) {
 		issue.Source = "cluster"
@@ -105,6 +142,11 @@ func statusIssue(stage string, err error, at time.Time) store.ApplicationStatusI
 		issue.Code = "kubernetes.authentication_failed"
 		issue.Summary = "Kubernetes rejected the configured credential."
 		issue.Remediation = "Update the cluster or namespace credential, then refresh the plan."
+	}
+	for _, cause := range issue.Causes {
+		if cause.Field != "" {
+			issue.Summary += " " + cause.Field + ": " + cause.Message
+		}
 	}
 	return issue
 }

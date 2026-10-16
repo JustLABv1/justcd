@@ -1,9 +1,17 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { applicationResourceNodes, relatedNodes, topologyLayout, syncState, nodeHeight, nodeWidth } from "./topology-view.ts"
+import { applicationResourceNodes, configurationResource, relatedNodes, topologyLayout, syncState, nodeHeight, nodeWidth } from "./topology-view.ts"
 
 const node = (id, kind = "Deployment", extra = {}) => ({ id, identity: { clusterId: "cluster", apiVersion: "v1", kind, namespace: "demo", name: id }, source: "desired", ...extra })
 const edge = (from, to, relation = "uses") => ({ from, to, relation })
+
+test("StackGres object storage is configuration without a workload health check", () => {
+  for (const apiVersion of ["stackgres.io/v1beta1", "stackgres.io/v1"]) {
+    assert.equal(configurationResource({ apiVersion, kind: "SGObjectStorage" }), true)
+  }
+  assert.equal(configurationResource({ apiVersion: "example.io/v1", kind: "SGObjectStorage" }), false)
+  assert.equal(configurationResource({ apiVersion: "stackgres.io/v1", kind: "SGCluster" }), false)
+})
 
 test("focusing a workload does not traverse sideways through a shared config", () => {
   const graph = { nodes: [node("a"), node("b"), node("config", "ConfigMap"), node("service", "Service")], edges: [edge("a", "config"), edge("b", "config"), edge("service", "a", "selects")] }

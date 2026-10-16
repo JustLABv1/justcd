@@ -25,8 +25,9 @@ priority failure or incomplete observation exists. Desired replica counts that
 are omitted by Kubernetes default to one; a desired count of zero is healthy.
 For an observed workload status, omitted readiness/update counters are treated
 as zero. Built-in non-workload objects such as Services and ConfigMaps do not
-affect runtime health completeness; StackGres SGInstanceProfile and SGScript definitions are also configuration
-objects without independent readiness (script execution belongs to the consuming
+affect runtime health completeness; StackGres SGInstanceProfile, SGScript, and
+SGObjectStorage definitions are also configuration objects without independent
+readiness (script execution and backup storage usage belong to the consuming
 cluster). Other custom resources without a `Ready` condition remain unassessed.
 
 ## Application condition precedence

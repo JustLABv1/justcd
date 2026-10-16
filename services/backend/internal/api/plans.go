@@ -105,14 +105,14 @@ func (s *Server) createPlanNow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	role := "deployer"
-	if app.Decommissioning {
+	if app.Decommissioning || app.ConfigurationMissing {
 		role = "owner"
 	}
 	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, role) {
 		return
 	}
 	var record store.PlanRecord
-	if app.Decommissioning {
+	if app.Decommissioning || app.ConfigurationMissing {
 		record, err = s.Syncer.BuildDecommissionPlan(r.Context(), app, currentUser(r).ID)
 	} else {
 		record, err = s.Syncer.BuildPlan(r.Context(), app.ID, currentUser(r).ID)
@@ -497,7 +497,23 @@ func (s *Server) createPlanSelection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if record.Plan.Decommission {
-		writeError(w, http.StatusBadRequest, "decommission plans cannot exclude managed resource deletions")
+		if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
+			return
+		}
+		var selection core.PlanSelection
+		if err := decodeJSON(w, r, &selection); err != nil {
+			return
+		}
+		if len(selection.Resources) > 0 || len(selection.Fields) > 0 {
+			writeError(w, http.StatusBadRequest, "deletion plans only support the keepNamespaces option")
+			return
+		}
+		selected, err := s.Syncer.SelectDecommissionNamespaces(r.Context(), app, record, currentUser(r).ID, selection.KeepNamespaces)
+		if err != nil {
+			writeError(w, http.StatusConflict, "could not update namespace retention; refresh the plan and try again")
+			return
+		}
+		writeJSON(w, http.StatusCreated, toPlanView(selected))
 		return
 	}
 	if record.Plan.Rollback != nil {
@@ -507,6 +523,10 @@ func (s *Server) createPlanSelection(w http.ResponseWriter, r *http.Request) {
 	var input core.PlanSelection
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if input.KeepNamespaces {
+		writeError(w, http.StatusBadRequest, "namespace retention is only available for deletion plans")
 		return
 	}
 	if len(input.Resources) > 10000 || len(input.Fields) > 10000 {

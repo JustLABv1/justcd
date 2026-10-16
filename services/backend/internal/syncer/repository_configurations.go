@@ -110,6 +110,27 @@ func (s *Service) ReconcileRepository(parent context.Context, id string) (result
 	if err := s.Store.ApplyRepositoryApplications(ctx, repository, checkout.Commit, apps); err != nil {
 		return err
 	}
+	// Removed definitions use the same immutable, owner-reviewed deletion flow
+	// as an explicit decommission. Discovery only plans; it never queues deletes.
+	stored, err := s.Store.ListApplications(ctx, repository.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	var planningErrors []error
+	for _, app := range stored {
+		if app.RepositoryConfigurationID != repository.ID || !app.ConfigurationMissing || app.BranchTest != nil || app.Health == "decommissioned" {
+			continue
+		}
+		if _, err := s.BuildDecommissionPlan(ctx, app, systemActorID); err != nil {
+			_ = s.Store.SetApplicationStatusIssues(ctx, app.ID, []store.ApplicationStatusIssue{statusIssue("plan", err, time.Now().UTC())})
+			planningErrors = append(planningErrors, fmt.Errorf("application %q deletion plan: %w", app.Name, err))
+		} else if _, err := s.Store.DB.ExecContext(ctx, `UPDATE applications SET status_issues='[]'::jsonb WHERE id=$1 AND configuration_missing AND decommissioning`, app.ID); err != nil {
+			planningErrors = append(planningErrors, err)
+		}
+	}
+	if err := errors.Join(planningErrors...); err != nil {
+		return err
+	}
 	if repository.LastCommit != checkout.Commit || repository.LastError != "" {
 		_ = s.Store.Audit(ctx, "", "repository.configuration.reconciled", "repository_configuration", id, map[string]any{"commit": checkout.Commit, "applications": len(apps), "workspaceId": repository.WorkspaceID, "actor": systemActorID})
 	}

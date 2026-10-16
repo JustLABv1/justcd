@@ -361,7 +361,7 @@ export type Change = {
 }
 
 export type FieldExclusion = { identity: Identity; path: string }
-export type PlanSelection = { resources?: Identity[]; fields?: FieldExclusion[] }
+export type PlanSelection = { keepNamespaces?: boolean; resources?: Identity[]; fields?: FieldExclusion[] }
 export type IgnoreRule = {
   managedByGit?: boolean
   id: string

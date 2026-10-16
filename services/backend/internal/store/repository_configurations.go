@@ -146,6 +146,26 @@ func (s *Store) ApplyRepositoryApplications(ctx context.Context, repository Repo
 			return err
 		default:
 			app.ID = existing.ID
+			// Restoring a removed definition cancels its pending deletion. Locking
+			// the application serializes this with plan save and operation enqueue.
+			if existing.ConfigurationMissing && existing.Decommissioning {
+				if err := cancelScheduledForConfiguration(ctx, tx, app.ID); err != nil {
+					return err
+				}
+				var active bool
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM operations WHERE application_id=$1 AND status IN ('queued','running'))`, app.ID).Scan(&active); err != nil {
+					return err
+				}
+				if active {
+					return errors.New("cannot restore a definition while its application is syncing; discovery will retry")
+				}
+				if _, err := tx.ExecContext(ctx, `UPDATE applications SET decommissioning=FALSE,health='out_of_sync',status_issues='[]'::jsonb WHERE id=$1`, app.ID); err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, app.ID); err != nil {
+					return err
+				}
+			}
 			// A branch test freezes the complete tracked definition until resume.
 			// Do not register destinations or update metadata from the base branch.
 			if existing.BranchTest != nil {

@@ -16,6 +16,7 @@ export const riskLabels = {
   ownership: "Ownership takeover",
   cluster: "Cluster scope",
   ignored: "Ignored fields",
+  retained: "Namespace kept",
   ordinary: "Ordinary change",
 } as const
 export type Risk = keyof typeof riskLabels
@@ -135,7 +136,9 @@ export function makeEntry(
   if (!ignored && paths.length) risks.push("replacement")
   if (!ignored && change.takeover) risks.push("ownership")
   if (!ignored && change.identity.clusterScoped) risks.push("cluster")
-  if (ignored || change.ignoredPaths?.length) risks.push("ignored")
+  const retained = ignored && plan?.decommission && plan.selection?.keepNamespaces && change.identity.apiVersion === "v1" && change.identity.kind === "Namespace" && change.identity.clusterScoped
+  if (retained) risks.push("retained")
+  else if (ignored || change.ignoredPaths?.length) risks.push("ignored")
   if (!risks.length) risks.push("ordinary")
   const id = change.identity
   const search =

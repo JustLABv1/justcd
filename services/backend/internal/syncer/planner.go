@@ -256,12 +256,22 @@ func (s *Service) BuildDecommissionPlan(ctx context.Context, app store.Applicati
 	// Re-read live state before reusing a plan. A current, unexpired deletion
 	// plan may still be stale after a partial operation or controller update.
 	// SavePlanOrReuse only reuses a snapshot with the same freshly computed digest.
-	plan, err := s.CalculateDecommissionPlan(ctx, app)
+	plans, err := s.Store.ListPlans(ctx, app.ID, 1)
+	if err != nil {
+		return store.PlanRecord{}, err
+	}
+	keepNamespaces := len(plans) > 0 && plans[0].Plan.Decommission && plans[0].Plan.Selection.KeepNamespaces
+	plan, err := s.calculateDecommissionPlan(ctx, app, keepNamespaces)
 	if err != nil {
 		return store.PlanRecord{}, err
 	}
 	now := time.Now().UTC()
 	record := store.PlanRecord{ID: store.NewID(), Plan: plan, Desired: []core.Resource{}, CreatedBy: actorID, CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute), Status: "current"}
+	latestID := ""
+	if len(plans) > 0 {
+		latestID = plans[0].ID
+	}
+	record.ExpectedLatestPlanID = &latestID
 	record, _, err = s.Store.SavePlanOrReuse(ctx, record)
 	if err != nil {
 		return store.PlanRecord{}, err
@@ -270,6 +280,10 @@ func (s *Service) BuildDecommissionPlan(ctx context.Context, app store.Applicati
 }
 
 func (s *Service) CalculateDecommissionPlan(ctx context.Context, app store.Application) (core.Plan, error) {
+	return s.calculateDecommissionPlan(ctx, app, false)
+}
+
+func (s *Service) calculateDecommissionPlan(ctx context.Context, app store.Application, keepNamespaces bool) (core.Plan, error) {
 	input, err := s.loadPlanInput(ctx, app)
 	if err != nil {
 		return core.Plan{}, err
@@ -287,6 +301,7 @@ func (s *Service) CalculateDecommissionPlan(ctx context.Context, app store.Appli
 		return core.Plan{}, err
 	}
 	plan.Decommission = true
+	selectDecommissionNamespaces(&plan, keepNamespaces)
 	policy, err := s.Store.EffectiveApprovalPolicy(ctx, app)
 	if err != nil {
 		return core.Plan{}, err
@@ -328,7 +343,7 @@ func (s *Service) recalculatePlan(ctx context.Context, app store.Application, re
 		if !app.Decommissioning {
 			return core.Plan{}, errors.New("decommission plan was cancelled")
 		}
-		return s.CalculateDecommissionPlan(ctx, app)
+		return s.calculateDecommissionPlan(ctx, app, record.Plan.Selection.KeepNamespaces)
 	}
 	if app.Decommissioning {
 		return core.Plan{}, errors.New("application is being decommissioned; cancel deletion before normal sync")

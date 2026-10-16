@@ -91,3 +91,33 @@ func TestDemoFixturesCoverReviewStates(t *testing.T) {
 		}
 	}
 }
+
+func TestGitRemovalDemoRequiresReviewOfWorkloadsAndNamespace(t *testing.T) {
+	bindings := []core.Binding{{ClusterID: "demo-cluster", Namespace: "demo-retired-app", CredentialRef: "demo-credential"}, {ClusterID: "demo-cluster", ClusterScope: true, CredentialRef: "demo-credential"}}
+	live, plan := gitRemovalPlan("demo-removed-app", "demo-cluster", bindings)
+	if len(live) != 4 || len(plan.Changes) != 4 || !plan.Decommission || plan.ApprovalKind != "deletion" || core.RequiredApprovalCount(plan) != 1 {
+		t.Fatalf("unexpected removal plan: %+v", plan)
+	}
+	kinds := map[string]bool{}
+	for _, change := range plan.Changes {
+		if change.Kind != core.Delete || change.LiveUID == "" || change.LiveFingerprint == "" {
+			t.Fatalf("deletion lacks reviewed live identity: %+v", change)
+		}
+		kinds[change.Identity.Kind] = true
+		if change.Identity.Kind == "Namespace" && (!change.Identity.ClusterScoped || change.Identity.Namespace != "" || change.Identity.Name != "demo-retired-app") {
+			t.Fatalf("invalid namespace deletion: %+v", change)
+		}
+	}
+	for _, kind := range []string{"Deployment", "Service", "ConfigMap", "Namespace"} {
+		if !kinds[kind] {
+			t.Errorf("missing %s deletion", kind)
+		}
+	}
+	if len(plan.ApproverRoles) != 1 || plan.ApproverRoles[0] != "owner" || len(plan.ApprovalReasons) != 1 {
+		t.Fatal("removal demo must explain its owner approval requirement")
+	}
+	digest := plan.Digest
+	if err := core.RefreshDigest(&plan); err != nil || digest != plan.Digest {
+		t.Fatalf("plan digest does not cover review metadata: %v", err)
+	}
+}

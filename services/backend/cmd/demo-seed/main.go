@@ -80,10 +80,14 @@ func seed(ctx context.Context, db *sql.DB, encryptionKey []byte) (bool, error) {
 		if err != nil {
 			return false, err
 		}
+		deletionCreated, err := seedGitRemoval(ctx, tx, existing)
+		if err != nil {
+			return false, err
+		}
 		if err := tx.Commit(); err != nil {
 			return false, err
 		}
-		return created, nil
+		return created || deletionCreated, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return false, err
@@ -205,6 +209,9 @@ func seed(ctx context.Context, db *sql.DB, encryptionKey []byte) (bool, error) {
 		}
 	}
 	if _, err := seedHelmTopology(ctx, tx, workspaceID); err != nil {
+		return false, err
+	}
+	if _, err := seedGitRemoval(ctx, tx, workspaceID); err != nil {
 		return false, err
 	}
 
@@ -474,7 +481,7 @@ func insertPlan(ctx context.Context, tx *sql.Tx, id string, plan core.Plan, desi
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO plans(id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, id, plan.ApplicationID, plan.Revision, plan.Digest, bindings, changes, desiredJSON, actorID, createdAt, expiresAt, status)
+	_, err = tx.ExecContext(ctx, `INSERT INTO plans(id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,approval_reasons) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`, id, plan.ApplicationID, plan.Revision, plan.Digest, bindings, changes, desiredJSON, actorID, createdAt, expiresAt, status, plan.Decommission, plan.ApprovalKind, plan.RequiredApprovals, jsonBytes(plan.ApproverRoles), jsonBytes(plan.ApproverUserIDs), jsonBytes(plan.ApprovalReasons))
 	return err
 }
 

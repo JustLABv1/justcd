@@ -23,7 +23,7 @@ export function isApplicationHealthy(app: Application) {
 
 
 export function applicationAttentionReason(app: Application): string | null {
-  if (app.configurationMissing) return "Git definition missing"
+  if (app.configurationMissing) return app.health === "decommissioned" ? "Removed from Git · decommissioned" : "Removed from Git · deletion review required"
   if (app.autoSyncPaused) return "Reconciliation paused"
   const condition = app.healthCondition
   if (condition && ["Progressing", "Degraded", "Suspended", "Missing", "Unknown", "Partial"].includes(condition.status)) {

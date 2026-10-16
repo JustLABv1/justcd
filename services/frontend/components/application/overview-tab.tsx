@@ -75,6 +75,10 @@ export function OverviewTab({
     { create: 0, update: 0, delete: 0 }
   )
   const current = latestPlan?.status === "current"
+  const planLabel =
+    latestPlan?.plan.decommission || application.configurationMissing
+      ? "Deletion plan"
+      : "Deployment plan"
   const headline =
     plansError != null
       ? "Plan unavailable"
@@ -91,8 +95,19 @@ export function OverviewTab({
           role="alert"
           className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm"
         >
-          The application definition is missing from Git. Automatic processing
-          is stopped; workloads remain in place. Restore the file to resume.
+          {application.health === "decommissioned" ? (
+            <>
+              This application was removed from Git and its managed resources have
+              been deleted. Finish removing the application from JustCD.
+            </>
+          ) : (
+            <>
+              This application was removed from Git. Review and approve its deletion
+              plan before applying it. Workloads remain in place until then. Only
+              namespaces explicitly managed by this application are included;
+              shared namespaces are kept. Restore the definition to cancel deletion.
+            </>
+          )}
         </div>
       )}
       <OverviewMetrics
@@ -104,11 +119,11 @@ export function OverviewTab({
       />
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)]">
         <section
-          aria-label="Deployment plan"
+          aria-label={planLabel}
           className="min-w-0 rounded-xl border bg-card"
         >
           <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
-            <h2 className="text-sm font-semibold">Deployment plan</h2>
+            <h2 className="text-sm font-semibold">{planLabel}</h2>
           </div>
           <div className="space-y-4 p-5">
             {pending.plans ? (

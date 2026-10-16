@@ -226,14 +226,28 @@ Changing a cluster or namespace while the application manages resources is
 rejected. Decommission the old target through the normal reviewed workflow
 before moving it. Repository configuration does not bypass those rules.
 
-Removing a definition marks its existing application as missing, invalidates
-outstanding plans, and excludes it from automatic reconciliation. Neither the
-application nor its workloads are automatically deleted. Normal sync is blocked
-until the definition is restored; reviewed manual decommissioning remains
-available. If a sync is active, discovery retries the removal after it finishes.
-Restoring the same name restores the same application and preserves any explicit
-operational pause. Removing the entire repository's definitions has the same
-behavior for all of its applications.
+Removing a definition marks its existing application as removed from Git,
+invalidates outstanding sync plans, and prepares a deletion plan from the live
+managed resources. This also works when the entire application directory is
+removed. A workspace owner must review, approve, and apply the plan; discovery
+never queues deletion automatically, including with `auto-safe`. Repeated
+discovery reuses an unchanged, unexpired plan. Cluster access failures are
+reported and retried, and an owner can generate a fresh deletion plan manually.
+
+Only application-owned resources are deletion targets. Explicitly managed
+Namespace manifests follow the normal deletion rules; namespaces provisioned
+through `createNamespaces` remain shared infrastructure and are preserved. For an
+explicitly managed Namespace, enable **Keep namespace** in the deletion plan to
+retain it while deleting the application's other managed resources. Changing
+this option creates a new immutable plan and requires fresh approval. The choice
+survives plan refresh and repeated discovery. After successful decommissioning,
+retained namespaces are released from application management without a Kubernetes
+delete.
+After applying the plan, finish removing the decommissioned application in
+JustCD. If a sync is active, discovery retries the removal after it finishes.
+Restoring the same definition cancels its pending deletion plan, restores the
+same application, and preserves any explicit operational pause. Removing all
+definitions has the same behavior for every application in the repository.
 
 ## API
 

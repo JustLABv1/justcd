@@ -20,7 +20,7 @@ func (s *Server) createPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	role := "deployer"
-	if app.Decommissioning {
+	if app.Decommissioning || app.ConfigurationMissing {
 		role = "owner"
 	}
 	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, role) {

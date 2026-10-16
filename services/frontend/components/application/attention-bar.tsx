@@ -95,7 +95,7 @@ export function AttentionBar({ application, canApprove, busy, hasPendingOperatio
         <p className="mt-0.5 text-sm text-muted-foreground">A plan cannot be refreshed until an owner enables the namespace transform.</p>
       </AttentionRow>}
       {application.decommissioning && <AttentionRow tone="warning" icon={AlertCircleIcon} title="Deletion in progress" actions={canApprove && <Button size="sm" variant="outline" disabled={busy || hasPendingOperation} onClick={onCancelDecommission}>Cancel deletion</Button>}>
-        <p className="mt-0.5 text-sm text-muted-foreground">Auto-sync is paused. Review and apply the deletion plan, then finish removing the application.</p>
+        <p className="mt-0.5 text-sm text-muted-foreground">Auto-sync is paused. Review and apply the deletion plan, then finish removing the application.{application.configurationMissing && " Restore the Git definition to cancel deletion; discovery will recreate the plan while it remains removed."}</p>
       </AttentionRow>}
       {paused && <AttentionRow tone="info" icon={PauseIcon} title="Auto-sync paused" actions={canApprove && <>
         <Button size="sm" variant="outline" loading={pendingAction === "rollback-state-resume"} loadingText="Resuming…" disabled={resumeBlocked || (Boolean(application.rollbackResumeRequiresRevision) && !resumeRevision.trim())} onClick={onResume}>{application.rollbackResumeAvailable ? "Resume previous source" : "Resume auto-sync"}</Button>

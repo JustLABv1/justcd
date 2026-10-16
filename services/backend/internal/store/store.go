@@ -2370,14 +2370,16 @@ func (s *Store) Audit(ctx context.Context, actorID, action, resourceType, resour
 }
 
 type PlanRecord struct {
-	ID        string          `json:"id"`
-	Plan      core.Plan       `json:"plan"`
-	Trigger   *GitPushTrigger `json:"trigger,omitempty"`
-	Desired   []core.Resource `json:"desired"`
-	CreatedBy string          `json:"createdBy"`
-	CreatedAt time.Time       `json:"createdAt"`
-	ExpiresAt time.Time       `json:"expiresAt"`
-	Status    string          `json:"status"`
+	ExpectedLatestPlanID *string         `json:"-"`
+	SourcePlanID         string          `json:"-"`
+	ID                   string          `json:"id"`
+	Plan                 core.Plan       `json:"plan"`
+	Trigger              *GitPushTrigger `json:"trigger,omitempty"`
+	Desired              []core.Resource `json:"desired"`
+	CreatedBy            string          `json:"createdBy"`
+	CreatedAt            time.Time       `json:"createdAt"`
+	ExpiresAt            time.Time       `json:"expiresAt"`
+	Status               string          `json:"status"`
 }
 
 type RollbackSnapshot struct {
@@ -2524,6 +2526,35 @@ func (s *Store) savePlan(ctx context.Context, record PlanRecord, reuse bool) (Pl
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE id=$1 FOR UPDATE`, record.Plan.ApplicationID).Scan(&applicationID); err != nil {
 		return PlanRecord{}, false, err
 	}
+	if record.ExpectedLatestPlanID != nil {
+		var latestID string
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT id FROM plans WHERE application_id=$1 ORDER BY created_at DESC LIMIT 1),'')`, applicationID).Scan(&latestID); err != nil {
+			return PlanRecord{}, false, err
+		}
+		if latestID != *record.ExpectedLatestPlanID {
+			return PlanRecord{}, false, ErrPlanNotCurrent
+		}
+	}
+	if record.SourcePlanID != "" {
+		var current bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM plans WHERE id=$1 AND application_id=$2 AND status='current' AND expires_at>NOW())`, record.SourcePlanID, applicationID).Scan(&current); err != nil {
+			return PlanRecord{}, false, err
+		}
+		if !current {
+			return PlanRecord{}, false, ErrPlanNotCurrent
+		}
+	}
+	if record.Plan.Decommission && record.CreatedBy == "justcd-system" {
+		// PR preview cleanup also uses the system actor. Only tracked Git
+		// applications need the definition-removal precondition.
+		var allowed bool
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(repository_configuration_id,'')='' OR configuration_missing FROM applications WHERE id=$1`, applicationID).Scan(&allowed); err != nil {
+			return PlanRecord{}, false, err
+		}
+		if !allowed {
+			return PlanRecord{}, false, errors.New("application definition was restored; deletion planning was cancelled")
+		}
+	}
 	if record.Plan.PolicyEvaluation != nil {
 		var raw []byte
 		if err := tx.QueryRowContext(ctx, `SELECT w.guardrail_policy FROM workspaces w JOIN applications a ON a.workspace_id=w.id WHERE a.id=$1`, record.Plan.ApplicationID).Scan(&raw); err != nil {
@@ -2570,7 +2601,7 @@ func (s *Store) savePlan(ctx context.Context, record PlanRecord, reuse bool) (Pl
 		return PlanRecord{}, false, err
 	}
 	if record.Plan.Decommission {
-		if _, err := tx.ExecContext(ctx, `UPDATE applications SET decommissioning=TRUE,updated_at=NOW() WHERE id=$1`, record.Plan.ApplicationID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE applications SET decommissioning=TRUE,health='deletion_pending',status_issues='[]'::jsonb,last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, record.Plan.ApplicationID); err != nil {
 			return PlanRecord{}, false, err
 		}
 	}

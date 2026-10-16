@@ -317,7 +317,7 @@ func buildFixtures(clusterID, paymentsCredentialID string) []appFixture {
 			desired: webDesired, live: webLive, planStatus: "current", operation: "succeeded", operationNote: "Demo history: previous sync completed; Git has changed since then.",
 		},
 		{
-			name: "Demo Worker · Deletion approval", namespace: "batch-jobs", syncPolicy: "manual", health: "deletion_pending",
+			name: "Demo Worker · Deletion approval", namespace: "batch-jobs", syncPolicy: "manual", health: "out_of_sync",
 			revision: "cccccccccccccccccccccccccccccccccccccccc", lastSynced: "2222222222222222222222222222222222222222",
 			desired: []core.Resource{}, live: []core.Resource{worker}, planStatus: "current", operation: "succeeded", operationNote: "Demo history: previous sync completed; Git now removes a managed worker.",
 		},

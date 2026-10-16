@@ -197,6 +197,7 @@ export type RepositoryConfiguration = {
 }
 
 export type Application = {
+  labels?: Record<string, string>
   branchTest?: { mode: "existing" | "isolated"; revision: string; baseRevision: string; parentApplicationId?: string; previouslyPaused: boolean; startedAt: string }
   createNamespaces: boolean
   helmReleaseName?: string

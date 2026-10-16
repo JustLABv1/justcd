@@ -168,7 +168,7 @@ func (s *Service) ResolveRepositoryDefinition(ctx context.Context, repository st
 		binding = store.NamespaceBinding{Namespace: definition.Spec.Destination.Namespace}
 	}
 	app := store.Application{
-		WorkspaceID: repository.WorkspaceID, Name: definition.Metadata.Name, SourceID: repository.SourceID, Revision: repository.Revision,
+		Labels: definition.Metadata.Labels, WorkspaceID: repository.WorkspaceID, Name: definition.Metadata.Name, SourceID: repository.SourceID, Revision: repository.Revision,
 		ManifestPath: definition.Spec.Source.Path, Renderer: definition.Spec.Source.Renderer,
 		HelmReleaseName: definition.Spec.Source.ReleaseName, HelmValuesFiles: definition.Spec.Source.ValuesFiles, HelmValuesYAML: definition.Spec.Source.ValuesYAML,
 		KustomizeHelmEnabled: definition.Spec.Source.KustomizeHelmEnabled, KustomizeNamespaceOverride: definition.Spec.Source.KustomizeNamespaceOverride,

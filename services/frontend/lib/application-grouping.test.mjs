@@ -16,3 +16,13 @@ test("status mode orders attention first and none keeps one bucket", () => {
   assert.equal(groupApplications(apps, "none", classify).length, 1)
   assert.equal(groupApplications([], "none", classify).length, 0)
 })
+
+test("label grouping separates missing and empty values without losing applications", () => {
+  const apps = [app("1", "a", { labels: { team: "platform" } }), app("2", "a", { labels: { team: "payments" } }), app("3", "a", { labels: {} }), app("4", "a", { labels: { team: "" } }), app("5", "a", { labels: { team: "platform" } })]
+  const groups = groupApplications(apps, "label", classify, "team")
+  assert.equal(groups.length, 4)
+  assert.deepEqual(groups.find(group => group.label === "platform").applications.map(app => app.id), ["1", "5"])
+  assert.equal(groups.find(group => group.label === "No team label").applications[0].id, "3")
+  assert.equal(groups.find(group => group.label === "(empty value)").applications[0].id, "4")
+  assert.equal(groups.flatMap(group => group.applications).length, apps.length)
+})

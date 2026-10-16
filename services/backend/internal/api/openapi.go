@@ -614,6 +614,53 @@ paths:
       responses:
         '201': { description: Selected plan snapshot }
         '409': { description: Source plan is stale; includes refreshed plan }
+  /application-preferences:
+    get:
+      summary: List the current user's personal saved application views and accessible favorites
+      responses:
+        '200': { description: Saved views with default selection and favorite application IDs }
+  /application-views:
+    post:
+      summary: Save a personal application view and select it as the default
+      description: Up to 20 views per user. Configuration includes grouping, labelKey, search, status, cluster, filters, layout, sort and favoritesOnly.
+      responses:
+        '201': { description: Saved view }
+        '400': { description: Invalid view configuration }
+        '409': { description: Duplicate name or view limit reached }
+  /application-views/default:
+    put:
+      summary: Select a saved view to reopen on the next visit
+      description: Accepts viewId. An empty viewId selects the standard default view.
+      responses:
+        '200': { description: Default selection saved }
+        '404': { description: View does not belong to this user }
+  /application-views/{viewID}:
+    put:
+      summary: Update a personal saved view and select it as the default
+      responses:
+        '200': { description: Saved view }
+        '404': { description: View does not belong to this user }
+    delete:
+      summary: Delete a personal saved view
+      responses:
+        '200': { description: Saved view deleted }
+        '404': { description: View does not belong to this user }
+  /applications/{applicationID}/labels:
+    put:
+      summary: Replace an application's organizational labels (workspace owner)
+      description: Accepts labels as a string map. Maximum 32 labels with Kubernetes label syntax. Git-managed labels must be changed in metadata.labels in justcd.yaml. No Kubernetes objects are modified.
+      responses:
+        '200': { description: Updated application }
+        '400': { description: Invalid labels }
+        '403': { description: Workspace owner permission required }
+        '409': { description: Labels are managed by Git or a branch test }
+  /applications/{applicationID}/favorite:
+    put:
+      summary: Set the current user's favorite flag for an accessible application
+      description: Accepts favorite as a boolean. Requires at least workspace viewer permission.
+      responses:
+        '200': { description: Favorite flag saved }
+        '403': { description: Workspace access denied }
   /applications/{applicationID}/pause:
     post:
       summary: Pause automatic reconciliation (workspace owner; rejects active operations)

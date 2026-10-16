@@ -49,6 +49,47 @@ Use the ID if names are ambiguous. The namespace must already be bound to the
 workspace. Credentials, cluster connections, namespace bindings, and approval
 policies remain managed in JustCD and cannot be created by repository files.
 
+## Application labels
+
+Define shared application labels in `metadata.labels`:
+
+```yaml
+metadata:
+  name: shop-production
+  labels:
+    team: commerce
+    environment: production
+    example.com/service: storefront
+```
+
+Labels organize applications inside JustCD and are not injected into Kubernetes
+objects. Up to 32 labels are supported. Keys and values follow Kubernetes label
+syntax, including optional DNS prefixes on keys. Values may be empty; quote
+numeric or boolean-looking values in YAML.
+
+Discovery creates, updates, and removes labels to match the tracked definition.
+For Git-managed applications, edit labels in `justcd.yaml`. For other
+applications, workspace owners can choose **Edit labels** from the application's
+actions menu on the Applications page.
+
+On **Applications**, choose **Group: Label**, then a label key. Each value gets a
+group; applications without that key appear in a separate **No … label** group.
+Labels are also searchable and visible in cards and the list.
+
+Open the views menu beside **New** in the Applications header and choose
+**Save as new view…** to name and save your grouping, filters, sort order,
+favorites filter, and card/list layout. The selected saved view reopens when you
+refresh or return, including in another browser signed in to the same account.
+Changes remain drafts until you choose **Update current view** from the menu.
+**Discard view changes** restores the saved configuration. Selecting **Default
+view** restores the standard view. Each user can keep up to 20 personal views;
+views can be deleted without changing applications.
+
+Use the star on an application card or list row to add or remove a favorite.
+The **Favorites** filter shows your starred applications. Favorites and saved
+views belong to the signed-in user and do not affect other workspace members.
+Application access still follows workspace membership.
+
 ## Helm
 
 Place this file beside `Chart.yaml`:

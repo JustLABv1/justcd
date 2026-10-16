@@ -1,6 +1,6 @@
 "use client"
 
-import { Suspense } from "react"
+import { Suspense, type ReactNode } from "react"
 import { useSearchParams } from "next/navigation"
 import { ApplicationCollection } from "@/components/application-collection"
 import { Add01Icon, Layers01Icon } from "@hugeicons/core-free-icons"
@@ -23,7 +23,7 @@ export default function ApplicationsPage() {
 }
 
 function ApplicationsContent() {
-  const { workspaces, applications, loading, error, refresh } = useWorkspace({
+  const { workspaces, applications, loading, error, refresh, updateApplication } = useWorkspace({
     includeAllApplications: true,
   })
   const { workspaceId } = useWorkspaceSelection()
@@ -34,12 +34,11 @@ function ApplicationsContent() {
   )
     ? searchParams.get("status")!
     : "all"
-  return (
-    <>
+  const renderHeader = (viewMenu?: ReactNode) => (
       <PageHeading
         title="Applications"
         description="Deployments across your workspaces, from Git revision to running workload."
-        actions={<ActionMenu
+        actions={<div className="flex flex-wrap items-center gap-2">{viewMenu}<ActionMenu
           label="New"
           variant="default"
           icon={Add01Icon}
@@ -47,17 +46,22 @@ function ApplicationsContent() {
             { label: "New application", icon: Add01Icon, href: workspaceId ? `/applications/new?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces" },
             { label: "New deployment group", icon: Layers01Icon, href: workspaceId ? `/application-groups/new?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces" },
           ]}
-        />}
+        /></div>}
       />
+  )
+  return (
+    <>
       {error ? (
-        <LoadError error={error} retry={refresh} />
+        <>{renderHeader()}<LoadError error={error} retry={refresh} /></>
       ) : loading ? (
-        <CollectionSkeleton />
+        <>{renderHeader()}<CollectionSkeleton /></>
       ) : (
         <ApplicationCollection
           key={initialFilter}
+          renderHeader={renderHeader}
           initialFilter={initialFilter}
           applications={applications}
+          onApplicationUpdated={updateApplication}
           workspaces={workspaces}
           clusterStatuses={clusterStatuses}
         />

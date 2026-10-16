@@ -920,13 +920,8 @@ func (s *Service) ValidateIgnoreRule(ctx context.Context, app store.Application,
 }
 
 func healthForPlan(plan core.Plan) string {
-	if plan.RequiresApproval {
-		for _, change := range plan.Changes {
-			if change.Kind == core.Delete {
-				return "deletion_pending"
-			}
-		}
-	}
+	// Resource deletions are sync changes. Application deletion status is set
+	// separately when a decommission plan is saved.
 	if len(plan.Changes) > 0 {
 		return "out_of_sync"
 	}

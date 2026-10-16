@@ -115,7 +115,7 @@ func ConfigurationResource(identity core.Identity) bool {
 		return false
 	}
 	switch identity.Kind {
-	case "SGInstanceProfile", "SGScript":
+	case "SGInstanceProfile", "SGScript", "SGObjectStorage":
 		return true
 	default:
 		return false

@@ -218,6 +218,38 @@ func TestCustomReadinessAndConfiguration(t *testing.T) {
 	}
 }
 
+func TestObjectStorageDoesNotMakeRuntimeHealthPartial(t *testing.T) {
+	for _, apiVersion := range []string{"stackgres.io/v1beta1", "stackgres.io/v1"} {
+		t.Run(apiVersion, func(t *testing.T) {
+			storage := core.Identity{ClusterID: "cluster", APIVersion: apiVersion, Kind: "SGObjectStorage", Namespace: "justapps-dev", Name: "schaufenster-db-backups"}
+			deployment := identity("Deployment", "web")
+			workload := Observation{Identity: deployment, Source: "kubernetes", Details: ResourceDetails{StatusObserved: true, DesiredReplicas: count(1), ReadyReplicas: count(1), UpdatedReplicas: count(1), AvailableReplicas: count(1)}}
+			config := Observation{Identity: storage, Source: "kubernetes"}
+			if !ConfigurationResource(storage) || SupportsObservation(config) {
+				t.Fatal("object storage must be configuration without independent workload health")
+			}
+			// Configuration must not require either an observation or a status block.
+			for _, observations := range [][]Observation{{workload}, {workload, config}} {
+				result := Evaluate([]core.Identity{deployment, storage}, observations, nil, false, time.Now())
+				if result.Status != Healthy || len(result.Resources) != 0 {
+					t.Fatalf("configuration made healthy workloads unassessed: %#v", result)
+				}
+			}
+			if result := Evaluate([]core.Identity{storage}, []Observation{config}, nil, false, time.Now()); result.Status != Unknown || len(result.Resources) != 0 {
+				t.Fatalf("configuration alone must not imply runtime health: %#v", result)
+			}
+			workload.Details.Conditions = []KubernetesCondition{{Type: "Progressing", Status: "False", Reason: "ProgressDeadlineExceeded"}}
+			if result := Evaluate([]core.Identity{deployment, storage}, []Observation{workload, config}, nil, false, time.Now()); result.Status != Degraded {
+				t.Fatalf("configuration masked a workload failure: %#v", result)
+			}
+			storage.APIVersion = "example.io/v1"
+			if ConfigurationResource(storage) {
+				t.Fatal("object storage configuration exemption crossed API groups")
+			}
+		})
+	}
+}
+
 func TestOperatorHealthEvidence(t *testing.T) {
 	tests := []struct {
 		name, apiVersion, kind string

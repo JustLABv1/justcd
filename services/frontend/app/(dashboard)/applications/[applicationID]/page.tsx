@@ -459,6 +459,19 @@ export default function ApplicationDetailPage() {
     return resources(selectionResources) !== resources(originalResources) || fields(selectionFields) !== fields(originalFields)
   })()
 
+  async function keepDecommissionNamespaces(keepNamespaces: boolean) {
+    if (!activePlan) return
+    setBusy(true); setPendingAction("namespace-retention"); setError(null)
+    try {
+      const plan = await apiPost<PlanRecord>(`/api/v1/plans/${encodeURIComponent(activePlan.id)}/selections`, { keepNamespaces })
+      setApprovalSummary(null)
+      setActivePlan(plan)
+      setPlans((current) => [plan, ...current.filter((item) => item.id !== plan.id).map((item) => item.status === "current" ? { ...item, status: "stale" } : item)])
+      toast.success(keepNamespaces ? "Namespace will be kept. Review and approve the updated deletion plan." : "Namespace deletion included. Review and approve the updated plan.")
+    } catch (cause) { toast.error(errorMessage(cause), cause) }
+    finally { setBusy(false); setPendingAction("") }
+  }
+
   async function savePlanSelection() {
     if (!activePlan || !selectionDirty) return
     setBusy(true); setPendingAction("selection"); setError(null); setApprovalSummary(null)
@@ -709,9 +722,9 @@ export default function ApplicationDetailPage() {
   const namespaceMismatch = Boolean(application?.renderer === "kustomize" && kustomization?.namespace && application.namespaces.length === 1 && kustomization.namespace !== application.namespaces[0].namespace)
   if (loading && !application) return <ApplicationDetailSkeleton />
 
-  const createPlanDisabled = Boolean(application && (busy || hasPendingOperation || (application.decommissioning
+  const createPlanDisabled = Boolean(application && (busy || hasPendingOperation || (application.decommissioning || application.configurationMissing
     ? !canApprove
-    : application.configurationMissing || !canDeploy || (namespaceMismatch && !application.kustomizeNamespaceOverride))))
+    : !canDeploy || (namespaceMismatch && !application.kustomizeNamespaceOverride))))
   const planBlockedByNamespace = Boolean(application && namespaceMismatch && !application.kustomizeNamespaceOverride)
 
   return <>
@@ -795,7 +808,7 @@ export default function ApplicationDetailPage() {
             decommissioning={application.decommissioning} canDeploy={canDeploy} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} hasOwnershipConflict={Boolean(ownershipConflict)}
             onReviewOwnershipConflict={() => setConflictOpen(true)} reviewResource={reviewResource} onReviewResourceChange={setReviewResource}
             selectionResources={selectionResources} selectionFields={selectionFields} selectionDirty={selectionDirty} onToggleResource={toggleResourceExclusion} onToggleField={toggleFieldExclusion}
-            onResetSelection={() => { setSelectionResources(activePlan?.plan.selection?.resources ?? []); setSelectionFields(activePlan?.plan.selection?.fields ?? []) }} onSaveSelection={() => void savePlanSelection()}
+            onResetSelection={() => { setSelectionResources(activePlan?.plan.selection?.resources ?? []); setSelectionFields(activePlan?.plan.selection?.fields ?? []) }} onSaveSelection={() => void savePlanSelection()} onKeepNamespacesChange={(keep) => void keepDecommissionNamespaces(keep)}
             ignoreRules={ignoreRules} ignoreReasons={ignoreReasons} onIgnoreReasonChange={(key, reason) => setIgnoreReasons((current) => ({ ...current, [key]: reason }))} onSaveIgnore={(identity, path, reason) => void saveIgnoreRule(identity, path, reason)} onRemoveRule={removeIgnoreRule}
             requiredApprovals={requiredApprovals} approvedApprovals={approvedApprovals} approvalsComplete={approvalsComplete} approverRoles={displayedApproverRoles} approverMembers={displayedApproverMembers} approvalSummary={currentApprovalSummary} approvalError={approvalError && approvalError.planId === activePlanId ? approvalError.cause : null}
             autoApplyAfterApproval={application.syncPolicy === "auto-safe" && !application.autoSyncPaused && !application.decommissioning && !activePlan?.plan.rollback && !activePlan?.plan.decommission}

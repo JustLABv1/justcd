@@ -68,7 +68,8 @@ go run ./cmd/demo-seed
 
 The seed is additive and idempotent. It creates a clearly named demo workspace,
 fake encrypted credentials, example drift/diff and approval plans, a failed
-operation, and a Helm shop with connected Ingress, Services, Deployments,
+operation, a removed-from-Git application with an owner-reviewed deletion plan
+for its workloads and explicitly managed Namespace, and a Helm shop with connected Ingress, Services, Deployments,
 ReplicaSets, Pods, ConfigMaps, Secret, PVC, and autoscaler. ReplicaSets and Pods
 in that demo are marked as sample observations. Its Git and Kubernetes endpoints use the reserved `.invalid` domain;
 they are intentionally unreachable, so the demo cannot sync to a real cluster.

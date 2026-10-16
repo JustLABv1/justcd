@@ -83,8 +83,9 @@ type FieldExclusion struct {
 }
 
 type PlanSelection struct {
-	Resources []Identity       `json:"resources,omitempty"`
-	Fields    []FieldExclusion `json:"fields,omitempty"`
+	KeepNamespaces bool             `json:"keepNamespaces,omitempty"`
+	Resources      []Identity       `json:"resources,omitempty"`
+	Fields         []FieldExclusion `json:"fields,omitempty"`
 }
 
 type IgnoreRule struct {

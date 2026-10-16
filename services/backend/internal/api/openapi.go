@@ -584,11 +584,11 @@ paths:
       description: Claims the ownership label and inventory record, pauses auto-sync, and requires a fresh plan before workload changes. A later marked takeover update requires owner approval before transferring field ownership.
       responses:
         '201': { description: Resource claimed without changing workload fields }
-        '409': { description: Git, UID, resource version, or existing ownership changed }
+        '409': { description: Git, UID, live configuration, or existing ownership changed; older reviews also require the same resource version }
   /applications/{applicationID}/adopt-batch:
     post:
       summary: Claim selected, freshly reviewed resources for this application (workspace owner only)
-      description: Validates the full selection before claiming any resource. Each claim has UID and resource-version preconditions; a mid-run change is reported as a partial result. Auto-sync is paused and a fresh approved plan is required before workload changes.
+      description: Validates the full selection against the reviewed UID, live configuration, ownership, and source inputs before claiming any resource. Status-only updates do not invalidate the review. Each claim uses the latest UID and resource-version preconditions, with up to three attempts for harmless concurrent updates; a configuration or ownership change is reported as a partial result. Auto-sync is paused and a fresh approved plan is required before workload changes.
       responses:
         '200': { description: Per-resource claimed or failed results }
         '409': { description: The review set became stale or contains an unsafe resource }

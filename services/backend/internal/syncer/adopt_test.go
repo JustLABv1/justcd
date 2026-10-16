@@ -2,7 +2,9 @@ package syncer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,9 +14,157 @@ import (
 	"github.com/justlab/justcd/services/backend/internal/core"
 	"github.com/justlab/justcd/services/backend/internal/render"
 	"github.com/justlab/justcd/services/backend/internal/store"
+	jsonpatch "gopkg.in/evanphx/json-patch.v5"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
+
+func adoptionLiveFixture(t *testing.T, object *unstructured.Unstructured) OwnershipConflict {
+	t.Helper()
+	current, err := render.CanonicalLive(object, "cluster", "app", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return OwnershipConflict{Identity: current.Identity, UID: current.UID, ResourceVersion: current.ResourceVersion, LiveFingerprint: current.Fingerprint, Owner: current.Owner, DesiredFingerprint: "git", ReviewFingerprint: "source"}
+}
+
+func adoptionStatefulSet() *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "apps/v1", "kind": "StatefulSet",
+		"metadata": map[string]interface{}{"name": "loki-backend", "namespace": "loki-prd", "uid": "uid", "resourceVersion": "27"},
+		"spec":     map[string]interface{}{"replicas": int64(3)},
+		"status":   map[string]interface{}{"readyReplicas": int64(2)},
+	}}
+}
+
+func TestAdoptionReviewAllowsStatusChurnButRejectsConfigurationChanges(t *testing.T) {
+	object := adoptionStatefulSet()
+	expected := adoptionLiveFixture(t, object)
+	object.SetResourceVersion("28")
+	object.SetGeneration(4)
+	object.SetManagedFields([]metav1.ManagedFieldsEntry{{Manager: "controller"}})
+	object.Object["status"] = map[string]interface{}{"readyReplicas": int64(3)}
+	fresh := adoptionLiveFixture(t, object)
+	if _, err := validateAdoptionSelection([]*OwnershipConflict{&fresh}, []OwnershipConflict{expected}, "app"); err != nil {
+		t.Fatalf("status-only update invalidated review: %v", err)
+	}
+	if err := validateAdoptionObject(object, expected, "app"); err != nil {
+		t.Fatalf("status-only update before claim invalidated review: %v", err)
+	}
+	for name, mutate := range map[string]func(*unstructured.Unstructured){
+		"spec":       func(o *unstructured.Unstructured) { o.Object["spec"] = map[string]interface{}{"replicas": int64(4)} },
+		"label":      func(o *unstructured.Unstructured) { o.SetLabels(map[string]string{"team": "changed"}) },
+		"annotation": func(o *unstructured.Unstructured) { o.SetAnnotations(map[string]string{"config": "changed"}) },
+		"owner": func(o *unstructured.Unstructured) {
+			o.SetLabels(map[string]string{"justcd.io/application-id": "other"})
+		},
+		"replacement": func(o *unstructured.Unstructured) { o.SetUID("other") },
+		"dependent": func(o *unstructured.Unstructured) {
+			o.SetOwnerReferences([]metav1.OwnerReference{{Name: "parent", UID: "parent"}})
+		},
+		"deleting": func(o *unstructured.Unstructured) { now := metav1.Now(); o.SetDeletionTimestamp(&now) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := object.DeepCopy()
+			mutate(changed)
+			fresh := adoptionLiveFixture(t, changed)
+			if err := validateAdoptionConflict(&fresh, &expected, "app"); err == nil {
+				t.Fatal("changed review accepted")
+			}
+			if err := validateAdoptionObject(changed, expected, "app"); err == nil {
+				t.Fatal("changed object accepted at claim")
+			}
+		})
+	}
+	legacy := expected
+	legacy.LiveFingerprint = ""
+	if err := validateAdoptionConflict(&fresh, &legacy, "app"); !errors.Is(err, ErrAdoptionStale) {
+		t.Fatalf("old review bypassed version check: %v", err)
+	}
+}
+
+func TestAdoptionLabelClaimRevalidatesRaces(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		change      string
+		wantPatches int
+		wantStale   bool
+	}{
+		{"status changes before patch", "status", 2, false},
+		{"configuration changes before patch", "spec", 1, true},
+		{"ownership changes before patch", "owner", 1, true},
+		{"replacement before patch", "uid", 1, true},
+		{"continuous status changes are bounded", "continuous", 3, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			live := adoptionStatefulSet()
+			expected := adoptionLiveFixture(t, live)
+			client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+			client.PrependReactor("get", "statefulsets", func(k8stesting.Action) (bool, runtime.Object, error) { return true, live.DeepCopy(), nil })
+			patches := 0
+			client.PrependReactor("patch", "statefulsets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				patches++
+				patchAction := action.(k8stesting.PatchAction)
+				patch, err := jsonpatch.DecodePatch(patchAction.GetPatch())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if patches == 1 || test.change == "continuous" {
+					live.SetResourceVersion(fmt.Sprint(27 + patches))
+					live.Object["status"] = map[string]interface{}{"readyReplicas": int64(patches)}
+					switch test.change {
+					case "spec":
+						live.Object["spec"] = map[string]interface{}{"replicas": int64(9)}
+					case "owner":
+						live.SetLabels(map[string]string{"justcd.io/application-id": "other"})
+					case "uid":
+						live.SetUID("replacement")
+					}
+				}
+				body, _ := json.Marshal(live.Object)
+				updated, err := patch.Apply(body)
+				if err != nil {
+					return true, nil, &apierrors.StatusError{ErrStatus: metav1.Status{Reason: metav1.StatusReasonInvalid, Code: 422}}
+				}
+				if err := live.UnmarshalJSON(updated); err != nil {
+					t.Fatal(err)
+				}
+				return true, live.DeepCopy(), nil
+			})
+			resource := client.Resource(schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "statefulsets"}).Namespace("loki-prd")
+			claimed, err := claimAdoptionLabel(context.Background(), resource, "app", expected)
+			if patches != test.wantPatches || (test.wantStale && !errors.Is(err, ErrAdoptionStale)) || (!test.wantStale && err != nil) {
+				t.Fatalf("unexpected claim: patches=%d err=%v", patches, err)
+			}
+			if !test.wantStale && (claimed.GetLabels()["justcd.io/application-id"] != "app" || claimed.Object["spec"].(map[string]interface{})["replicas"] != int64(3)) {
+				t.Fatal("claim changed workload or failed to label it")
+			}
+		})
+	}
+}
+
+func TestAdoptionLabelClaimPreservesAdmissionRejection(t *testing.T) {
+	live := adoptionStatefulSet()
+	expected := adoptionLiveFixture(t, live)
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), live)
+	rejected := &apierrors.StatusError{ErrStatus: metav1.Status{Reason: metav1.StatusReasonInvalid, Code: 422, Message: "admission rejected the label"}}
+	patches := 0
+	client.PrependReactor("patch", "statefulsets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		patches++
+		return true, nil, rejected
+	})
+	resource := client.Resource(schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "statefulsets"}).Namespace("loki-prd")
+	_, err := claimAdoptionLabel(context.Background(), resource, "app", expected)
+	if !errors.Is(err, rejected) || errors.Is(err, ErrAdoptionStale) || patches != 1 {
+		t.Fatalf("admission rejection hidden or retried: patches=%d err=%v", patches, err)
+	}
+}
 
 func TestAdoptionReviewBindsSourceInputs(t *testing.T) {
 	source := store.GitSource{ID: "source", RepositoryURL: "https://example.com/repo.git"}

@@ -11,7 +11,9 @@ import (
 	"github.com/justlab/justcd/services/backend/internal/core"
 	"github.com/justlab/justcd/services/backend/internal/render"
 	"github.com/justlab/justcd/services/backend/internal/store"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 )
@@ -61,7 +63,7 @@ func (s *Service) AdoptResource(ctx context.Context, app store.Application, acto
 	if err != nil {
 		return core.Resource{}, err
 	}
-	return s.adoptValidatedConflict(ctx, input, app, actorID, reason, *conflict, expected)
+	return s.adoptValidatedConflict(ctx, input, app, actorID, reason, *conflict)
 }
 
 func (s *Service) OwnershipConflicts(ctx context.Context, app store.Application) ([]*OwnershipConflict, error) {
@@ -106,7 +108,7 @@ func (s *Service) AdoptResources(ctx context.Context, app store.Application, act
 		if err := ctx.Err(); err != nil {
 			return results, err
 		}
-		_, err := s.adoptValidatedConflict(ctx, input, app, actorID, reason, *byKey[selected.Identity.Key()], selected)
+		_, err := s.adoptValidatedConflict(ctx, input, app, actorID, reason, *byKey[selected.Identity.Key()])
 		item := AdoptionResult{Identity: selected.Identity, Status: "claimed"}
 		if err != nil {
 			item.Status = "failed"
@@ -136,7 +138,7 @@ func validateAdoptionSelection(fresh []*OwnershipConflict, expected []OwnershipC
 	return byKey, nil
 }
 
-func (s *Service) adoptValidatedConflict(ctx context.Context, input planInput, app store.Application, actorID, reason string, conflict OwnershipConflict, expected OwnershipConflict) (core.Resource, error) {
+func (s *Service) adoptValidatedConflict(ctx context.Context, input planInput, app store.Application, actorID, reason string, conflict OwnershipConflict) (core.Resource, error) {
 	mapping, err := input.Mapper.Mapper.RESTMapping(groupKind(conflict.Identity), groupVersion(conflict.Identity))
 	if err != nil {
 		return core.Resource{}, err
@@ -151,17 +153,7 @@ func (s *Service) adoptValidatedConflict(ctx context.Context, input planInput, a
 	} else {
 		resourceClient = client.Dynamic.Resource(mapping.Resource).Namespace(conflict.Identity.Namespace)
 	}
-	object, err := resourceClient.Get(ctx, conflict.Identity.Name, metav1.GetOptions{})
-	if err != nil {
-		return core.Resource{}, &resourceAccessError{identity: conflict.Identity, action: "get", err: err}
-	}
-	if string(object.GetUID()) != expected.UID || object.GetResourceVersion() != expected.ResourceVersion {
-		return core.Resource{}, fmt.Errorf("%w: %s %s/%s changed in Kubernetes", ErrAdoptionStale, conflict.Identity.Kind, conflict.Identity.Namespace, conflict.Identity.Name)
-	}
-	owner := object.GetLabels()["justcd.io/application-id"]
-	if owner != expected.Owner {
-		return core.Resource{}, ErrAdoptionStale
-	}
+	owner := conflict.Owner
 	ownerMissing, err := s.adoptionOwnerMissing(ctx, owner, app.ID)
 	if err != nil {
 		return core.Resource{}, err
@@ -169,27 +161,9 @@ func (s *Service) adoptValidatedConflict(ctx context.Context, input planInput, a
 	if owner != "" && owner != app.ID && !ownerMissing {
 		return core.Resource{}, fmt.Errorf("%w: ownership label belongs to an existing application", ErrAdoptionUnsafe)
 	}
-	if len(object.GetOwnerReferences()) != 0 {
-		return core.Resource{}, fmt.Errorf("%w: object has Kubernetes owner references", ErrAdoptionUnsafe)
-	}
-	if object.GetLabels()["justcd.io/application-id"] != app.ID {
-		operations := []map[string]any{
-			{"op": "test", "path": "/metadata/uid", "value": expected.UID},
-			{"op": "test", "path": "/metadata/resourceVersion", "value": expected.ResourceVersion},
-		}
-		if object.GetLabels() == nil {
-			operations = append(operations, map[string]any{"op": "add", "path": "/metadata/labels", "value": map[string]string{"justcd.io/application-id": app.ID}})
-		} else {
-			operations = append(operations, map[string]any{"op": "add", "path": "/metadata/labels/justcd.io~1application-id", "value": app.ID})
-		}
-		patch, err := json.Marshal(operations)
-		if err != nil {
-			return core.Resource{}, err
-		}
-		object, err = resourceClient.Patch(ctx, conflict.Identity.Name, types.JSONPatchType, patch, metav1.PatchOptions{FieldManager: "justcd-adoption/" + app.ID})
-		if err != nil {
-			return core.Resource{}, fmt.Errorf("%w: label claim was rejected: %v", ErrAdoptionStale, err)
-		}
+	object, err := claimAdoptionLabel(ctx, resourceClient, app.ID, conflict)
+	if err != nil {
+		return core.Resource{}, err
 	}
 	current, err := render.CanonicalLive(object, input.Cluster.ID, app.ID, conflict.Identity.ClusterScoped)
 	if err != nil {
@@ -204,6 +178,80 @@ func (s *Service) adoptValidatedConflict(ctx context.Context, input planInput, a
 	return current, nil
 }
 
+// Re-read and revalidate on every attempt. Only status/server metadata churn may
+// advance the resource version; a changed configuration still needs review.
+func claimAdoptionLabel(ctx context.Context, resourceClient dynamic.ResourceInterface, applicationID string, conflict OwnershipConflict) (*unstructured.Unstructured, error) {
+	var claimError error
+	var failedVersion string
+	for attempt := 0; attempt < 3; attempt++ {
+		object, err := resourceClient.Get(ctx, conflict.Identity.Name, metav1.GetOptions{})
+		if err != nil {
+			return nil, &resourceAccessError{identity: conflict.Identity, action: "get", err: err}
+		}
+		if err := validateAdoptionObject(object, conflict, applicationID); err != nil {
+			return nil, err
+		}
+		if claimError != nil && object.GetResourceVersion() == failedVersion {
+			// An unchanged object means this was not a resource-version race
+			// (for example, an admission rejection). Preserve the actual cause.
+			return nil, &resourceAccessError{identity: conflict.Identity, action: "claim ownership label", err: claimError}
+		}
+		if object.GetLabels()["justcd.io/application-id"] == applicationID {
+			return object, nil
+		}
+		operations := []map[string]any{
+			{"op": "test", "path": "/metadata/uid", "value": conflict.UID},
+			{"op": "test", "path": "/metadata/resourceVersion", "value": object.GetResourceVersion()},
+		}
+		if object.GetLabels() == nil {
+			operations = append(operations, map[string]any{"op": "add", "path": "/metadata/labels", "value": map[string]string{"justcd.io/application-id": applicationID}})
+		} else {
+			operations = append(operations, map[string]any{"op": "add", "path": "/metadata/labels/justcd.io~1application-id", "value": applicationID})
+		}
+		patch, err := json.Marshal(operations)
+		if err != nil {
+			return nil, err
+		}
+		claimed, err := resourceClient.Patch(ctx, conflict.Identity.Name, types.JSONPatchType, patch, metav1.PatchOptions{FieldManager: "justcd-adoption/" + applicationID})
+		if err == nil {
+			return claimed, nil
+		}
+		if !apierrors.IsConflict(err) && !apierrors.IsInvalid(err) {
+			return nil, &resourceAccessError{identity: conflict.Identity, action: "claim ownership label", err: err}
+		}
+		claimError, failedVersion = err, object.GetResourceVersion()
+	}
+	return nil, fmt.Errorf("%w: %s %s/%s kept changing while claiming its ownership label", ErrAdoptionStale, conflict.Identity.Kind, conflict.Identity.Namespace, conflict.Identity.Name)
+}
+
+func validateAdoptionObject(object *unstructured.Unstructured, conflict OwnershipConflict, applicationID string) error {
+	if string(object.GetUID()) != conflict.UID || object.GetLabels()["justcd.io/application-id"] != conflict.Owner {
+		return fmt.Errorf("%w: resource identity or ownership changed", ErrAdoptionStale)
+	}
+	if len(object.GetOwnerReferences()) != 0 {
+		return fmt.Errorf("%w: object has Kubernetes owner references", ErrAdoptionUnsafe)
+	}
+	current, err := render.CanonicalLive(object, conflict.Identity.ClusterID, applicationID, conflict.Identity.ClusterScoped)
+	if err != nil {
+		return err
+	}
+	return validateAdoptionLiveVersion(current.Fingerprint, current.ResourceVersion, conflict)
+}
+
+func validateAdoptionLiveVersion(fingerprint, resourceVersion string, expected OwnershipConflict) error {
+	target := expected.Identity.Kind + " " + expected.Identity.Namespace + "/" + expected.Identity.Name
+	if fingerprint != "" && expected.LiveFingerprint != "" {
+		if fingerprint != expected.LiveFingerprint {
+			return fmt.Errorf("%w: the live configuration for %s changed", ErrAdoptionStale, target)
+		}
+	} else if resourceVersion != expected.ResourceVersion {
+		// Older clients have no configuration fingerprint and must refresh if
+		// the resource version changed; never relax their review implicitly.
+		return fmt.Errorf("%w: %s changed in Kubernetes (resource version %s -> %s); refresh the ownership review", ErrAdoptionStale, target, expected.ResourceVersion, resourceVersion)
+	}
+	return nil
+}
+
 func validateAdoptionConflict(fresh, expected *OwnershipConflict, applicationID string) error {
 	if fresh == nil || expected == nil || fresh.Identity.Key() != expected.Identity.Key() {
 		return fmt.Errorf("%w: the selected resource is no longer in the conflict list", ErrAdoptionStale)
@@ -212,8 +260,8 @@ func validateAdoptionConflict(fresh, expected *OwnershipConflict, applicationID 
 	if fresh.UID != expected.UID {
 		return fmt.Errorf("%w: %s was replaced in Kubernetes", ErrAdoptionStale, target)
 	}
-	if fresh.ResourceVersion != expected.ResourceVersion {
-		return fmt.Errorf("%w: %s changed in Kubernetes (resource version %s -> %s)", ErrAdoptionStale, target, expected.ResourceVersion, fresh.ResourceVersion)
+	if err := validateAdoptionLiveVersion(fresh.LiveFingerprint, fresh.ResourceVersion, *expected); err != nil {
+		return err
 	}
 	if fresh.ReviewFingerprint != "" {
 		if fresh.ReviewFingerprint != expected.ReviewFingerprint {

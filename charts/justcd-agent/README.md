@@ -3,6 +3,13 @@
 Installation, connection modes, local scope, and recovery behavior are documented
 in [Private cluster connections](../../docs/cluster-agents.md).
 
+For the opt-in `profiles[].deploymentCredentials` mode, minimal issuer RBAC,
+prepared-namespace bootstrap, automatic provisioning/deletion, migration and validation, see
+[Short-lived namespace deployment credentials](../../docs/managed-deployment-credentials.md).
+
+Migrating an existing stored cluster-wide token connection:
+[production migration and rollback](../../docs/migrate-to-managed-credentials.md).
+
 Use an existing enrollment Secret; never commit enrollment tokens in Helm values.
 The chart requires an HTTPS server URL and explicit local workspace IDs. Identity
 storage is persistent, namespace RBAC is the default, and cluster-wide RBAC requires

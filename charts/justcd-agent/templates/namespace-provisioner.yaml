@@ -1,0 +1,118 @@
+{{- $name := printf "%s-justcd-agent" .Release.Name | trunc 45 | trimSuffix "-" -}}
+{{- $sa := default $name .Values.serviceAccount.name -}}
+{{- range .Values.profiles -}}
+{{- if and .deploymentCredentials .deploymentCredentials.provisioning -}}
+{{- $policy := .deploymentCredentials.provisioning -}}
+{{- $platform := default "kubernetes" $policy.platform -}}
+{{- if not (has $platform (list "kubernetes" "openshift")) }}{{ fail "provisioning platform must be kubernetes or openshift" }}{{ end -}}
+{{- if $.Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}-provisioner
+rules:
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get{{ if eq $platform "kubernetes" }}, create{{ end }}{{ if $policy.deleteNamespaces }}, delete{{ end }}]
+  {{- if eq $platform "openshift" }}
+  - apiGroups: [project.openshift.io]
+    resources: [projectrequests]
+    verbs: [create]
+  {{- end }}
+  - apiGroups: [""]
+    resources: [serviceaccounts]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [serviceaccounts]
+    resourceNames: [justcd-deployer]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [serviceaccounts/token]
+    resourceNames: [justcd-deployer]
+    verbs: [create]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [rolebindings]
+    verbs: [create]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [rolebindings]
+    resourceNames: [justcd-deployer]
+    verbs: [get]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles]
+    resourceNames: [{{ $policy.deploymentClusterRole | quote }}]
+    verbs: [bind]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}-provisioner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $.Release.Namespace }}
+---
+{{- end }}
+{{- if $.Values.namespaceProvisioningPolicy.enabled }}
+{{- $matches := list -}}
+{{- range .namespaces -}}
+{{- if hasSuffix "-*" . -}}
+{{- $matches = append $matches (printf "variables.target.startsWith(%s)" (trimSuffix "*" . | toJson)) -}}
+{{- else -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" .) }}{{ fail "provisioning namespaces must be DNS names or prefixes ending in -*" }}{{ end -}}
+{{- $matches = append $matches (printf "variables.target == %s" (. | toJson)) -}}
+{{- end -}}
+{{- end }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $name }}-provisioner
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, DELETE]
+        resources: [namespaces, serviceaccounts, serviceaccounts/token]
+      - apiGroups: [rbac.authorization.k8s.io]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [rolebindings]
+      {{- if eq $platform "openshift" }}
+      - apiGroups: [project.openshift.io]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [projectrequests]
+      {{- end }}
+  matchConditions:
+    - name: helper-identity
+      expression: {{ printf "request.userInfo.username == %s" (printf "system:serviceaccount:%s:%s" $.Release.Namespace $sa | toJson) | quote }}
+  variables:
+    - name: target
+      expression: "request.resource.resource in ['namespaces', 'projectrequests'] ? (request.operation == 'DELETE' ? oldObject.metadata.name : object.metadata.name) : request.namespace"
+  validations:
+    - expression: {{ printf "!(variables.target in %s) && (%s)" ((concat (list $.Release.Namespace "default" "kube-system" "kube-public" "kube-node-lease") (default (list) .deniedNamespaces)) | toJson) (default "false" (join " || " $matches)) | quote }}
+      message: 'Provisioning target is outside the local namespace policy.'
+    - expression: {{ printf "request.resource.resource != 'namespaces' || request.operation != 'DELETE' || %t" (default false $policy.deleteNamespaces) | quote }}
+      message: 'Namespace deletion is disabled by operator policy.'
+    - expression: "request.resource.resource != 'serviceaccounts' || (request.subResource == 'token' ? request.name == 'justcd-deployer' : object.metadata.name == 'justcd-deployer')"
+      message: 'Only the deployment account may be created or issued credentials.'
+    - expression: {{ printf "request.subResource != 'token' || (has(object.spec.expirationSeconds) && object.spec.expirationSeconds >= 600 && object.spec.expirationSeconds <= %d)" (int .deploymentCredentials.lifetimeSeconds) | quote }}
+      message: 'Token lifetime exceeds local operator policy.'
+    - expression: {{ printf "request.resource.resource != 'rolebindings' || (object.metadata.name == 'justcd-deployer' && object.roleRef.apiGroup == 'rbac.authorization.k8s.io' && object.roleRef.kind == 'ClusterRole' && object.roleRef.name == %s && size(object.subjects) == 1 && object.subjects[0].kind == 'ServiceAccount' && object.subjects[0].name == 'justcd-deployer' && object.subjects[0].namespace == request.namespace)" ($policy.deploymentClusterRole | toJson) | quote }}
+      message: 'Only the approved deployment role may be bound to its namespace account.'
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $name }}-provisioner
+spec:
+  policyName: {{ $name }}-provisioner
+  validationActions: [Deny]
+{{- end }}
+{{- end }}
+{{- end }}

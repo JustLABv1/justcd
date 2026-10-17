@@ -34,6 +34,13 @@ func ForWorkspaceBinding(ctx context.Context, db *store.Store, key []byte, c sto
 		return nil, errors.New("cluster is unavailable to this workspace")
 	}
 	profile := a.DefaultProfile
+	// A managed namespace profile must never route cluster/workload requests
+	// through a broader profile, even if a cluster profile was also configured.
+	for _, p := range a.Profiles {
+		if p.Name == a.DefaultProfile && p.DeploymentCredentials != nil && clusterScope {
+			return nil, errors.New("managed deployment credentials use a separate provisioning lifecycle; cluster-scope workload access is disabled")
+		}
+	}
 	if clusterScope {
 		profile = a.ClusterProfile
 		if profile == "" {
@@ -43,7 +50,16 @@ func ForWorkspaceBinding(ctx context.Context, db *store.Store, key []byte, c sto
 	if a.Revoked || a.LastSeenAt == nil || time.Since(*a.LastSeenAt) > time.Minute {
 		return nil, &AgentError{Code: "cluster.agent_unavailable", Message: "cluster agent is offline; reconnect the agent and refresh the plan", Transient: true}
 	}
-	return clientsForConfig(&rest.Config{Host: "https://justcd-agent.invalid", Timeout: 30 * time.Second, Transport: &agentTransport{ctx: ctx, db: db, key: key, cluster: c.ID, workspace: workspace, namespace: namespace, profile: profile, clusterScope: clusterScope}})
+	clients, err := clientsForConfig(&rest.Config{Host: "https://justcd-agent.invalid", Timeout: 30 * time.Second, Transport: &agentTransport{ctx: ctx, db: db, key: key, cluster: c.ID, workspace: workspace, namespace: namespace, profile: profile, clusterScope: clusterScope}})
+	if err == nil {
+		for _, p := range a.Profiles {
+			if p.Name == profile {
+				clients.DeploymentCredentials = p.DeploymentCredentials
+				break
+			}
+		}
+	}
+	return clients, err
 }
 func AgentEnabled(ctx context.Context, db *store.Store, id string) bool {
 	_, err := db.ClusterAgent(ctx, id)
@@ -51,7 +67,15 @@ func AgentEnabled(ctx context.Context, db *store.Store, id string) bool {
 }
 func AgentClusterScope(ctx context.Context, db *store.Store, id string) bool {
 	a, err := db.ClusterAgent(ctx, id)
-	return err == nil && a.ClusterProfile != ""
+	if err != nil || a.ClusterProfile == "" {
+		return false
+	}
+	for _, p := range a.Profiles {
+		if p.Name == a.DefaultProfile && p.DeploymentCredentials != nil {
+			return false
+		}
+	}
+	return true
 }
 
 type agentTransport struct {
@@ -60,6 +84,7 @@ type agentTransport struct {
 	key                                    []byte
 	cluster, workspace, namespace, profile string
 	clusterScope                           bool
+	environment                            *agentprotocol.EnvironmentRequest
 }
 
 func (t *agentTransport) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -81,7 +106,7 @@ func (t *agentTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if d, ok := r.Context().Deadline(); ok && d.Before(deadline) {
 		deadline = d
 	}
-	task := agentprotocol.Request{ID: store.NewID(), WorkspaceID: t.workspace, Profile: t.profile, Namespace: t.namespace, ClusterScope: t.clusterScope, Method: r.Method, URI: r.URL.RequestURI(), ContentType: r.Header.Get("Content-Type"), Accept: r.Header.Get("Accept"), Deadline: deadline}
+	task := agentprotocol.Request{Environment: t.environment, ID: store.NewID(), WorkspaceID: t.workspace, Profile: t.profile, Namespace: t.namespace, ClusterScope: t.clusterScope, Method: r.Method, URI: r.URL.RequestURI(), ContentType: r.Header.Get("Content-Type"), Accept: r.Header.Get("Accept"), Deadline: deadline}
 	if r.Body != nil {
 		defer r.Body.Close()
 		var err error
@@ -129,7 +154,7 @@ func (t *agentTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 				if result.ErrorCode == "cluster.agent_unknown_outcome" {
 					return nil, uncertainAgentError(r, "cluster agent: "+result.Error)
 				}
-				return nil, &AgentError{Code: result.ErrorCode, Message: "cluster agent: " + result.Error}
+				return nil, &AgentError{Code: result.ErrorCode, Message: "cluster agent: " + result.Error, Environment: result.Environment}
 			}
 			return &http.Response{StatusCode: result.Status, Header: http.Header{"Content-Type": []string{result.ContentType}}, Body: io.NopCloser(bytes.NewReader(result.Body)), Request: r}, nil
 		}
@@ -153,6 +178,7 @@ func WithExecution(ctx context.Context, operationID, planID, digest string) cont
 // AgentError prevents client-go's URL wrappers from turning an uncertain write
 // into a generic retryable network error.
 type AgentError struct {
+	Environment   *agentprotocol.EnvironmentStatus
 	Code, Message string
 	Transient     bool
 }

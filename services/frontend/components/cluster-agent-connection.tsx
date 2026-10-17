@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import Link from "next/link"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Copy01Icon, Delete02Icon, Tick02Icon, ViewIcon, ViewOffIcon } from "@hugeicons/core-free-icons"
 import { AppDialog } from "@/components/ui/dialog"
@@ -14,7 +15,7 @@ import { ErrorDetailsButton } from "@/components/error-details"
 import { api, apiDelete, apiPost, errorMessage } from "@/lib/api"
 import type { Cluster, Workspace } from "@/lib/types"
 
-type Status = { mode: "direct" | "agent"; online?: boolean; agent?: { defaultProfile: string; clusterProfile: string; clusterUid: string; version: string; revoked: boolean; lastSeenAt?: string; profiles: { name: string; namespaces: string[]; clusterScope: boolean }[] } }
+type Status = { mode: "direct" | "agent"; online?: boolean; environments?: { namespace: string; applicationId?: string; status: { phase: string; shared: boolean; managed: boolean; failedPhase?: string; reason?: string; resources?: string[] } }[]; agent?: { defaultProfile: string; clusterProfile: string; clusterUid: string; version: string; revoked: boolean; lastSeenAt?: string; profiles: { name: string; namespaces: string[]; clusterScope: boolean; deploymentCredentials?: { lifetimeSeconds: number; audience?: string; provisioning?: { platform?: string; deploymentClusterRole: string; deleteNamespaces: boolean } } }[] } }
 
 /** Pass `open`/`onOpenChange` to control the dialog from a menu item; the built-in trigger button is then hidden. */
 export function ClusterAgentConnection({ cluster, workspace, canManage, onModeChange, open: controlledOpen, onOpenChange }: { cluster: Cluster; workspace: Workspace; canManage: boolean; onModeChange: (mode: "direct" | "agent") => void; open?: boolean; onOpenChange?: (open: boolean) => void }) {
@@ -31,6 +32,7 @@ export function ClusterAgentConnection({ cluster, workspace, canManage, onModeCh
   const [busy, setBusy] = useState(false)
   const [showToken, setShowToken] = useState(false)
   const [copied, setCopied] = useState(false)
+  const managedProfile = status?.agent?.profiles.find((profile) => profile.name === defaultProfile)?.deploymentCredentials
   const endpoint = `/api/v1/clusters/${encodeURIComponent(cluster.id)}/agent`
   const refresh = useCallback(async () => {
     const next = await api<Status>(`${endpoint}?workspaceId=${encodeURIComponent(workspace.id)}`)
@@ -54,7 +56,7 @@ export function ClusterAgentConnection({ cluster, workspace, canManage, onModeCh
   async function enroll() {
     setBusy(true); setError(null)
     try {
-      const result = await apiPost<{ enrollmentToken: string; expiresAt: string }>(`${endpoint}/enrollment`, { defaultProfile, clusterProfile })
+      const result = await apiPost<{ enrollmentToken: string; expiresAt: string }>(`${endpoint}/enrollment`, { defaultProfile, clusterProfile: managedProfile ? "" : clusterProfile })
       setToken(result.enrollmentToken); setExpiresAt(result.expiresAt); onModeChange("agent"); setStatus(await refresh())
     } catch (cause) { setError(cause) }
     finally { setBusy(false) }
@@ -72,7 +74,7 @@ export function ClusterAgentConnection({ cluster, workspace, canManage, onModeCh
         {canManage && <>
           <div className="grid gap-3 sm:grid-cols-2">
             <FormField label="Namespace access profile" htmlFor={`agent-default-${cluster.id}`} hint="Must match a locally configured profile."><Input id={`agent-default-${cluster.id}`} value={defaultProfile} onChange={(event) => setDefaultProfile(event.target.value)} maxLength={64} /></FormField>
-            <FormField label="Cluster-scope profile (optional)" htmlFor={`agent-cluster-${cluster.id}`} hint="Needed to create preview namespaces or manage cluster resources."><Input id={`agent-cluster-${cluster.id}`} value={clusterProfile} onChange={(event) => setClusterProfile(event.target.value)} maxLength={64} /></FormField>
+            <FormField label="Cluster-scope profile (optional)" htmlFor={`agent-cluster-${cluster.id}`} hint={managedProfile ? "Provisioning uses the local lifecycle. Cluster-scope workload access is disabled." : "Needed to create preview namespaces or manage cluster resources."}><Input id={`agent-cluster-${cluster.id}`} disabled={!!managedProfile} value={clusterProfile} onChange={(event) => setClusterProfile(event.target.value)} maxLength={64} /></FormField>
           </div>
           <ConfirmDisclosure trigger={status?.mode === "agent" ? "Create new enrollment token" : "Enable agent connection"} title="Enable agent connection" description="This switches Kubernetes requests to the agent and invalidates existing plans. A new token revokes the previous agent identity. Deployments will wait until the agent is connected." confirmLabel="Create enrollment token" triggerVariant="default" confirmVariant="default" disabled={busy || !defaultProfile} onConfirm={enroll} />
         </>}
@@ -89,7 +91,8 @@ export function ClusterAgentConnection({ cluster, workspace, canManage, onModeCh
           <dl className="text-sm"><dt className="text-muted-foreground">Local profile workspace ID</dt><dd className="break-all font-mono">{workspace.id}</dd></dl>
           <p className="text-sm text-muted-foreground">Set the profile’s namespaces locally. The agent enforces this allowlist and Kubernetes RBAC. Keep the identity volume when restarting or upgrading.</p>
         </div>}
-        {!!status?.agent?.profiles.length && <div className="space-y-2"><h3 className="text-sm font-medium">Reported local profiles</h3>{status.agent.profiles.map((profile) => <p key={profile.name} className="break-words text-sm text-muted-foreground"><span className="font-medium text-foreground">{profile.name}</span> · {profile.clusterScope ? "Cluster scope" : profile.namespaces.join(", ") || "No namespaces"}</p>)}</div>}
+        {!!status?.agent?.profiles.length && <div className="space-y-3"><h3 className="text-sm font-medium">Reported local profiles</h3>{status.agent.profiles.map((profile) => <div key={profile.name} className="space-y-1 break-words text-sm text-muted-foreground"><p><span className="font-medium text-foreground">{profile.name}</span> · {profile.clusterScope ? "Cluster scope" : profile.namespaces.join(", ") || "No namespaces"}</p>{profile.deploymentCredentials ? <><p>Short-lived namespace credentials · justcd-deployer · requested lifetime {profile.deploymentCredentials.lifetimeSeconds} seconds</p><p>Provisioning: {profile.deploymentCredentials.provisioning ? `automatic (${profile.deploymentCredentials.provisioning.platform || "kubernetes"}) · deployment role ${profile.deploymentCredentials.provisioning.deploymentClusterRole}` : "administrator-prepared namespaces and deployment RBAC"}. Namespace deletion: {profile.deploymentCredentials.provisioning?.deleteNamespaces ? "exclusively owned namespaces after application cleanup" : "disabled"}. Tokens remain inside the agent.</p><p>Audience: {profile.deploymentCredentials.audience || "Kubernetes API default"}. Run namespace verification to check credential availability and deployment access.</p></> : <p>Credentials: local service account or configured token file.</p>}</div>)}<p className="text-xs text-muted-foreground">Policy is configured by the cluster operator. Re-enroll after changing local profiles to update this report.</p></div>}
+        {!!status?.environments?.length && <div className="space-y-3"><h3 className="text-sm font-medium">Namespace environments</h3>{status.environments.map((environment) => <div key={environment.namespace} className="space-y-1 rounded-md border p-3 text-sm"><p className="flex flex-wrap items-center gap-2"><span className="break-all font-medium">{environment.namespace}</span><Badge size="sm" variant={environment.status.phase === "failed" ? "destructive-light" : environment.status.phase === "ready" ? "success-light" : "warning-light"}>{environment.status.phase}</Badge></p><p className="text-muted-foreground">{environment.status.shared ? "Shared namespace · preserved on deletion" : environment.status.managed ? "Managed namespace with recorded ownership" : "Administrator-prepared namespace"}</p>{environment.status.failedPhase && <p>Phase requiring attention: {environment.status.failedPhase}</p>}{environment.status.reason && <p className="break-words text-muted-foreground">{environment.status.reason}</p>}{!!environment.status.resources?.length && <p className="text-muted-foreground">Created resources: {environment.status.resources.join(", ")}</p>}{environment.applicationId && <><p className="text-muted-foreground">Refresh the application plan to retry provisioning. Retry application deletion to complete pending cleanup.</p><Button variant="link" size="sm" nativeButton={false} render={<Link href={`/applications/${encodeURIComponent(environment.applicationId)}`} />}>View application</Button></>}</div>)}</div>}
         {canManage && status?.mode === "agent" && <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-4">
           <ConfirmDisclosure trigger="Use direct connection" title="Switch to direct API access" description="Revoke the agent and use this connection’s Kubernetes API endpoint and stored credentials. Existing plans must be refreshed." confirmLabel="Use direct connection" triggerVariant="secondary" confirmVariant="default" disabled={busy} onConfirm={() => revoke(true)} />
           <ActionMenu label="More actions" items={[{ label: "Revoke agent", icon: Delete02Icon, destructive: true, disabled: busy, confirm: { title: `Revoke agent for ${cluster.name}?`, description: "Block new tasks for this agent. In-flight requests may finish. Agent connection stays enabled and deployments will fail until you enroll again.", confirmLabel: "Revoke agent", onConfirm: () => revoke() } }]} />

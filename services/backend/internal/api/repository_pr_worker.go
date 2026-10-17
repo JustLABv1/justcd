@@ -160,6 +160,10 @@ func (s *Server) cleanupRepositoryPRApplication(ctx context.Context, c store.Sou
 		return false, err
 	}
 	if len(managed) == 0 && (app.Health == "decommissioned" || app.LastSyncedRevision == "" && !app.Decommissioning) {
+		if err = s.cleanupManagedApplicationNamespaces(ctx, app); err != nil {
+			result.Error = "Namespace cleanup is waiting: " + err.Error()
+			return false, nil
+		}
 		if v.Mode == "isolated" {
 			if err = s.removePreviewNamespace(ctx, c, *result, app.Namespaces[0].Namespace); err != nil {
 				result.Error = "Namespace cleanup is waiting: " + err.Error()

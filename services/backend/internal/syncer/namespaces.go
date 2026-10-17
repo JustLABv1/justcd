@@ -51,7 +51,7 @@ func addNamespaceCreations(ctx context.Context, input planInput, plan *core.Plan
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		if explicit[name] {
+		if explicit[name] || input.ManagedNamespaces[name] {
 			continue
 		}
 		client, err := namespaceProvisioningClient(input, name)

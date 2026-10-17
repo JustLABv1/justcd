@@ -37,6 +37,9 @@ type Agent struct {
 	Config        Config
 	HTTP          *http.Client
 	Local         map[string]*http.Client
+	Workload      map[string]*http.Client
+	credentials   deploymentCredentialCache
+	environments  environmentLedger
 	KubernetesURL string
 	mu            sync.RWMutex
 	identity      agentprotocol.Identity
@@ -52,6 +55,9 @@ func New(c Config, kube *rest.Config) (*Agent, error) {
 	}
 	if len(c.ClusterID) > 128 || strings.TrimSpace(c.ClusterID) != c.ClusterID {
 		return nil, errors.New("agent clusterId must be at most 128 bytes with no surrounding whitespace")
+	}
+	if err := agentprotocol.ValidateDeploymentProfiles(c.Profiles); err != nil {
+		return nil, err
 	}
 	if c.KubernetesServerURL != "" {
 		u, err := url.Parse(c.KubernetesServerURL)
@@ -107,6 +113,22 @@ func New(c Config, kube *rest.Config) (*Agent, error) {
 		}
 		client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
 		a.Local[p.Name] = client
+		if p.DeploymentCredentials != nil {
+			if a.Workload == nil {
+				a.Workload = map[string]*http.Client{}
+			}
+			anonymous := rest.AnonymousClientConfig(cfg)
+			// Never inherit an operator-supplied transport or wrapper that can
+			// attach privileged credentials to deployment requests.
+			anonymous.Transport = nil
+			anonymous.WrapTransport = nil
+			workload, err := rest.HTTPClientFor(anonymous)
+			if err != nil {
+				return nil, err
+			}
+			workload.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+			a.Workload[p.Name] = workload
+		}
 	}
 	return a, nil
 }
@@ -272,6 +294,19 @@ func (a *Agent) Execute(ctx context.Context, task agentprotocol.Request) agentpr
 	}
 	ctx, cancel := context.WithDeadline(ctx, task.Deadline)
 	defer cancel()
+	if profile.DeploymentCredentials != nil {
+		lock := a.environmentLock(task.Namespace)
+		lock.Lock()
+		defer lock.Unlock()
+		if task.Environment != nil {
+			return a.executeEnvironment(ctx, task, *profile)
+		}
+		if err := a.checkEnvironmentWorkload(task, profile.DeploymentCredentials.Provisioning != nil); err != nil {
+			result.ErrorCode = "cluster.agent_environment_unavailable"
+			result.Error = err.Error()
+			return result
+		}
+	}
 	req, err := http.NewRequestWithContext(ctx, task.Method, a.KubernetesURL+task.URI, bytes.NewReader(task.Body))
 	if err != nil {
 		result.Error = "invalid local Kubernetes request"
@@ -280,14 +315,35 @@ func (a *Agent) Execute(ctx context.Context, task agentprotocol.Request) agentpr
 	req.Header.Set("Content-Type", task.ContentType)
 	req.Header.Set("Accept", task.Accept)
 	req.Header.Set("User-Agent", "JustCD-Agent/1.0")
+	client := a.Local[task.Profile]
+	var credential deploymentCredential
+	if profile.DeploymentCredentials != nil {
+		credential, err = a.deploymentCredential(ctx, task, *profile)
+		if err != nil {
+			result.ErrorCode = "cluster.agent_credential_unavailable"
+			result.Error = err.Error()
+			return result
+		}
+		client = a.Workload[task.Profile]
+		if client == nil {
+			result.ErrorCode = "cluster.agent_credential_unavailable"
+			result.Error = "managed deployment client is unavailable"
+			return result
+		}
+		req.Header.Set("Authorization", "Bearer "+credential.token)
+	}
 	result.ErrorCode = ""
-	res, err := a.Local[task.Profile].Do(req)
+	res, err := client.Do(req)
 	if err != nil {
 		result.ErrorCode = "cluster.agent_unknown_outcome"
 		result.Error = "local Kubernetes request failed; execution outcome may be unknown"
 		return result
 	}
 	defer res.Body.Close()
+	if profile.DeploymentCredentials != nil && res.StatusCode == http.StatusUnauthorized {
+		a.credentials.invalidate(credential)
+		// Do not replay a mutation after a possibly ambiguous response.
+	}
 	result.Status = res.StatusCode
 	result.ContentType = res.Header.Get("Content-Type")
 	result.Body, err = io.ReadAll(io.LimitReader(res.Body, agentprotocol.MaxBody+1))
@@ -304,7 +360,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
-	defer func() { cancel(); wg.Wait() }()
+	defer func() { cancel(); a.credentials.stop(); wg.Wait() }()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()

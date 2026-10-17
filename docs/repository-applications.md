@@ -236,7 +236,7 @@ reported and retried, and an owner can generate a fresh deletion plan manually.
 
 Only application-owned resources are deletion targets. Explicitly managed
 Namespace manifests follow the normal deletion rules; namespaces provisioned
-through `createNamespaces` remain shared infrastructure and are preserved. For an
+through `createNamespaces` with static credentials remain shared infrastructure and are preserved. Managed agent environments can opt into ownership-checked deletion; see [managed namespace credentials](managed-deployment-credentials.md). For an
 explicitly managed Namespace, enable **Keep namespace** in the deletion plan to
 retain it while deleting the application's other managed resources. Changing
 this option creates a new immutable plan and requires fresh approval. The choice
@@ -507,8 +507,13 @@ A denied project request is reported without falling back to bare Namespace
 creation. Existing projects are never modified or assigned new permissions.
 On other Kubernetes clusters, JustCD creates a missing Namespace through the
 configured provisioning credential; Kubernetes RBAC remains cluster-managed.
+The opt-in [short-lived deployment credential mode](managed-deployment-credentials.md)
+supports administrator-prepared namespaces and explicitly authorized automatic
+provisioning. `createNamespace: true` (alias of `createNamespaces`) provisions the
+namespace/account/approved role binding before workload planning. Optional deletion
+uses persisted ownership and UID checks; shared/pre-existing namespaces stay intact.
 
-Bootstrap is create-only. It does not update namespace/project labels, annotations,
+Static-credential bootstrap is create-only. It does not update namespace/project labels, annotations,
 requester ownership, or RBAC, even if an existing environment has another creator.
 If OpenShift reports an inaccessible project already exists, setup leaves it
 alone and normal workload planning checks the account's permissions. Bootstrap

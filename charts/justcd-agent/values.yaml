@@ -18,6 +18,31 @@ profiles:
     workspaceIds: []
     namespaces: []
     clusterScope: false
+    # Opt-in: one workspace; exact prepared namespaces or authorized provisioning prefixes.
+    # deploymentCredentials:
+    #   lifetimeSeconds: 600
+    #   audience: "" # Empty requests the Kubernetes API's default audience.
+    #   provisioning:
+    #     platform: kubernetes # openshift uses ProjectRequest and platform templates.
+    #     deploymentClusterRole: justcd-approved-deployer
+    #     deleteNamespaces: false # Explicit opt-in for exclusively owned namespaces.
+managedCredentials:
+  # Optional administrator-installed ClusterRole, bound only in each namespace.
+  # Empty creates a namespace Role using these explicit workload rules.
+  deploymentClusterRole: ""
+  rules:
+    - apiGroups: [""]
+      resources: ["pods", "services", "configmaps", "persistentvolumeclaims"]
+      verbs: ["get", "list", "create", "update", "patch", "delete"]
+    - apiGroups: ["apps"]
+      resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+      verbs: ["get", "list", "create", "update", "patch", "delete"]
+    - apiGroups: ["batch"]
+      resources: ["jobs", "cronjobs"]
+      verbs: ["get", "list", "create", "update", "patch", "delete"]
+    - apiGroups: ["networking.k8s.io"]
+      resources: ["ingresses", "networkpolicies"]
+      verbs: ["get", "list", "create", "update", "patch", "delete"]
 persistence:
   existingClaim: ""
   size: 1Gi
@@ -79,3 +104,8 @@ workloadPolicy:
   allowedServiceAccounts: ["default"]
   # Explicitly authorize existing Secret references, never the agent identity Secret.
   allowedSecrets: []
+
+# Restricts the chart service account's provisioning mutations at admission.
+# Provide equivalent controls for an externally supplied issuer identity.
+namespaceProvisioningPolicy:
+  enabled: true

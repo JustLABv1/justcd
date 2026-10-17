@@ -1,5 +1,10 @@
 # Private cluster connections
 
+For opt-in, agent-local TokenRequest credentials in prepared or automatically
+provisioned namespaces, see [short-lived namespace deployment credentials](managed-deployment-credentials.md).
+For an existing production connection using a stored cluster-wide token, follow
+the [migration and rollback runbook](migrate-to-managed-credentials.md).
+
 JustCD supports direct Kubernetes API connections and outbound cluster agents.
 An agent runs inside each private target cluster and connects to JustCD over HTTPS.
 The target Kubernetes API needs no public endpoint or inbound tunnel. The target

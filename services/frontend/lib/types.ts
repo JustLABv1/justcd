@@ -117,6 +117,16 @@ export type KubernetesPermissionScope = {
 }
 
 export type KubernetesPermissionReport = {
+  deploymentCredentials?: {
+    mode: string
+    provisioning: string
+    issuance: string
+    deployment: string
+    serviceAccount: string
+    requestedLifetimeSeconds: number
+    deleteNamespaces?: boolean
+    deploymentClusterRole?: string
+  }
   status: string
   namespace: string
   serverVersion?: string

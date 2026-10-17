@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/justlab/justcd/services/backend/internal/agentprotocol"
 	"github.com/justlab/justcd/services/backend/internal/security"
 	"github.com/justlab/justcd/services/backend/internal/store"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -19,9 +20,10 @@ import (
 )
 
 type Clients struct {
-	Dynamic   dynamic.Interface
-	Discovery discovery.DiscoveryInterface
-	Mapper    meta.RESTMapper
+	Dynamic               dynamic.Interface
+	Discovery             discovery.DiscoveryInterface
+	Mapper                meta.RESTMapper
+	DeploymentCredentials *agentprotocol.DeploymentCredentials
 }
 
 type credentialPayload struct {

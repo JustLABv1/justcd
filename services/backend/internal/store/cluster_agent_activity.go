@@ -36,6 +36,9 @@ type AgentActivitySummary struct {
 // Resource labels exclude names, query parameters, bodies, and credentials.
 func agentResource(uri string) string {
 	path := strings.SplitN(uri, "?", 2)[0]
+	if path == "/justcd/environments" {
+		return "environment-lifecycle"
+	}
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	offset := 0
 	if len(parts) >= 2 && parts[0] == "api" {
@@ -58,7 +61,7 @@ func agentResource(uri string) string {
 func agentResultClassification(result agentprotocol.Result) (string, string) {
 	if result.Error != "" {
 		switch result.ErrorCode {
-		case "cluster.agent_scope_denied":
+		case "cluster.agent_scope_denied", "cluster.agent_credential_unavailable", "cluster.agent_provisioning_failed", "cluster.agent_environment_unavailable":
 			return "failed", result.ErrorCode
 		case "cluster.agent_unknown_outcome":
 			return "unknown", result.ErrorCode

@@ -267,3 +267,32 @@ func TestDiscoverApplicationLabels(t *testing.T) {
 		t.Fatal("invalid metadata.labels accepted")
 	}
 }
+
+func TestDiscoverCreateNamespaceAlias(t *testing.T) {
+	root := t.TempDir()
+	writeDefinition(t, root, "justcd.yaml", strings.Replace(validDefinition, "namespace: shop", "namespace: shop\n    createNamespace: true", 1))
+	singular, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !singular[0].Spec.Destination.CreateNamespaces {
+		t.Fatal("createNamespace alias was ignored")
+	}
+	writeDefinition(t, root, "justcd.yaml", strings.Replace(validDefinition, "namespace: shop", "namespace: shop\n    createNamespaces: true", 1))
+	plural, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if singular[0].Hash != plural[0].Hash {
+		t.Fatal("equivalent namespace flags changed the semantic definition")
+	}
+	writeDefinition(t, root, "justcd.yaml", strings.Replace(validDefinition, "namespace: shop", "namespace: shop\n    createNamespaces: true\n    createNamespace: false", 1))
+	if _, err = Discover(root); err == nil {
+		t.Fatal("contradictory namespace creation flags accepted")
+	}
+	writeDefinition(t, root, "justcd.yaml", strings.Replace(validDefinition, "namespace: shop", "namespace: shop\n    createNamespaces: false\n    createNamespace: true", 1))
+	if _, err = Discover(root); err == nil {
+		t.Fatal("explicitly disabled plural flag was overridden by alias")
+	}
+
+}

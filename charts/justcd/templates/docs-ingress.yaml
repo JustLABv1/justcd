@@ -1,0 +1,35 @@
+{{- if and .Values.docs.enabled .Values.docs.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "justcd.fullname" . }}-docs
+  labels:
+    {{- include "justcd.labels" . | nindent 4 }}
+  {{- with .Values.docs.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.docs.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.docs.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.docs.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path | quote }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ include "justcd.fullname" $ }}-docs
+                port:
+                  name: http
+          {{- end }}
+    {{- end }}
+{{- end }}

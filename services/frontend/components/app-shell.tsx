@@ -1,5 +1,6 @@
 "use client"
 
+import { DocumentationLink } from "@/components/documentation-link"
 import { LogoMark } from "@/components/logo"
 import Link from "next/link"
 import styles from "./app-shell.module.css"
@@ -180,6 +181,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {selectedWorkspaceId && <NavGroup label="Workspace" items={workspaceNavigation} pathname={pathname} />}
           {user.isAdmin && <NavGroup label="Administration" items={administration} pathname={pathname} />}
         </div>
+        <div className="px-3 pb-2"><DocumentationLink /></div>
         <AccountMenu user={user} onSignOut={signOut} />
       </aside>
 
@@ -189,7 +191,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <LogoMark className="h-7 w-auto text-foreground" />
             <span className="font-semibold">JustCD</span>
           </Link>
-          <AccountMenu user={user} onSignOut={signOut} compact />
+          <div className="flex items-center gap-1"><DocumentationLink compact /><AccountMenu user={user} onSignOut={signOut} compact /></div>
         </header>
         <div className="mx-4 mb-2 lg:hidden">
           <WorkspaceSelector workspaces={workspaces} selectedId={selectedWorkspaceId} onChange={selectWorkspace} compact loading={workspacesLoading} />

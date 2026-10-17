@@ -59,10 +59,33 @@ services:
     environment:
       JUSTCD_ENV: ${JUSTCD_ENV:-development}
       JUSTCD_API_URL: http://backend:8080
+      JUSTCD_DOCS_URL: ${JUSTCD_DOCS_URL:-http://localhost:3001}
       PORT: "3000"
       HOSTNAME: 0.0.0.0
     ports:
       - "${JUSTCD_BIND_ADDRESS:-127.0.0.1}:${JUSTCD_PORT:-3000}:3000"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('http').get('http://127.0.0.1:3000/healthz', r => { r.resume(); process.exit(r.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));"
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    logging: *logging
+
+  docs:
+    profiles: [docs]
+    image: ghcr.io/justlabv1/justcd:docs${JUSTCD_IMAGE_TAG_SUFFIX:-}
+    restart: unless-stopped
+    init: true
+    environment:
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    ports:
+      - "${JUSTCD_DOCS_BIND_ADDRESS:-127.0.0.1}:${JUSTCD_DOCS_PORT:-3001}:3000"
     healthcheck:
       test:
         - CMD

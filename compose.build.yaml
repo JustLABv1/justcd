@@ -9,3 +9,7 @@ services:
     image: justcd-frontend:local
     build:
       context: ./services/frontend
+  docs:
+    image: justcd-docs:local
+    build:
+      context: ./services/docs

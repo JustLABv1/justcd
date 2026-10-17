@@ -1,0 +1,13 @@
+{
+  "title": "Guides",
+  "pages": [
+    "workflow",
+    "controls",
+    "pull-requests",
+    "test-branch",
+    "repository-applications",
+    "application-health",
+    "plan-review",
+    "notifications"
+  ]
+}

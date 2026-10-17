@@ -15,7 +15,7 @@ compose() {
 }
 stack() {
   compose --project-name "$project" --env-file "$scratch/test.env" \
-    -f "$root/compose.yaml" -f "$scratch/images.yaml" "$@"
+    -f "$root/compose.yaml" -f "$scratch/images.yaml" --profile docs "$@"
 }
 cleanup() {
   status=$?
@@ -36,9 +36,12 @@ JUSTCD_PUBLIC_URL=http://localhost:3000
 JUSTCD_COOKIE_SECURE=false
 JUSTCD_BIND_ADDRESS=127.0.0.1
 JUSTCD_PORT=0
+JUSTCD_DOCS_PORT=0
 EOF
 cat > "$scratch/images.yaml" <<'EOF'
 services:
+  docs:
+    image: ${JUSTCD_COMPOSE_DOCS_IMAGE:-justcd-docs:local}
   backend:
     image: ${JUSTCD_COMPOSE_BACKEND_IMAGE:-justcd-backend:local}
   frontend:
@@ -49,6 +52,13 @@ EOF
 compose --env-file "$scratch/test.env" -f "$root/compose.yaml" config --quiet
 compose --env-file "$scratch/test.env" -f "$root/compose.yaml" \
   -f "$root/compose.build.yaml" config --quiet
+# Documentation has no backend or database dependencies.
+stack up -d --wait --wait-timeout 180 --pull missing docs
+address=$(stack port docs 3000)
+curl --fail --silent --show-error "http://$address/healthz" > /dev/null
+curl --fail --silent --show-error "http://$address/guides/workflow" > /dev/null
+curl --fail --silent --show-error "http://$address/api/search?query=deployment" \
+  | python3 -c 'import json,sys; assert len(json.load(sys.stdin)) > 0'
 stack up -d --wait --wait-timeout 180 --pull missing
 address=$(stack port frontend 3000)
 origin="http://$address"
@@ -76,4 +86,4 @@ cat > "$scratch/login.json" <<'EOF'
 EOF
 curl --fail --silent --show-error -H 'Content-Type: application/json' \
   --data-binary "@$scratch/login.json" "$origin/api/v1/auth/login" > /dev/null
-echo 'Compose startup, API proxy, signup, persisted administrator, and login passed.'
+echo 'Docs standalone startup/search, Compose startup, API proxy, signup, persisted administrator, and login passed.'

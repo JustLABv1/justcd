@@ -3,8 +3,8 @@ name: Backup and restore drill
 on:
   pull_request:
     paths:
-      - 'docs/production-operations.md'
-      - 'docs/operations/**'
+      - 'services/docs/content/docs/operations/production-operations.md'
+      - 'scripts/operations/**'
       - 'scripts/restore-drill.sh'
       - 'charts/justcd/**'
       - 'services/backend/cmd/restore-drill/**'

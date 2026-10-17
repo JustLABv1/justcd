@@ -128,7 +128,7 @@ export JUSTCD_ENCRYPTION_KEY=$(cat "$scratch/recovered-key")
 cmp "$scratch/before.sha256" "$scratch/after.sha256"
 JUSTCD_ENCRYPTION_KEY=$(openssl rand -hex 32) "$scratch/fixture" wrong-key
 # Execute the exact cold-restore quarantine procedure before enabling workers.
-kubectl -n justcd exec -i postgres -- psql -U postgres -d justcd_restored -v ON_ERROR_STOP=1 < "$root/docs/operations/quarantine-restored.sql"
+kubectl -n justcd exec -i postgres -- psql -U postgres -d justcd_restored -v ON_ERROR_STOP=1 < "$root/scripts/operations/quarantine-restored.sql"
 [[ $(kubectl -n justcd exec postgres -- psql -U postgres -d justcd_restored -Atc "SELECT count(*) FROM operations WHERE status IN ('queued','running')") == 0 ]]
 [[ $(kubectl -n justcd exec postgres -- psql -U postgres -d justcd_restored -Atc "SELECT jsonb_array_length(progress->'completed') FROM operations WHERE id='dr-running' AND status='failed'") == 1 ]]
 [[ $(kubectl -n justcd exec postgres -- psql -U postgres -d justcd_restored -Atc "SELECT count(*) FROM plans WHERE status='current'") == 0 ]]
@@ -142,8 +142,8 @@ kubectl -n justcd exec deployment/justcd-backend -- wget -qO- http://127.0.0.1:8
 "$scratch/fixture" quarantined > "$scratch/after-start.sha256"
 cmp "$scratch/quarantined.sha256" "$scratch/after-start.sha256"
 # Validate both RBAC recipes, including denied cross-namespace/cluster permissions.
-kubectl apply -f "$root/docs/operations/rbac-namespaced.yaml"
-kubectl apply -f "$root/docs/operations/rbac-cluster-scoped.yaml"
+kubectl apply -f "$root/scripts/operations/rbac-namespaced.yaml"
+kubectl apply -f "$root/scripts/operations/rbac-cluster-scoped.yaml"
 identity=system:serviceaccount:justcd-target:justcd-deployer
 [[ $(kubectl auth can-i create configmaps -n justcd-target --as="$identity") == yes ]]
 [[ $(kubectl auth can-i create configmaps -n default --as="$identity" || true) == no ]]

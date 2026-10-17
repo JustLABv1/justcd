@@ -1,14 +1,14 @@
 # JustCD cluster agent
 
 Installation, connection modes, local scope, and recovery behavior are documented
-in [Private cluster connections](../../docs/cluster-agents.md).
+in [Private cluster connections](../../services/docs/content/docs/operations/cluster-agents.md).
 
 For the opt-in `profiles[].deploymentCredentials` mode, minimal issuer RBAC,
 prepared-namespace bootstrap, automatic provisioning/deletion, migration and validation, see
-[Short-lived namespace deployment credentials](../../docs/managed-deployment-credentials.md).
+[Short-lived namespace deployment credentials](../../services/docs/content/docs/operations/managed-deployment-credentials.md).
 
 Migrating an existing stored cluster-wide token connection:
-[production migration and rollback](../../docs/migrate-to-managed-credentials.md).
+[production migration and rollback](../../services/docs/content/docs/operations/migrate-to-managed-credentials.md).
 
 Use an existing enrollment Secret; never commit enrollment tokens in Helm values.
 The chart requires an HTTPS server URL and explicit local workspace IDs. Identity

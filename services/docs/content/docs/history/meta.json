@@ -1,0 +1,9 @@
+{
+  "title": "History",
+  "pages": [
+    "kubernetes-ha-readiness",
+    "security-audit-2026-10-01",
+    "security-remediation-2026-10-12",
+    "connections-ui-audit"
+  ]
+}

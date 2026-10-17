@@ -37,6 +37,9 @@ jobs:
           - service: backend
             context: ./services/backend
             file: ./services/backend/Dockerfile
+          - service: docs
+            context: ./services/docs
+            file: ./services/docs/Dockerfile
           - service: agent
             context: ./services/backend
             file: ./services/backend/Dockerfile.agent

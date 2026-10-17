@@ -101,7 +101,7 @@ Workers drain during the existing shutdown grace period. Interrupted tasks are
 marked failed without automatic replay, because approval may already have been
 recorded. The UI shows the outcome and asks users to refresh current state
 before retrying. See the
-[operations guide](../../docs/production-operations.md#background-plan-and-approval-tasks).
+[operations guide](../../services/docs/content/docs/operations/production-operations.md#background-plan-and-approval-tasks).
 
 The backend applies database migrations at startup under a PostgreSQL migration
 lock. `backend.replicaCount` defaults to one and can be increased for multiple
@@ -217,7 +217,7 @@ backend:
 The optional Secret key should contain the OTLP exporter header string, for
 example `Authorization=Bearer <token>`. Store exporter credentials in a Secret;
 do not put them in Helm values or commit them. See
-[`docs/observability.md`](../../docs/observability.md) for metric names,
+[`services/docs/content/docs/operations/observability.md`](../../services/docs/content/docs/operations/observability.md) for metric names,
 cardinality limits, the starter Grafana dashboard, and alert recommendations.
 
 ## OpenShift and pod configuration
@@ -299,6 +299,20 @@ certificate in the Secret, restart the backend deployment: Go caches its CA
 pool, so updating the mounted file alone does not reload trust. Do not override
 `SSL_CERT_DIR`, `GIT_SSL_CAINFO`, or `GIT_SSL_CAPATH` in `backend.extraEnv` when using this option.
 
-See the [production operations runbook](../../docs/production-operations.md) for coordinated backups, cold restore, least-privilege target RBAC, troubleshooting and tested recovery drills.
+See the [production operations runbook](../../services/docs/content/docs/operations/production-operations.md) for coordinated backups, cold restore, least-privilege target RBAC, troubleshooting and tested recovery drills.
 
-Production mode now requires an HTTPS `publicUrl` and `cookieSecure: true`; the backend defaults to `JUSTCD_ENV=production`. For local chart testing with HTTP, explicitly set `JUSTCD_ENV=development` in backend and frontend `extraEnv`. See [security hardening](../../docs/security-hardening.md) for session management, MFA, shared rate limits and the offline encryption-key rotation procedure.
+Production mode now requires an HTTPS `publicUrl` and `cookieSecure: true`; the backend defaults to `JUSTCD_ENV=production`. For local chart testing with HTTP, explicitly set `JUSTCD_ENV=development` in backend and frontend `extraEnv`. See [security hardening](../../services/docs/content/docs/operations/security-hardening.md) for session management, MFA, shared rate limits and the offline encryption-key rotation procedure.
+
+## Optional documentation service
+
+Set `docs.enabled: true` to deploy Fumadocs independently of the frontend and
+backend. It needs no Secret or backend connection. `docs.image` defaults to the
+moving `ghcr.io/justlabv1/justcd:docs` image; pin `docs.image.tag` to a published
+`docs-vX.Y.Z` release for reproducible deployments. The image becomes available
+with the first release containing this service.
+
+`docs.service.port` defaults to 3000. Enable `docs.ingress.enabled` and configure
+`docs.ingress.hosts`, `className`, annotations, and TLS for a dedicated hostname.
+The service serves at `/`; path-prefix hosting below `/docs` is not supported by
+this build. The frontend Ingress continues to serve the application separately.
+See the [docs deployment guide](../../services/docs/content/docs/getting-started/docs-service.md).

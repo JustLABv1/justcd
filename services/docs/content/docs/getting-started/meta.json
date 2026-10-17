@@ -1,0 +1,10 @@
+{
+  "title": "Getting Started",
+  "pages": [
+    "first-setup",
+    "docker-compose",
+    "helm",
+    "docs-service",
+    "local-development"
+  ]
+}

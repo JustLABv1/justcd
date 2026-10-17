@@ -25,6 +25,8 @@ jobs:
         run: sh scripts/check-backend-runtime.sh docker justcd-backend:local
       - name: Build frontend for Compose installation
         run: docker build --pull -t justcd-frontend:local -f services/frontend/Dockerfile services/frontend
+      - name: Build documentation for Compose installation
+        run: docker build --pull -t justcd-docs:local -f services/docs/Dockerfile services/docs
       - name: Check Compose startup and database persistence
         run: bash scripts/check-compose.sh
 
@@ -59,3 +61,21 @@ jobs:
           path: artifacts/e2e/
           if-no-files-found: ignore
           retention-days: 7
+
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: services/docs
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Install pnpm
+        run: npm install --global pnpm@12.4.2
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Validate documentation
+        run: pnpm check:links && pnpm lint && pnpm typecheck && pnpm build

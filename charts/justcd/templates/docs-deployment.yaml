@@ -1,0 +1,97 @@
+{{- if .Values.docs.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "justcd.fullname" . }}-docs
+  labels:
+    {{- include "justcd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: docs
+spec:
+  replicas: {{ .Values.docs.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "justcd.selectorLabels" (dict "root" . "component" "docs") | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.docs.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "justcd.selectorLabels" (dict "root" . "component" "docs") | nindent 8 }}
+    spec:
+      automountServiceAccountToken: {{ .Values.docs.automountServiceAccountToken }}
+      {{- with .Values.docs.serviceAccountName }}
+      serviceAccountName: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.docs.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.docs.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.docs.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.docs.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.docs.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.docs.extraVolumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: docs
+          image: "{{ .Values.docs.image.repository }}:{{ default .Chart.AppVersion .Values.docs.image.tag }}"
+          imagePullPolicy: {{ .Values.docs.image.pullPolicy }}
+          {{- with .Values.docs.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.docs.extraVolumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.docs.service.port }}
+              protocol: TCP
+          env:
+            - name: PORT
+              value: {{ .Values.docs.service.port | quote }}
+            - name: HOSTNAME
+              value: 0.0.0.0
+            {{- with .Values.docs.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.docs.resources | nindent 12 }}
+{{- end }}

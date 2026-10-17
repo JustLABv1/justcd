@@ -487,6 +487,11 @@ func (s *Server) handleClosedReview(ctx context.Context, connection store.Source
 		return
 	}
 	if len(managed) == 0 && (preview.Health == "decommissioned" || (preview.LastSyncedRevision == "" && !preview.Decommissioning)) {
+		if err := s.cleanupManagedApplicationNamespaces(ctx, preview); err != nil {
+			result.Phase = "cleanup_pending"
+			result.Error = "namespace cleanup is waiting: " + err.Error()
+			return
+		}
 		if len(preview.Namespaces) != 1 {
 			result.Phase = "failed"
 			result.Error = "preview namespace binding is missing"

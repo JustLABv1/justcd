@@ -393,6 +393,10 @@ func (s *Server) deleteApplication(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusAccepted, map[string]any{"deleted": false, "plan": toPlanView(record)})
 			return
 		}
+		if err := s.cleanupManagedApplicationNamespaces(r.Context(), app); err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 	}
 	orphaned, err := s.Store.DeleteApplicationKeepingResources(r.Context(), app.ID, policy == "delete")
 	if err != nil {

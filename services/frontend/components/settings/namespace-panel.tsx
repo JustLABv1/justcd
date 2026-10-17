@@ -359,6 +359,7 @@ function PermissionReportDetails({ report }: { report: KubernetesPermissionRepor
         Checks ask Kubernetes whether the credential is allowed to act and do not touch deployment resources.
         <span className="block font-mono text-xs">Uses SelfSubjectAccessReview</span>
       </p>
+      {report.deploymentCredentials && <div className="space-y-1 text-sm text-muted-foreground"><p className="font-medium text-foreground">Short-lived namespace credentials · {report.deploymentCredentials.serviceAccount}</p><p>Provisioning: {report.deploymentCredentials.provisioning === "automatic" ? `automatic · role ${report.deploymentCredentials.deploymentClusterRole}` : "administrator-prepared"} · namespace deletion {report.deploymentCredentials.deleteNamespaces ? "limited to exclusively owned namespaces after app cleanup" : "disabled"}</p><p>Credential availability: {report.deploymentCredentials.issuance === "credential-available" ? "Verified using an issued token" : "Unverified"} · requested lifetime {report.deploymentCredentials.requestedLifetimeSeconds} seconds</p><p>Deployment permissions: {statusLabel(report.deploymentCredentials.deployment)}</p></div>}
       {report.failure && (
         <div className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm">
           <p className="font-medium">{report.failure.category}: {report.failure.message}</p>

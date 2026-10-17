@@ -60,9 +60,14 @@ func (s *Server) getClusterAgent(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	environments, err := s.Store.ListManagedEnvironments(r.Context(), a.ClusterID, workspace)
+	if err != nil {
+		writeStoreError(w, "could not load namespace provisioning state")
+		return
+	}
 	a.Profiles = profiles
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, 200, map[string]any{"activity": items, "summary": summary, "mode": "agent", "online": !a.Revoked && a.LastSeenAt != nil && time.Since(*a.LastSeenAt) < time.Minute, "agent": a})
+	writeJSON(w, 200, map[string]any{"environments": environments, "activity": items, "summary": summary, "mode": "agent", "online": !a.Revoked && a.LastSeenAt != nil && time.Since(*a.LastSeenAt) < time.Minute, "agent": a})
 }
 func (s *Server) enrollClusterAgent(w http.ResponseWriter, r *http.Request) {
 	if !s.agentOwner(w, r) {
@@ -126,10 +131,18 @@ func (s *Server) agentEnroll(w http.ResponseWriter, r *http.Request) {
 	for i := range e.Profiles {
 		p := &e.Profiles[i]
 		p.TokenFile = ""
+		if err := agentprotocol.ValidateDeploymentProfile(*p); err != nil {
+			writeError(w, 400, "invalid managed deployment credential policy")
+			return
+		}
 		if !agentProfilePattern.MatchString(p.Name) || len(p.WorkspaceIDs) > 100 || len(p.Namespaces) > 100 {
 			writeError(w, 400, "invalid agent profile")
 			return
 		}
+	}
+	if err := agentprotocol.ValidateDeploymentProfiles(e.Profiles); err != nil {
+		writeError(w, 400, "managed deployment profiles overlap or have invalid policy")
+		return
 	}
 	token, hash, err := security.RandomToken(32)
 	if err != nil {

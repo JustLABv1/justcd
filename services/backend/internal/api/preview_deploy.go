@@ -113,7 +113,11 @@ func (s *Server) previewApplication(ctx context.Context, production store.Applic
 	} else if err != nil {
 		return store.Application{}, "", err
 	}
-	preview := store.Application{ID: id, WorkspaceID: production.WorkspaceID, Name: id, SourceID: production.SourceID, Revision: pullRequestRef(connection.Provider, review.Number), ManifestPath: production.ManifestPath, Renderer: production.Renderer, KustomizeHelmEnabled: production.KustomizeHelmEnabled, KustomizeNamespaceOverride: production.Renderer == "kustomize", ClusterID: production.ClusterID, Namespaces: []store.NamespaceBinding{binding}, SyncPolicy: "manual", PollSeconds: 86400, RetryPolicy: store.DefaultRetryPolicy(), Health: "unknown"}
+	provisioning, err := kube.AgentNamespaceProvisioning(ctx, s.Store, production.ClusterID, production.WorkspaceID)
+	if err != nil {
+		return store.Application{}, "", err
+	}
+	preview := store.Application{ID: id, WorkspaceID: production.WorkspaceID, Name: id, SourceID: production.SourceID, Revision: pullRequestRef(connection.Provider, review.Number), ManifestPath: production.ManifestPath, Renderer: production.Renderer, KustomizeHelmEnabled: production.KustomizeHelmEnabled, KustomizeNamespaceOverride: production.Renderer == "kustomize", ClusterID: production.ClusterID, Namespaces: []store.NamespaceBinding{binding}, CreateNamespaces: provisioning, SyncPolicy: "manual", PollSeconds: 86400, RetryPolicy: store.DefaultRetryPolicy(), Health: "unknown"}
 	if p.ManifestPath != "" {
 		preview.ManifestPath = p.ManifestPath
 	}
@@ -312,27 +316,54 @@ func (s *Server) ensurePreviewNamespace(ctx context.Context, connection store.So
 	if err != nil {
 		return err
 	}
-	if cluster.ClusterScopeCredential == nil && !kube.AgentClusterScope(ctx, s.Store, cluster.ID) {
-		return errors.New("preview namespace creation requires a cluster-scope credential")
-	}
-	client, err := kube.ForWorkspaceBinding(ctx, s.Store, s.EncryptionKey, cluster, cluster.ClusterScopeCredential, true, app.WorkspaceID, namespace)
+	labels := map[string]any{"justcd.io/preview-connection": connection.ID, "justcd.io/preview-number": strconv.Itoa(review.Number)}
+	var client *kube.Clients
+	provisioning, err := kube.AgentNamespaceProvisioning(ctx, s.Store, app.ClusterID, app.WorkspaceID)
 	if err != nil {
 		return err
 	}
-	labels := map[string]any{"justcd.io/preview-connection": connection.ID, "justcd.io/preview-number": strconv.Itoa(review.Number)}
-	resource := client.Dynamic.Resource(namespacesGVR)
-	existing, err := resource.Get(ctx, namespace, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		obj := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": namespace, "labels": labels}}}
-		if _, err = resource.Create(ctx, obj, metav1.CreateOptions{}); err != nil {
+	if provisioning {
+		id, _ := previewIdentity(connection.ID, review.Number, connection.PreviewProfile.NamespacePrefix)
+		if review.PreviewApplicationID != nil {
+			id = *review.PreviewApplicationID
+		}
+		preview, loadErr := s.Store.ApplicationByID(ctx, id)
+		if loadErr != nil || preview.WorkspaceID != app.WorkspaceID || preview.ClusterID != app.ClusterID || len(preview.Namespaces) != 1 || preview.Namespaces[0].Namespace != namespace {
+			return errors.New("managed preview environment binding does not match the authorized preview")
+		}
+		if !preview.CreateNamespaces {
+			return errors.New("managed preview must explicitly enable namespace creation")
+		}
+		if _, err = kube.EnsureApplicationNamespace(ctx, s.Store, s.EncryptionKey, preview, namespace); err != nil {
 			return err
 		}
-	} else if err != nil {
-		return err
-	} else {
-		if existing.GetLabels()["justcd.io/preview-connection"] != connection.ID || existing.GetLabels()["justcd.io/preview-number"] != strconv.Itoa(review.Number) {
-			return errors.New("preview namespace is owned by another deployment")
+		client, err = kube.ForWorkspaceBinding(ctx, s.Store, s.EncryptionKey, cluster, nil, false, app.WorkspaceID, namespace)
+		if err != nil {
+			return err
 		}
+	} else {
+		if cluster.ClusterScopeCredential == nil && !kube.AgentClusterScope(ctx, s.Store, cluster.ID) {
+			return errors.New("preview namespace creation requires a cluster-scope credential")
+		}
+		client, err = kube.ForWorkspaceBinding(ctx, s.Store, s.EncryptionKey, cluster, cluster.ClusterScopeCredential, true, app.WorkspaceID, namespace)
+		if err != nil {
+			return err
+		}
+		resource := client.Dynamic.Resource(namespacesGVR)
+		existing, err := resource.Get(ctx, namespace, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			obj := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": namespace, "labels": labels}}}
+			if _, err = resource.Create(ctx, obj, metav1.CreateOptions{}); err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		} else {
+			if existing.GetLabels()["justcd.io/preview-connection"] != connection.ID || existing.GetLabels()["justcd.io/preview-number"] != strconv.Itoa(review.Number) {
+				return errors.New("preview namespace is owned by another deployment")
+			}
+		}
+
 	}
 	quota := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "ResourceQuota", "metadata": map[string]any{"name": "justcd-preview-quota", "namespace": namespace, "labels": labels}, "spec": map[string]any{"hard": map[string]any{"requests.cpu": connection.PreviewProfile.QuotaCPU, "requests.memory": connection.PreviewProfile.QuotaMemory, "limits.cpu": connection.PreviewProfile.QuotaCPU, "limits.memory": connection.PreviewProfile.QuotaMemory}}}}
 	quotas := client.Dynamic.Resource(resourceQuotasGVR).Namespace(namespace)
@@ -360,6 +391,17 @@ func (s *Server) removePreviewNamespace(ctx context.Context, connection store.So
 	cluster, err := s.Store.ClusterByID(ctx, app.ClusterID)
 	if err != nil {
 		return err
+	}
+	if environment, lookupErr := s.Store.ManagedEnvironmentForNamespace(ctx, app.ClusterID, namespace); lookupErr == nil {
+		if environment.WorkspaceID != app.WorkspaceID {
+			return errors.New("managed preview namespace belongs to another workspace")
+		}
+		if environment.Phase == "deleted" || environment.Phase == "retained" {
+			return nil
+		}
+		return errors.New("managed namespace cleanup must finish through its ownership lifecycle")
+	} else if !errors.Is(lookupErr, sql.ErrNoRows) {
+		return lookupErr
 	}
 	client, err := kube.ForWorkspaceBinding(ctx, s.Store, s.EncryptionKey, cluster, cluster.ClusterScopeCredential, true, app.WorkspaceID, namespace)
 	if err != nil {

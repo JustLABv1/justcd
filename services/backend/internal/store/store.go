@@ -1778,6 +1778,13 @@ func (s *Store) DeleteApplicationKeepingResources(ctx context.Context, id string
 	if previewSlots > 0 {
 		return 0, errors.New("application has active pull request previews")
 	}
+	var namespaceDeleting bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM managed_namespace_environments WHERE owner_application_id=$1 AND phase='deleting')`, id).Scan(&namespaceDeleting); err != nil {
+		return 0, err
+	}
+	if namespaceDeleting {
+		return 0, errors.New("namespace deletion is in progress; complete cleanup before removing the application")
+	}
 	if requireEmpty && managed > 0 {
 		return 0, errors.New("application still manages Kubernetes resources")
 	}
@@ -1818,6 +1825,13 @@ func (s *Store) CancelApplicationDecommission(ctx context.Context, id string) er
 	var active bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM operations WHERE application_id=$1 AND status IN ('queued','running'))`, id).Scan(&active); err != nil {
 		return err
+	}
+	var namespaceCleanup bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM managed_namespace_environments WHERE owner_application_id=$1 AND phase IN ('deleting','deleted'))`, id).Scan(&namespaceCleanup); err != nil {
+		return err
+	}
+	if namespaceCleanup {
+		return errors.New("namespace deletion has started; finish application cleanup instead of cancelling decommission")
 	}
 	if active {
 		return errors.New("application is currently syncing")

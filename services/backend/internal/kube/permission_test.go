@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/justlab/justcd/services/backend/internal/agentprotocol"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -219,5 +221,19 @@ func TestReadOnlyClusterChecksCanUseEffectiveNamespaceCredential(t *testing.T) {
 		if action.GetResource().Resource != "selfsubjectaccessreviews" {
 			t.Fatalf("read-only check mutated resources: %v", action)
 		}
+	}
+}
+
+func TestManagedPermissionsDistinguishCredentialAvailabilityAndWorkloadAccess(t *testing.T) {
+	client := permissionTestClients(t, func(_, _, _, _ string) bool { return false })
+	client.DeploymentCredentials = &agentprotocol.DeploymentCredentials{LifetimeSeconds: 600}
+	report := CheckPermissions(context.Background(), client, "dev", nil)
+	if report.Status != "partial" || report.DeploymentCredentials == nil || report.DeploymentCredentials.Issuance != "credential-available" || report.DeploymentCredentials.Deployment != "partial" || report.DeploymentCredentials.Provisioning != "administrator-prepared" {
+		t.Fatal("issuance availability was conflated with workload authorization")
+	}
+	client.Discovery = permissionTestDiscovery{versionErr: &AgentError{Code: "cluster.agent_credential_unavailable", Message: "redacted issuance failure"}}
+	report = CheckPermissions(context.Background(), client, "dev", nil)
+	if report.Status != "failed" || report.DeploymentCredentials.Issuance != "unverified" || report.Failure == nil || report.Failure.Category != "authentication" || !strings.Contains(report.Failure.Remediation, "TokenRequest") {
+		t.Fatal("credential preparation failure lacks a safe remediation")
 	}
 }

@@ -409,6 +409,9 @@ and install the [agent Helm chart](charts/justcd-agent/README.md). Plans and
 approvals remain central; Kubernetes credentials and scope enforcement stay in
 the target cluster. See [installation and recovery](docs/cluster-agents.md).
 
+To replace an existing cluster-wide token with short-lived namespace credentials,
+follow the [production migration and rollback guide](docs/migrate-to-managed-credentials.md).
+
 Production administrators: see the [operations and disaster-recovery runbook](docs/production-operations.md) for tested backup/restore, scoped RBAC, capacity and upgrade procedures.
 
 ### Deployment policy guardrails

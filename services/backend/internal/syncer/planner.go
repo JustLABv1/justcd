@@ -193,6 +193,7 @@ type planInput struct {
 	Bindings           []core.Binding
 	NamespaceBindings  map[string]store.NamespaceBinding
 	NamespaceClients   map[string]*kube.Clients
+	ManagedNamespaces  map[string]bool
 	ClusterScopeClient *kube.Clients
 	Mapper             *kube.Clients
 	IgnoreRules        []store.ApplicationIgnoreRule
@@ -937,7 +938,7 @@ func (s *Service) loadPlanInput(ctx context.Context, app store.Application) (pla
 	if err != nil {
 		return planInput{}, errors.New("application cluster is unavailable")
 	}
-	input := planInput{Application: app, Cluster: cluster, NamespaceBindings: map[string]store.NamespaceBinding{}, NamespaceClients: map[string]*kube.Clients{}}
+	input := planInput{Application: app, Cluster: cluster, NamespaceBindings: map[string]store.NamespaceBinding{}, NamespaceClients: map[string]*kube.Clients{}, ManagedNamespaces: map[string]bool{}}
 	if len(app.Namespaces) == 0 {
 		return planInput{}, &PlanConfigurationError{Source: "cluster", Code: "kubernetes.namespace_binding_missing", Summary: "Application has no namespace bindings.", Remediation: "Bind the application's destination namespace to this workspace, then build a fresh plan."}
 	}
@@ -968,6 +969,11 @@ func (s *Service) loadPlanInput(ctx context.Context, app store.Application) (pla
 		if credentialID == nil {
 			return planInput{}, &PlanConfigurationError{Source: "cluster", Code: "kubernetes.namespace_credential_missing", Summary: fmt.Sprintf("Namespace %q has no Kubernetes credential.", binding.Namespace), Remediation: "Configure a Kubernetes credential on the namespace binding, or a default credential for the workspace and cluster, then build a fresh plan."}
 		}
+		provisioned, provisionErr := kube.EnsureApplicationNamespace(ctx, s.Store, s.EncryptionKey, app, stored.Namespace)
+		if provisionErr != nil {
+			return planInput{}, fmt.Errorf("namespace environment %q: %w", stored.Namespace, provisionErr)
+		}
+		input.ManagedNamespaces[stored.Namespace] = provisioned
 		input.Bindings = append(input.Bindings, core.Binding{ClusterID: cluster.ID, Namespace: stored.Namespace, CredentialRef: *credentialID})
 		client, err := kube.ForWorkspaceBinding(ctx, s.Store, s.EncryptionKey, cluster, credentialID, false, app.WorkspaceID, stored.Namespace)
 		if err != nil {
@@ -975,6 +981,9 @@ func (s *Service) loadPlanInput(ctx context.Context, app store.Application) (pla
 		}
 		input.NamespaceBindings[stored.Namespace] = stored
 		input.NamespaceClients[stored.Namespace] = client
+	}
+	if kube.AgentEnabled(ctx, s.Store, cluster.ID) && !kube.AgentClusterScope(ctx, s.Store, cluster.ID) {
+		cluster.ClusterScopeCredential = nil
 	}
 	if kube.AgentClusterScope(ctx, s.Store, cluster.ID) {
 		a, err := s.Store.ClusterAgent(ctx, cluster.ID)
@@ -1184,7 +1193,7 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 			for page := 0; page < 100; page++ {
 				list, err := resourceInterface.List(ctx, v1.ListOptions{LabelSelector: "justcd.io/application-id=" + input.Application.ID, Limit: 500, Continue: continueToken})
 				if err != nil {
-					if apierrors.IsNotFound(err) && input.Application.CreateNamespaces && namespace != "" {
+					if apierrors.IsNotFound(err) && input.Application.CreateNamespaces && namespace != "" && !input.ManagedNamespaces[namespace] {
 						provisioningClient, clientErr := namespaceProvisioningClient(input, namespace)
 						if clientErr == nil {
 							_, namespaceErr := provisioningClient.Dynamic.Resource(namespaceResource).Get(ctx, namespace, v1.GetOptions{})

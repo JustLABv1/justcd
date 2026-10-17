@@ -226,3 +226,206 @@ func TestCustomKubernetesCredentials(t *testing.T) {
 		t.Fatalf("credential mount count: %d", found)
 	}
 }
+
+func TestManagedCredentialBootstrap(t *testing.T) {
+	args := []string{"template", "audit", "..", "--namespace", "justcd-agent", "--set", "serverUrl=https://justcd.invalid", "--set", "enrollmentSecret=synthetic", "--set", "profiles[0].name=managed", "--set", "profiles[0].workspaceIds[0]=workspace", "--set", "profiles[0].namespaces[0]=dev", "--set", "profiles[0].deploymentCredentials.lifetimeSeconds=600"}
+	data, err := exec.Command("helm", args...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v: %s", err, data)
+	}
+	issuer, deployment, account := false, false, false
+	for _, doc := range strings.Split(string(data), "\n---") {
+		var obj map[string]any
+		if yaml.Unmarshal([]byte(doc), &obj) != nil {
+			continue
+		}
+		metadata, _ := obj["metadata"].(map[string]any)
+		name, _ := metadata["name"].(string)
+		switch obj["kind"] {
+		case "Namespace":
+			t.Fatal("prepared mode must not create namespaces")
+		case "ServiceAccount":
+			if name == "justcd-deployer" {
+				account = true
+				if metadata["namespace"] != "dev" || obj["automountServiceAccountToken"] != false {
+					t.Fatal("unsafe deployment account")
+				}
+			}
+		case "Role":
+			if name == "audit-justcd-agent" {
+				t.Fatal("issuer retained static workload access in managed namespace")
+			}
+			rules := obj["rules"].([]any)
+			if strings.HasSuffix(name, "-issuer") {
+				issuer = true
+				if metadata["namespace"] != "dev" || len(rules) != 2 {
+					t.Fatal("unexpected issuer scope")
+				}
+				for _, raw := range rules {
+					rule := raw.(map[string]any)
+					names := rule["resourceNames"].([]any)
+					if len(names) != 1 || names[0] != "justcd-deployer" {
+						t.Fatal("issuer can select arbitrary accounts")
+					}
+					resource := rule["resources"].([]any)[0]
+					verb := rule["verbs"].([]any)[0]
+					if (resource != "serviceaccounts/token" || verb != "create") && (resource != "serviceaccounts" || verb != "get") {
+						t.Fatal("issuer has extra privilege")
+					}
+				}
+			} else if strings.HasSuffix(name, "-deployment") {
+				deployment = true
+				for _, raw := range rules {
+					rule := raw.(map[string]any)
+					for _, resource := range rule["resources"].([]any) {
+						if resource == "secrets" || resource == "serviceaccounts" || resource == "roles" || resource == "rolebindings" || resource == "*" {
+							t.Fatal("unsafe default deployment role")
+						}
+					}
+				}
+			}
+		case "RoleBinding":
+			role := obj["roleRef"].(map[string]any)["name"].(string)
+			subjects := obj["subjects"].([]any)
+			if len(subjects) != 1 {
+				t.Fatal("unexpected binding subjects")
+			}
+			subject := subjects[0].(map[string]any)
+			if strings.HasSuffix(role, "-deployment") && (subject["name"] != "justcd-deployer" || subject["namespace"] != "dev") {
+				t.Fatal("workload role granted to issuer")
+			}
+			if strings.HasSuffix(role, "-issuer") && (subject["name"] != "audit-justcd-agent" || subject["namespace"] != "justcd-agent") {
+				t.Fatal("wrong issuer binding")
+			}
+		}
+	}
+	if !issuer || !deployment || !account {
+		t.Fatal("bootstrap resources missing")
+	}
+	for _, override := range []string{"profiles[0].namespaces[0]=*", "profiles[0].namespaces[0]=preview-*", "profiles[0].namespaces[0]=default", "profiles[0].namespaces[0]=kube-system", "profiles[0].namespaces[0]=justcd-agent", "profiles[0].clusterScope=true", "profiles[0].deploymentCredentials.lifetimeSeconds=599", "rbac.clusterWide=true", "profiles[0].workspaceIds[1]=other", "managedCredentials.rules[0].apiGroups[0]=*", "managedCredentials.rules[0].apiGroups[0]=rbac.authorization.k8s.io", "managedCredentials.rules[0].resources[0]=serviceaccounts/token", "managedCredentials.rules[0].verbs[0]=impersonate"} {
+		t.Run(override, func(t *testing.T) {
+			if _, err := exec.Command("helm", append(append([]string{}, args...), "--set", override)...).CombinedOutput(); err == nil {
+				t.Fatal("unsafe managed profile accepted")
+			}
+		})
+	}
+	data, err = exec.Command("helm", append(append([]string{}, args...), "--set", "rbac.create=false")...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v: %s", err, data)
+	}
+	if strings.Contains(string(data), "kind: RoleBinding") || strings.Contains(string(data), "name: justcd-deployer") {
+		t.Fatal("external RBAC mode changed prepared resources")
+	}
+}
+
+func TestNamespaceProvisionerRBACAndAdmission(t *testing.T) {
+	args := []string{"template", "audit", "..", "--namespace", "justcd-agent", "--set", "serverUrl=https://justcd.invalid", "--set", "enrollmentSecret=synthetic", "--set", "profiles[0].name=managed", "--set", "profiles[0].workspaceIds[0]=workspace", "--set", "profiles[0].namespaces[0]=preview-*", "--set", "profiles[0].deploymentCredentials.lifetimeSeconds=600", "--set", "profiles[0].deploymentCredentials.provisioning.deploymentClusterRole=approved", "--set", "profiles[0].deploymentCredentials.provisioning.deleteNamespaces=true"}
+	// Lint validates raw template separators before helm template sorts documents.
+	// Keep both checks: sorting can mask whitespace-trimmed document boundaries.
+	lintArgs := append([]string{"lint", ".."}, args[3:]...)
+	if data, err := exec.Command("helm", lintArgs...).CombinedOutput(); err != nil {
+		t.Fatalf("helm lint: %v: %s", err, data)
+	}
+	data, err := exec.Command("helm", args...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v: %s", err, data)
+	}
+	var policy map[string]any
+	roleFound := false
+	for _, doc := range strings.Split(string(data), "\n---") {
+		var obj map[string]any
+		if yaml.Unmarshal([]byte(doc), &obj) != nil {
+			continue
+		}
+		metadata, _ := obj["metadata"].(map[string]any)
+		name, _ := metadata["name"].(string)
+		if obj["kind"] == "Namespace" {
+			t.Fatal("Helm must not own runtime environment namespaces")
+		}
+		if obj["kind"] == "RoleBinding" || obj["kind"] == "Role" {
+			t.Fatal("automatic profile tried to bootstrap a wildcard namespace")
+		}
+		if obj["kind"] == "ClusterRole" && strings.HasSuffix(name, "-provisioner") {
+			roleFound = true
+			for _, raw := range obj["rules"].([]any) {
+				rule := raw.(map[string]any)
+				resource := rule["resources"].([]any)[0].(string)
+				for _, verb := range rule["verbs"].([]any) {
+					if verb == "*" || verb == "escalate" || verb == "impersonate" || verb == "patch" || verb == "update" {
+						t.Fatal("provisioner received unnecessary escalation/write permissions")
+					}
+				}
+				if resource == "secrets" || resource == "roles" || resource == "clusterrolebindings" {
+					t.Fatal("provisioner received unrelated privileges")
+				}
+				if resource == "clusterroles" {
+					names := rule["resourceNames"].([]any)
+					if len(names) != 1 || names[0] != "approved" || rule["verbs"].([]any)[0] != "bind" {
+						t.Fatal("unrestricted role binding privilege")
+					}
+				}
+				if resource == "serviceaccounts/token" {
+					names := rule["resourceNames"].([]any)
+					if len(names) != 1 || names[0] != "justcd-deployer" {
+						t.Fatal("arbitrary account issuance")
+					}
+				}
+			}
+		}
+		if obj["kind"] == "ValidatingAdmissionPolicy" && strings.HasSuffix(name, "-provisioner") {
+			policy = obj["spec"].(map[string]any)
+		}
+	}
+	if !roleFound || policy == nil {
+		t.Fatal("provisioner bootstrap is missing")
+	}
+	env, err := cel.NewEnv(cel.Variable("object", cel.DynType), cel.Variable("oldObject", cel.DynType), cel.Variable("request", cel.DynType), cel.Variable("variables", cel.DynType))
+	must(err)
+	programs := []cel.Program{}
+	for _, raw := range policy["validations"].([]any) {
+		ast, issues := env.Compile(raw.(map[string]any)["expression"].(string))
+		must(issues.Err())
+		program, e := env.Program(ast)
+		must(e)
+		programs = append(programs, program)
+	}
+	cases := []struct {
+		name, resource, subresource, target, account, role, subject string
+		lifetime                                                    int
+		want                                                        bool
+	}{
+		{name: "namespace", resource: "namespaces", target: "preview-12", want: true},
+		{name: "outside prefix", resource: "namespaces", target: "production", want: false},
+		{name: "protected namespace", resource: "namespaces", target: "kube-system", want: false},
+		{name: "deployment account", resource: "serviceaccounts", target: "preview-12", account: "justcd-deployer", want: true},
+		{name: "arbitrary account", resource: "serviceaccounts", target: "preview-12", account: "admin", want: false},
+		{name: "token", resource: "serviceaccounts", subresource: "token", target: "preview-12", account: "justcd-deployer", lifetime: 600, want: true},
+		{name: "long token", resource: "serviceaccounts", subresource: "token", target: "preview-12", account: "justcd-deployer", lifetime: 3600, want: false},
+		{name: "unapproved token", resource: "serviceaccounts", subresource: "token", target: "preview-12", account: "default", lifetime: 600, want: false},
+		{name: "cross namespace token", resource: "serviceaccounts", subresource: "token", target: "production", account: "justcd-deployer", lifetime: 600, want: false},
+		{name: "approved role", resource: "rolebindings", target: "preview-12", role: "approved", subject: "justcd-deployer", want: true},
+		{name: "admin role", resource: "rolebindings", target: "preview-12", role: "cluster-admin", subject: "justcd-deployer", want: false},
+		{name: "foreign subject", resource: "rolebindings", target: "preview-12", role: "approved", subject: "admin", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			object := map[string]any{"metadata": map[string]any{"name": tc.account}, "spec": map[string]any{"expirationSeconds": tc.lifetime}}
+			if tc.resource == "rolebindings" {
+				object["metadata"] = map[string]any{"name": "justcd-deployer"}
+				object["roleRef"] = map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": tc.role}
+				object["subjects"] = []any{map[string]any{"kind": "ServiceAccount", "name": tc.subject, "namespace": tc.target}}
+			}
+			request := map[string]any{"resource": map[string]any{"resource": tc.resource}, "operation": "CREATE", "subResource": tc.subresource, "namespace": tc.target, "name": tc.account}
+			allowed := true
+			for _, program := range programs {
+				out, _, e := program.Eval(map[string]any{"object": object, "oldObject": nil, "request": request, "variables": map[string]any{"target": tc.target}})
+				if e != nil || out.Value() != true {
+					allowed = false
+				}
+			}
+			if allowed != tc.want {
+				t.Fatalf("admission allowed=%t, want %t", allowed, tc.want)
+			}
+		})
+	}
+}

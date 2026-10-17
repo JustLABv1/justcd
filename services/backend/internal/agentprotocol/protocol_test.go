@@ -86,3 +86,47 @@ func TestWildcardNamespacesAllowConnectionChecksAndKeepBoundaries(t *testing.T) 
 		})
 	}
 }
+
+func TestManagedProfilePolicy(t *testing.T) {
+	base := Profile{Name: "managed", WorkspaceIDs: []string{"w"}, Namespaces: []string{"dev"}, DeploymentCredentials: &DeploymentCredentials{LifetimeSeconds: 600}}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Profile)
+	}{
+		{"cluster scope", func(p *Profile) { p.ClusterScope = true }},
+		{"multiple workspaces", func(p *Profile) { p.WorkspaceIDs = []string{"w", "other"} }},
+		{"no namespaces", func(p *Profile) { p.Namespaces = nil }},
+		{"wildcard", func(p *Profile) { p.Namespaces = []string{"*"} }},
+		{"prefix", func(p *Profile) { p.Namespaces = []string{"preview-*"} }},
+		{"invalid name", func(p *Profile) { p.Namespaces = []string{"dev/prod"} }},
+		{"system", func(p *Profile) { p.Namespaces = []string{"kube-system"} }},
+		{"default", func(p *Profile) { p.Namespaces = []string{"default"} }},
+		{"local protected", func(p *Profile) { p.DeniedNamespaces = []string{"dev"} }},
+		{"short lifetime", func(p *Profile) { p.DeploymentCredentials = &DeploymentCredentials{LifetimeSeconds: 599} }},
+		{"long lifetime", func(p *Profile) { p.DeploymentCredentials = &DeploymentCredentials{LifetimeSeconds: 3601} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := base
+			tc.mutate(&p)
+			if ValidateDeploymentProfile(p) == nil {
+				t.Fatal("invalid managed profile accepted")
+			}
+		})
+	}
+	if err := ValidateDeploymentProfile(base); err != nil {
+		t.Fatal(err)
+	}
+	for _, other := range []Profile{
+		{Name: "other", Namespaces: []string{"dev"}},
+		{Name: "other", Namespaces: []string{"*"}},
+		{Name: "other", Namespaces: []string{"d-*", "dev"}},
+		{Name: "other", ClusterScope: true},
+	} {
+		if ValidateDeploymentProfiles([]Profile{base, other}) == nil {
+			t.Fatal("overlapping profile accepted")
+		}
+	}
+	if err := ValidateDeploymentProfiles([]Profile{base, {Name: "other", Namespaces: []string{"prod", "devx"}}}); err != nil {
+		t.Fatal(err)
+	}
+}

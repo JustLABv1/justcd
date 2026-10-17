@@ -68,6 +68,9 @@ func bootstrapNamespace(ctx context.Context, input planInput, name string) (bool
 	if _, ok := input.NamespaceBindings[name]; !ok {
 		return false, fmt.Errorf("namespace %q is not bound to this workspace", name)
 	}
+	if input.ManagedNamespaces[name] {
+		return false, nil
+	}
 	// Use the workload credential for OpenShift so project-admin belongs to the
 	// account that will plan and deploy, not a separate cluster-scope account.
 	client := input.NamespaceClients[name]

@@ -49,15 +49,27 @@ type ClusterScopePermissions struct {
 }
 
 type PermissionReport struct {
-	Status        string                   `json:"status"`
-	Namespace     string                   `json:"namespace"`
-	ServerVersion string                   `json:"serverVersion,omitempty"`
-	CanReadPods   bool                     `json:"canReadPods"`
-	CheckedAt     time.Time                `json:"checkedAt,omitempty"`
-	Checks        []PermissionCheck        `json:"checks"`
-	ClusterScope  *ClusterScopePermissions `json:"clusterScope,omitempty"`
-	Suggestions   RBACSuggestions          `json:"suggestions"`
-	Failure       *PermissionFailure       `json:"failure,omitempty"`
+	DeploymentCredentials *DeploymentCredentialReport `json:"deploymentCredentials,omitempty"`
+	Status                string                      `json:"status"`
+	Namespace             string                      `json:"namespace"`
+	ServerVersion         string                      `json:"serverVersion,omitempty"`
+	CanReadPods           bool                        `json:"canReadPods"`
+	CheckedAt             time.Time                   `json:"checkedAt,omitempty"`
+	Checks                []PermissionCheck           `json:"checks"`
+	ClusterScope          *ClusterScopePermissions    `json:"clusterScope,omitempty"`
+	Suggestions           RBACSuggestions             `json:"suggestions"`
+	Failure               *PermissionFailure          `json:"failure,omitempty"`
+}
+
+type DeploymentCredentialReport struct {
+	Mode                     string `json:"mode"`
+	Provisioning             string `json:"provisioning"`
+	Issuance                 string `json:"issuance"`
+	Deployment               string `json:"deployment"`
+	ServiceAccount           string `json:"serviceAccount"`
+	RequestedLifetimeSeconds int64  `json:"requestedLifetimeSeconds"`
+	DeleteNamespaces         bool   `json:"deleteNamespaces"`
+	DeploymentClusterRole    string `json:"deploymentClusterRole,omitempty"`
 }
 
 // FailedPermissionReport returns a redacted report when a client cannot be built
@@ -110,6 +122,14 @@ func CheckPermissions(ctx context.Context, namespaceClient *Clients, namespace s
 		Namespace: namespace,
 		Checks:    []PermissionCheck{},
 	}
+	if policy := namespaceClient.DeploymentCredentials; policy != nil {
+		report.DeploymentCredentials = &DeploymentCredentialReport{Mode: "agent-short-lived", Provisioning: "administrator-prepared", Issuance: "unverified", Deployment: "unverified", ServiceAccount: "justcd-deployer", RequestedLifetimeSeconds: policy.LifetimeSeconds}
+		if policy.Provisioning != nil {
+			report.DeploymentCredentials.Provisioning = "automatic"
+			report.DeploymentCredentials.DeleteNamespaces = policy.Provisioning.DeleteNamespaces
+			report.DeploymentCredentials.DeploymentClusterRole = policy.Provisioning.DeploymentClusterRole
+		}
+	}
 
 	version, err := namespaceClient.Discovery.ServerVersion()
 	if err != nil {
@@ -119,6 +139,11 @@ func CheckPermissions(ctx context.Context, namespaceClient *Clients, namespace s
 		return report
 	}
 	report.ServerVersion = version.GitVersion
+	if report.DeploymentCredentials != nil {
+		// Even API discovery used the issued credential. This proves a usable
+		// token is available; the agent may have reused its expiry-aware cache.
+		report.DeploymentCredentials.Issuance = "credential-available"
+	}
 	// Access reviews use explicit resource names, so fetching every group's
 	// resource schema adds a large agent queue burst without validating RBAC.
 	if _, err := namespaceClient.Discovery.ServerGroups(); err != nil {
@@ -141,6 +166,9 @@ func CheckPermissions(ctx context.Context, namespaceClient *Clients, namespace s
 	}
 
 	report.Status = summarizeChecks(report.Checks, report.Failure != nil)
+	if report.DeploymentCredentials != nil {
+		report.DeploymentCredentials.Deployment = report.Status
+	}
 	report.Suggestions = permissionSuggestions(namespace, report.Checks, report.ClusterScope)
 	return report
 }
@@ -350,6 +378,12 @@ func ClassifyPermissionTestError(err error) PermissionFailure {
 	}
 	var agent *AgentError
 	if errors.As(err, &agent) {
+		if agent.ErrorCode() == "cluster.agent_provisioning_failed" || agent.ErrorCode() == "cluster.agent_environment_unavailable" {
+			return PermissionFailure{Code: agent.ErrorCode(), Category: "kubernetes", Message: "The namespace environment is not ready for deployment.", Remediation: "Review the environment phase in Agent connection. Fix local provisioning policy or bootstrap RBAC, then refresh the application plan; complete namespace deletion before redeploying."}
+		}
+		if agent.ErrorCode() == "cluster.agent_credential_unavailable" {
+			return PermissionFailure{Code: agent.ErrorCode(), Category: "authentication", Message: "The agent could not obtain a usable namespace deployment credential.", Remediation: "Prepare the namespace's justcd-deployer ServiceAccount and named-account TokenRequest issuer RBAC; check the local profile, token audience, and Kubernetes API, then retry."}
+		}
 		if agent.ErrorCode() == "cluster.agent_scope_denied" {
 			return PermissionFailure{Code: agent.ErrorCode(), Category: "authorization", Message: "The cluster agent's local profile does not allow this access test.", Remediation: "Check the agent profile's workspace, namespace, and API permissions, then rerun the self-test."}
 		}

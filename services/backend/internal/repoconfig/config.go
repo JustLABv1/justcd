@@ -56,6 +56,7 @@ type Definition struct {
 		} `json:"source"`
 		Destination struct {
 			CreateNamespaces bool   `json:"createNamespaces,omitempty"`
+			CreateNamespace  *bool  `json:"createNamespace,omitempty"`
 			Cluster          string `json:"cluster"`
 			Namespace        string `json:"namespace"`
 		} `json:"destination"`
@@ -139,6 +140,26 @@ func Discover(root string) ([]Definition, error) {
 		}
 		if err := store.ValidateApplicationLabels(d.Metadata.Labels); err != nil {
 			return fail(fmt.Errorf("metadata.labels: %w", err))
+		}
+		if alias := d.Spec.Destination.CreateNamespace; alias != nil {
+			var presence struct {
+				Spec struct {
+					Destination struct {
+						Plural *bool `json:"createNamespaces"`
+					} `json:"destination"`
+				} `json:"spec"`
+			}
+			if err := yaml.Unmarshal(data, &presence); err != nil {
+				return fail(err)
+			}
+			if plural := presence.Spec.Destination.Plural; plural != nil && *plural != *alias {
+				return fail(fmt.Errorf("createNamespace and createNamespaces disagree"))
+			}
+			if d.Spec.Destination.CreateNamespaces && !*alias {
+				return fail(fmt.Errorf("createNamespace and createNamespaces disagree"))
+			}
+			d.Spec.Destination.CreateNamespaces = *alias
+			d.Spec.Destination.CreateNamespace = nil
 		}
 		identity := d.Spec.Destination.Cluster + "\x00" + d.Metadata.Name
 		if names[identity] {

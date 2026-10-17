@@ -311,6 +311,10 @@ moving `ghcr.io/justlabv1/justcd:docs` image; pin `docs.image.tag` to a publishe
 `docs-vX.Y.Z` release for reproducible deployments. The image becomes available
 with the first release containing this service.
 
+Set top-level `docsUrl` to the browser-facing docs origin (for example,
+`https://docs.justcd.example.com`) so the frontend Documentation link opens the
+deployed site. Without it, the link opens the versioned source on GitHub.
+
 `docs.service.port` defaults to 3000. Enable `docs.ingress.enabled` and configure
 `docs.ingress.hosts`, `className`, annotations, and TLS for a dedicated hostname.
 The service serves at `/`; path-prefix hosting below `/docs` is not supported by

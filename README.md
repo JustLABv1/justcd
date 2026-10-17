@@ -35,7 +35,8 @@ alongside the control plane:
 docker compose --profile docs up -d --wait
 ```
 
-Open `http://localhost:3001`. Docs need no database, credentials, or backend and
+Open `http://localhost:3001` or use **Documentation** in the frontend sidebar.
+Set `JUSTCD_DOCS_URL` to your docs hostname for server deployments. Docs need no database, credentials, or backend and
 can also run alone: `docker compose --profile docs up -d --wait docs`.
 Release images use `ghcr.io/justlabv1/justcd:docs` and `:docs-vX.Y.Z` tags.
 Until a release containing the service is published, build this checkout:

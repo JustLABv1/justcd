@@ -72,6 +72,8 @@ spec:
               value: {{ .Values.frontend.service.port | quote }}
             - name: HOSTNAME
               value: 0.0.0.0
+            - name: JUSTCD_DOCS_URL
+              value: {{ .Values.docsUrl | quote }}
             - name: JUSTCD_API_URL
               value: "http://{{ include "justcd.fullname" . }}-backend:{{ .Values.backend.service.port }}"
             {{- with .Values.frontend.extraEnv }}

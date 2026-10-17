@@ -3,6 +3,8 @@ fullnameOverride: ""
 
 # The browser-facing origin, including scheme. Also used for OIDC callbacks.
 publicUrl: ""
+# Browser-facing docs origin; empty falls back to the versioned source on GitHub.
+docsUrl: ""
 cookieSecure: true
 sessionLifetime: 12h
 

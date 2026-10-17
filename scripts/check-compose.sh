@@ -37,6 +37,7 @@ JUSTCD_COOKIE_SECURE=false
 JUSTCD_BIND_ADDRESS=127.0.0.1
 JUSTCD_PORT=0
 JUSTCD_DOCS_PORT=0
+JUSTCD_DOCS_URL=https://docs.example.invalid
 EOF
 cat > "$scratch/images.yaml" <<'EOF'
 services:
@@ -65,6 +66,20 @@ origin="http://$address"
 curl --fail --silent --show-error "$origin/healthz" > /dev/null
 curl --fail --silent --show-error "$origin/api/v1/health" > /dev/null
 curl --fail --silent --show-error "$origin/signup" > /dev/null
+# The frontend resolves the public docs destination from runtime configuration.
+curl --silent --show-error --dump-header "$scratch/docs-redirect.headers" \
+  --output /dev/null "$origin/docs/guides/repository-applications"
+python3 - "$scratch/docs-redirect.headers" <<'PYDOCS'
+import email.parser
+import pathlib
+import sys
+status, headers = pathlib.Path(sys.argv[1]).read_text().split('\n', 1)
+assert '307' in status, status
+headers = email.parser.Parser().parsestr(headers)
+assert headers['Location'] == 'https://docs.example.invalid/guides/repository-applications'
+assert headers['Cache-Control'] == 'no-store'
+PYDOCS
+
 curl --fail --silent --show-error "$origin/api/v1/auth/setup" \
   | python3 -c 'import json,sys; assert json.load(sys.stdin)["signupAvailable"] is True'
 

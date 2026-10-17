@@ -8,6 +8,20 @@ The service uses Fumadocs and Next.js with a standalone Node runtime. It serves 
 Documentation content is public to anyone who can reach the service; use your reverse
 proxy's access controls if the installation should be private.
 
+## Open docs from JustCD
+
+Use **Documentation** in the desktop sidebar or **Docs** in the mobile header and
+sign-in screen. Links open in a new tab. Configure the frontend's runtime environment
+variable `JUSTCD_DOCS_URL` with the browser-facing docs origin, such as
+`https://docs.justcd.example.com`. Use a public hostname reachable by users, not the
+internal Compose service address `http://docs:3000`.
+
+Compose defaults this setting to `http://localhost:3001`; change it for a server or
+if you change `JUSTCD_DOCS_PORT`. For Helm, set the top-level `docsUrl` value alongside
+`docs.enabled` and your docs Ingress host. Recreate the frontend after changing the
+setting; its image does not need rebuilding. Without a configured URL, frontend
+links open the corresponding versioned content on GitHub.
+
 ## Docker Compose
 
 From the repository root, after configuring `.env`:
@@ -47,6 +61,7 @@ plane is stopped. They do not expose or proxy the JustCD API.
 Enable the optional service in the [Helm installation](/getting-started/helm):
 
 ```yaml
+docsUrl: https://docs.justcd.example.com
 docs:
   enabled: true
   image:

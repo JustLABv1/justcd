@@ -1,5 +1,6 @@
 "use client"
 
+import { DocumentationLink } from "@/components/documentation-link"
 import Link from "next/link"
 import type { ReactNode } from "react"
 import { LogoMark } from "@/components/logo"
@@ -10,7 +11,7 @@ export function AuthShell({ eyebrow, title, description, children }: { eyebrow: 
   return <main className={styles.scene}>
     <header className={styles.header}>
       <Link href="/login" className={styles.brand} aria-label="JustCD sign in"><LogoMark className={styles.logo} />JustCD<span className={styles.brandCaption}>continuous delivery</span></Link>
-      <ThemePicker />
+      <div className="flex items-center gap-2"><DocumentationLink compact /><ThemePicker /></div>
     </header>
     <div className={styles.backdrop} aria-hidden="true">
       <div className={styles.atmosphere} />

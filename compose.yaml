@@ -59,6 +59,7 @@ services:
     environment:
       JUSTCD_ENV: ${JUSTCD_ENV:-development}
       JUSTCD_API_URL: http://backend:8080
+      JUSTCD_DOCS_URL: ${JUSTCD_DOCS_URL:-http://localhost:3001}
       PORT: "3000"
       HOSTNAME: 0.0.0.0
     ports:

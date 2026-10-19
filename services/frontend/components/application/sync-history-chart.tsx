@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useId, useState } from "react"
+import { useId } from "react"
 import { Bar, BarChart, XAxis, YAxis } from "recharts"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -14,8 +14,8 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Disclosure } from "@/components/ui/collapsible"
 import { ErrorDetailsButton } from "@/components/error-details"
-import { api } from "@/lib/api"
-import { summarizeSyncHistory, type SyncHistory } from "@/lib/sync-history"
+import { summarizeSyncHistory } from "@/lib/sync-history"
+import { useSyncHistory, type SyncHistoryState } from "@/hooks/use-sync-history"
 
 const config = {
   succeeded: { label: "Succeeded", color: "var(--success)" },
@@ -27,54 +27,33 @@ const outcomes = ["succeeded", "failed", "cancelled", "active"] as const
 
 export function SyncHistoryChart({
   applicationID,
+  workspaceID,
   revision,
   onViewActivity,
 }: {
-  applicationID: string
-  revision: string
-  onViewActivity: () => void
+  revision?: string
+  onViewActivity?: () => void
+} & (
+  | { applicationID: string; workspaceID?: never }
+  | { workspaceID: string; applicationID?: never }
+)) {
+  const state = useSyncHistory(
+    workspaceID ? "workspaces" : "applications",
+    workspaceID ?? applicationID,
+    revision
+  )
+  return <SyncHistoryChartView state={state} onViewActivity={onViewActivity} />
+}
+
+export function SyncHistoryChartView({
+  state,
+  onViewActivity,
+}: {
+  state: SyncHistoryState
+  onViewActivity?: () => void
 }) {
-  const [range, setRange] = useState<"24h" | "7d">("24h")
-  const [refresh, setRefresh] = useState(0)
-  const requestKey = `${applicationID}:${range}:${refresh}:${revision}`
-  const [response, setResult] = useState<{
-    key: string
-    history?: SyncHistory
-    error?: unknown
-    loading: boolean
-  }>({ key: "", loading: true })
-  const result =
-    response.key === requestKey
-      ? response
-      : { loading: true, history: undefined, error: undefined }
+  const { result, range, setRange, retry } = state
   const patternID = useId().replace(/:/g, "")
-  useEffect(() => {
-    const controller = new AbortController()
-    let loading = false
-    async function load() {
-      if (loading) return
-      loading = true
-      try {
-        const history = await api<SyncHistory>(
-          `/api/v1/applications/${encodeURIComponent(applicationID)}/sync-history?range=${range}`,
-          { signal: controller.signal }
-        )
-        if (!controller.signal.aborted)
-          setResult({ key: requestKey, history, loading: false })
-      } catch (error) {
-        if (!controller.signal.aborted)
-          setResult({ key: requestKey, error, loading: false })
-      } finally {
-        loading = false
-      }
-    }
-    void load()
-    const timer = window.setInterval(() => void load(), 60_000)
-    return () => {
-      controller.abort()
-      window.clearInterval(timer)
-    }
-  }, [applicationID, range, requestKey])
   const history = result.history
   const totals = history ? summarizeSyncHistory(history) : null
   const label = range === "24h" ? "24 hours" : "7 days"
@@ -155,11 +134,7 @@ export function SyncHistoryChart({
           <p className="text-sm text-muted-foreground">
             Sync history could not be loaded.
           </p>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setRefresh((value) => value + 1)}
-          >
+          <Button variant="outline" size="sm" onClick={retry}>
             Retry history
           </Button>
           <ErrorDetailsButton error={result.error} />
@@ -262,9 +237,11 @@ export function SyncHistoryChart({
           Syncs and rollbacks grouped by start time. Success rate includes
           succeeded, failed and cancelled runs; active runs are excluded.
         </p>
-        <Button variant="ghost" size="sm" onClick={onViewActivity}>
-          View activity
-        </Button>
+        {onViewActivity && (
+          <Button variant="ghost" size="sm" onClick={onViewActivity}>
+            View activity
+          </Button>
+        )}
       </div>
       {history && totals && totals.total > 0 && (
         <Disclosure summary="View history as text">

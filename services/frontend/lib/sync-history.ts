@@ -10,6 +10,16 @@ export type SyncHistory = {
   endedAt: string
   bucketSeconds: number
   buckets: SyncHistoryBucket[]
+  applications?: ApplicationSyncActivity[]
+}
+
+export type ApplicationSyncActivity = {
+  applicationId: string
+  name: string
+  status?: string
+  type?: "sync" | "rollback"
+  startedAt?: string
+  finishedAt?: string
 }
 
 export function summarizeSyncHistory(history: SyncHistory) {

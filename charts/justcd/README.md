@@ -1,5 +1,34 @@
 # JustCD Helm chart
 
+## Published releases
+
+Pushing a stable `vX.Y.Z` tag runs the image release workflow, then publishes
+both Helm charts to GHCR and attaches their `.tgz` packages to the GitHub
+release. Chart `version` and `appVersion` use `X.Y.Z`; packaged defaults pin
+each service to its matching `service-vX.Y.Z` image. Source chart metadata
+and development defaults are unchanged. Pull requests validate packaging
+without publishing.
+
+Once a release containing this workflow is published, install it with:
+
+```sh
+helm upgrade --install justcd oci://ghcr.io/justlabv1/charts/justcd \
+  --version X.Y.Z --namespace justcd --create-namespace -f deploy-values.yaml
+```
+
+Replace `X.Y.Z` with the release version. Omit `frontend.image`,
+`backend.image`, and `docs.image` overrides from your values to use the
+packaged release images. Configure the database Secret, public URL, and
+Ingress as described below.
+
+Publishing uses the repository's `GITHUB_TOKEN` with `packages: write`;
+no additional credential is required. The repository must be allowed to
+publish packages in `justlabv1`. Set the new GHCR chart packages to public
+for anonymous installs, or authenticate with `helm registry login ghcr.io`
+using an account with package read access.
+
+## Installation from source
+
 This chart deploys the JustCD web server and API. PostgreSQL is external. The
 backend connects directly to configured Git repositories and Kubernetes API
 servers; the chart does not grant it in-cluster Kubernetes permissions.

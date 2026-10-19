@@ -20,11 +20,12 @@ import (
 // Force only transfers fields included in an Apply request. Fields omitted from
 // that request can remain owned by the same manager's earlier Update operation.
 // Remove those leftovers and retire the Update entry, preserving shared fields.
+// Explicitly authorized legacy client-side managers follow the same cleanup.
 // Planning submits the complete predicted result as one dry-run merge patch:
 // separate dry-run requests cannot see each other's ownership changes.
-func finishOwnershipMigration(ctx context.Context, rc dynamic.ResourceInterface, name string, applied *unstructured.Unstructured, options metav1.PatchOptions) (*unstructured.Unstructured, error) {
+func finishOwnershipMigration(ctx context.Context, rc dynamic.ResourceInterface, name string, applied *unstructured.Unstructured, options metav1.PatchOptions, legacyManagers ...string) (*unstructured.Unstructured, error) {
 	if applied == nil || len(options.DryRun) > 0 {
-		return finishOwnershipMigrationStep(ctx, rc, name, applied, options)
+		return finishOwnershipMigrationStep(ctx, rc, name, applied, options, legacyManagers...)
 	}
 	current := applied
 	var result *unstructured.Unstructured
@@ -45,7 +46,7 @@ func finishOwnershipMigration(ctx context.Context, rc dynamic.ResourceInterface,
 		}
 		attempt++
 		var err error
-		result, err = finishOwnershipMigrationStep(ctx, rc, name, current, options)
+		result, err = finishOwnershipMigrationStep(ctx, rc, name, current, options, legacyManagers...)
 		return err
 	})
 	return result, err
@@ -68,11 +69,11 @@ func ownershipMigrationState(object *unstructured.Unstructured) map[string]inter
 	return state.Object
 }
 
-func finishOwnershipMigrationStep(ctx context.Context, rc dynamic.ResourceInterface, name string, applied *unstructured.Unstructured, options metav1.PatchOptions) (*unstructured.Unstructured, error) {
+func finishOwnershipMigrationStep(ctx context.Context, rc dynamic.ResourceInterface, name string, applied *unstructured.Unstructured, options metav1.PatchOptions, legacyManagers ...string) (*unstructured.Unstructured, error) {
 	if applied == nil {
 		return applied, nil
 	}
-	cleaned, changed, err := cleanUpdateOwnership(applied, options.FieldManager)
+	cleaned, changed, err := cleanUpdateOwnership(applied, options.FieldManager, legacyManagers...)
 	if err != nil || !changed {
 		return applied, err
 	}
@@ -113,12 +114,23 @@ func finishOwnershipMigrationStep(ctx context.Context, rc dynamic.ResourceInterf
 	return rc.Patch(ctx, name, types.MergePatchType, patch, options)
 }
 
-func cleanUpdateOwnership(object *unstructured.Unstructured, manager string) (*unstructured.Unstructured, bool, error) {
+func cleanUpdateOwnership(object *unstructured.Unstructured, manager string, legacyManagers ...string) (*unstructured.Unstructured, bool, error) {
+	isMigratingManager := func(name string) bool {
+		if name == manager {
+			return true
+		}
+		for _, legacy := range legacyManagers {
+			if name == legacy {
+				return true
+			}
+		}
+		return false
+	}
 	stale, retained := fieldpath.NewSet(), fieldpath.NewSet()
 	entries := object.GetManagedFields()
 	needsMigration := false
 	for _, entry := range entries {
-		if entry.Manager == manager && entry.Operation == metav1.ManagedFieldsOperationUpdate && entry.Subresource == "" {
+		if isMigratingManager(entry.Manager) && entry.Operation == metav1.ManagedFieldsOperationUpdate && entry.Subresource == "" {
 			needsMigration = true
 		}
 	}
@@ -141,7 +153,7 @@ func cleanUpdateOwnership(object *unstructured.Unstructured, manager string) (*u
 		if err := fields.FromJSON(strings.NewReader(string(entry.FieldsV1.Raw))); err != nil {
 			return nil, false, err
 		}
-		if entry.Manager == manager && entry.Operation == metav1.ManagedFieldsOperationUpdate && entry.Subresource == "" {
+		if isMigratingManager(entry.Manager) && entry.Operation == metav1.ManagedFieldsOperationUpdate && entry.Subresource == "" {
 			hasUpdate = true
 			stale = stale.Union(fields)
 			continue

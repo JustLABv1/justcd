@@ -3,16 +3,50 @@ package syncer
 import (
 	"context"
 	"errors"
-	"github.com/justlab/justcd/services/backend/internal/kube"
 	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/justlab/justcd/services/backend/internal/gitops"
+	"github.com/justlab/justcd/services/backend/internal/kube"
 	"github.com/justlab/justcd/services/backend/internal/store"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
+
+func TestGitCheckoutFailureSchedulesFreshPlanRetry(t *testing.T) {
+	bin := t.TempDir()
+	gitPath := filepath.Join(bin, "git")
+	script := "#!/bin/sh\nif [ \"$1\" = '-C' ]; then shift 2; fi\n" +
+		"if [ \"$1\" = 'rev-parse' ]; then echo 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; fi\n"
+	if err := os.WriteFile(gitPath, []byte(script+"if [ \"$1\" = 'checkout' ]; then echo 'RPC failed; curl 92 HTTP/2 stream closed' >&2; exit 128; fi\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	source := store.GitSource{RepositoryURL: "https://git.example.com/team/app.git"}
+	checkout, err := gitops.Fetch(context.Background(), nil, nil, source, "main")
+	defer checkout.Close()
+	if err == nil {
+		t.Fatal("expected lazy blob fetch failure during checkout")
+	}
+	now := time.Now().UTC()
+	decision := DecideRetry(context.Background(), store.DefaultRetryPolicy(), 1, &planStageError{stage: "git", err: err}, now, 0.5, true)
+	if decision.NextRetryAt == nil || !decision.NextRetryAt.Equal(now.Add(5*time.Second)) || decision.TerminalReason != "" || decision.ErrorCode != "git.fetch_failed" {
+		t.Fatalf("transient Git failure requires manual attention instead of retry: %+v", decision)
+	}
+	// The provider recovers before the scheduled fresh checkout.
+	if err := os.WriteFile(gitPath, []byte(script+"exit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := gitops.Fetch(context.Background(), nil, nil, source, "main")
+	defer recovered.Close()
+	if err != nil || recovered.Commit != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("fresh Git checkout did not recover: %+v, %v", recovered, err)
+	}
+}
 
 type testRetryError struct {
 	retryable bool

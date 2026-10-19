@@ -122,6 +122,15 @@ The application list and detail page observe background updates without manual
 plan refresh. Failed read-only planning checks continue at the polling interval;
 failed writes retain their review/retry safeguards. An explicit Retry now resumes
 failed reconciliation, and plans needing approval remain eligible for auto-sync.
+Temporary Git failures during clone, revision fetch, or checkout (including lazy
+blob downloads) use the application's retry policy. HTTP timeouts, rate limits,
+server errors, and transient transport failures retry with exponential backoff
+and jitter. The default policy permits five attempts, starting with a five-second
+delay and capped at 300 seconds; the poller runs every 15 seconds, so a retry runs
+on a poll after its delay expires. Read-only planning checks keep polling after
+that retry budget is exhausted. Invalid credentials, repository/revision errors,
+and certificate or SSH host-key failures require correction rather than a fast
+automatic retry.
 Push webhooks can trigger fresh plans, and PR integrations track provider revisions
 and report review results. Connection tests check connectivity and Kubernetes
 permissions during setup; runtime health is observed separately from desired-state drift.

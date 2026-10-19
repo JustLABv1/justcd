@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -136,7 +137,7 @@ func Fetch(ctx context.Context, db *store.Store, key []byte, source store.GitSou
 	}
 	if err := runGit(cloneCtx, env, "-C", checkoutPath, "config", "core.hooksPath", "/dev/null"); err != nil {
 		cleanup()
-		return nil, errors.New("could not isolate repository configuration")
+		return nil, commandFailure(cloneCtx, "isolate repository configuration", err)
 	}
 	if err := runGit(cloneCtx, env, "-C", checkoutPath, "fetch", "--depth=1", "origin", revision); err != nil {
 		cleanup()
@@ -145,7 +146,7 @@ func Fetch(ctx context.Context, db *store.Store, key []byte, source store.GitSou
 	commitBytes, err := runGitOutput(cloneCtx, env, "-C", checkoutPath, "rev-parse", "--verify", "--end-of-options", "FETCH_HEAD^{commit}")
 	if err != nil {
 		cleanup()
-		return nil, errors.New("requested Git revision does not resolve to a commit")
+		return nil, commandFailure(cloneCtx, "resolve requested Git revision to a commit", err)
 	}
 	commit := strings.TrimSpace(string(commitBytes))
 	if !validCommit(commit) {
@@ -154,7 +155,7 @@ func Fetch(ctx context.Context, db *store.Store, key []byte, source store.GitSou
 	}
 	if err := runGit(cloneCtx, env, "-C", checkoutPath, "checkout", "--detach", commit); err != nil {
 		cleanup()
-		return nil, errors.New("could not check out requested Git revision")
+		return nil, commandFailure(cloneCtx, "check out requested Git revision", err)
 	}
 	return &Checkout{Root: checkoutPath, Commit: commit, env: env, cleanup: cleanup}, nil
 }
@@ -234,6 +235,10 @@ func runGitOutput(ctx context.Context, env []string, args ...string) ([]byte, er
 	return output, nil
 }
 
+// Git reports transport failures through stderr rather than typed network errors.
+// Keep stderr private: it can contain repository URLs and credential material.
+var transientGitResponse = regexp.MustCompile(`(?i)(?:returned error:|HTTP(?:/[0-9.]+)?)\s+(?:408|429|5[0-9]{2})\b|\bcurl (?:18|28|52|55|56|92)\b`)
+
 func commandFailure(ctx context.Context, operation string, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -242,7 +247,8 @@ func commandFailure(ctx context.Context, operation string, err error) error {
 	transient := false
 	if errors.As(err, &exitErr) {
 		output := strings.ToLower(string(exitErr.Stderr))
-		for _, marker := range []string{"could not resolve host", "connection timed out", "connection reset", "connection refused", "network is unreachable", "temporary failure", "temporarily unavailable", "service unavailable", "remote end hung up", "early eof", "unexpected eof", "tls handshake timeout", "i/o timeout", "returned error: 502", "returned error: 503", "returned error: 504", "http 502", "http 503", "http 504"} {
+		transient = transientGitResponse.MatchString(output)
+		for _, marker := range []string{"could not resolve host", "could not resolve hostname", "could not resolve proxy", "connection timed out", "operation timed out", "connection reset", "connection refused", "connection closed", "failed to connect", "network is unreachable", "temporary failure", "temporarily unavailable", "service unavailable", "remote end hung up", "early eof", "unexpected eof", "empty reply from server", "tls handshake timeout", "i/o timeout"} {
 			if strings.Contains(output, marker) {
 				transient = true
 				break

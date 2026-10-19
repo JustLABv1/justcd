@@ -62,12 +62,23 @@ func (s *Server) applicationTopology(w http.ResponseWriter, r *http.Request) {
 		if refreshed, err := s.Store.ObservedResources(r.Context(), app.ID); err == nil {
 			observed = refreshed
 		}
+		if refreshed, err := s.Store.ApplicationByID(r.Context(), app.ID); err == nil {
+			app = refreshed
+		}
+	}
+	options := topology.BuildOptions{ObservationIncomplete: warning != "" || len(app.HealthCondition.Warnings) > 0}
+	if !hasSample {
+		for _, item := range observed {
+			if item.Source == "kubernetes" && time.Since(item.ObservedAt) > time.Minute {
+				options.ObservationIncomplete = true
+			}
+		}
 	}
 	var graph topology.Graph
 	if len(plans) > 0 {
-		graph = topology.Build(&plans[0], managed, observed)
+		graph = topology.BuildWithOptions(&plans[0], managed, observed, options)
 	} else {
-		graph = topology.Build(nil, managed, observed)
+		graph = topology.BuildWithOptions(nil, managed, observed, options)
 	}
 	if warning != "" {
 		graph.Warnings = append(graph.Warnings, warning)

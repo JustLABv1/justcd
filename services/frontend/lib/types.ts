@@ -474,12 +474,20 @@ export type PlanRecord = {
 
 export type ManagedResource = { identity: Identity; uid: string; resourceVersion: string; adopted?: boolean }
 
+export type RoutingHealth = {
+  status: "healthy" | "progressing" | "degraded" | "unknown"
+  reason: string; label: string; message: string; readyPods: number; totalPods: number
+  available?: boolean
+  backends?: { serviceName: string; namespace: string; port?: string; status: RoutingHealth["status"]; reason: string; message: string; readyPods: number; totalPods: number }[]
+}
 export type TopologyNode = {
+  routingHealth?: RoutingHealth
+  urls?: string[]
   tracked?: boolean
   health?: ResourceHealthAssessment
   id: string
   identity: Identity
-  source: "desired" | "managed" | "kubernetes" | "sample"
+  source: "desired" | "managed" | "kubernetes" | "sample" | "reference"
   uid?: string
   resourceVersion?: string
   phase?: string

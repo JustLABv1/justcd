@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -26,6 +27,8 @@ type Node struct {
 	Readiness       string                        `json:"readiness,omitempty"`
 	HealthSummary   *apphealth.ResourceDetails    `json:"healthSummary,omitempty"`
 	ObservedAt      *time.Time                    `json:"observedAt,omitempty"`
+	URLs            []string                      `json:"urls,omitempty"`
+	RoutingHealth   *RoutingHealth                `json:"routingHealth,omitempty"`
 }
 
 type Edge struct {
@@ -54,6 +57,10 @@ func ID(identity core.Identity) string {
 }
 
 func Build(plan *store.PlanRecord, managed []store.ManagedResource, observed []store.ObservedResource) Graph {
+	return BuildWithOptions(plan, managed, observed, BuildOptions{})
+}
+
+func BuildWithOptions(plan *store.PlanRecord, managed []store.ManagedResource, observed []store.ObservedResource, options BuildOptions) Graph {
 	graph := Graph{Nodes: []Node{}, Edges: []Edge{}, Warnings: []string{}}
 	items := map[string]*material{}
 	if plan != nil {
@@ -93,6 +100,18 @@ func Build(plan *store.PlanRecord, managed []store.ManagedResource, observed []s
 			manifest = existing.value
 			tracked = existing.node.Tracked
 		}
+		if len(resource.TopologySpec) > 0 && string(resource.TopologySpec) != "{}" {
+			live := parse(resource.TopologySpec)
+			if manifest == nil || slices.Contains([]string{"Ingress", "Route", "Service"}, identity.Kind) {
+				manifest = live
+			} else if isWorkload(identity.Kind) || identity.Kind == "ReplicaSet" {
+				path := []string{"spec", "template", "metadata", "labels"}
+				if identity.Kind == "CronJob" {
+					path = []string{"spec", "jobTemplate", "spec", "template", "metadata", "labels"}
+				}
+				_ = unstructured.SetNestedStringMap(manifest, nestedStringMap(live, path...), path...)
+			}
+		}
 		items[key] = &material{value: manifest, node: Node{ID: key, Identity: identity, Tracked: tracked, Health: health, Source: resource.Source, UID: resource.UID, ResourceVersion: resource.ResourceVersion, Phase: resource.Phase, Readiness: resource.Readiness, HealthSummary: nonEmptyHealthSummary(resource.HealthSummary), ObservedAt: &at}, labels: resource.Labels, owners: resource.OwnerUIDs}
 	}
 
@@ -117,6 +136,19 @@ func Build(plan *store.PlanRecord, managed []store.ManagedResource, observed []s
 		}
 	}
 	seen := map[string]bool{}
+	// Missing references remain visible, but are never counted as managed resources.
+	for _, item := range slices.Collect(maps.Values(items)) {
+		for _, ref := range networkBackends(item.node.Identity, item.value) {
+			key := nameKey("Service", item.node.Identity.Namespace, ref.name)
+			if byName[key] != nil {
+				continue
+			}
+			identity := core.Identity{ClusterID: item.node.Identity.ClusterID, APIVersion: "v1", Kind: "Service", Namespace: item.node.Identity.Namespace, Name: ref.name}
+			missing := &material{node: Node{ID: ID(identity), Identity: identity, Source: "reference", Tracked: false}}
+			items[missing.node.ID] = missing
+			byName[key] = missing
+		}
+	}
 	add := func(from, to *material, relation string) {
 		if from == nil || to == nil || from.node.ID == to.node.ID {
 			return
@@ -134,24 +166,9 @@ func Build(plan *store.PlanRecord, managed []store.ManagedResource, observed []s
 			add(byUID[owner], item, "owns")
 		}
 		switch id.Kind {
-		case "Ingress":
-			if name := nestedString(item.value, "spec", "defaultBackend", "service", "name"); name != "" {
-				add(item, byName[nameKey("Service", id.Namespace, name)], "routes to")
-			}
-			for _, rule := range nestedSlice(item.value, "spec", "rules") {
-				r, ok := rule.(map[string]any)
-				if !ok {
-					continue
-				}
-				for _, path := range nestedSlice(r, "http", "paths") {
-					p, ok := path.(map[string]any)
-					if !ok {
-						continue
-					}
-					if name := nestedString(p, "backend", "service", "name"); name != "" {
-						add(item, byName[nameKey("Service", id.Namespace, name)], "routes to")
-					}
-				}
+		case "Route", "Ingress":
+			for _, ref := range networkBackends(id, item.value) {
+				add(item, byName[nameKey("Service", id.Namespace, ref.name)], "routes to")
 			}
 		case "HTTPRoute":
 			for _, rule := range nestedSlice(item.value, "spec", "rules") {
@@ -174,7 +191,6 @@ func Build(plan *store.PlanRecord, managed []store.ManagedResource, observed []s
 			if len(selector) == 0 {
 				break
 			}
-			matchedWorkload := false
 			for _, target := range items {
 				if target.node.Identity.Namespace != id.Namespace || !isWorkload(target.node.Identity.Kind) {
 					continue
@@ -182,14 +198,11 @@ func Build(plan *store.PlanRecord, managed []store.ManagedResource, observed []s
 				labels := nestedStringMap(target.value, "spec", "template", "metadata", "labels")
 				if matches(selector, labels) {
 					add(item, target, "selects")
-					matchedWorkload = true
 				}
 			}
-			if !matchedWorkload {
-				for _, target := range items {
-					if target.node.Identity.Kind == "Pod" && target.node.Identity.Namespace == id.Namespace && matches(selector, target.labels) {
-						add(item, target, "selects")
-					}
+			for _, target := range items {
+				if target.node.Identity.Kind == "Pod" && target.node.Identity.Namespace == id.Namespace && matches(selector, target.labels) {
+					add(item, target, "selects")
 				}
 			}
 		case "HorizontalPodAutoscaler":
@@ -240,7 +253,9 @@ func Build(plan *store.PlanRecord, managed []store.ManagedResource, observed []s
 			}
 		}
 	}
+	assessRouting(items, byName, options)
 	for _, item := range items {
+		item.node.URLs = ResourceURLs(item.node.Identity, item.value)
 		graph.Nodes = append(graph.Nodes, item.node)
 	}
 	sortGraph(&graph)

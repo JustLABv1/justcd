@@ -56,6 +56,11 @@ ReplicaSets, Pods, ConfigMaps, Secret, PVC, and autoscaler. ReplicaSets and Pods
 in that demo are marked as sample observations. Its Git and Kubernetes endpoints use the reserved `.invalid` domain;
 they are intentionally unreachable, so the demo cannot sync to a real cluster.
 
+Route highlighting reports backend readiness from matching, non-terminating
+ready pods and OpenShift admission conditions. Green means the configured
+backend is ready; it does not certify DNS, TLS, network policy, or external HTTP
+reachability. Missing permissions or incomplete observations remain unknown.
+
 For real applications, the topology endpoint derives links from rendered Helm,
 Kustomize, or YAML manifests and reads controller-created ReplicaSets, Jobs,
 and Pods from the cluster using the configured namespace credential. Grant

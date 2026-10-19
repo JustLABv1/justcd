@@ -1,0 +1,76 @@
+.canvas {
+  --topology-blue: var(--info);
+  background: radial-gradient(ellipse at 50% 40%, color-mix(in srgb, var(--info) 4%, transparent), transparent 70%), var(--background);
+}
+.canvas :global(.react-flow) { --xy-background-color: transparent; --xy-edge-stroke: var(--border); }
+.canvas :global(.react-flow:focus-visible) { outline: 2px solid var(--ring); outline-offset: -2px; }
+.canvas :global(.react-flow__attribution) { background: var(--card); color: var(--muted-foreground); font-size: 9px; }
+.canvas :global(.react-flow__node-resource) { border: 0; background: transparent; }
+.node { width: 224px; height: 100%; display: flex; flex-direction: column; align-items: center; position: relative; transition: opacity 140ms ease; }
+.dimmed { opacity: .5; }
+.nodeButton { display: flex; width: 100%; height: auto; flex-direction: column; gap: 0; padding: 8px 6px 0; white-space: normal; justify-content: flex-start; border-radius: 16px; transition: none; }
+.nodeButton > span { flex-shrink: 0; }
+.nodeButton:hover { background: transparent; }
+.nodeButton:active { transform: none; }
+.orb { position: relative; display: grid; place-items: center; width: 72px; height: 72px; flex-shrink: 0; border: 1.5px solid color-mix(in srgb, var(--foreground) 24%, var(--border)); border-radius: 50%; background: var(--card); color: var(--muted-foreground); box-shadow: 0 2px 8px color-mix(in srgb, var(--foreground) 3%, transparent); transition: border-color 150ms ease, box-shadow 150ms ease; }
+.selected .orb { color: var(--info); border-color: var(--info); box-shadow: 0 0 0 6px color-mix(in srgb, var(--info) 10%, transparent), 0 0 0 14px color-mix(in srgb, var(--info) 4%, transparent); }
+.node[data-sync="syncing"] .orb::after { content: ""; position: absolute; inset: -8px; border: 1px dashed var(--info); border-radius: 50%; animation: applying 4s linear infinite; pointer-events: none; }
+.node[data-runtime="progressing"] .orb { border-color: var(--warning); }
+.node[data-runtime="degraded"] .orb { border-color: var(--destructive); }
+.node[data-network="true"][data-runtime="healthy"] .orb { border-color: var(--success); }
+.routingStatus { max-width: 212px; font-size: 10px; line-height: 18px; color: var(--muted-foreground); }
+.node[data-runtime="healthy"] .routingStatus { color: var(--success-foreground); }
+.node[data-runtime="progressing"] .routingStatus { color: var(--warning-foreground); }
+.node[data-runtime="degraded"] .routingStatus { color: var(--destructive); }
+.healthDot { position: absolute; right: 1px; bottom: 1px; width: 14px; height: 14px; border: 3px solid var(--card); border-radius: 50%; background: var(--muted-foreground); }
+.node[data-runtime="healthy"] .healthDot { background: var(--success); }
+.node[data-runtime="progressing"] .healthDot { background: var(--warning); }
+.node[data-runtime="degraded"] .healthDot { background: var(--destructive); }
+.node[data-runtime="unknown"] .healthDot { background: var(--card); outline: 1px dashed var(--muted-foreground); outline-offset: -2px; }
+.childCount { position: absolute; right: -5px; top: -4px; min-width: 23px; height: 23px; padding: 2px 4px; display: grid; place-items: center; border: 2px solid var(--card); border-radius: 20px; background: var(--info); color: var(--info-foreground); font-size: 10px; font-weight: 600; }
+.nodeName { display: block; width: 100%; max-width: 212px; margin-top: 10px; overflow-wrap: anywhere; white-space: normal; font-size: 12px; line-height: 16px; font-weight: 600; }
+.nodeKind { color: var(--muted-foreground); font-size: 10px; line-height: 16px; }
+.nodeStatus { display: flex; align-items: center; gap: 4px; max-width: 160px; color: var(--muted-foreground); font-size: 9px; line-height: 14px; white-space: nowrap; }
+.nodeStatus > span { width: 4px; height: 4px; border-radius: 50%; background: var(--muted-foreground); }
+.nodeStatus[data-sync="syncing"] > span, .nodeStatus[data-sync="create"] > span { background: var(--info); }
+.nodeStatus[data-sync="failed"] > span, .nodeStatus[data-sync="delete"] > span { background: var(--destructive); }
+.nodeStatus[data-sync="update"] > span { background: var(--warning); }
+.nodeStatus[data-sync="synced"] > span, .nodeStatus[data-sync="applied"] > span { background: var(--success); }
+.actions { display: flex; align-items: center; justify-content: center; gap: 2px; margin-top: 4px; color: var(--muted-foreground); }
+.actions > * { font-size: 10px; }
+.node :global(.react-flow__handle) { top: 44px; width: 1px; height: 1px; min-width: 0; min-height: 0; border: 0; opacity: 0; pointer-events: none; }
+.node .targetHandle { left: 76px; }
+.node .sourceHandle { left: 148px; right: auto; }
+.relationship { --edge-color: var(--muted-foreground); }
+.edgePath { stroke: var(--edge-color); stroke-width: 1.3; stroke-opacity: .4; transition: stroke 150ms ease, stroke-opacity 150ms ease; }
+.relationship[data-signal="healthy"] { --edge-color: var(--success); }
+.relationship[data-signal="healthy"] .edgePath { stroke-opacity: .7; }
+.activeEdge .edgePath { stroke-opacity: .85; stroke-width: 1.8; }
+.relationship[data-dependency="true"] .edgePath { stroke-dasharray: 3 6; }
+.relationship[data-signal="syncing"] { --edge-color: var(--info); }
+.relationship[data-signal="progressing"] { --edge-color: var(--warning); }
+.relationship[data-signal="degraded"] { --edge-color: var(--destructive); }
+.relationship[data-signal="syncing"] .edgePath, .relationship[data-signal="progressing"] .edgePath, .relationship[data-signal="degraded"] .edgePath { stroke-opacity: .75; }
+.flow { stroke: var(--edge-color); stroke-width: 2; stroke-dasharray: 2 16; stroke-linecap: round; animation: flow 1s linear infinite; pointer-events: none; }
+.relationship[data-signal="progressing"] .flow { animation-duration: 2.4s; }
+.relationship[data-signal="degraded"] .edgePath { animation: attention 2.8s ease-in-out infinite; }
+.legendLine { display: inline-block; width: 18px; border-top: 2px solid var(--muted-foreground); }
+.legendLine[data-signal="syncing"] { border-color: var(--info); }
+.legendLine[data-signal="progressing"] { border-color: var(--warning); }
+.legendLine[data-signal="degraded"] { border-color: var(--destructive); }
+.legendLine[data-signal="healthy"] { border-color: var(--success); }
+.entering { pointer-events: none; }
+.paused .flow, .paused .relationship[data-signal] .edgePath, .paused .node[data-sync="syncing"] .orb::after { animation-play-state: paused; }
+@keyframes applying { to { transform: rotate(360deg); } }
+@keyframes flow { to { stroke-dashoffset: -36; } }
+@keyframes attention { 50% { stroke-opacity: .3; } }
+@media (hover: hover) and (pointer: fine) { .nodeButton:hover .orb { border-color: var(--info); box-shadow: 0 0 0 6px color-mix(in srgb, var(--info) 8%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .flow, .relationship[data-signal="degraded"] .edgePath, .node[data-sync="syncing"] .orb::after { animation: none; } .node, .orb { transition: none; } }
+
+.podStatus { max-width: 212px; font-size: 10px; line-height: 16px; color: var(--muted-foreground); overflow-wrap: anywhere; }
+.node[data-runtime="degraded"] .podStatus { color: var(--destructive); }
+.node[data-runtime="progressing"] .podStatus { color: var(--warning-foreground); }
+.contextLabel { font-size: 10px; line-height: 18px; color: var(--info); }
+.node[data-context="true"] .orb { border-style: dashed; }
+.edgeLabel { opacity: 0; pointer-events: none; }
+.relationship:hover .edgeLabel, .canvas :global(.react-flow__edge:focus-visible) .edgeLabel { opacity: 1; }

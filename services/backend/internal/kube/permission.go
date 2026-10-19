@@ -101,6 +101,8 @@ var namespacePermissionSpecs = []permissionSpec{
 	{id: "list-daemonsets", title: "List DaemonSets", apiGroup: "apps", resource: "daemonsets", verb: "list"},
 	{id: "list-replicasets", title: "List ReplicaSets", apiGroup: "apps", resource: "replicasets", verb: "list"},
 	{id: "list-jobs", title: "List Jobs", apiGroup: "batch", resource: "jobs", verb: "list"},
+	{id: "list-services", title: "List Services for topology", resource: "services", verb: "list"},
+	{id: "list-ingresses", title: "List Ingresses for topology", apiGroup: "networking.k8s.io", resource: "ingresses", verb: "list"},
 	{id: "create-deployments", title: "Create Deployments", apiGroup: "apps", resource: "deployments", verb: "create"},
 	{id: "apply-deployments", title: "Server-side apply Deployments", apiGroup: "apps", resource: "deployments", verb: "patch"},
 	{id: "delete-deployments", title: "Delete Deployments", apiGroup: "apps", resource: "deployments", verb: "delete"},

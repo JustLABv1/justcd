@@ -164,6 +164,7 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 	if err := s.Migrate(ctx); err != nil {
 		t.Fatalf("idempotent migration: %v", err)
 	}
+	testTopologyObservationPersistence(t, ctx, s)
 	if _, err := s.ListPlans(ctx, "integration-app", 20); err != nil {
 		t.Fatalf("list plans after schema repair: %v", err)
 	}

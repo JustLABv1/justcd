@@ -36,25 +36,43 @@ func fieldOwnershipConflict(err error) bool {
 // applyWithOwnershipMigration transitions JustCD's own Create/Update field
 // ownership to Apply ownership. Kubernetes distinguishes these operations even
 // under the same manager name. Only conflicts exclusively with this application's
-// manager can be retried automatically; other managers require a sealed takeover.
+// manager, or the legacy client-side manager of an explicitly adopted object,
+// can be retried automatically. Other managers require a sealed takeover.
 // Preserve the caller's dry-run and resource-version preconditions on the retry.
 func applyWithOwnershipMigration(ctx context.Context, rc dynamic.ResourceInterface, name string, body []byte, options metav1.PatchOptions) (*unstructured.Unstructured, error) {
+	// Inspect the pre-apply snapshot, including for removal-only updates that
+	// produce no SSA conflict. Their omitted legacy fields still need cleanup.
+	var legacyManagers []string
+	request := &unstructured.Unstructured{}
+	if request.UnmarshalJSON(body) == nil && request.GetResourceVersion() != "" {
+		if live, err := rc.Get(ctx, name, metav1.GetOptions{}); err == nil && live.GetResourceVersion() == request.GetResourceVersion() && pendingClientSideAdoption(live, options.FieldManager) {
+			legacyManagers = []string{"kubectl-client-side-apply"}
+		}
+	}
 	object, err := rc.Patch(ctx, name, types.ApplyPatchType, body, options)
 	if options.Force != nil && *options.Force || !fieldOwnershipConflict(err) {
 		if err != nil {
 			return object, err
 		}
-		return finishOwnershipMigration(ctx, rc, name, object, options)
+		return finishOwnershipMigration(ctx, rc, name, object, options, legacyManagers...)
 	}
 	var status apierrors.APIStatus
 	if !errors.As(err, &status) {
 		return object, err
 	}
-	prefix := "conflict with " + strconv.Quote(options.FieldManager)
+	legacy := false
 	for _, cause := range status.Status().Details.Causes {
-		if cause.Message != prefix && !strings.HasPrefix(cause.Message, prefix+" using ") {
-			return object, err
+		if managerConflict(cause.Message, options.FieldManager) {
+			continue
 		}
+		if managerConflict(cause.Message, "kubectl-client-side-apply") {
+			legacy = true
+			continue
+		}
+		return object, err
+	}
+	if legacy && len(legacyManagers) == 0 {
+		return object, err
 	}
 	force := true
 	options.Force = &force
@@ -62,7 +80,36 @@ func applyWithOwnershipMigration(ctx context.Context, rc dynamic.ResourceInterfa
 	if err != nil {
 		return object, err
 	}
-	return finishOwnershipMigration(ctx, rc, name, object, options)
+	return finishOwnershipMigration(ctx, rc, name, object, options, legacyManagers...)
+}
+
+func managerConflict(message, manager string) bool {
+	prefix := "conflict with " + strconv.Quote(manager)
+	return message == prefix || strings.HasPrefix(message, prefix+" using ")
+}
+
+// Adoption is the explicit authorization to replace the old client-side manager.
+// Only finish that initial handoff: once this app has Apply ownership, subsequent
+// external kubectl edits are real conflicts and must still require review.
+func pendingClientSideAdoption(object *unstructured.Unstructured, manager string) bool {
+	applicationID, ok := strings.CutPrefix(manager, "justcd/")
+	if !ok || applicationID == "" || object.GetLabels()["justcd.io/application-id"] != applicationID {
+		return false
+	}
+	adopted, clientSide := false, false
+	for _, entry := range object.GetManagedFields() {
+		if entry.Subresource != "" {
+			continue
+		}
+		if entry.Manager == manager && entry.Operation == metav1.ManagedFieldsOperationApply {
+			return false
+		}
+		if entry.Operation == metav1.ManagedFieldsOperationUpdate {
+			adopted = adopted || entry.Manager == "justcd-adoption/"+applicationID
+			clientSide = clientSide || entry.Manager == "kubectl-client-side-apply"
+		}
+	}
+	return adopted && clientSide
 }
 
 // reconcileUpdatePlan validates ownership and compares the live snapshot with

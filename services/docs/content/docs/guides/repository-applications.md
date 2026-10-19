@@ -279,6 +279,11 @@ version as an atomic precondition, with up to three attempts if status updates
 race with the claim. Configuration or ownership changes require a fresh review.
 The claim only updates ownership labels and inventory, then
 pauses automatic reconciliation. Refresh and review a new plan before syncing.
+For resources previously managed by `kubectl-client-side-apply`, the first sync
+completes the field ownership migration authorized by adoption. Routine image
+and ConfigMap updates do not require a second ownership takeover approval.
+Conflicts with other managers, or external edits after JustCD has established
+server-side apply ownership, still require takeover review.
 Objects owned by an existing application, including another workspace's
 application, or carrying Kubernetes owner references remain blocked.
 

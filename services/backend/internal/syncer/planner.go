@@ -580,17 +580,6 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 			}
 		}
 	}
-	adopted := make(map[string]bool, len(managed))
-	for _, resource := range managed {
-		if resource.Adopted {
-			adopted[resource.Identity.Key()] = true
-		}
-	}
-	for index := range plan.Changes {
-		if plan.Changes[index].Kind == core.Update && adopted[plan.Changes[index].Identity.Key()] {
-			plan.Changes[index].Takeover = true
-		}
-	}
 	if err := s.reconcileUpdatePlan(ctx, input, &plan, desired, live); err != nil {
 		return core.Plan{}, nil, &planStageError{stage: "cluster", err: err}
 	}

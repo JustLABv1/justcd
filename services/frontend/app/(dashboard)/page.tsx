@@ -7,7 +7,6 @@ import { HugeiconsIcon } from "@hugeicons/react"
 import {
   Add01Icon,
   ArrowRight01Icon,
-  Clock01Icon,
 } from "@hugeicons/core-free-icons"
 import { Badge } from "@/components/reui/badge"
 import { Button } from "@/components/ui/button"
@@ -17,6 +16,9 @@ import { useWorkspace, needsAttention, isApplicationHealthy } from "@/hooks/use-
 import { useWorkspaceHealth } from "@/hooks/use-workspace-health"
 import { useWorkspaceSelection } from "@/hooks/workspace-selection"
 import { WorkspaceMetrics } from "@/components/workspace-metrics"
+import { SyncHistoryChartView } from "@/components/application/sync-history-chart"
+import { LatestSyncs } from "@/components/latest-syncs"
+import { useSyncHistory } from "@/hooks/use-sync-history"
 import { tone } from "@/components/health-tone"
 import { ago } from "@/lib/relative-time"
 import { applicationAttentionReason } from "@/lib/application-status"
@@ -79,6 +81,12 @@ export default function OverviewPage() {
   const { workspace, workspaceId } = useWorkspaceSelection()
   const health = useWorkspaceHealth(workspaceId)
   const [now, setNow] = useState(() => Date.now())
+  const [syncRevision, setSyncRevision] = useState(0)
+  const syncHistory = useSyncHistory("workspaces", workspaceId, String(syncRevision))
+  const refreshOverview = () => {
+    refresh()
+    setSyncRevision((value) => value + 1)
+  }
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 15000)
     return () => window.clearInterval(timer)
@@ -102,22 +110,19 @@ export default function OverviewPage() {
     ].sort((a, b) => ["critical", "warning", "unknown", "healthy"].indexOf(a.health.level) - ["critical", "warning", "unknown", "healthy"].indexOf(b.health.level))
     const connectionsDown = rows.filter((row) => row.health.level === "critical").length
     const connectionsWarn = rows.filter((row) => row.health.level === "warning" || row.health.level === "unknown").length
-    const recent = [...applications]
-      .sort((a, b) => (Date.parse(b.lastCheckedAt || b.createdAt) || 0) - (Date.parse(a.lastCheckedAt || a.createdAt) || 0))
-      .slice(0, 5)
     const level = overallLevel([
       connectionsDown ? "critical" : connectionsWarn ? "warning" : "healthy",
       attention.some((app) => app.health === "failed" || app.health === "error" || app.healthCondition?.status === "Degraded") ? "critical" : attention.length || stalled.length ? "warning" : "healthy",
       health.failed.length ? "warning" : "healthy",
     ])
-    return { attention, synced, other, stalled, rows, connectionsDown, connectionsWarn, recent, level }
+    return { attention, synced, other, stalled, rows, connectionsDown, connectionsWarn, level }
   }, [applications, health, now])
 
   const total = applications.length
   const qs = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : ""
   const listHref = (status?: string) => (workspaceId ? `/applications${qs}${status ? `&status=${status}` : ""}` : "/workspaces")
   const connectionsHref = workspaceId ? `/workspaces/${workspaceId}?tab=connections` : "/workspaces"
-  const { attention, synced, other, stalled, rows, connectionsDown, connectionsWarn, recent, level } = model
+  const { attention, synced, other, stalled, rows, connectionsDown, connectionsWarn, level } = model
 
   const problems: string[] = []
   if (connectionsDown) problems.push(`${connectionsDown} connection${connectionsDown === 1 ? "" : "s"} down`)
@@ -137,7 +142,7 @@ export default function OverviewPage() {
         description={workspace ? "Live health of connections, deployments, and pending reviews in this workspace." : "Select a workspace to view its delivery status."}
         actions={
           <>
-            <Button type="button" variant="outline" onClick={refresh}>Refresh</Button>
+            <Button type="button" variant="outline" onClick={refreshOverview}>Refresh</Button>
             <ActionLink href={workspaceId ? `/applications/new${qs}` : "/workspaces"}>
               <HugeiconsIcon icon={Add01Icon} strokeWidth={1.8} aria-hidden="true" /> New application
             </ActionLink>
@@ -173,51 +178,51 @@ export default function OverviewPage() {
 
           <WorkspaceMetrics total={total} healthy={synced} other={other} attention={attention} stalled={stalled} connections={rows} health={health} now={now} applicationsHref={listHref("synced")} attentionHref={listHref("attention")} connectionsHref={connectionsHref} />
 
-          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,420px)]">
-            <div className="min-w-0 space-y-6">
-              <Panel
-                title="Needs attention"
-                description="Applications with drift, runtime problems, pauses, or stalled checks."
-                action={<TrailingLink href={listHref("attention")}>View all</TrailingLink>}
-              >
-                {attention.length + stalled.length ? (
-                  <ul className="divide-y">
-                    {[...attention, ...stalled].slice(0, 6).map((app) => {
-                      const reason = applicationAttentionReason(app) ?? `No check ${ago(app.lastCheckedAt || app.createdAt, now)} (every ${app.pollSeconds}s expected)`
-                      return (
-                        <li key={app.id}>
-                          <Link href={`/applications/${app.id}`} className="flex flex-wrap items-center gap-3 px-5 py-4 transition-colors hover:bg-muted/40">
-                            <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-lg bg-warning/10 text-warning-foreground dark:text-warning">
-                              <WorkspaceIcon name="app" className="size-4" />
+          <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,420px)] xl:grid-rows-[min-content_1fr]">
+            <Panel
+              title="Needs attention"
+              description="Applications with drift, runtime problems, pauses, or stalled checks."
+              action={<TrailingLink href={listHref("attention")}>View all</TrailingLink>}
+            >
+              {attention.length + stalled.length ? (
+                <ul className="divide-y">
+                  {[...attention, ...stalled].slice(0, 6).map((app) => {
+                    const reason = applicationAttentionReason(app) ?? `No check ${ago(app.lastCheckedAt || app.createdAt, now)} (every ${app.pollSeconds}s expected)`
+                    return (
+                      <li key={app.id}>
+                        <Link href={`/applications/${app.id}`} className="flex flex-wrap items-center gap-3 px-5 py-4 transition-colors hover:bg-muted/40">
+                          <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-lg bg-warning/10 text-warning-foreground dark:text-warning">
+                            <WorkspaceIcon name="app" className="size-4" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium">{app.name}</span>
+                            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                              {app.clusterName ?? "cluster"} · {app.revision}
                             </span>
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-sm font-medium">{app.name}</span>
-                              <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                                {app.clusterName ?? "cluster"} · {app.revision}
-                              </span>
-                              <span className="mt-1 block text-sm text-warning-foreground dark:text-warning">{reason}</span>
-                              {app.statusIssues?.[0] && (
-                                <span className="mt-0.5 block text-xs text-muted-foreground">{app.statusIssues[0].summary}</span>
-                              )}
-                            </span>
-                            <StatusBadge status={app.health} />
-                            {app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}
-                            <WorkspaceIcon name="arrow" className="size-4 text-muted-foreground" />
-                          </Link>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                ) : (
-                  <EmptyState
-                    title={total ? "Nothing needs attention" : "A fresh start"}
-                    description={total ? "No drift, degradation, pauses, or stalled checks." : "Create your first application to start delivering."}
-                    href={total || !workspaceId ? undefined : `/applications/new${qs}`}
-                    action="Create application"
-                  />
-                )}
-              </Panel>
+                            <span className="mt-1 block text-sm text-warning-foreground dark:text-warning">{reason}</span>
+                            {app.statusIssues?.[0] && (
+                              <span className="mt-0.5 block text-xs text-muted-foreground">{app.statusIssues[0].summary}</span>
+                            )}
+                          </span>
+                          <StatusBadge status={app.health} />
+                          {app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}
+                          <WorkspaceIcon name="arrow" className="size-4 text-muted-foreground" />
+                        </Link>
+                      </li>
+                    )
+                  })}
+                </ul>
+              ) : (
+                <EmptyState
+                  title={total ? "Nothing needs attention" : "A fresh start"}
+                  description={total ? "No drift, degradation, pauses, or stalled checks." : "Create your first application to start delivering."}
+                  href={total || !workspaceId ? undefined : `/applications/new${qs}`}
+                  action="Create application"
+                />
+              )}
+            </Panel>
 
+            <div className="min-w-0 space-y-6 xl:col-start-2 xl:row-span-2 xl:row-start-1">
               <Panel
                 title="Pending approvals"
                 description="Plans waiting for a decision."
@@ -247,9 +252,7 @@ export default function OverviewPage() {
                   </p>
                 )}
               </Panel>
-            </div>
 
-            <div className="min-w-0 space-y-6">
               <Panel
                 title="Connection health"
                 description="Clusters, agents, and Git sources used by this workspace."
@@ -257,6 +260,8 @@ export default function OverviewPage() {
               >
                 {!health.loaded ? <p className="px-5 py-8 text-center text-sm text-muted-foreground">Checking connections…</p> : <ConnectionList rows={rows} href={connectionsHref} />}
               </Panel>
+
+              {workspaceId && <LatestSyncs key={workspaceId} state={syncHistory} now={now} />}
 
               <Panel title="Delivery status" description={`${total} application${total === 1 ? "" : "s"}`}>
                 <div className="p-5">
@@ -287,34 +292,13 @@ export default function OverviewPage() {
                   </ul>
                 </div>
               </Panel>
-
-              <Panel title="Latest checks" description="Most recently checked applications">
-                {recent.length ? (
-                  <ul className="divide-y">
-                    {recent.map((app) => {
-                      const state: HealthLevel = isApplicationHealthy(app) ? "healthy" : needsAttention(app) ? "warning" : "unknown"
-                      return (
-                        <li key={app.id}>
-                          <Link href={`/applications/${app.id}`} className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-muted/40">
-                            <LevelIcon level={state} />
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-sm font-medium">{app.name}</span>
-                              <span className="block truncate font-mono text-xs text-muted-foreground">{app.lastSyncedRevision || app.revision}</span>
-                            </span>
-                            <span className={`flex shrink-0 items-center gap-1 text-xs ${isCheckStalled(app, now) ? "text-warning-foreground dark:text-warning" : "text-muted-foreground"}`}>
-                              <HugeiconsIcon icon={Clock01Icon} strokeWidth={1.8} className="size-3.5" aria-hidden="true" />
-                              {ago(app.lastCheckedAt, now)}
-                            </span>
-                          </Link>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                ) : (
-                  <p className="px-5 py-8 text-center text-sm text-muted-foreground">Checks appear after you add an application.</p>
-                )}
-              </Panel>
             </div>
+
+            {workspaceId && (
+              <div className="min-w-0 xl:col-start-1 xl:row-start-2">
+                <SyncHistoryChartView state={syncHistory} />
+              </div>
+            )}
           </div>
         </div>
       )}

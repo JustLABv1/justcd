@@ -14,6 +14,18 @@ func (s *Server) applicationSyncHistory(w http.ResponseWriter, r *http.Request) 
 	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "viewer") {
 		return
 	}
+	s.writeSyncHistory(w, r, app.ID, "")
+}
+
+func (s *Server) workspaceSyncHistory(w http.ResponseWriter, r *http.Request) {
+	workspaceID := r.PathValue("workspaceID")
+	if !s.requireWorkspaceRole(w, r, workspaceID, "viewer") {
+		return
+	}
+	s.writeSyncHistory(w, r, "", workspaceID)
+}
+
+func (s *Server) writeSyncHistory(w http.ResponseWriter, r *http.Request, applicationID, workspaceID string) {
 	period, width := 24*time.Hour, time.Hour
 	switch r.URL.Query().Get("range") {
 	case "", "24h":
@@ -24,7 +36,13 @@ func (s *Server) applicationSyncHistory(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	end := time.Now().UTC()
-	history, err := s.Store.SyncHistory(r.Context(), app.ID, end.Add(-period), end, width)
+	var history any
+	var err error
+	if workspaceID != "" {
+		history, err = s.Store.WorkspaceSyncHistory(r.Context(), workspaceID, end.Add(-period), end, width)
+	} else {
+		history, err = s.Store.SyncHistory(r.Context(), applicationID, end.Add(-period), end, width)
+	}
 	if err != nil {
 		writeStoreError(w, "could not load sync history")
 		return

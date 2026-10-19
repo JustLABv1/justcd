@@ -1,0 +1,68 @@
+name: Release Helm charts
+
+on:
+  workflow_call:
+  pull_request:
+    paths:
+      - charts/**
+      - scripts/package-charts.py
+      - .github/workflows/release-helm.yml
+      - .github/workflows/release.yml
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Install chart packaging dependency
+        run: python -m pip install PyYAML==6.0.3
+      - name: Install Helm
+        run: |
+          curl -fsSL https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz -o /tmp/helm.tar.gz
+          curl -fsSL https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz.sha256sum -o /tmp/helm.sha256sum
+          echo "$(cut -d ' ' -f 1 /tmp/helm.sha256sum)  /tmp/helm.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/helm.tar.gz -C /tmp
+          sudo install /tmp/linux-amd64/helm /usr/local/bin/helm
+      - name: Validate and package release charts
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'pull_request' && 'v0.0.0' || github.ref_name }}
+        run: python scripts/package-charts.py "$RELEASE_TAG"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: helm-charts
+          path: dist/charts/*.tgz
+          if-no-files-found: error
+          retention-days: 14
+  publish:
+    if: github.event_name != 'pull_request'
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: helm-charts
+          path: dist/charts
+      - name: Install Helm
+        run: |
+          curl -fsSL https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz -o /tmp/helm.tar.gz
+          curl -fsSL https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz.sha256sum -o /tmp/helm.sha256sum
+          echo "$(cut -d ' ' -f 1 /tmp/helm.sha256sum)  /tmp/helm.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/helm.tar.gz -C /tmp
+          sudo install /tmp/linux-amd64/helm /usr/local/bin/helm
+      - name: Publish charts to GHCR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GH_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          for chart in dist/charts/*.tgz; do
+            helm push "$chart" oci://ghcr.io/justlabv1/charts
+          done

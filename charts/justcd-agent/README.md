@@ -1,5 +1,22 @@
 # JustCD cluster agent
 
+Stable `vX.Y.Z` releases publish this chart to
+`oci://ghcr.io/justlabv1/charts/justcd-agent` and attach its package to the
+GitHub release, after the images have been published. Packaged chart versions
+use `X.Y.Z` and default to `ghcr.io/justlabv1/justcd:agent-vX.Y.Z`.
+
+```sh
+helm upgrade --install justcd-agent oci://ghcr.io/justlabv1/charts/justcd-agent \
+  --version X.Y.Z --namespace justcd-agent --create-namespace -f agent-values.yaml
+```
+
+Replace `X.Y.Z` with a published version. Set `serverUrl`, `enrollmentSecret`,
+and the explicit workspace/namespace profiles in `agent-values.yaml` as
+described below. Omit image overrides to use the packaged release image.
+Private GHCR packages require `helm registry login ghcr.io` with package read
+access. See [chart publishing](../justcd/README.md#published-releases) for
+workflow and package visibility configuration.
+
 Installation, connection modes, local scope, and recovery behavior are documented
 in [Private cluster connections](../../services/docs/content/docs/operations/cluster-agents.md).
 

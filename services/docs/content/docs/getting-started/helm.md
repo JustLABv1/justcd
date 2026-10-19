@@ -65,6 +65,21 @@ Install or upgrade:
 helm upgrade --install justcd ./charts/justcd --namespace justcd --create-namespace -f deploy-values.yaml
 ```
 
+Stable `vX.Y.Z` releases also publish a versioned chart to GHCR after all
+release images pass their checks. Once a release containing chart publishing
+is available, use:
+
+```sh
+helm upgrade --install justcd oci://ghcr.io/justlabv1/charts/justcd \
+  --version X.Y.Z --namespace justcd --create-namespace -f deploy-values.yaml
+```
+
+Replace `X.Y.Z` with a published version. Omit the image overrides from the
+example values above to use the packaged frontend, backend, and docs images,
+which are pinned to that release. Chart archives are also attached to the
+GitHub release. Private packages require `helm registry login ghcr.io` with
+package read access.
+
 On a fresh installation, create the first administrator at `/signup`. JustCD
 then opens `/onboarding`, where the readiness checklist verifies the database
 and public URL, asks an administrator to confirm the encryption key is durably

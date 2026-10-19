@@ -75,6 +75,9 @@ rules:
   - apiGroups: [networking.k8s.io]
     resources: [ingresses, networkpolicies]
     verbs: [get, list, create, update, patch, delete]
+  - apiGroups: [route.openshift.io]
+    resources: [routes]
+    verbs: [get, list]
 ```
 
 ```sh
@@ -82,7 +85,9 @@ kubectl apply -f justcd-approved-deployer.yaml
 ```
 
 This example excludes Secret access, ServiceAccount/RBAC management, token issuance,
-cluster resources and custom resources. Add only required workload kinds and verbs.
+cluster resources and other custom resources. The read-only OpenShift Route rule
+allows topology discovery, including Routes generated from Ingresses; it does not
+grant Route mutations. Add only required workload kinds and verbs.
 Do not use `cluster-admin`, wildcards, `bind`, `escalate` or `impersonate`. Because
 this is an existing administrator-supplied role, reviewing its contents is your
 responsibility. A ClusterRole bound using a **RoleBinding** grants its namespaced

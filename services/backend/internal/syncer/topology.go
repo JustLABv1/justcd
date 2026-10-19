@@ -3,6 +3,7 @@ package syncer
 import (
 	"context"
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -13,7 +14,9 @@ import (
 	"github.com/justlab/justcd/services/backend/internal/core"
 	"github.com/justlab/justcd/services/backend/internal/kube"
 	"github.com/justlab/justcd/services/backend/internal/store"
+	"github.com/justlab/justcd/services/backend/internal/topology"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -95,11 +98,27 @@ func (s *Service) ObserveTopology(ctx context.Context, app store.Application, ma
 			{schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "replicasets"}, "ReplicaSet"},
 			{schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "jobs"}, "Job"},
 			{schema.GroupVersionResource{Version: "v1", Resource: "pods"}, "Pod"},
+			{schema.GroupVersionResource{Version: "v1", Resource: "services"}, "Service"},
+			{schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"}, "Ingress"},
+			{schema.GroupVersionResource{Group: "route.openshift.io", Version: "v1", Resource: "routes"}, "Route"},
 		} {
+			if target.kind == "Route" {
+				_, mappingErr := client.Mapper.RESTMapping(schema.GroupKind{Group: "route.openshift.io", Kind: "Route"}, "v1")
+				if meta.IsNoMatchError(mappingErr) {
+					continue
+				}
+				if mappingErr != nil {
+					warnings = append(warnings, fmt.Sprintf("cannot discover Route in %s", binding.Namespace))
+					continue
+				}
+			}
 			listCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 			result, listErr := client.Dynamic.Resource(target.gvr).Namespace(binding.Namespace).List(listCtx, metav1.ListOptions{Limit: 500})
 			cancel()
 			if listErr != nil {
+				if target.kind == "Route" && apierrors.IsNotFound(listErr) {
+					continue
+				}
 				warnings = append(warnings, fmt.Sprintf("cannot observe %s in %s", target.kind, binding.Namespace))
 				continue
 			}
@@ -113,34 +132,7 @@ func (s *Service) ObserveTopology(ctx context.Context, app store.Application, ma
 			}
 		}
 	}
-	selected := []store.ObservedResource{}
-	selectedUIDs := map[string]bool{}
-	for _, item := range all {
-		if item.UID != "" && managedUIDs[item.UID] {
-			selected = append(selected, item)
-			selectedUIDs[item.UID] = true
-		}
-	}
-	for range 4 {
-		added := false
-		for _, item := range all {
-			if item.UID == "" || known[item.UID] || selectedUIDs[item.UID] {
-				continue
-			}
-			for _, owner := range item.OwnerUIDs {
-				if known[owner] {
-					known[item.UID] = true
-					selected = append(selected, item)
-					selectedUIDs[item.UID] = true
-					added = true
-					break
-				}
-			}
-		}
-		if !added {
-			break
-		}
-	}
+	selected := selectTopologyObservations(managed, all, managedUIDs)
 	if err := s.Store.ReplaceObservedResources(ctx, app.ID, selected); err != nil {
 		return err
 	}
@@ -148,6 +140,52 @@ func (s *Service) ObserveTopology(ctx context.Context, app store.Application, ma
 		return errors.New(strings.Join(warnings, "; "))
 	}
 	return nil
+}
+
+// Include networking resources connected to this app, not every namespace route.
+// Reverse traversal is limited to traffic entry points; ownership stays directed.
+func selectTopologyObservations(managed []store.ManagedResource, all []store.ObservedResource, managedUIDs map[string]bool) []store.ObservedResource {
+	graph := topology.Build(nil, managed, all)
+	selected := map[string]bool{}
+	nodes := map[string]topology.Node{}
+	for _, node := range graph.Nodes {
+		nodes[node.ID] = node
+	}
+	for _, item := range all {
+		if item.UID != "" && managedUIDs[item.UID] {
+			selected[topology.ID(item.Identity)] = true
+		}
+	}
+	for {
+		added := false
+		include := func(id string) {
+			if !selected[id] {
+				selected[id] = true
+				added = true
+			}
+		}
+		for _, edge := range graph.Edges {
+			if selected[edge.From] && (edge.Relation == "owns" || edge.Relation == "routes to" || edge.Relation == "selects" && nodes[edge.To].Identity.Kind == "Pod") {
+				include(edge.To)
+			}
+			if selected[edge.To] && (edge.Relation == "selects" || edge.Relation == "routes to" || edge.Relation == "owns" && nodes[edge.From].Identity.Kind == "Ingress") {
+				include(edge.From)
+			}
+		}
+		if !added {
+			break
+		}
+	}
+	result := []store.ObservedResource{}
+	seen := map[string]bool{}
+	for _, item := range all {
+		id := topology.ID(item.Identity)
+		if selected[id] && !seen[id] {
+			result = append(result, item)
+			seen[id] = true
+		}
+	}
+	return result
 }
 
 // RefreshApplicationHealth stores a deterministic application-level condition
@@ -250,9 +288,11 @@ func observedObject(clusterID string, object unstructured.Unstructured) store.Ob
 			break
 		}
 	}
+	topologySpec, _ := json.Marshal(topology.ObservationSpec(object.GetKind(), object.Object))
 	return store.ObservedResource{
 		Identity: coreIdentity(clusterID, object), UID: string(object.GetUID()), ResourceVersion: object.GetResourceVersion(),
 		Labels: object.GetLabels(), OwnerUIDs: owners, Phase: phase, Readiness: readiness, HealthSummary: details, Source: "kubernetes", ObservedAt: time.Now().UTC(),
+		TopologySpec: topologySpec,
 	}
 }
 

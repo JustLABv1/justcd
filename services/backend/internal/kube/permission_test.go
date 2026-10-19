@@ -185,12 +185,14 @@ func TestCheckPermissionsUsesKubernetesResourceAttributeGroups(t *testing.T) {
 		}
 		seen[group+"/"+resource] = true
 		switch resource {
-		case "pods":
+		case "pods", "services":
 			return group == ""
 		case "deployments", "statefulsets", "daemonsets", "replicasets":
 			return group == "apps"
 		case "jobs":
 			return group == "batch"
+		case "ingresses":
+			return group == "networking.k8s.io"
 		default:
 			return false
 		}
@@ -199,7 +201,7 @@ func TestCheckPermissionsUsesKubernetesResourceAttributeGroups(t *testing.T) {
 	if report.Status != "passed" {
 		t.Fatalf("workload access falsely denied: %+v", report)
 	}
-	for _, key := range []string{"/pods", "apps/deployments", "batch/jobs"} {
+	for _, key := range []string{"/pods", "/services", "networking.k8s.io/ingresses", "apps/deployments", "batch/jobs"} {
 		if !seen[key] {
 			t.Fatalf("API group not reviewed correctly: %s", key)
 		}

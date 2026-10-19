@@ -6,8 +6,63 @@ import (
 
 	"github.com/justlab/justcd/services/backend/internal/apphealth"
 	"github.com/justlab/justcd/services/backend/internal/core"
+	"github.com/justlab/justcd/services/backend/internal/store"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
+
+func TestSelectTopologyObservationsIncludesConnectedIngressAndGeneratedRoutes(t *testing.T) {
+	objects := []string{
+		`{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"web","namespace":"demo","uid":"deployment"},"spec":{"template":{"metadata":{"labels":{"app":"web"}}}}}`,
+		`{"apiVersion":"v1","kind":"Service","metadata":{"name":"web","namespace":"demo","uid":"service"},"spec":{"selector":{"app":"web"}}}`,
+		`{"apiVersion":"networking.k8s.io/v1","kind":"Ingress","metadata":{"name":"entry","namespace":"demo","uid":"ingress"},"spec":{"rules":[{"host":"web.example.com","http":{"paths":[{"path":"/","backend":{"service":{"name":"web"}}}]}}]}}`,
+		`{"apiVersion":"route.openshift.io/v1","kind":"Route","metadata":{"name":"generated","namespace":"demo","uid":"route","ownerReferences":[{"uid":"ingress"}]},"spec":{"to":{"name":"web","kind":"Service"},"tls":{"key":"must-not-persist","termination":"edge"}},"status":{"ingress":[{"host":"web.apps.example.com"}]}}`,
+		`{"apiVersion":"v1","kind":"Service","metadata":{"name":"other","namespace":"demo","uid":"other-service"},"spec":{"selector":{"app":"other"}}}`,
+		`{"apiVersion":"route.openshift.io/v1","kind":"Route","metadata":{"name":"unrelated","namespace":"demo","uid":"other-route"},"spec":{"to":{"name":"other"}}}`,
+	}
+	all := []store.ObservedResource{}
+	for _, raw := range objects {
+		var object unstructured.Unstructured
+		if err := object.UnmarshalJSON([]byte(raw)); err != nil {
+			t.Fatal(err)
+		}
+		all = append(all, observedObject("cluster", object))
+	}
+	selected := selectTopologyObservations([]store.ManagedResource{{Identity: all[0].Identity, UID: "deployment"}}, all, map[string]bool{"deployment": true})
+	if len(selected) != 4 {
+		t.Fatalf("selected %d resources, want Deployment + Service + Ingress + Route: %#v", len(selected), selected)
+	}
+	for _, item := range selected {
+		if item.Identity.Name == "unrelated" || item.Identity.Name == "other" {
+			t.Fatalf("unrelated networking resource included: %#v", item)
+		}
+	}
+}
+
+func TestSelectedServiceIncludesMatchingPodsOutsideTheManagedOwnerChain(t *testing.T) {
+	objects := []string{
+		`{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"web","namespace":"demo","uid":"deployment"},"spec":{"template":{"metadata":{"labels":{"app":"web"}}}}}`,
+		`{"apiVersion":"v1","kind":"Service","metadata":{"name":"web","namespace":"demo","uid":"service"},"spec":{"selector":{"app":"web"}}}`,
+		`{"apiVersion":"v1","kind":"Pod","metadata":{"name":"shared-ready","namespace":"demo","uid":"pod","labels":{"app":"web"}},"status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}]}}`,
+		`{"apiVersion":"v1","kind":"Pod","metadata":{"name":"other","namespace":"demo","uid":"other","labels":{"app":"other"}}}`,
+	}
+	all := []store.ObservedResource{}
+	for _, raw := range objects {
+		var object unstructured.Unstructured
+		if err := object.UnmarshalJSON([]byte(raw)); err != nil {
+			t.Fatal(err)
+		}
+		all = append(all, observedObject("cluster", object))
+	}
+	selected := selectTopologyObservations([]store.ManagedResource{{Identity: all[0].Identity, UID: "deployment"}}, all, map[string]bool{"deployment": true})
+	if len(selected) != 3 {
+		t.Fatalf("selected %d resources, want Deployment + Service + matching Pod", len(selected))
+	}
+	for _, item := range selected {
+		if item.Identity.Name == "other" {
+			t.Fatal("included an unrelated pod")
+		}
+	}
+}
 
 func TestObservedDeploymentFeedsApplicationHealth(t *testing.T) {
 	object := unstructured.Unstructured{Object: map[string]any{

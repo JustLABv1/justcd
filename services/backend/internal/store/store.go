@@ -3140,12 +3140,13 @@ type ObservedResource struct {
 	Phase           string                    `json:"phase,omitempty"`
 	Readiness       string                    `json:"readiness,omitempty"`
 	HealthSummary   apphealth.ResourceDetails `json:"healthSummary,omitempty"`
+	TopologySpec    json.RawMessage           `json:"topologySpec,omitempty"`
 	Source          string                    `json:"source"`
 	ObservedAt      time.Time                 `json:"observedAt"`
 }
 
 func (s *Store) ObservedResources(ctx context.Context, applicationID string) ([]ObservedResource, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT cluster_id,api_version,kind,namespace,name,uid,resource_version,labels,owner_uids,phase,readiness,source,observed_at,health_summary FROM application_resource_observations WHERE application_id=$1 ORDER BY kind,namespace,name`, applicationID)
+	rows, err := s.DB.QueryContext(ctx, `SELECT cluster_id,api_version,kind,namespace,name,uid,resource_version,labels,owner_uids,phase,readiness,source,observed_at,health_summary,topology_spec FROM application_resource_observations WHERE application_id=$1 ORDER BY kind,namespace,name`, applicationID)
 	if err != nil {
 		return nil, err
 	}
@@ -3154,7 +3155,7 @@ func (s *Store) ObservedResources(ctx context.Context, applicationID string) ([]
 	for rows.Next() {
 		var item ObservedResource
 		var labels, owners, healthSummary []byte
-		if err := rows.Scan(&item.Identity.ClusterID, &item.Identity.APIVersion, &item.Identity.Kind, &item.Identity.Namespace, &item.Identity.Name, &item.UID, &item.ResourceVersion, &labels, &owners, &item.Phase, &item.Readiness, &item.Source, &item.ObservedAt, &healthSummary); err != nil {
+		if err := rows.Scan(&item.Identity.ClusterID, &item.Identity.APIVersion, &item.Identity.Kind, &item.Identity.Namespace, &item.Identity.Name, &item.UID, &item.ResourceVersion, &labels, &owners, &item.Phase, &item.Readiness, &item.Source, &item.ObservedAt, &healthSummary, &item.TopologySpec); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(labels, &item.Labels); err != nil {
@@ -3193,7 +3194,11 @@ func (s *Store) ReplaceObservedResources(ctx context.Context, applicationID stri
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO application_resource_observations(application_id,cluster_id,api_version,kind,namespace,name,uid,resource_version,labels,owner_uids,phase,readiness,source,observed_at,health_summary) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'kubernetes',NOW(),$13) ON CONFLICT(application_id,cluster_id,api_version,kind,namespace,name) DO UPDATE SET uid=EXCLUDED.uid,resource_version=EXCLUDED.resource_version,labels=EXCLUDED.labels,owner_uids=EXCLUDED.owner_uids,phase=EXCLUDED.phase,readiness=EXCLUDED.readiness,source='kubernetes',observed_at=NOW(),health_summary=EXCLUDED.health_summary`, applicationID, item.Identity.ClusterID, item.Identity.APIVersion, item.Identity.Kind, item.Identity.Namespace, item.Identity.Name, item.UID, item.ResourceVersion, labels, owners, item.Phase, item.Readiness, healthSummary); err != nil {
+		topologySpec := item.TopologySpec
+		if len(topologySpec) == 0 {
+			topologySpec = json.RawMessage(`{}`)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO application_resource_observations(application_id,cluster_id,api_version,kind,namespace,name,uid,resource_version,labels,owner_uids,phase,readiness,source,observed_at,health_summary,topology_spec) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'kubernetes',NOW(),$13,$14) ON CONFLICT(application_id,cluster_id,api_version,kind,namespace,name) DO UPDATE SET uid=EXCLUDED.uid,resource_version=EXCLUDED.resource_version,labels=EXCLUDED.labels,owner_uids=EXCLUDED.owner_uids,phase=EXCLUDED.phase,readiness=EXCLUDED.readiness,source='kubernetes',observed_at=NOW(),health_summary=EXCLUDED.health_summary,topology_spec=EXCLUDED.topology_spec`, applicationID, item.Identity.ClusterID, item.Identity.APIVersion, item.Identity.Kind, item.Identity.Namespace, item.Identity.Name, item.UID, item.ResourceVersion, labels, owners, item.Phase, item.Readiness, healthSummary, topologySpec); err != nil {
 			return err
 		}
 	}

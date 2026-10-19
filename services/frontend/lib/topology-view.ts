@@ -5,6 +5,7 @@ export const observed = (node: TopologyNode) => node.source === "sample" || node
 export const workload = (node: TopologyNode) => ["Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob"].includes(node.identity.kind)
 export function configurationResource(identity: Identity) {
   return (identity.apiVersion === "v1" && ["ConfigMap", "Secret", "Service", "ServiceAccount"].includes(identity.kind)) ||
+    (identity.apiVersion.startsWith("route.openshift.io/") && identity.kind === "Route") ||
     (identity.apiVersion.startsWith("networking.k8s.io/") && ["Ingress", "NetworkPolicy"].includes(identity.kind)) ||
     (identity.apiVersion.startsWith("rbac.authorization.k8s.io/")) ||
     (identity.apiVersion.startsWith("stackgres.io/") && ["SGInstanceProfile", "SGScript", "SGObjectStorage"].includes(identity.kind))

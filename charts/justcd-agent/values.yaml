@@ -43,6 +43,9 @@ managedCredentials:
     - apiGroups: ["networking.k8s.io"]
       resources: ["ingresses", "networkpolicies"]
       verbs: ["get", "list", "create", "update", "patch", "delete"]
+    - apiGroups: ["route.openshift.io"]
+      resources: ["routes"]
+      verbs: ["get", "list"] # Observe OpenShift-generated routes in the topology.
 persistence:
   existingClaim: ""
   size: 1Gi
@@ -65,6 +68,9 @@ rbac:
     - apiGroups: ["networking.k8s.io"]
       resources: ["ingresses", "networkpolicies"]
       verbs: ["get", "list", "create", "update", "patch", "delete"]
+    - apiGroups: ["route.openshift.io"]
+      resources: ["routes"]
+      verbs: ["get", "list"]
 serviceAccount:
   create: true
   name: ""

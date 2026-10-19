@@ -8,6 +8,56 @@ import { ManifestDiff } from "@/components/manifest-diff"
 import { makeEntry, resourceKey } from "@/lib/plan-review"
 import { Button } from "@/components/ui/button"
 
+const iniBefore = [
+  "[analytics]",
+  "check_for_updates = true",
+  "",
+  "[auth.generic_oauth]",
+  "enabled = true",
+  "name = Example SSO",
+  "auth_url = https://login.example.invalid/realms/demo/protocol/openid-connect/auth",
+  "token_url = https://login.example.invalid/realms/demo/protocol/openid-connect/token",
+  "",
+  "[paths]",
+  "data = /var/lib/grafana",
+  "logs = /var/log/grafana",
+  "plugins = /var/lib/grafana/plugins",
+  "",
+  "[server]",
+  "domain = grafana.example.invalid",
+  "",
+  "[smtp]",
+  "enabled = true",
+  "host = smtp.old.example.invalid:2525",
+  "from_name = Grafana Alerts",
+  "",
+  "[unified_storage]",
+  "index_path = /var/lib/grafana-search/bleve",
+  "",
+].join("\n")
+const embeddedBefore = {
+  apiVersion: "v1",
+  kind: "ConfigMap",
+  metadata: { name: "grafana-config", labels: { team: "platform" } },
+  data: {
+    "grafana.ini": iniBefore,
+    "removed.conf": "",
+    "unchanged.json": "{}",
+  },
+}
+const embeddedAfter = {
+  ...embeddedBefore,
+  metadata: { ...embeddedBefore.metadata, labels: { team: "observability" } },
+  data: {
+    "grafana.ini": iniBefore.replace(
+      "smtp.old.example.invalid:2525",
+      "smtp.new.example.invalid:587"
+    ),
+    "added.yaml": "enabled: true\n",
+    "unchanged.json": "{}",
+  },
+}
+
 export function PlanReviewFixture() {
   const [policyMode, setPolicyMode] = useState<"warn" | "block">("warn")
   const fixture = useMemo(() => {
@@ -169,6 +219,15 @@ export function PlanReviewFixture() {
         10,000 changes, 1,000 ignored resources; one manifest contains 10,000
         data fields. All actions stay in browser memory.
       </p>
+      <section
+        aria-label="Embedded configuration fixture"
+        className="mb-6 overflow-hidden rounded-xl border"
+      >
+        <h2 className="border-b px-4 py-3 font-semibold">
+          Embedded ConfigMap files
+        </h2>
+        <ManifestDiff before={embeddedBefore} after={embeddedAfter} />
+      </section>
       <Button
         className="mb-4"
         variant="outline"

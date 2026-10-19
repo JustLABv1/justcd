@@ -14,7 +14,20 @@ export type ReviewRow = {
 
 /** Align unchanged context and pair replacement lines without hiding additions or deletions. */
 export function reviewRows(before: unknown, after: unknown): ReviewRow[] {
-  const diff = diffJsonLines(before ?? null, after ?? null)
+  return alignRows(diffJsonLines(before ?? null, after ?? null))
+}
+
+/** Compare decoded file contents, preserving empty files and final newlines. */
+export function reviewTextRows(before?: string, after?: string): ReviewRow[] {
+  return alignRows(
+    diffLines(
+      before === undefined ? [] : before.split("\n"),
+      after === undefined ? [] : after.split("\n")
+    )
+  )
+}
+
+function alignRows(diff: JsonLineDiff): ReviewRow[] {
   const rows: ReviewRow[] = []
   let i = 0,
     j = 0
@@ -64,8 +77,18 @@ function sameLine(left: string, right: string) {
 
 /** Compare formatted manifests without losing their existing JSON layout. */
 export function diffJsonLines(before: unknown, after: unknown): JsonLineDiff {
-  const oldLines = JSON.stringify(before, null, 2).split("\n")
-  const newLines = JSON.stringify(after, null, 2).split("\n")
+  return diffLines(
+    JSON.stringify(before, null, 2).split("\n"),
+    JSON.stringify(after, null, 2).split("\n"),
+    sameLine
+  )
+}
+
+function diffLines(
+  oldLines: string[],
+  newLines: string[],
+  equal = (left: string, right: string) => left === right
+): JsonLineDiff {
   const removed = new Set<number>()
   const added = new Set<number>()
 
@@ -73,7 +96,7 @@ export function diffJsonLines(before: unknown, after: unknown): JsonLineDiff {
   while (
     prefix < oldLines.length &&
     prefix < newLines.length &&
-    sameLine(oldLines[prefix], newLines[prefix])
+    equal(oldLines[prefix], newLines[prefix])
   )
     prefix++
   let oldEnd = oldLines.length
@@ -81,7 +104,7 @@ export function diffJsonLines(before: unknown, after: unknown): JsonLineDiff {
   while (
     oldEnd > prefix &&
     newEnd > prefix &&
-    sameLine(oldLines[oldEnd - 1], newLines[newEnd - 1])
+    equal(oldLines[oldEnd - 1], newLines[newEnd - 1])
   ) {
     oldEnd--
     newEnd--
@@ -100,7 +123,7 @@ export function diffJsonLines(before: unknown, after: unknown): JsonLineDiff {
     // unbounded LCS matrix. Reordering remains visible as changed lines.
     if (oldCount === newCount) {
       for (let n = 0; n < oldCount; n++) {
-        if (!sameLine(oldLines[prefix + n], newLines[prefix + n])) {
+        if (!equal(oldLines[prefix + n], newLines[prefix + n])) {
           removed.add(prefix + n)
           added.add(prefix + n)
         }
@@ -118,7 +141,7 @@ export function diffJsonLines(before: unknown, after: unknown): JsonLineDiff {
   )
   for (let i = oldCount - 1; i >= 0; i--) {
     for (let j = newCount - 1; j >= 0; j--) {
-      matches[i][j] = sameLine(oldLines[prefix + i], newLines[prefix + j])
+      matches[i][j] = equal(oldLines[prefix + i], newLines[prefix + j])
         ? matches[i + 1][j + 1] + 1
         : Math.max(matches[i + 1][j], matches[i][j + 1])
     }
@@ -130,7 +153,7 @@ export function diffJsonLines(before: unknown, after: unknown): JsonLineDiff {
     if (
       i < oldCount &&
       j < newCount &&
-      sameLine(oldLines[prefix + i], newLines[prefix + j])
+      equal(oldLines[prefix + i], newLines[prefix + j])
     ) {
       i++
       j++

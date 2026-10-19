@@ -15,6 +15,8 @@ import {
   Settings02Icon,
 } from "@hugeicons/core-free-icons"
 import { Input } from "@/components/ui/input"
+import { FormSelect } from "@/components/ui/form-select"
+import { DiffText, useDiffSyntax } from "@/components/diff-text"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import { VirtualReviewList } from "@/components/virtual-review-list"
 import { Button } from "@/components/ui/button"
@@ -25,34 +27,137 @@ import {
 } from "@/components/ui/popover"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { SwitchField } from "@/components/ui-kit"
-import { contextRows, reviewRows } from "@/lib/line-diff"
+import { contextRows, reviewRows, reviewTextRows } from "@/lib/line-diff"
+import {
+  embeddedFiles,
+  otherManifestChanges,
+  changedTextRanges,
+  type EmbeddedFile,
+} from "@/lib/embedded-diff"
 import { hiddenChangedPaths } from "@/lib/plan-review"
 
-export function ManifestDiff({
-  before,
-  after,
-  excluded = false,
-  changedPaths,
-  takeover = false,
-}: {
+type ManifestDiffProps = {
   before: unknown
   after: unknown
   excluded?: boolean
   changedPaths?: string[]
   takeover?: boolean
-}) {
+}
+
+export function ManifestDiff(props: ManifestDiffProps) {
+  const files = useMemo(
+    () => embeddedFiles(props.before, props.after),
+    [props.before, props.after]
+  )
+  const [selected, setSelected] = useState(() =>
+    files[0]?.status !== "unchanged" && files[0]
+      ? `file:${files[0].key}`
+      : "manifest"
+  )
+  const file = files.find((item) => `file:${item.key}` === selected)
+  const otherChanges = useMemo(
+    () => otherManifestChanges(props.before, props.after, files),
+    [props.before, props.after, files]
+  )
+  return (
+    <>
+      {files.length > 0 && (
+        <div className="space-y-2 border-b p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <FormSelect
+              ariaLabel="Diff content"
+              value={file ? selected : "manifest"}
+              onValueChange={setSelected}
+              className="sm:max-w-md"
+              items={[
+                {
+                  value: "manifest",
+                  label: `Full manifest (JSON)${otherChanges ? " · other fields changed" : ""}`,
+                },
+                ...files.map((item) => ({
+                  value: `file:${item.key}`,
+                  label: `data / ${item.key} · ${item.status}`,
+                })),
+              ]}
+            />
+            {file && (
+              <span className="text-xs text-muted-foreground">
+                {file.language.toUpperCase()} · Decoded file content
+              </span>
+            )}
+          </div>
+          {file && otherChanges && (
+            <div className="flex flex-wrap items-center gap-x-2 text-sm">
+              <span>Other manifest fields also changed.</span>
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                onClick={() => setSelected("manifest")}
+              >
+                Review full manifest
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+      <ManifestDiffView
+        key={file ? `file:${file.key}` : "manifest"}
+        {...props}
+        file={file}
+      />
+    </>
+  )
+}
+
+function ManifestDiffView({
+  before,
+  after,
+  excluded = false,
+  changedPaths,
+  takeover = false,
+  file,
+}: ManifestDiffProps & { file?: EmbeddedFile }) {
   const [mode, setMode] = useState("split")
   const [fontSize, setFontSize] = useState("14")
-  const [wrap, setWrap] = useState(true)
+  const [wrap, setWrap] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const [position, setPosition] = useState(-1)
   const scrollTo = useRef<((index: number) => void) | null>(null)
   const [query, setQuery] = useState("")
   const search = useDeferredValue(query)
   const optionsId = useId()
-  const singleSide = before == null || after == null
+  const singleSide = file
+    ? file.before === undefined || file.after === undefined
+    : before == null || after == null
+  const beforeMissing = file ? file.before === undefined : before == null
   const split = !singleSide && mode === "split"
-  const rows = useMemo(() => reviewRows(before, after), [before, after])
+  const rows = useMemo(
+    () =>
+      file
+        ? reviewTextRows(file.before, file.after)
+        : reviewRows(before, after),
+    [before, after, file]
+  )
+  const oldSource = useMemo(
+    () =>
+      file ? (file.before ?? "") : JSON.stringify(before ?? null, null, 2),
+    [before, file]
+  )
+  const newSource = useMemo(
+    () => (file ? (file.after ?? "") : JSON.stringify(after ?? null, null, 2)),
+    [after, file]
+  )
+  const syntax = useDiffSyntax(oldSource, newSource, file?.language ?? "json")
+  const wordChanges = useMemo(
+    () =>
+      rows.map((row) =>
+        row.changed && row.before !== undefined && row.after !== undefined
+          ? changedTextRanges(row.before, row.after)
+          : undefined
+      ),
+    [rows]
+  )
   const hiddenPaths = useMemo(
     () => hiddenChangedPaths(before, after, changedPaths),
     [before, after, changedPaths]
@@ -128,7 +233,9 @@ export function ManifestDiff({
   function line(
     text: string | undefined,
     number: number | undefined,
-    tone?: "removed" | "added"
+    tone?: "removed" | "added",
+    index = 0,
+    side: "before" | "after" = "after"
   ) {
     return (
       <div
@@ -144,9 +251,18 @@ export function ManifestDiff({
           {tone === "removed" ? "−" : tone === "added" ? "+" : ""}
         </span>
         <span
-          className={`min-w-0 flex-1 pr-4 ${wrap || split ? "break-all whitespace-pre-wrap" : "whitespace-pre"}`}
+          className={`min-w-0 flex-1 pr-4 ${wrap ? "[overflow-wrap:anywhere] break-words whitespace-pre-wrap" : "overflow-x-auto whitespace-pre"}`}
         >
-          {text ?? " "}
+          <DiffText
+            text={text ?? " "}
+            syntax={
+              number
+                ? syntax?.[side === "before" ? 0 : 1]?.[number - 1]
+                : undefined
+            }
+            ranges={wordChanges[index]?.[side]}
+            tone={tone}
+          />
         </span>
       </div>
     )
@@ -172,12 +288,8 @@ export function ManifestDiff({
               if (next[0]) setMode(next[0])
             }}
           >
-            <ToggleGroupItem value="split">
-              Side by side
-            </ToggleGroupItem>
-            <ToggleGroupItem value="unified">
-              Unified
-            </ToggleGroupItem>
+            <ToggleGroupItem value="split">Side by side</ToggleGroupItem>
+            <ToggleGroupItem value="unified">Unified</ToggleGroupItem>
           </ToggleGroup>
         )}
         <Popover>
@@ -230,13 +342,8 @@ export function ManifestDiff({
             <SwitchField
               id={`${optionsId}-wrap`}
               label="Wrap lines"
-              description={
-                split
-                  ? "Side-by-side view always wraps long lines to keep both manifests visible."
-                  : "Wrap long lines instead of scrolling horizontally."
-              }
-              checked={wrap || split}
-              disabled={split}
+              description="Wrap long lines instead of scrolling horizontally."
+              checked={wrap}
               onCheckedChange={setWrap}
             />
             <SwitchField
@@ -321,19 +428,22 @@ export function ManifestDiff({
         className="bg-card font-mono leading-6"
         style={{ fontSize: Number(fontSize) }}
       >
-        <div className="grid border-b bg-muted px-3 py-2 font-sans text-sm font-medium md:grid-cols-2">
-          <span>Live before</span>
-          <span>{excluded ? "Git reference · excluded" : "Desired after"}</span>
+        <div
+          className={`grid border-b bg-muted px-3 py-2 font-sans text-sm font-medium ${split ? "md:grid-cols-2" : "grid-cols-2"}`}
+        >
+          <span>
+            Live before
+            {file && file.before === undefined ? " · file absent" : ""}
+          </span>
+          <span>
+            {excluded ? "Git reference · excluded" : "Desired after"}
+            {file && file.after === undefined ? " · file absent" : ""}
+          </span>
         </div>
         {singleSide && excluded && (
           <p className="border-b px-4 py-3 font-sans text-sm text-muted-foreground">
-            {before == null
-              ? excluded
-                ? "Creation is excluded."
-                : "This resource will be created."
-              : excluded
-                ? "Deletion is excluded."
-                : "This resource will be deleted."}
+            {beforeMissing ? "Creation" : "Deletion"} of this{" "}
+            {file ? "file" : "resource"} is excluded.
           </p>
         )}
         <VirtualReviewList
@@ -361,23 +471,24 @@ export function ManifestDiff({
                 </Button>
               )
             const unified = singleSide ? (
-              before == null ? (
-                row.after !== undefined && line(row.after, row.newLine, "added")
+              beforeMissing ? (
+                row.after !== undefined &&
+                line(row.after, row.newLine, "added", i, "after")
               ) : (
                 row.before !== undefined &&
-                line(row.before, row.oldLine, "removed")
+                line(row.before, row.oldLine, "removed", i, "before")
               )
             ) : (
               <>
                 {row.changed ? (
                   <>
                     {row.before !== undefined &&
-                      line(row.before, row.oldLine, "removed")}
+                      line(row.before, row.oldLine, "removed", i, "before")}
                     {row.after !== undefined &&
-                      line(row.after, row.newLine, "added")}
+                      line(row.after, row.newLine, "added", i, "after")}
                   </>
                 ) : (
-                  line(row.after, row.newLine)
+                  line(row.after, row.newLine, undefined, i, "after")
                 )}
               </>
             )
@@ -396,7 +507,9 @@ export function ManifestDiff({
                           row.oldLine,
                           row.changed && row.before !== undefined
                             ? "removed"
-                            : undefined
+                            : undefined,
+                          i,
+                          "before"
                         )
                       )}
                       {after == null ? (
@@ -413,7 +526,9 @@ export function ManifestDiff({
                           row.newLine,
                           row.changed && row.after !== undefined
                             ? "added"
-                            : undefined
+                            : undefined,
+                          i,
+                          "after"
                         )
                       )}
                     </div>

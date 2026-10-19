@@ -132,6 +132,7 @@ export const codeBlockLanguages: Record<string, () => Promise<unknown>> = {
   go: () => import("shiki/langs/go.mjs"),
   graphql: () => import("shiki/langs/graphql.mjs"),
   html: () => import("shiki/langs/html.mjs"),
+  ini: () => import("shiki/langs/ini.mjs"),
   java: () => import("shiki/langs/java.mjs"),
   javascript: () => import("shiki/langs/javascript.mjs"),
   json: () => import("shiki/langs/json.mjs"),
@@ -150,6 +151,7 @@ export const codeBlockLanguages: Record<string, () => Promise<unknown>> = {
   tsx: () => import("shiki/langs/tsx.mjs"),
   typescript: () => import("shiki/langs/typescript.mjs"),
   vue: () => import("shiki/langs/vue.mjs"),
+  xml: () => import("shiki/langs/xml.mjs"),
   yaml: () => import("shiki/langs/yaml.mjs"),
 }
 

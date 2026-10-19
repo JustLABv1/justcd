@@ -24,6 +24,19 @@ revision whose schema types use `structured-merge-diff/v7`, while Kubernetes
 0.37 expects v6. Remove the replacement once both tools use compatible schema
 types, and rebuild both binaries before doing so.
 
+## Xray dependency fixes (2026-10-19)
+
+- XRAY-1117186: the bundled Helm binary now selects ORAS v2.6.4, newer
+  than Xray's minimum fix v2.6.4-0.20261015110029-8883c8588eb5.
+- XRAY-1110429 (GHSA-mgcc-cww5-fp2q): both Go modules pin go-jose
+  v4.1.6. The API uses it through OIDC; the tools module also retains it
+  through Helm's dependency tests. This release caps parsed RSA keys at
+  4096 bits by default, so OIDC providers using larger keys need review.
+
+Rebuild and publish the backend image, deploy it, and rescan its new digest
+in Xray to confirm these findings are cleared. Updating the API module alone
+does not update ORAS in the separately built Helm binary.
+
 ## Remaining upstream findings (2026-10-12)
 
 - The module-wide GO-2026-5932 advisory for deprecated

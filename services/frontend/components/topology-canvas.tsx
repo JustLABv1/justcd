@@ -1,15 +1,16 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react"
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react"
 import { ReactFlow, ReactFlowProvider, Handle, Position, BaseEdge, EdgeText, getBezierPath, getViewportForBounds, useReactFlow, useNodesInitialized, useViewport, type Node, type NodeProps, type Edge, type EdgeProps, type NodeChange, type Viewport, type XYPosition } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { ArrowLeft01Icon, ArrowRight01Icon, CenterFocusIcon, Maximize01Icon, MinusSignIcon, PlusSignIcon, CubeIcon } from "@hugeicons/core-free-icons"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Disclosure } from "@/components/ui/collapsible"
 import { Switch } from "@/components/ui/switch"
 import { EmptyState } from "@/components/ui-kit"
-import { aggregateRuntime, connectionSignal, mapNodeHeightFor, mapNodeWidth, resourceURLs, podSummary, topologyUpstream, topologyContextLayout, topologyVisibleEdges, topologyHierarchy, topologyMapLayout, topologyScope, type ConnectionSignal, type RuntimeSignal } from "@/lib/topology-map"
+import { aggregateRuntime, connectionSignal, mapNodeHeightFor, mapNodeWidth, resourceURLs, supportingTopologyResource, topologyCanvasResources, podSummary, topologyUpstream, topologySceneLayout, topologyVisibleEdges, topologyHierarchy, topologyScope, type ConnectionSignal, type RuntimeSignal } from "@/lib/topology-map"
 import type { SyncState } from "@/lib/topology-view"
 import type { ResourceTopology, TopologyNode } from "@/lib/types"
 import styles from "./topology-canvas.module.css"
@@ -42,6 +43,7 @@ function ResourceNode({ data, selected }: NodeProps<Node<MapNodeData, "resource"
         <span className={styles.nodeKind}>{resource.identity.kind}</span>
         {data.backLabel && <span className={styles.contextLabel}>← {data.backLabel}</span>}
         {data.context && <span className={styles.contextLabel}>Upstream</span>}
+        {resource.identity.kind === "Ingress" && childCount > 0 && !data.backLabel && <span className={styles.contextLabel}>{data.childLabel} · Explore</span>}
         {data.podStatus && <span className={styles.podStatus}>{data.podStatus}</span>}
         {resource.routingHealth && <span className={styles.routingStatus}>{resource.routingHealth.label}</span>}
         <span className={styles.nodeStatus} data-sync={data.sync}><span aria-hidden="true" />{data.syncLabel}</span>
@@ -102,14 +104,24 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
   const context = !globalView && parentId ? topologyUpstream(graph, parentId) : []
   const contextIds = new Set(context.map((node) => node.id))
   const scoped = globalView ? [...graph.nodes] : [...topologyScope(graph, parentId, replicaSets), ...context]
-  // Inspector relationships and pod search can explicitly select a collapsed child.
-  const selectedResource = graph.nodes.find((node) => node.id === selectedId)
-  if (selectedResource && !scoped.some((node) => node.id === selectedId)) scoped.push(selectedResource)
-  const shown = scoped.filter((node) => (!focus || !selectedId || related.has(node.id)) && (mode === "all" || (mode === "observed" ? ["kubernetes", "sample"].includes(node.source) : ["create", "update", "delete", "failed", "syncing"].includes(stateFor(node)))))
-  const layout = topologyMapLayout(shown.filter((node) => !contextIds.has(node.id)), globalView ? null : parentId, graph.edges)
-  if (parentId) for (const [id, position] of topologyContextLayout(graph, parentId, context, layout.get(parentId)?.y ?? 40)) layout.set(id, position)
-  const runtime = useMemo(() => new Map(graph.nodes.map((node) => [node.id, aggregateRuntime(node, hierarchy.descendants(node.id))])), [graph, hierarchy])
   const matches = (node: TopologyNode) => `${node.identity.kind} ${node.identity.namespace} ${node.identity.name}`.toLowerCase().includes(query.trim().toLowerCase())
+  const inFilter = (node: TopologyNode) => (!focus || !selectedId || related.has(node.id)) && (mode === "all" || (mode === "observed" ? ["kubernetes", "sample"].includes(node.source) : ["create", "update", "delete", "failed", "syncing"].includes(stateFor(node))))
+  const supportCandidates = graph.nodes.filter(supportingTopologyResource)
+  const available = [...new Map([...scoped, ...supportCandidates].map((node) => [node.id, node])).values()]
+  const canvasResources = topologyCanvasResources(available, graph.edges, dependencies)
+  const scopedSupport = parentId && !globalView ? new Set(topologyCanvasResources(available, graph.edges, true).map((node) => node.id)) : null
+  const supporting = supportCandidates.filter((node) => (!scopedSupport || scopedSupport.has(node.id)) && inFilter(node) && (!query.trim() || matches(node)))
+  const supportGroups = [...new Set(supporting.map((node) => node.identity.kind))].sort().map((kind) => ({ kind, nodes: supporting.filter((node) => node.identity.kind === kind).sort((a, b) => a.identity.namespace.localeCompare(b.identity.namespace) || a.identity.name.localeCompare(b.identity.name)) }))
+  // Search and filters also keep supporting inventory in its separate list.
+  const shown = canvasResources.filter(inFilter)
+  const selectedResource = graph.nodes.find((node) => node.id === selectedId)
+  if (selectedResource && !supportingTopologyResource(selectedResource) && !shown.some((node) => node.id === selectedId)) shown.push(selectedResource)
+  const visible = new Set(shown.map((node) => node.id))
+  const sceneEdges = topologyVisibleEdges(graph, visible).filter((edge) => dependencies || ["owns", "selects", "routes to"].includes(edge.relation))
+  // Camera animation renders must not rerun graph ordering. Status refreshes can
+  // update measurements, while the existing viewport remains untouched.
+  const layout = topologySceneLayout(graph, parentId, globalView, shown.map((node) => node.id), dependencies)
+  const runtime = useMemo(() => new Map(graph.nodes.map((node) => [node.id, aggregateRuntime(node, hierarchy.descendants(node.id))])), [graph, hierarchy])
   const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches
 
   const enter = async (id: string, animate: boolean) => {
@@ -148,20 +160,17 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
     const pods = hierarchy.descendants(resource.id).filter((node) => node.identity.kind === "Pod")
     const isContext = contextIds.has(resource.id)
     return {
-      id: resource.id, type: "resource", position: positions[`${scopeKey(parentId)}:${resource.id}`] ?? layout.get(resource.id)!,
+      id: resource.id, type: "resource", position: positions[`${scopeKey(parentId)}:${resource.id}`] ?? { ...layout.get(resource.id)! },
       selected: selectedId === resource.id, width: mapNodeWidth, height: mapNodeHeightFor(resource),
       measured: { width: mapNodeWidth, height: mapNodeHeightFor(resource) },
       // Shared Button owns keyboard activation; the wrapper is only the draggable canvas object.
       focusable: false, draggable: true,
       data: { resource, podStatus: resource.identity.kind === "Pod" ? resource.healthSummary?.failureReason ?? resource.readiness ?? resource.phase ?? null : podSummary(pods), context: isContext, backLabel: resource.id === parentId && !globalView ? "Back to previous view" : null, icon: iconFor(resource.identity.kind), runtime: runtime.get(resource.id)!, runtimeLabel: describeNode(resource), sync: stateFor(resource), syncLabel: syncLabels[stateFor(resource)], childCount: pods.length || children.length,
         childLabel: pods.length ? `${pods.length} pods · ${children.length} direct controllers or children` : [...new Set(children.map((node) => node.identity.kind))].map((kind) => `${children.filter((node) => node.identity.kind === kind).length} ${kind}`).join(" · "), canEnter: resource.id === parentId && !globalView || !isContext && children.length > 0 && resource.id !== parentId,
-        // React Flow stores this callback in node data; it only runs on user activation.
-        // eslint-disable-next-line react-hooks/refs
         dimmed: Boolean(query.trim() && !matches(resource)) || Boolean(selectedId && !related.has(resource.id)), onEnter: handleEnter, onInspect: onSelect },
     }
   })
-  const visible = new Set(shown.map((node) => node.id))
-  const edges: MapEdge[] = topologyVisibleEdges(graph, visible).filter((edge) => dependencies || ["owns", "selects", "routes to"].includes(edge.relation)).map((edge) => {
+  const edges: MapEdge[] = sceneEdges.map((edge) => {
     const from = graph.nodes.find((node) => node.id === edge.from)!, to = graph.nodes.find((node) => node.id === edge.to)!
     const dependency = !["owns", "selects", "routes to"].includes(edge.relation)
     const sync = [from, to].some((node) => stateFor(node) === "syncing")
@@ -169,7 +178,9 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
     const traffic = edge.relation === "routes to" ? to.routingHealth : edge.relation === "selects" ? from.routingHealth : undefined
     const backends = from.routingHealth?.backends?.filter((backend) => backend.serviceName === to.identity.name && backend.namespace === to.identity.namespace)
     const backendStatus = backends?.find((backend) => backend.status === "degraded")?.status ?? backends?.find((backend) => backend.status === "unknown")?.status ?? backends?.find((backend) => backend.status === "progressing")?.status ?? backends?.[0]?.status
-    const trafficStatus = edge.relation === "routes to" && from.routingHealth?.reason === "RouteNotAdmitted" ? "degraded" : backendStatus ?? traffic?.status
+    const collapsedRoutes = (hierarchy.children.get(from.id) ?? []).filter((child) => child.identity.kind === "Route" && !visible.has(child.id) && graph.edges.some((link) => link.from === child.id && link.to === to.id && link.relation === "routes to"))
+    const collapsedStatus = collapsedRoutes.some((child) => runtime.get(child.id) === "degraded") ? "degraded" : collapsedRoutes.some((child) => runtime.get(child.id) === "progressing") ? "progressing" : undefined
+    const trafficStatus = collapsedStatus ?? (edge.relation === "routes to" && from.routingHealth?.reason === "RouteNotAdmitted" ? "degraded" : backendStatus ?? traffic?.status)
     const signal = dependency ? "unknown" : trafficStatus ? connectionSignal(trafficStatus, trafficStatus, sync, failed) : connectionSignal(edge.relation === "owns" ? runtime.get(to.id)! : runtime.get(from.id)!, runtime.get(to.id)!, sync, failed)
     const active = edge.from === selectedId || edge.to === selectedId
     const forward = (nodes.find((node) => node.id === edge.from)?.position.x ?? 0) <= (nodes.find((node) => node.id === edge.to)?.position.x ?? 0)
@@ -180,7 +191,7 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
   })
 
   // Fit only when navigating/filtering, never on live observations or node status changes.
-  const viewKey = JSON.stringify([parentId, query.trim(), mode, focus, replicaSets, focus ? selectedId : null])
+  const viewKey = JSON.stringify([parentId, query.trim(), mode, focus, replicaSets, dependencies, focus ? selectedId : null])
   useEffect(() => {
     if (!initialized || appliedView.current === viewKey && !pendingView.current) return
     const frame = requestAnimationFrame(() => {
@@ -197,7 +208,7 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
           const height = Math.max(...targets.map((node) => node.position.y + mapNodeHeightFor(node.data.resource))) - y
           // Use the new layout directly; React Flow's measured nodes can still belong
           // to the outgoing scene during this commit.
-          const camera = getViewportForBounds({ x, y, width, height }, canvas.clientWidth, canvas.clientHeight, 0.15, 1.1, 0.25)
+          const camera = getViewportForBounds({ x, y, width, height }, canvas.clientWidth, canvas.clientHeight, 0.15, 1.1, 0.15)
           void flow.setViewport(camera, { duration: pending?.duration ?? 0, ease })
         }
       }
@@ -209,7 +220,7 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
 
   useEffect(() => () => { ++navigation.current }, [])
 
-  const onNodesChange = useCallback((changes: NodeChange<MapNode>[]) => {
+  const onNodesChange = (changes: NodeChange<MapNode>[]) => {
     const moved = changes.filter((change) => change.type === "position" && change.position)
     if (!moved.length) return
     setPositions((previous) => {
@@ -217,7 +228,7 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
       for (const change of moved) if (change.type === "position" && change.position) next[`${scopeKey(parentId)}:${change.id}`] = change.position
       return next
     })
-  }, [parentId])
+  }
 
   function centerSelection(event: MouseEvent) {
     const node = selectedId ? flow.getNode(selectedId) : undefined
@@ -240,22 +251,22 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
       <ReactFlow<MapNode, MapEdge> nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} onNodesChange={onNodesChange}
         nodesConnectable={false} edgesReconnectable={false} nodesFocusable={false} deleteKeyCode={null} selectionKeyCode={null}
         minZoom={0.15} maxZoom={2} zoomOnDoubleClick={false} panOnDrag panOnScroll zoomOnScroll={false} zoomOnPinch
-        onInit={(instance) => { void instance.fitView({ padding: 0.25, maxZoom: 1.1 }) }}
+        onInit={(instance) => { void instance.fitView({ padding: 0.15, maxZoom: 1.1 }) }}
         tabIndex={0} onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return
           const offset: Record<string, XYPosition> = { ArrowLeft: { x: 64, y: 0 }, ArrowRight: { x: -64, y: 0 }, ArrowUp: { x: 0, y: 64 }, ArrowDown: { x: 0, y: -64 } }
           const delta = offset[event.key]
           if (delta) { event.preventDefault(); const camera = flow.getViewport(); void flow.setViewport({ ...camera, x: camera.x + delta.x, y: camera.y + delta.y }) }
-          else if (event.key === "Home") { event.preventDefault(); void flow.fitView({ padding: 0.25, maxZoom: 1.1 }) }
+          else if (event.key === "Home") { event.preventDefault(); void flow.fitView({ padding: 0.15, maxZoom: 1.1 }) }
           else if (event.key === "Escape" && parentId) { event.preventDefault(); back(validPath.length - 1, false) }
         }}
         aria-label="Interactive application topology. Drag resources to arrange them. Drag the background or use arrow keys to pan. Pinch or use the controls to zoom. Home fits the view; Escape returns to the parent group."
         className={moving ? styles.entering : undefined}>
-        {!shown.length && <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center p-6"><EmptyState title={graph.nodes.length ? "No matching resources" : "No resources to show yet"} description={graph.nodes.length ? "Try another filter or return to the application." : "Build a plan to discover resources and their relationships."} /></div>}
+        {!shown.length && <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center p-6"><EmptyState title={supporting.length && !globalView ? "Configuration resources" : graph.nodes.length ? "No matching resources" : "No resources to show yet"} description={supporting.length && !globalView ? "This application has no traffic or workload nodes in this view. Inspect its supporting resources below." : graph.nodes.length ? "Try another filter or return to the application." : "Build a plan to discover resources and their relationships."} /></div>}
       </ReactFlow>
       <div className="absolute right-3 bottom-3 z-10 flex max-w-[calc(100%-24px)] flex-wrap items-center gap-0.5 rounded-lg border bg-card/95 p-1 shadow-sm" role="group" aria-label="Canvas view controls">
         {parentId && <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Back to parent group" onClick={(event) => back(validPath.length - 1, event.detail !== 0)} />}><HugeiconsIcon icon={ArrowLeft01Icon} aria-hidden="true" /></TooltipTrigger><TooltipContent>Back to parent</TooltipContent></Tooltip>}
-        <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Fit all resources" onClick={(event) => { void flow.fitView({ padding: 0.25, maxZoom: 1.1, duration: event.detail && !reducedMotion() ? 240 : 0, ease }) }} />}><HugeiconsIcon icon={Maximize01Icon} aria-hidden="true" /></TooltipTrigger><TooltipContent>Fit view</TooltipContent></Tooltip>
+        <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Fit all resources" onClick={(event) => { void flow.fitView({ padding: 0.15, maxZoom: 1.1, duration: event.detail && !reducedMotion() ? 240 : 0, ease }) }} />}><HugeiconsIcon icon={Maximize01Icon} aria-hidden="true" /></TooltipTrigger><TooltipContent>Fit view</TooltipContent></Tooltip>
         <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Center selection" disabled={!selectedId || !visible.has(selectedId)} onClick={centerSelection} />}><HugeiconsIcon icon={CenterFocusIcon} aria-hidden="true" /></TooltipTrigger><TooltipContent>Center selection</TooltipContent></Tooltip>
         <Button variant="ghost" size="icon-sm" aria-label="Zoom out" disabled={viewport.zoom <= 0.15} onClick={() => { void flow.zoomOut() }}><HugeiconsIcon icon={MinusSignIcon} aria-hidden="true" /></Button>
         <Button variant="ghost" size="sm" className="tabular-nums" aria-label="Reset zoom to 100 percent" onClick={() => { void flow.zoomTo(1) }}>{Math.round(viewport.zoom * 100)}%</Button>
@@ -263,10 +274,18 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
       </div>
     </div>
     <div className="flex flex-wrap justify-between gap-2 border-t px-4 py-2 text-xs text-muted-foreground"><p>Drag to pan or arrange · Pinch to zoom · Click a parent to explore</p><p role="status" aria-live="polite">{shown.length} resources · {parentId ? graph.nodes.find((node) => node.id === parentId)?.identity.name : "Application overview"}</p></div>
+    {supporting.length > 0 && <section aria-label="Supporting topology resources" className="border-t bg-card/80 px-4 py-3">
+      <Disclosure summary={<span>Configuration &amp; supporting resources <span className="text-muted-foreground">({supporting.length})</span>{supporting.some((node) => ["create", "update", "delete", "failed", "syncing"].includes(stateFor(node))) && <span className="ml-2 text-xs text-warning-foreground">Changes pending</span>}</span>}>
+        <p className="mb-3 text-xs text-muted-foreground">Grouped separately to keep traffic paths readable. Enable Dependencies to show connected configuration on the map.</p>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{supportGroups.map(({ kind, nodes: resources }) => <Disclosure key={kind} className="min-w-0 rounded-lg border bg-background/50 p-3" summary={<span className="inline-flex items-center gap-2"><HugeiconsIcon icon={iconFor(kind)} className="size-4 text-muted-foreground" aria-hidden="true" />{kind}<span className="text-muted-foreground">{resources.length}</span></span>}>
+          <div className="space-y-1">{resources.map((resource) => <Button key={resource.id} variant="ghost" className="h-auto w-full justify-between gap-2 whitespace-normal px-2 py-2 text-left text-xs" aria-label={`Inspect ${resource.identity.kind} ${resource.identity.name}`} aria-current={selectedId === resource.id ? "true" : undefined} onClick={() => onSelect(resource.id)}><span className="min-w-0 break-all">{resource.identity.name}<span className="mt-0.5 block text-muted-foreground">{resource.identity.namespace || "Cluster scope"}</span></span><span className="shrink-0 text-muted-foreground">{syncLabels[stateFor(resource)]}</span></Button>)}</div>
+        </Disclosure>)}</div>
+      </Disclosure>
+    </section>}
     <div aria-label="Connection status legend" className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t px-4 py-3 text-xs text-muted-foreground">
       <span className="font-medium text-foreground">Connections</span>
       {([["healthy", "Backend ready"], ["syncing", "Applying"], ["progressing", "Not ready / progressing"], ["degraded", "Needs attention"], ["unknown", "Idle / unknown"]] as const).map(([signal, label]) => <span key={signal} className="inline-flex items-center gap-1.5"><i className={styles.legendLine} data-signal={signal} aria-hidden="true" />{label}</span>)}
-      <span>{dependencies ? "Dashed = configuration dependency" : "Configuration links hidden · Enable Dependencies to show"}</span>
+      <span>{dependencies ? "Dashed = configuration dependency" : "Configuration grouped below · Click an Ingress to explore generated Routes"}</span>
     </div>
   </div>
 }

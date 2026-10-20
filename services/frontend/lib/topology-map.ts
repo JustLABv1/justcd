@@ -47,7 +47,32 @@ export function topologyScope(graph: ResourceTopology, parentId: string | null, 
     const ids = new Set([parentId, ...expanded.map((node) => node.id)])
     return graph.nodes.filter((node) => ids.has(node.id))
   }
-  return graph.nodes.filter((node) => !hierarchy.parents.has(node.id) || node.tracked === true || node.source === "desired" || node.source === "managed" || node.identity.kind === "Ingress" || node.identity.kind === "Route" && node.identity.apiVersion.startsWith("route.openshift.io/"))
+  return graph.nodes.filter((node) => !hierarchy.parents.has(node.id) || node.tracked === true || node.source === "desired" || node.source === "managed" || node.identity.kind === "Ingress")
+}
+
+/** Supporting objects stay inspectable without competing with traffic and workloads. */
+export function supportingTopologyResource(node: TopologyNode) {
+  return ["ConfigMap", "Secret", "ServiceAccount", "Role", "RoleBinding", "ClusterRole", "ClusterRoleBinding", "NetworkPolicy", "PersistentVolumeClaim", "PersistentVolume", "StorageClass", "HorizontalPodAutoscaler", "PodDisruptionBudget", "ResourceQuota", "LimitRange", "Endpoints", "EndpointSlice", "Namespace", "SGInstanceProfile", "SGScript", "SGObjectStorage"].includes(node.identity.kind)
+}
+
+/** Only connected dependencies belong on the canvas when explicitly requested. */
+export function topologyCanvasResources(nodes: TopologyNode[], edges: ResourceTopology["edges"], showDependencies: boolean) {
+  const available = new Set(nodes.map((node) => node.id))
+  const core = new Set(nodes.filter((node) => !supportingTopologyResource(node)).map((node) => node.id))
+  const included = new Set(core)
+  if (showDependencies) {
+    // Include dependency chains (e.g. ServiceAccount → RoleBinding → Role), but
+    // never pull a disconnected inventory object onto the map.
+    let changed = true
+    while (changed) {
+      changed = false
+      for (const edge of edges) {
+        if (!available.has(edge.from) || !available.has(edge.to) || !included.has(edge.from) && !included.has(edge.to)) continue
+        for (const id of [edge.from, edge.to]) if (!included.has(id)) { included.add(id); changed = true }
+      }
+    }
+  }
+  return nodes.filter((node) => included.has(node.id))
 }
 
 /** Incoming traffic and ownership ancestors provide real upstream context. */
@@ -75,6 +100,9 @@ export function topologyVisibleEdges(graph: ResourceTopology, visible: Set<strin
     }
   }
   return edges.filter((edge) => {
+    // Expanded generated Routes already carry this traffic; the Ingress →
+    // Service shortcut would draw the same connection across two layers.
+    if (edge.relation === "routes to") return !edges.some((ownership) => ownership.from === edge.from && ownership.relation === "owns" && graph.nodes.some((node) => node.id === ownership.to && node.identity.kind === "Route") && edges.some((route) => route.from === ownership.to && route.to === edge.to && route.relation === "routes to"))
     if (edge.relation !== "selects") return true
     const ancestors = hierarchy.ancestry(edge.to)
     return !edges.some((other) => other.from === edge.from && other.relation === "selects" && ancestors.includes(other.to))
@@ -138,7 +166,6 @@ export function runtimeSignal(node: TopologyNode): RuntimeSignal {
 
 /** Collapsed parents retain the worst observed descendant status. */
 export function aggregateRuntime(node: TopologyNode, descendants: TopologyNode[]): RuntimeSignal {
-  if (node.routingHealth) return runtimeSignal(node)
   const signals = [node, ...descendants].map((item) => runtimeSignal(item))
   if (signals.includes("degraded")) return "degraded"
   if (signals.includes("progressing")) return "progressing"
@@ -193,19 +220,110 @@ export function topologyMapLayout(nodes: TopologyNode[], parentId: string | null
     }
     return positions
   }
-  const rank = (node: TopologyNode) => ["Ingress", "Route", "HTTPRoute", "Gateway"].includes(node.identity.kind) ? 0 : node.identity.kind === "Service" ? 1 : ["Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "ReplicaSet", "Pod"].includes(node.identity.kind) ? 2 : 3
-  let x = 40
-  for (const lane of [0, 1, 2, 3]) {
-    const incomingY = (id: string) => {
-      const ys = edges.filter((edge) => edge.to === id && ["routes to", "selects"].includes(edge.relation)).flatMap((edge) => positions.has(edge.from) ? [positions.get(edge.from)!.y] : [])
-      return ys.length ? ys.reduce((a, b) => a + b, 0) / ys.length : Number.MAX_SAFE_INTEGER
+  return topologyOverviewLayout(sorted, edges)
+}
+
+/** Layered graph layout: connected flows form bands; ordering minimizes crossings. */
+function topologyOverviewLayout(sorted: TopologyNode[], edges: ResourceTopology["edges"]) {
+  const positions = new Map<string, { x: number; y: number }>()
+  const ids = new Set(sorted.map((node) => node.id))
+  const links = topologyVisibleEdges({ nodes: sorted, edges, warnings: [] }, ids)
+  const traffic = links.filter((edge) => ["owns", "routes to", "selects"].includes(edge.relation))
+  const neighbours = new Map(sorted.map((node) => [node.id, new Set<string>()]))
+  for (const edge of links) { neighbours.get(edge.from)!.add(edge.to); neighbours.get(edge.to)!.add(edge.from) }
+  const components: TopologyNode[][] = [], seen = new Set<string>()
+  const byId = new Map(sorted.map((node) => [node.id, node]))
+  for (const node of sorted) {
+    if (seen.has(node.id)) continue
+    const queue = [node.id], members: TopologyNode[] = []
+    seen.add(node.id)
+    for (let index = 0; index < queue.length; index++) {
+      members.push(byId.get(queue[index])!)
+      for (const id of neighbours.get(queue[index])!) if (!seen.has(id)) { seen.add(id); queue.push(id) }
     }
-    const members = sorted.filter((node) => rank(node) === lane).sort((a, b) => incomingY(a.id) - incomingY(b.id))
-    if (!members.length) continue
-    const columns = Math.min(3, Math.ceil(members.length / 5))
-    const rowHeight = Math.max(mapNodeHeight, ...members.map(mapNodeHeightFor)) + 40
-    members.forEach((node, index) => positions.set(node.id, { x: x + index % columns * 280, y: 40 + Math.floor(index / columns) * rowHeight }))
-    x += columns * 280 + 60
+    components.push(members)
+  }
+  // Traffic paths first, then other independent workload bands. No health-based
+  // sorting: a live status refresh must not move resources.
+  const hasEntry = (members: TopologyNode[]) => members.some((node) => ["Ingress", "Route", "Gateway", "HTTPRoute"].includes(node.identity.kind))
+  components.sort((a, b) => Number(hasEntry(b)) - Number(hasEntry(a)))
+  const hasOwnedRoute = sorted.some((node) => node.identity.kind === "Route" && traffic.some((edge) => edge.to === node.id && edge.relation === "owns"))
+  const baseRank = (node: TopologyNode) => supportingTopologyResource(node) ? 5 : node.identity.kind === "Service" ? (hasOwnedRoute ? 2 : 1) : ["Ingress", "Route", "Gateway", "HTTPRoute"].includes(node.identity.kind) ? 0 : hasOwnedRoute ? 3 : 2
+  const allRanks = new Map(sorted.map((node) => [node.id, baseRank(node)]))
+  // Kahn ordering gives owned Routes their own layer after the Ingress, with
+  // bounded deterministic behaviour even for malformed ownership cycles.
+  const incoming = new Map(sorted.map((node) => [node.id, traffic.filter((edge) => edge.to === node.id).length]))
+  const queue = sorted.filter((node) => incoming.get(node.id) === 0).map((node) => node.id)
+  for (let index = 0; index < queue.length; index++) for (const edge of traffic) {
+    if (edge.from !== queue[index]) continue
+    allRanks.set(edge.to, Math.max(allRanks.get(edge.to)!, allRanks.get(edge.from)! + 1))
+    incoming.set(edge.to, incoming.get(edge.to)! - 1)
+    if (incoming.get(edge.to) === 0) queue.push(edge.to)
+  }
+  const ranks = [...new Set(allRanks.values())].sort((a, b) => a - b)
+  const columns = new Map(ranks.map((rank, index) => [rank, 40 + index * 300]))
+  let top = 40
+  for (const members of components) {
+    const lanes = ranks.map((rank) => members.filter((node) => allRanks.get(node.id) === rank).sort((a, b) => sorted.indexOf(a) - sorted.indexOf(b)))
+    const memberIds = new Set(members.map((node) => node.id)), componentEdges = links.filter((edge) => memberIds.has(edge.from) && memberIds.has(edge.to))
+    const order = () => new Map(lanes.flatMap((lane) => lane.map((node, index) => [node.id, index / Math.max(1, lane.length - 1)] as const)))
+    // Alternating barycentre sweeps order nodes by their neighbours, rather
+    // than by resource name. Ties preserve the deterministic initial order.
+    for (let sweep = 0; sweep < 8; sweep++) {
+      const indices = ranks.map((_, index) => index)
+      if (sweep % 2) indices.reverse()
+      for (const index of indices) {
+        const current = order()
+        const score = (id: string) => {
+          const peers = componentEdges.flatMap((edge) => edge.to === id && sweep % 2 === 0 ? [edge.from] : edge.from === id && sweep % 2 === 1 ? [edge.to] : [])
+          return peers.length ? peers.reduce((sum, peer) => sum + current.get(peer)!, 0) / peers.length : current.get(id)!
+        }
+        lanes[index].sort((a, b) => score(a.id) - score(b.id))
+      }
+    }
+    const row = Math.max(mapNodeHeight, ...members.map(mapNodeHeightFor)) + 32
+    const rows = Math.max(...lanes.map((lane) => lane.length)), height = rows * row
+    lanes.forEach((lane, index) => lane.forEach((node, offset) => positions.set(node.id, { x: columns.get(ranks[index])!, y: top + (offset + (rows - lane.length) / 2) * row })))
+    // Align sparse lanes with their connected resources while keeping every
+    // node inside its band and leaving full label height between neighbours.
+    for (let sweep = 0; sweep < 4; sweep++) {
+      const indices = ranks.map((_, index) => index)
+      if (sweep % 2) indices.reverse()
+      for (const index of indices) {
+        const lane = lanes[index]
+        const desired = lane.map((node) => {
+          const peers = componentEdges.flatMap((edge) => edge.to === node.id && sweep % 2 === 0 ? [edge.from] : edge.from === node.id && sweep % 2 === 1 ? [edge.to] : [])
+          return peers.length ? peers.reduce((sum, id) => sum + positions.get(id)!.y, 0) / peers.length : positions.get(node.id)!.y
+        })
+        for (let offset = 0; offset < lane.length; offset++) desired[offset] = Math.max(top + offset * row, Math.min(desired[offset], top + height - (lane.length - offset) * row), offset ? desired[offset - 1] + row : top)
+        for (let offset = lane.length - 1; offset >= 0; offset--) {
+          const y = Math.min(desired[offset], top + height - (lane.length - offset) * row, offset < lane.length - 1 ? positions.get(lane[offset + 1].id)!.y - row : Infinity)
+          positions.set(lane[offset].id, { x: columns.get(ranks[index])!, y })
+        }
+      }
+    }
+    top += height + 56
   }
   return positions
+}
+
+
+// Keep only the current scene per graph snapshot. Camera updates reuse its
+// layout; filters and new observations replace it without retaining old scenes.
+const sceneLayouts = new WeakMap<ResourceTopology, { key: string; positions: ReadonlyMap<string, { x: number; y: number }> }>()
+
+/** Keep layout mutations behind the model boundary used by the canvas. */
+export function topologySceneLayout(graph: ResourceTopology, parentId: string | null, globalView: boolean, visibleIds: string[], dependencies: boolean) {
+  const key = JSON.stringify([parentId, globalView, visibleIds, dependencies])
+  const cached = sceneLayouts.get(graph)
+  if (cached?.key === key) return cached.positions
+  const ids = new Set(visibleIds)
+  const resources = graph.nodes.filter((node) => ids.has(node.id))
+  const upstream = !globalView && parentId ? topologyUpstream(graph, parentId) : []
+  const upstreamIds = new Set(upstream.map((node) => node.id))
+  const links = topologyVisibleEdges(graph, ids).filter((edge) => dependencies || ["owns", "selects", "routes to"].includes(edge.relation))
+  const result = topologyMapLayout(resources.filter((node) => !upstreamIds.has(node.id)), globalView ? null : parentId, links)
+  if (parentId && !globalView) for (const [id, position] of topologyContextLayout(graph, parentId, upstream, result.get(parentId)?.y ?? 40)) result.set(id, position)
+  sceneLayouts.set(graph, { key, positions: result })
+  return result
 }

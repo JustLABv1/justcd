@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { aggregateRuntime, connectionSignal, mapNodeHeight, mapNodeHeightFor, mapNodeWidth, resourceURLs, podSummary, topologyUpstream, topologyContextLayout, topologyVisibleEdges, runtimeSignal, topologyHierarchy, topologyMapLayout, topologyScope } from "./topology-map.ts"
+import { aggregateRuntime, connectionSignal, mapNodeHeight, mapNodeHeightFor, mapNodeWidth, resourceURLs, podSummary, topologyUpstream, topologyContextLayout, topologyVisibleEdges, supportingTopologyResource, topologyCanvasResources, runtimeSignal, topologyHierarchy, topologyMapLayout, topologyScope } from "./topology-map.ts"
 
 const node = (id, kind = "Deployment", extra = {}) => ({ id, identity: { apiVersion: "v1", kind, namespace: "demo", name: id }, source: "kubernetes", ...extra })
 const edge = (from, to, relation = "owns") => ({ from, to, relation })
@@ -66,9 +66,13 @@ test("long names receive enough height and do not overlap the following resource
   }
 })
 
-test("generated OpenShift Routes stay visible beside their owning Ingress", () => {
+test("generated OpenShift Routes are grouped under their Ingress but remain explorable", () => {
   const ingress=node("ingress","Ingress"),route=node("route","Route",{identity:{apiVersion:"route.openshift.io/v1",kind:"Route",namespace:"demo",name:"route"}})
-  assert.equal(topologyScope({nodes:[ingress,route],edges:[edge("ingress","route")]},null).length,2)
+  const network = {nodes:[ingress,route],edges:[edge("ingress","route")]}
+  assert.deepEqual(topologyScope(network,null).map(n => n.id),["ingress"])
+  assert.deepEqual(topologyScope(network,"ingress").map(n => n.id),["ingress","route"])
+  assert.deepEqual(topologyScope({...network,nodes:[ingress,{...route,tracked:true}]},null).map(n => n.id),["ingress","route"])
+  assert.equal(topologyScope({nodes:[route],edges:[]},null).length,1)
 })
 
 test("resource URLs allow only concrete HTTP(S) addresses without embedded credentials", () => {
@@ -114,4 +118,70 @@ test("Service selection is drawn once through the visible owning workload", () =
   const network={nodes:[...graph.nodes,node("svc","Service")],edges:[...graph.edges,edge("svc","web","selects"),edge("svc","pod","selects")]}
   assert.deepEqual(topologyVisibleEdges(network,new Set(["svc","web","pod"])).filter(e=>e.relation==="selects").map(e=>e.to),["web"])
   assert.deepEqual(topologyVisibleEdges(network,new Set(["svc","pod"])).filter(e=>e.relation==="selects").map(e=>e.to),["pod"])
+})
+
+
+test("supporting inventory is separate; only explicitly enabled connected dependencies enter the canvas", () => {
+  const nodes=[node("workload"),node("config","ConfigMap"),node("account","ServiceAccount"),node("binding","RoleBinding"),node("role","Role"),node("unrelated","ConfigMap"),node("operator","CustomDatabase")]
+  const edges=[edge("workload","config","uses"),edge("workload","account","uses"),edge("account","binding","uses"),edge("binding","role","uses")]
+  assert.deepEqual(topologyCanvasResources(nodes,edges,false).map(n=>n.id),["workload","operator"])
+  assert.deepEqual(topologyCanvasResources(nodes,edges,true).map(n=>n.id),["workload","config","account","binding","role","operator"])
+  assert.equal(supportingTopologyResource(node("volume","PersistentVolumeClaim")),true)
+  // A hidden workload cannot serve as a bridge into its unrelated configuration.
+  assert.deepEqual(topologyCanvasResources(nodes, [...edges,edge("unseen","workload","selects"),edge("unseen","unrelated","uses")], true).map(n=>n.id),["workload","config","account","binding","role","operator"])
+})
+
+test("expanded OpenShift paths remove only the duplicated Ingress-to-Service shortcut", () => {
+  const nodes=[node("entry","Ingress"),node("generated","Route"),node("web","Service"),node("api","Service")]
+  const network={nodes,edges:[edge("entry","generated"),edge("generated","web","routes to"),edge("entry","web","routes to"),edge("entry","api","routes to")],warnings:[]}
+  const links=topologyVisibleEdges(network,new Set(nodes.map(n=>n.id)))
+  assert.equal(links.some(e=>e.from==="entry"&&e.to==="web"),false)
+  assert.equal(links.some(e=>e.from==="entry"&&e.to==="api"),true)
+  assert.equal(topologyVisibleEdges(network,new Set(["entry","web"])).length,1)
+  const layout=topologyMapLayout(nodes,null,network.edges)
+  assert.ok(layout.get("entry").x<layout.get("generated").x)
+  assert.ok(layout.get("generated").x<layout.get("web").x)
+})
+
+test("collapsed Ingress retains generated Route rejection instead of reporting healthy", () => {
+  const ingress=node("entry","Ingress",{routingHealth:{status:"healthy"}})
+  const route=node("generated","Route",{routingHealth:{status:"degraded",reason:"RouteNotAdmitted"}})
+  assert.equal(aggregateRuntime(ingress,[route]),"degraded")
+  assert.equal(aggregateRuntime(ingress,[{...route,routingHealth:{status:"unknown"}}]),"healthy")
+})
+
+test("flows follow their Services rather than alphabetical workload order", () => {
+  const nodes=[node("entry-a","Ingress"),node("entry-b","Ingress"),node("svc-a","Service"),node("svc-b","Service"),node("workload-z"),node("workload-a")]
+  const edges=[edge("entry-a","svc-a","routes to"),edge("entry-b","svc-b","routes to"),edge("svc-a","workload-z","selects"),edge("svc-b","workload-a","selects")]
+  const layout=topologyMapLayout(nodes,null,edges)
+  for (const e of edges) { assert.equal(layout.get(e.from).y,layout.get(e.to).y);assert.ok(layout.get(e.from).x<layout.get(e.to).x) }
+  assert.deepEqual(layout,topologyMapLayout([...nodes].reverse(),null,[...edges].reverse()))
+})
+
+test("production-shaped topology groups generated routes and separates isolated configuration", () => {
+  const ingressA=node("public-a","Ingress"),ingressB=node("public-b","Ingress")
+  const services=["frontend","backend","metrics","database"].map(id=>node(id+"-svc","Service"))
+  const workloads=["frontend","backend","metrics","database"].map(id=>node(id+"-workload"))
+  const generated=[0,1,2,3,4,5].map(i=>node(`generated-${i}`,"Route",{identity:{apiVersion:"route.openshift.io/v1",kind:"Route",namespace:"demo",name:`generated-${i}`}}))
+  const config=Array.from({length:17},(_,i)=>node(`config-${i}`,i%2?"ConfigMap":"Role"))
+  const edges=services.map((s,i)=>edge(s.id,workloads[i].id,"selects"))
+  for(const [offset,ingress] of [ingressA,ingressB].entries()) {
+    edges.push(edge(ingress.id,services[0].id,"routes to"),edge(ingress.id,services[1].id,"routes to"))
+    for(let i=0;i<3;i++) edges.push(edge(ingress.id,generated[offset*3+i].id),edge(generated[offset*3+i].id,services[i%2].id,"routes to"))
+  }
+  const network={nodes:[ingressA,ingressB,...services,...workloads,...generated,...config],edges,warnings:[]}
+  const shown=topologyCanvasResources(topologyScope(network,null),edges,false)
+  assert.equal(network.nodes.length,33)
+  assert.equal(shown.length,10)
+  const links=topologyVisibleEdges(network,new Set(shown.map(n=>n.id)))
+  assert.equal(links.length,8)
+  const layout=topologyMapLayout(shown,null,links)
+  assert.deepEqual(layout,topologyMapLayout([...shown].reverse(),null,[...links].reverse()))
+  for(const link of links) assert.ok(layout.get(link.from).x<layout.get(link.to).x)
+  // Independent services/workloads align exactly, rather than spanning other bands.
+  for(let i=2;i<4;i++) assert.equal(layout.get(services[i].id).y,layout.get(workloads[i].id).y)
+  shown.forEach((a,i)=>shown.slice(i+1).forEach(b=>{
+    const pa=layout.get(a.id),pb=layout.get(b.id)
+    assert.ok(pa.x+mapNodeWidth<=pb.x||pb.x+mapNodeWidth<=pa.x||pa.y+mapNodeHeightFor(a)<=pb.y||pb.y+mapNodeHeightFor(b)<=pa.y)
+  }))
 })

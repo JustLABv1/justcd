@@ -55,26 +55,6 @@ export function supportingTopologyResource(node: TopologyNode) {
   return ["ConfigMap", "Secret", "ServiceAccount", "Role", "RoleBinding", "ClusterRole", "ClusterRoleBinding", "NetworkPolicy", "PersistentVolumeClaim", "PersistentVolume", "StorageClass", "HorizontalPodAutoscaler", "PodDisruptionBudget", "ResourceQuota", "LimitRange", "Endpoints", "EndpointSlice", "Namespace", "SGInstanceProfile", "SGScript", "SGObjectStorage"].includes(node.identity.kind)
 }
 
-/** Only connected dependencies belong on the canvas when explicitly requested. */
-export function topologyCanvasResources(nodes: TopologyNode[], edges: ResourceTopology["edges"], showDependencies: boolean) {
-  const available = new Set(nodes.map((node) => node.id))
-  const core = new Set(nodes.filter((node) => !supportingTopologyResource(node)).map((node) => node.id))
-  const included = new Set(core)
-  if (showDependencies) {
-    // Include dependency chains (e.g. ServiceAccount → RoleBinding → Role), but
-    // never pull a disconnected inventory object onto the map.
-    let changed = true
-    while (changed) {
-      changed = false
-      for (const edge of edges) {
-        if (!available.has(edge.from) || !available.has(edge.to) || !included.has(edge.from) && !included.has(edge.to)) continue
-        for (const id of [edge.from, edge.to]) if (!included.has(id)) { included.add(id); changed = true }
-      }
-    }
-  }
-  return nodes.filter((node) => included.has(node.id))
-}
-
 /** Incoming traffic and ownership ancestors provide real upstream context. */
 export function topologyUpstream(graph: ResourceTopology, parentId: string): TopologyNode[] {
   const ids = new Set(topologyHierarchy(graph).ancestry(parentId)), queue = [parentId, ...ids]
@@ -103,6 +83,7 @@ export function topologyVisibleEdges(graph: ResourceTopology, visible: Set<strin
     // Expanded generated Routes already carry this traffic; the Ingress →
     // Service shortcut would draw the same connection across two layers.
     if (edge.relation === "routes to") return !edges.some((ownership) => ownership.from === edge.from && ownership.relation === "owns" && graph.nodes.some((node) => node.id === ownership.to && node.identity.kind === "Route") && edges.some((route) => route.from === ownership.to && route.to === edge.to && route.relation === "routes to"))
+    if (edge.relation === "uses") return !edges.some(other => other.to === edge.to && other.relation === "uses" && hierarchy.ancestry(edge.from).includes(other.from))
     if (edge.relation !== "selects") return true
     const ancestors = hierarchy.ancestry(edge.to)
     return !edges.some((other) => other.from === edge.from && other.relation === "selects" && ancestors.includes(other.to))
@@ -180,12 +161,12 @@ export function connectionSignal(from: RuntimeSignal, to: RuntimeSignal, syncing
   return from === "healthy" && to === "healthy" ? "healthy" : "unknown"
 }
 
-export const mapNodeWidth = 224, mapNodeHeight = 170
+export const mapNodeWidth = 200, mapNodeHeight = 152
 
 export function mapNodeHeightFor(node: TopologyNode) {
   // Reserve enough lines even for maximum-length Kubernetes names. Labels wrap
   // naturally; using a conservative character width avoids font measurement races.
-  return mapNodeHeight + (["Deployment", "ReplicaSet", "StatefulSet", "DaemonSet", "Job", "CronJob"].includes(node.identity.kind) ? 64 : node.identity.kind === "Pod" ? 18 : 0) + Math.max(0, Math.ceil(node.identity.name.length / 20) - 1) * 16 + (node.routingHealth ? 18 : 0)
+  return (supportingTopologyResource(node) ? 80 : mapNodeHeight + (["Deployment", "ReplicaSet", "StatefulSet", "DaemonSet", "Job", "CronJob"].includes(node.identity.kind) ? 32 : node.identity.kind === "Pod" ? 18 : 0)) + Math.max(0, Math.ceil(node.identity.name.length / 20) - 1) * 16 + (node.routingHealth ? 18 : 0)
 }
 
 export function resourceURLs(node: TopologyNode): string[] {
@@ -261,7 +242,7 @@ function topologyOverviewLayout(sorted: TopologyNode[], edges: ResourceTopology[
     if (incoming.get(edge.to) === 0) queue.push(edge.to)
   }
   const ranks = [...new Set(allRanks.values())].sort((a, b) => a - b)
-  const columns = new Map(ranks.map((rank, index) => [rank, 40 + index * 300]))
+  const columns = new Map(ranks.map((rank, index) => [rank, 40 + index * (mapNodeWidth + 32)]))
   let top = 40
   for (const members of components) {
     const lanes = ranks.map((rank) => members.filter((node) => allRanks.get(node.id) === rank).sort((a, b) => sorted.indexOf(a) - sorted.indexOf(b)))
@@ -281,7 +262,7 @@ function topologyOverviewLayout(sorted: TopologyNode[], edges: ResourceTopology[
         lanes[index].sort((a, b) => score(a.id) - score(b.id))
       }
     }
-    const row = Math.max(mapNodeHeight, ...members.map(mapNodeHeightFor)) + 32
+    const row = Math.max(mapNodeHeight, ...members.map(mapNodeHeightFor)) + 12
     const rows = Math.max(...lanes.map((lane) => lane.length)), height = rows * row
     lanes.forEach((lane, index) => lane.forEach((node, offset) => positions.set(node.id, { x: columns.get(ranks[index])!, y: top + (offset + (rows - lane.length) / 2) * row })))
     // Align sparse lanes with their connected resources while keeping every
@@ -326,4 +307,155 @@ export function topologySceneLayout(graph: ResourceTopology, parentId: string | 
   if (parentId && !globalView) for (const [id, position] of topologyContextLayout(graph, parentId, upstream, result.get(parentId)?.y ?? 40)) result.set(id, position)
   sceneLayouts.set(graph, { key, positions: result })
   return result
+}
+
+export type TopologyGroup = { id: string; title: string; description: string; resourceIds: string[]; x: number; y: number; width: number; height: number }
+export type TopologyLayout = { positions: ReadonlyMap<string, { x: number; y: number }>; groups: TopologyGroup[] }
+type LocalGroup = Omit<TopologyGroup, "x" | "y"> & { positions: Map<string, { x: number; y: number }> }
+const gap = 24, inset = 16, header = 32
+const compare = (a: TopologyNode, b: TopologyNode) => a.identity.namespace.localeCompare(b.identity.namespace) || a.identity.kind.localeCompare(b.identity.kind) || a.identity.name.localeCompare(b.identity.name) || a.id.localeCompare(b.id)
+
+/** Resource groups describe observed relationships; they never invent graph edges. */
+export function packedTopologyLayout(nodes: TopologyNode[], edges: ResourceTopology["edges"], viewport: { width: number; height: number }): TopologyLayout {
+  if (!nodes.length) return { positions: new Map(), groups: [] }
+  const sorted = [...nodes].sort(compare), byId = new Map(sorted.map(node => [node.id, node]))
+  const links = topologyVisibleEdges({ nodes, edges, warnings: [] }, new Set(byId.keys()))
+  const core = sorted.filter(node => !supportingTopologyResource(node)), coreIds = new Set(core.map(node => node.id))
+  const traffic = links.filter(edge => coreIds.has(edge.from) && coreIds.has(edge.to) && ["owns", "selects", "routes to"].includes(edge.relation))
+  const neighbours = new Map(sorted.map(node => [node.id, new Set<string>()]))
+  for (const edge of traffic) { neighbours.get(edge.from)!.add(edge.to); neighbours.get(edge.to)!.add(edge.from) }
+  const components: TopologyNode[][] = [], visited = new Set<string>(), componentFor = new Map<string, number>()
+  for (const node of core) {
+    if (visited.has(node.id)) continue
+    const queue = [node.id], component: TopologyNode[] = []
+    visited.add(node.id)
+    for (let index = 0; index < queue.length; index++) {
+      const id = queue[index]
+      component.push(byId.get(id)!); componentFor.set(id, components.length)
+      for (const peer of neighbours.get(id)!) if (!visited.has(peer)) { visited.add(peer); queue.push(peer) }
+    }
+    components.push(component.sort(compare))
+  }
+  const supportOwners = new Map<string, string[]>()
+  const attachments = new Map<number, TopologyNode[]>(), shared: TopologyNode[] = [], unlinked: TopologyNode[] = []
+  const dependencies = new Map(sorted.map(node => [node.id, new Set<string>()]))
+  for (const edge of links) { dependencies.get(edge.from)!.add(edge.to); dependencies.get(edge.to)!.add(edge.from) }
+  for (const node of sorted.filter(supportingTopologyResource)) {
+    // Walk supporting objects only. A shared ConfigMap must not pull unrelated
+    // workloads into the same traffic group through their common dependency.
+    const owners = new Set<number>(), ownerNodes = new Set<string>(), seen = new Set([node.id]), queue = [node.id]
+    for (let index = 0; index < queue.length; index++) for (const peer of dependencies.get(queue[index])!) {
+      const owner = componentFor.get(peer)
+      if (owner !== undefined) { owners.add(owner); ownerNodes.add(peer) }
+      else if (!seen.has(peer)) { seen.add(peer); queue.push(peer) }
+    }
+    supportOwners.set(node.id, [...ownerNodes])
+    if (owners.size === 1) { const owner = [...owners][0]; attachments.set(owner, [...(attachments.get(owner) ?? []), node]) }
+    else if (owners.size) shared.push(node)
+    else unlinked.push(node)
+  }
+  const groups: LocalGroup[] = [], singletons: TopologyNode[] = []
+  const addGrid = (resources: TopologyNode[], title: string, description: string, chunkSize: number) => {
+    for (let start = 0; start < resources.length; start += chunkSize) {
+      const members = resources.slice(start, start + chunkSize), columns = members.length === 4 ? (viewport.width / viewport.height > 2 ? 4 : 2) : Math.min(3, members.length)
+      const row = Math.max(...members.map(mapNodeHeightFor)) + 12
+      const positions = new Map(members.map((node, index) => [node.id, { x: inset + index % columns * (mapNodeWidth + 12), y: header + Math.floor(index / columns) * row }]))
+      groups.push({ id: `group:${members[0].id}`, title, description, resourceIds: members.map(node => node.id), positions, width: inset * 2 + columns * (mapNodeWidth + 12) - 12, height: header + Math.ceil(members.length / columns) * row + inset - 12 })
+    }
+  }
+  components.forEach((component, index) => {
+    const support = attachments.get(index) ?? []
+    if (component.length === 1 && !support.length) { singletons.push(component[0]); return }
+    const ids = new Set(component.map(node => node.id)), local = topologyMapLayout(component, null, traffic.filter(edge => ids.has(edge.from) && ids.has(edge.to)))
+    const left = Math.min(...[...local.values()].map(position => position.x)), top = Math.min(...[...local.values()].map(position => position.y))
+    const positions = new Map(component.map(node => [node.id, { x: local.get(node.id)!.x - left + inset, y: local.get(node.id)!.y - top + header }]))
+    // Fan dependencies around their consumers instead of assigning another
+    // rigid lane. Stable ordering makes the constellation independent of health
+    // updates and API order; full label rectangles participate in separation.
+    const attached = new Map<string, TopologyNode[]>()
+    for (const node of support) {
+      const owners = (supportOwners.get(node.id) ?? []).filter(id => positions.has(id)).sort()
+      const key = JSON.stringify(owners)
+      attached.set(key, [...(attached.get(key) ?? []), node])
+    }
+    for (const [key, members] of attached) {
+      const owners = (JSON.parse(key) as string[]).map(id => positions.get(id)!).filter(Boolean)
+      const anchor = owners.length ? { x: Math.max(...owners.map(p => p.x)), y: owners.reduce((sum, p) => sum + p.y, 0) / owners.length } : { x: inset, y: header }
+      members.sort(compare).forEach((node, index) => {
+        const angle = members.length === 1 ? -.18 : -1.05 + index / (members.length - 1) * 2.1
+        positions.set(node.id, { x: anchor.x + mapNodeWidth + 20 + Math.cos(angle) * 150, y: anchor.y + 10 + Math.sin(angle) * Math.max(90, members.length * 30) })
+      })
+    }
+    // A gentle stagger keeps the traffic direction legible without ruler-straight
+    // columns. Resolve collisions geometrically, never by hiding resources.
+    component.forEach((node, index) => {
+      const p = positions.get(node.id)!
+      positions.set(node.id, { x: p.x + Math.sin(index * 2.4) * 18, y: p.y + Math.sin(index * 1.7) * 22 })
+    })
+    const members = [...component, ...support]
+    for (let iteration = 0; iteration < 80; iteration++) {
+      let moved = false
+      for (let i = 0; i < members.length; i++) for (let j = i + 1; j < members.length; j++) {
+        const a = members[i], b = members[j], pa = positions.get(a.id)!, pb = positions.get(b.id)!
+        const dx = pb.x + mapNodeWidth / 2 - pa.x - mapNodeWidth / 2
+        const dy = pb.y + mapNodeHeightFor(b) / 2 - pa.y - mapNodeHeightFor(a) / 2
+        const overlapX = mapNodeWidth + 16 - Math.abs(dx)
+        const overlapY = (mapNodeHeightFor(a) + mapNodeHeightFor(b)) / 2 + 16 - Math.abs(dy)
+        if (overlapX <= .01 || overlapY <= .01) continue
+        const shiftX = overlapX < overlapY, amount = (shiftX ? overlapX : overlapY) / 2 + .01
+        const axis = shiftX ? "x" : "y", sign = (shiftX ? dx : dy) >= 0 ? 1 : -1
+        pa[axis] -= amount * sign; pb[axis] += amount * sign; moved = true
+      }
+      if (!moved) break
+    }
+    const minX = Math.min(...[...positions.values()].map(p => p.x)), minY = Math.min(...[...positions.values()].map(p => p.y))
+    for (const p of positions.values()) { p.x += inset - minX; p.y += header - minY }
+    const groupWidth = Math.max(...members.map(node => positions.get(node.id)!.x + mapNodeWidth)) + inset
+    const groupHeight = Math.max(...members.map(node => positions.get(node.id)!.y + mapNodeHeightFor(node))) + inset
+    const entry = component.find(node => ["Ingress", "Route", "Gateway", "HTTPRoute"].includes(node.identity.kind))
+    const workload = component.find(node => !["Service", "Ingress", "Route", "Gateway", "HTTPRoute"].includes(node.identity.kind))
+    const anchor = entry ?? workload ?? component[0]
+    groups.push({ id: `group:${component[0].id}`, title: anchor.identity.name, description: entry ? "Traffic & workloads" : "Workload & dependencies", resourceIds: [...component, ...support].map(node => node.id), positions, width: groupWidth, height: groupHeight })
+  })
+  addGrid(singletons, "Standalone workloads", "No traffic relationship observed", 6)
+  addGrid(shared, "Shared configuration", "Used by multiple workload groups", 9)
+  addGrid(unlinked, "Other configuration", "No workload relationship observed", 9)
+  // Largest blocks first. Equal sizes use resource IDs, so refreshes and API
+  // ordering never shuffle a healthy/degraded workload to a different position.
+  groups.sort((a, b) => b.height - a.height || b.width - a.width || a.id.localeCompare(b.id))
+  const widest = Math.max(...groups.map(group => group.width)), totalWidth = groups.reduce((sum, group) => sum + group.width + gap, 0)
+  let best: { rectangles: TopologyGroup[]; width: number; height: number; score: number } | undefined
+  // Bottom-left rectangle packing fills space beside tall groups, rather than
+  // creating a full-width empty shelf below every connected component.
+  const widths = new Set([widest, viewport.width / 0.85, totalWidth])
+  for (let width = widest; width < Math.min(totalWidth, viewport.width * 2); width += 100) widths.add(width)
+  for (const limit of widths) {
+    const rectangles: TopologyGroup[] = []
+    for (const group of groups) {
+      const xs = [0, ...rectangles.map(rect => rect.x + rect.width + gap)], ys = [0, ...rectangles.map(rect => rect.y + rect.height + gap)]
+      let candidate: { x: number; y: number } | undefined
+      for (const y of ys) for (const x of xs) {
+        if (x + group.width > limit || rectangles.some(rect => x < rect.x + rect.width + gap && x + group.width + gap > rect.x && y < rect.y + rect.height + gap && y + group.height + gap > rect.y)) continue
+        if (!candidate || y < candidate.y || y === candidate.y && x < candidate.x) candidate = { x, y }
+      }
+      const metadata = { id: group.id, title: group.title, description: group.description, resourceIds: group.resourceIds, width: group.width, height: group.height }
+      rectangles.push({ ...metadata, ...(candidate ?? { x: 0, y: Math.max(0, ...rectangles.map(rect => rect.y + rect.height + gap)) }) })
+    }
+    const width = Math.max(...rectangles.map(rect => rect.x + rect.width)), height = Math.max(...rectangles.map(rect => rect.y + rect.height))
+    const score = Math.min(viewport.width / (width + 48), viewport.height / (height + 48))
+    if (!best || score > best.score || score === best.score && width * height < best.width * best.height) best = { rectangles, width, height, score }
+  }
+  const positions = new Map<string, { x: number; y: number }>()
+  for (const rect of best!.rectangles) for (const [id, position] of groups.find(group => group.id === rect.id)!.positions) positions.set(id, { x: rect.x + position.x, y: rect.y + position.y })
+  return { positions, groups: best!.rectangles }
+}
+
+const scenes = new WeakMap<ResourceTopology, { key: string; layout: TopologyLayout }>()
+/** Camera changes reuse the layout; snapshots and viewport dimensions invalidate it. */
+export function packedTopologyScene(graph: ResourceTopology, visibleIds: string[], viewport: { width: number; height: number }) {
+  const key = JSON.stringify([visibleIds, viewport.width, viewport.height]), cached = scenes.get(graph)
+  if (cached?.key === key) return cached.layout
+  const ids = new Set(visibleIds), layout = packedTopologyLayout(graph.nodes.filter(node => ids.has(node.id)), topologyVisibleEdges(graph, ids), viewport)
+  scenes.set(graph, { key, layout })
+  return layout
 }

@@ -6,19 +6,19 @@
 .canvas :global(.react-flow:focus-visible) { outline: 2px solid var(--ring); outline-offset: -2px; }
 .canvas :global(.react-flow__attribution) { background: var(--card); color: var(--muted-foreground); font-size: 9px; }
 .canvas :global(.react-flow__node-resource) { border: 0; background: transparent; }
-.node { width: 224px; height: 100%; display: flex; flex-direction: column; align-items: center; position: relative; transition: opacity 140ms ease; }
+.node { width: 200px; height: 100%; display: flex; flex-direction: column; align-items: center; position: relative; transition: opacity 140ms ease; }
 .dimmed { opacity: .5; }
 .nodeButton { display: flex; width: 100%; height: auto; flex-direction: column; gap: 0; padding: 8px 6px 0; white-space: normal; justify-content: flex-start; border-radius: 16px; transition: none; }
 .nodeButton > span { flex-shrink: 0; }
 .nodeButton:hover { background: transparent; }
 .nodeButton:active { transform: none; }
-.orb { position: relative; display: grid; place-items: center; width: 72px; height: 72px; flex-shrink: 0; border: 1.5px solid color-mix(in srgb, var(--foreground) 24%, var(--border)); border-radius: 50%; background: var(--card); color: var(--muted-foreground); box-shadow: 0 2px 8px color-mix(in srgb, var(--foreground) 3%, transparent); transition: border-color 150ms ease, box-shadow 150ms ease; }
+.orb { position: relative; display: grid; place-items: center; width: 60px; height: 60px; flex-shrink: 0; border: 1.5px solid color-mix(in srgb, var(--foreground) 24%, var(--border)); border-radius: 50%; background: var(--card); color: var(--muted-foreground); box-shadow: 0 2px 8px color-mix(in srgb, var(--foreground) 3%, transparent); transition: border-color 150ms ease, box-shadow 150ms ease; }
 .selected .orb { color: var(--info); border-color: var(--info); box-shadow: 0 0 0 6px color-mix(in srgb, var(--info) 10%, transparent), 0 0 0 14px color-mix(in srgb, var(--info) 4%, transparent); }
 .node[data-sync="syncing"] .orb::after { content: ""; position: absolute; inset: -8px; border: 1px dashed var(--info); border-radius: 50%; animation: applying 4s linear infinite; pointer-events: none; }
 .node[data-runtime="progressing"] .orb { border-color: var(--warning); }
 .node[data-runtime="degraded"] .orb { border-color: var(--destructive); }
 .node[data-network="true"][data-runtime="healthy"] .orb { border-color: var(--success); }
-.routingStatus { max-width: 212px; font-size: 10px; line-height: 18px; color: var(--muted-foreground); }
+.routingStatus { max-width: 188px; font-size: 10px; line-height: 18px; color: var(--muted-foreground); }
 .node[data-runtime="healthy"] .routingStatus { color: var(--success-foreground); }
 .node[data-runtime="progressing"] .routingStatus { color: var(--warning-foreground); }
 .node[data-runtime="degraded"] .routingStatus { color: var(--destructive); }
@@ -28,9 +28,9 @@
 .node[data-runtime="degraded"] .healthDot { background: var(--destructive); }
 .node[data-runtime="unknown"] .healthDot { background: var(--card); outline: 1px dashed var(--muted-foreground); outline-offset: -2px; }
 .childCount { position: absolute; right: -5px; top: -4px; min-width: 23px; height: 23px; padding: 2px 4px; display: grid; place-items: center; border: 2px solid var(--card); border-radius: 20px; background: var(--info); color: var(--info-foreground); font-size: 10px; font-weight: 600; }
-.nodeName { display: block; width: 100%; max-width: 212px; margin-top: 10px; overflow-wrap: anywhere; white-space: normal; font-size: 12px; line-height: 16px; font-weight: 600; }
-.nodeKind { color: var(--muted-foreground); font-size: 10px; line-height: 16px; }
-.nodeStatus { display: flex; align-items: center; gap: 4px; max-width: 160px; color: var(--muted-foreground); font-size: 9px; line-height: 14px; white-space: nowrap; }
+.nodeName { display: block; width: 100%; max-width: 188px; margin-top: 10px; overflow-wrap: anywhere; white-space: normal; font-size: 13px; line-height: 16px; font-weight: 600; }
+.nodeKind { color: var(--muted-foreground); font-size: 11px; line-height: 16px; }
+.nodeStatus { display: flex; align-items: center; gap: 4px; max-width: 160px; color: var(--muted-foreground); font-size: 10px; line-height: 14px; white-space: nowrap; }
 .nodeStatus > span { width: 4px; height: 4px; border-radius: 50%; background: var(--muted-foreground); }
 .nodeStatus[data-sync="syncing"] > span, .nodeStatus[data-sync="create"] > span { background: var(--info); }
 .nodeStatus[data-sync="failed"] > span, .nodeStatus[data-sync="delete"] > span { background: var(--destructive); }
@@ -38,9 +38,9 @@
 .nodeStatus[data-sync="synced"] > span, .nodeStatus[data-sync="applied"] > span { background: var(--success); }
 .actions { display: flex; align-items: center; justify-content: center; gap: 2px; margin-top: 4px; color: var(--muted-foreground); }
 .actions > * { font-size: 10px; }
-.node :global(.react-flow__handle) { top: 44px; width: 1px; height: 1px; min-width: 0; min-height: 0; border: 0; opacity: 0; pointer-events: none; }
-.node .targetHandle { left: 76px; }
-.node .sourceHandle { left: 148px; right: auto; }
+.node :global(.react-flow__handle) { top: 38px; width: 1px; height: 1px; min-width: 0; min-height: 0; border: 0; opacity: 0; pointer-events: none; }
+.node .targetHandle { left: 70px; }
+.node .sourceHandle { left: 130px; right: auto; }
 .relationship { --edge-color: var(--muted-foreground); }
 .edgePath { stroke: var(--edge-color); stroke-width: 1.3; stroke-opacity: .4; transition: stroke 150ms ease, stroke-opacity 150ms ease; }
 .relationship[data-signal="healthy"] { --edge-color: var(--success); }
@@ -67,10 +67,33 @@
 @media (hover: hover) and (pointer: fine) { .nodeButton:hover .orb { border-color: var(--info); box-shadow: 0 0 0 6px color-mix(in srgb, var(--info) 8%, transparent); } }
 @media (prefers-reduced-motion: reduce) { .flow, .relationship[data-signal="degraded"] .edgePath, .node[data-sync="syncing"] .orb::after { animation: none; } .node, .orb { transition: none; } }
 
-.podStatus { max-width: 212px; font-size: 10px; line-height: 16px; color: var(--muted-foreground); overflow-wrap: anywhere; }
+.podStatus { max-width: 188px; font-size: 10px; line-height: 16px; color: var(--muted-foreground); overflow-wrap: anywhere; }
 .node[data-runtime="degraded"] .podStatus { color: var(--destructive); }
 .node[data-runtime="progressing"] .podStatus { color: var(--warning-foreground); }
 .contextLabel { font-size: 10px; line-height: 18px; color: var(--info); }
 .node[data-context="true"] .orb { border-style: dashed; }
 .edgeLabel { opacity: 0; pointer-events: none; }
 .relationship:hover .edgeLabel, .canvas :global(.react-flow__edge:focus-visible) .edgeLabel { opacity: 1; }
+
+.node[data-compact="true"] .nodeButton { display: grid; grid-template-columns: 36px minmax(0, 1fr); column-gap: 10px; padding: 8px; align-items: center; border: 0; border-radius: 0; background: transparent; text-align: left; }
+.node[data-compact="true"] .orb { grid-column: 1; grid-row: 1 / 4; width: 36px; height: 36px; }
+.node[data-compact="true"] .orb svg { width: 20px; height: 20px; }
+.node[data-compact="true"] .healthDot { width: 10px; height: 10px; border-width: 2px; }
+.node[data-compact="true"] .nodeName { grid-column: 2; grid-row: 1; margin: 0; max-width: none; font-size: 12px; line-height: 14px; }
+.node[data-compact="true"] .nodeKind { grid-column: 2; grid-row: 2; line-height: 14px; }
+.node[data-compact="true"] .nodeStatus { grid-column: 2; grid-row: 3; max-width: none; white-space: normal; }
+.node[data-compact="true"] :global(.react-flow__handle) { top: 28px; }
+.node[data-compact="true"] .targetHandle { left: 8px; }
+.node[data-compact="true"] .sourceHandle { left: 44px; }
+.actions > * { height: 20px; min-height: 0; }
+.canvas :global(.react-flow__node-cluster) { pointer-events: none; }
+.resourceGroup { width: 100%; height: 100%; pointer-events: none; }
+.groupHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px 0; font-size: 13px; line-height: 16px; font-weight: 600; }
+.groupHeading > :first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.groupHeading > :last-child { color: var(--muted-foreground); font-weight: 400; }
+.resourceGroup > p { padding: 0 14px; font-size: 10px; line-height: 14px; color: var(--muted-foreground); }
+
+.node .topHandle { left: 100px; top: 8px; }
+.node .bottomHandle { left: 100px; top: 68px; bottom: auto; }
+.node[data-compact="true"] .topHandle { left: 26px; top: 10px; }
+.node[data-compact="true"] .bottomHandle { left: 26px; top: 46px; bottom: auto; }

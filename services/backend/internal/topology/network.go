@@ -12,9 +12,12 @@ import (
 )
 
 // ObservationSpec retains only topology inputs. In particular, Route TLS keys,
-// certificates, annotations, and workload container/environment data are excluded.
+// certificates, annotations, and literal workload container/environment data are excluded.
 func ObservationSpec(kind string, object map[string]any) map[string]any {
 	result := map[string]any{}
+	if isWorkload(kind) || kind == "ReplicaSet" || kind == "Pod" || kind == "RoleBinding" || kind == "ClusterRoleBinding" {
+		result["references"] = observationReferences(kind, object)
+	}
 	if slices.Contains([]string{"Ingress", "Route", "Service", "Deployment", "ReplicaSet", "StatefulSet", "DaemonSet", "Job", "CronJob"}, kind) {
 		result["spec"] = map[string]any{}
 	}

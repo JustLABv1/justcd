@@ -45,10 +45,12 @@ type Graph struct {
 }
 
 type material struct {
-	node   Node
-	value  map[string]any
-	labels map[string]string
-	owners []string
+	node           Node
+	value          map[string]any
+	labels         map[string]string
+	owners         []string
+	references     []dependencyReference
+	liveReferences bool
 }
 
 func ID(identity core.Identity) string {
@@ -89,6 +91,8 @@ func BuildWithOptions(plan *store.PlanRecord, managed []store.ManagedResource, o
 		key := ID(identity)
 		at := resource.ObservedAt
 		var manifest map[string]any
+		var references []dependencyReference
+		liveReferences := false
 		tracked := false
 		var health *apphealth.ResourceAssessment
 		observation := apphealth.Observation{Identity: identity, Source: resource.Source, Phase: resource.Phase, Readiness: resource.Readiness, Details: resource.HealthSummary}
@@ -102,6 +106,9 @@ func BuildWithOptions(plan *store.PlanRecord, managed []store.ManagedResource, o
 		}
 		if len(resource.TopologySpec) > 0 && string(resource.TopologySpec) != "{}" {
 			live := parse(resource.TopologySpec)
+			if _, liveReferences = live["references"]; liveReferences {
+				references = storedReferences(identity, live)
+			}
 			if manifest == nil || slices.Contains([]string{"Ingress", "Route", "Service"}, identity.Kind) {
 				manifest = live
 			} else if isWorkload(identity.Kind) || identity.Kind == "ReplicaSet" {
@@ -112,7 +119,7 @@ func BuildWithOptions(plan *store.PlanRecord, managed []store.ManagedResource, o
 				_ = unstructured.SetNestedStringMap(manifest, nestedStringMap(live, path...), path...)
 			}
 		}
-		items[key] = &material{value: manifest, node: Node{ID: key, Identity: identity, Tracked: tracked, Health: health, Source: resource.Source, UID: resource.UID, ResourceVersion: resource.ResourceVersion, Phase: resource.Phase, Readiness: resource.Readiness, HealthSummary: nonEmptyHealthSummary(resource.HealthSummary), ObservedAt: &at}, labels: resource.Labels, owners: resource.OwnerUIDs}
+		items[key] = &material{value: manifest, node: Node{ID: key, Identity: identity, Tracked: tracked, Health: health, Source: resource.Source, UID: resource.UID, ResourceVersion: resource.ResourceVersion, Phase: resource.Phase, Readiness: resource.Readiness, HealthSummary: nonEmptyHealthSummary(resource.HealthSummary), ObservedAt: &at}, labels: resource.Labels, owners: resource.OwnerUIDs, references: references, liveReferences: liveReferences}
 	}
 
 	byUID := map[string]*material{}
@@ -210,47 +217,39 @@ func BuildWithOptions(plan *store.PlanRecord, managed []store.ManagedResource, o
 			name := nestedString(item.value, "spec", "scaleTargetRef", "name")
 			add(item, byName[nameKey(kind, id.Namespace, name)], "scales")
 		}
-		if isWorkload(id.Kind) {
-			spec := podSpec(item.value, id.Kind)
-			if spec != nil {
-				if name := nestedString(spec, "serviceAccountName"); name != "" {
-					add(item, byName[nameKey("ServiceAccount", id.Namespace, name)], "uses")
-				}
-				for _, volume := range nestedSlice(spec, "volumes") {
-					v, ok := volume.(map[string]any)
-					if !ok {
-						continue
-					}
-					for _, ref := range []struct {
-						path []string
-						kind string
-					}{{[]string{"configMap", "name"}, "ConfigMap"}, {[]string{"secret", "secretName"}, "Secret"}, {[]string{"persistentVolumeClaim", "claimName"}, "PersistentVolumeClaim"}} {
-						if name := nestedString(v, ref.path...); name != "" {
-							add(item, byName[nameKey(ref.kind, id.Namespace, name)], "uses")
-						}
-					}
-				}
-				for _, containerType := range []string{"containers", "initContainers"} {
-					for _, container := range nestedSlice(spec, containerType) {
-						c, ok := container.(map[string]any)
-						if !ok {
-							continue
-						}
-						for _, source := range nestedSlice(c, "envFrom") {
-							v, ok := source.(map[string]any)
-							if !ok {
-								continue
-							}
-							if name := nestedString(v, "configMapRef", "name"); name != "" {
-								add(item, byName[nameKey("ConfigMap", id.Namespace, name)], "uses")
-							}
-							if name := nestedString(v, "secretRef", "name"); name != "" {
-								add(item, byName[nameKey("Secret", id.Namespace, name)], "uses")
-							}
-						}
-					}
-				}
+
+		refs := item.references
+		if !item.liveReferences {
+			refs = dependencyReferences(id, item.value)
+		}
+		for _, ref := range refs {
+			add(item, byName[nameKey(ref.Kind, ref.Namespace, ref.Name)], "uses")
+		}
+
+	}
+	// A collapsed controller still exposes dependencies used by its observed
+	// children. Follow real owner UIDs, never resource-name guesses.
+	for _, edge := range slices.Clone(graph.Edges) {
+		source, target := items[edge.From], items[edge.To]
+		if edge.Relation != "uses" || source == nil || target == nil || (source.node.Identity.Kind != "Pod" && source.node.Identity.Kind != "ReplicaSet") {
+			continue
+		}
+		queue := slices.Clone(source.owners)
+		visited := map[string]bool{}
+		for i := 0; i < len(queue); i++ {
+			uid := queue[i]
+			if visited[uid] {
+				continue
 			}
+			visited[uid] = true
+			owner := byUID[uid]
+			if owner == nil {
+				continue
+			}
+			if isWorkload(owner.node.Identity.Kind) {
+				add(owner, target, "uses")
+			}
+			queue = append(queue, owner.owners...)
 		}
 	}
 	assessRouting(items, byName, options)
@@ -308,6 +307,10 @@ func isWorkload(kind string) bool {
 	return false
 }
 func podSpec(value map[string]any, kind string) map[string]any {
+	if kind == "Pod" {
+		spec, _, _ := unstructured.NestedMap(value, "spec")
+		return spec
+	}
 	if kind == "CronJob" {
 		spec, _, _ := unstructured.NestedMap(value, "spec", "jobTemplate", "spec", "template", "spec")
 		return spec

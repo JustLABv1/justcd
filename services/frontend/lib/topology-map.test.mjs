@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { aggregateRuntime, connectionSignal, mapNodeHeight, mapNodeHeightFor, mapNodeWidth, resourceURLs, podSummary, topologyUpstream, topologyContextLayout, topologyVisibleEdges, supportingTopologyResource, topologyCanvasResources, runtimeSignal, topologyHierarchy, topologyMapLayout, topologyScope } from "./topology-map.ts"
+import { aggregateRuntime, connectionSignal, mapNodeHeight, mapNodeHeightFor, mapNodeWidth, resourceURLs, podSummary, topologyUpstream, topologyContextLayout, topologyVisibleEdges, supportingTopologyResource, packedTopologyLayout, runtimeSignal, topologyHierarchy, topologyMapLayout, topologyScope } from "./topology-map.ts"
 
 const node = (id, kind = "Deployment", extra = {}) => ({ id, identity: { apiVersion: "v1", kind, namespace: "demo", name: id }, source: "kubernetes", ...extra })
 const edge = (from, to, relation = "owns") => ({ from, to, relation })
@@ -121,14 +121,16 @@ test("Service selection is drawn once through the visible owning workload", () =
 })
 
 
-test("supporting inventory is separate; only explicitly enabled connected dependencies enter the canvas", () => {
+test("configuration stays visible and is placed with its workload or in a labelled configuration group", () => {
   const nodes=[node("workload"),node("config","ConfigMap"),node("account","ServiceAccount"),node("binding","RoleBinding"),node("role","Role"),node("unrelated","ConfigMap"),node("operator","CustomDatabase")]
   const edges=[edge("workload","config","uses"),edge("workload","account","uses"),edge("account","binding","uses"),edge("binding","role","uses")]
-  assert.deepEqual(topologyCanvasResources(nodes,edges,false).map(n=>n.id),["workload","operator"])
-  assert.deepEqual(topologyCanvasResources(nodes,edges,true).map(n=>n.id),["workload","config","account","binding","role","operator"])
+  const layout=packedTopologyLayout(nodes,edges,{width:1600,height:760})
+  assert.equal(layout.positions.size,nodes.length)
+  const attached=layout.groups.find(group=>group.resourceIds.includes("workload"))
+  for(const id of ["config","account","binding","role"]) assert.ok(attached.resourceIds.includes(id))
+  assert.ok(!attached.resourceIds.includes("unrelated"))
+  assert.ok(layout.groups.find(group=>group.title==="Other configuration").resourceIds.includes("unrelated"))
   assert.equal(supportingTopologyResource(node("volume","PersistentVolumeClaim")),true)
-  // A hidden workload cannot serve as a bridge into its unrelated configuration.
-  assert.deepEqual(topologyCanvasResources(nodes, [...edges,edge("unseen","workload","selects"),edge("unseen","unrelated","uses")], true).map(n=>n.id),["workload","config","account","binding","role","operator"])
 })
 
 test("expanded OpenShift paths remove only the duplicated Ingress-to-Service shortcut", () => {
@@ -170,9 +172,9 @@ test("production-shaped topology groups generated routes and separates isolated 
     for(let i=0;i<3;i++) edges.push(edge(ingress.id,generated[offset*3+i].id),edge(generated[offset*3+i].id,services[i%2].id,"routes to"))
   }
   const network={nodes:[ingressA,ingressB,...services,...workloads,...generated,...config],edges,warnings:[]}
-  const shown=topologyCanvasResources(topologyScope(network,null),edges,false)
+  const shown=topologyScope(network,null)
   assert.equal(network.nodes.length,33)
-  assert.equal(shown.length,10)
+  assert.equal(shown.length,27)
   const links=topologyVisibleEdges(network,new Set(shown.map(n=>n.id)))
   assert.equal(links.length,8)
   const layout=topologyMapLayout(shown,null,links)
@@ -184,4 +186,11 @@ test("production-shaped topology groups generated routes and separates isolated 
     const pa=layout.get(a.id),pb=layout.get(b.id)
     assert.ok(pa.x+mapNodeWidth<=pb.x||pb.x+mapNodeWidth<=pa.x||pa.y+mapNodeHeightFor(a)<=pb.y||pb.y+mapNodeHeightFor(b)<=pa.y)
   }))
+})
+
+test("controller dependencies draw once while distinct pod-only references remain visible",()=>{
+ const network={nodes:[node('web'),node('rs','ReplicaSet'),node('pod','Pod'),node('shared','ConfigMap'),node('unique','Secret')],edges:[edge('web','rs'),edge('rs','pod'),edge('web','shared','uses'),edge('pod','shared','uses'),edge('pod','unique','uses')],warnings:[]}
+ const links=topologyVisibleEdges(network,new Set(network.nodes.map(n=>n.id)))
+ assert.equal(links.filter(e=>e.to==='shared'&&e.relation==='uses').length,1)
+ assert.ok(links.some(e=>e.from==='pod'&&e.to==='unique'))
 })

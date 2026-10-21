@@ -275,6 +275,12 @@ func (a *Agent) enroll(ctx context.Context) error {
 }
 func (a *Agent) Execute(ctx context.Context, task agentprotocol.Request) agentprotocol.Result {
 	result := agentprotocol.Result{Lease: task.Lease, ErrorCode: "cluster.agent_scope_denied"}
+	// Log only the parsed path: query parameters and bodies may contain values
+	// that should not appear in a scope-denial diagnostic.
+	requestPath := "<invalid>"
+	if uri, err := url.ParseRequestURI(task.URI); err == nil && !uri.IsAbs() && uri.Host == "" {
+		requestPath = uri.EscapedPath()
+	}
 	var profile *agentprotocol.Profile
 	for i := range a.Config.Profiles {
 		if a.Config.Profiles[i].Name == task.Profile {
@@ -284,12 +290,12 @@ func (a *Agent) Execute(ctx context.Context, task agentprotocol.Request) agentpr
 	}
 	if profile == nil {
 		result.Error = "local agent profile does not exist"
-		slog.Warn("local agent profile denied request", "reason", result.Error, "profile", task.Profile, "workspace", task.WorkspaceID, "namespace", task.Namespace, "clusterScope", task.ClusterScope)
+		slog.Warn("local agent profile denied request", "reason", result.Error, "method", task.Method, "path", requestPath, "profile", task.Profile, "workspace", task.WorkspaceID, "namespace", task.Namespace, "clusterScope", task.ClusterScope)
 		return result
 	}
 	if err := agentprotocol.Validate(task, *profile); err != nil {
 		result.Error = err.Error()
-		slog.Warn("local agent profile denied request", "reason", result.Error, "profile", task.Profile, "workspace", task.WorkspaceID, "namespace", task.Namespace, "clusterScope", task.ClusterScope)
+		slog.Warn("local agent profile denied request", "reason", result.Error, "method", task.Method, "path", requestPath, "profile", task.Profile, "workspace", task.WorkspaceID, "namespace", task.Namespace, "clusterScope", task.ClusterScope, "profileClusterScope", profile.ClusterScope)
 		return result
 	}
 	ctx, cancel := context.WithDeadline(ctx, task.Deadline)

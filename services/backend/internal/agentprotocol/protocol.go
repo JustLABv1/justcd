@@ -254,8 +254,13 @@ func Validate(r Request, p Profile) error {
 		if r.Namespace != namespace || !namespaceAllowed(p.Namespaces, namespace) {
 			return errors.New("namespace is not authorized by the local agent profile")
 		}
-	} else if namespace == "" && (!r.ClusterScope || !p.ClusterScope) {
-		return errors.New("cluster-scoped resources require a local cluster-scope profile")
+	} else if namespace == "" {
+		if !r.ClusterScope {
+			return errors.New("cluster-scoped resource was sent through a namespace-scoped route")
+		}
+		if !p.ClusterScope {
+			return errors.New("cluster-scoped resources require a local cluster-scope profile")
+		}
 	}
 	return nil
 }

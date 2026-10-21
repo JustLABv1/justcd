@@ -50,7 +50,14 @@ func ForWorkspaceBinding(ctx context.Context, db *store.Store, key []byte, c sto
 	if a.Revoked || a.LastSeenAt == nil || time.Since(*a.LastSeenAt) > time.Minute {
 		return nil, &AgentError{Code: "cluster.agent_unavailable", Message: "cluster agent is offline; reconnect the agent and refresh the plan", Transient: true}
 	}
-	clients, err := clientsForConfig(&rest.Config{Host: "https://justcd-agent.invalid", Timeout: 30 * time.Second, Transport: &agentTransport{ctx: ctx, db: db, key: key, cluster: c.ID, workspace: workspace, namespace: namespace, profile: profile, clusterScope: clusterScope}})
+	transport := &agentTransport{ctx: ctx, db: db, key: key, cluster: c.ID, workspace: workspace, namespace: namespace, profile: profile, clusterScope: clusterScope}
+	for _, p := range a.Profiles {
+		if p.Name == profile && p.ClusterScope && p.DeploymentCredentials == nil && !clusterScope {
+			transport.projectBootstrapProfile = &p
+			break
+		}
+	}
+	clients, err := clientsForConfig(&rest.Config{Host: "https://justcd-agent.invalid", Timeout: 30 * time.Second, Transport: transport})
 	if err == nil {
 		for _, p := range a.Profiles {
 			if p.Name == profile {
@@ -85,6 +92,27 @@ type agentTransport struct {
 	cluster, workspace, namespace, profile string
 	clusterScope                           bool
 	environment                            *agentprotocol.EnvironmentRequest
+	projectBootstrapProfile                *agentprotocol.Profile
+}
+
+// Keep the workload profile (and therefore OpenShift's requester identity), but
+// accurately label bound project bootstrap calls as cluster API operations.
+// Validate against the enrolled local policy before promoting the route, so
+// older agents also retain namespace matching and protected-project checks.
+func routeProjectBootstrap(task *agentprotocol.Request, profile *agentprotocol.Profile) error {
+	if profile == nil || !profile.ClusterScope || profile.DeploymentCredentials != nil || task.ClusterScope || task.Namespace == "" {
+		return nil
+	}
+	path := strings.SplitN(task.URI, "?", 2)[0]
+	const base = "/apis/project.openshift.io/v1/"
+	if !(task.Method == "GET" && path == base+"projects/"+task.Namespace) && !(task.Method == "POST" && path == base+"projectrequests") {
+		return nil
+	}
+	if err := agentprotocol.Validate(*task, *profile); err != nil {
+		return &AgentError{Code: "cluster.agent_scope_denied", Message: "OpenShift project bootstrap route denied: " + err.Error()}
+	}
+	task.ClusterScope = true
+	return nil
 }
 
 func (t *agentTransport) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -119,6 +147,9 @@ func (t *agentTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		}
 	}
 	task.Execution, _ = r.Context().Value(executionKey{}).(*agentprotocol.Execution)
+	if err := routeProjectBootstrap(&task, t.projectBootstrapProfile); err != nil {
+		return nil, err
+	}
 	plain, err := json.Marshal(task)
 	if err != nil {
 		return nil, err

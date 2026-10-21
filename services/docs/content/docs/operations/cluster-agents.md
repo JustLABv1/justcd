@@ -246,6 +246,9 @@ to create `projectrequests.project.openshift.io`. Both calls enforce namespace
 matching and protected namespace exclusions. Upgrade the agent together with the
 backend to use this routing. Managed deployment credentials continue to use the
 separate local provisioning policy instead of direct project requests.
+The backend marks the validated Project lookup and ProjectRequest as
+cluster-scoped tasks while retaining the workload profile and bound namespace;
+ordinary workload requests remain namespace-scoped.
 
 Omit it to use the in-cluster endpoint. The configured endpoint must use HTTPS
 and its certificate must match the endpoint hostname.

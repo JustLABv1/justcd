@@ -1,8 +1,10 @@
 package kube
 
 import (
+	"github.com/justlab/justcd/services/backend/internal/agentprotocol"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestUnknownWritesRequireReview(t *testing.T) {
@@ -14,6 +16,44 @@ func TestUnknownWritesRequireReview(t *testing.T) {
 		err := uncertainAgentError(r, "request outcome unknown").(*AgentError)
 		if err.Retryable() != tc.transient {
 			t.Fatalf("%s %s incorrectly retryable", tc.method, tc.uri)
+		}
+	}
+}
+
+func TestProjectBootstrapUsesClusterRouteWithSameWorkloadProfile(t *testing.T) {
+	profile := agentprotocol.Profile{Name: "default", WorkspaceIDs: []string{"w"}, Namespaces: []string{"*"}, ClusterScope: true, DeniedNamespaces: []string{"agent"}}
+	for _, tc := range []struct {
+		name, method, uri, namespace, project string
+		promoted, denied                      bool
+	}{
+		{"existing project", "GET", "/apis/project.openshift.io/v1/projects/justapps-prd", "justapps-prd", "", true, false},
+		{"missing project", "POST", "/apis/project.openshift.io/v1/projectrequests", "justapps-prd", "justapps-prd", true, false},
+		{"different project", "POST", "/apis/project.openshift.io/v1/projectrequests", "justapps-prd", "other", false, true},
+		{"protected project", "POST", "/apis/project.openshift.io/v1/projectrequests", "agent", "agent", false, true},
+		{"invalid request", "POST", "/apis/project.openshift.io/v1/projectrequests", "justapps-prd", "", false, true},
+		{"ordinary workload", "GET", "/api/v1/namespaces/justapps-prd/pods", "justapps-prd", "", false, false},
+		{"unrelated cluster resource", "GET", "/api/v1/nodes", "justapps-prd", "", false, false},
+		{"project collection", "GET", "/apis/project.openshift.io/v1/projects", "justapps-prd", "", false, false},
+		{"different project lookup", "GET", "/apis/project.openshift.io/v1/projects/other", "justapps-prd", "", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			task := agentprotocol.Request{Profile: "default", WorkspaceID: "w", Namespace: tc.namespace, Method: tc.method, URI: tc.uri, Deadline: time.Now().Add(time.Minute)}
+			if tc.method == "POST" {
+				task.Body = []byte(`{"apiVersion":"project.openshift.io/v1","kind":"ProjectRequest","metadata":{"name":"` + tc.project + `"}}`)
+			}
+			err := routeProjectBootstrap(&task, &profile)
+			if (err != nil) != tc.denied || task.ClusterScope != tc.promoted || task.Profile != "default" || task.Namespace != tc.namespace {
+				t.Fatalf("incorrect bootstrap route: %+v err=%v", task, err)
+			}
+		})
+	}
+}
+
+func TestProjectBootstrapDoesNotPromoteRestrictedProfiles(t *testing.T) {
+	for _, p := range []*agentprotocol.Profile{nil, {Name: "default"}, {Name: "default", ClusterScope: true, DeploymentCredentials: &agentprotocol.DeploymentCredentials{LifetimeSeconds: 600}}} {
+		task := agentprotocol.Request{Profile: "default", Namespace: "dev", Method: "GET", URI: "/apis/project.openshift.io/v1/projects/dev"}
+		if err := routeProjectBootstrap(&task, p); err != nil || task.ClusterScope {
+			t.Fatalf("restricted profile promoted: %+v err=%v", p, err)
 		}
 	}
 }

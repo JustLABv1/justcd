@@ -180,3 +180,40 @@ func TestRejectInvalidConfiguredClusterIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestExecuteBoundOpenShiftBootstrap(t *testing.T) {
+	calls := 0
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == "GET" {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"kind":"Status","reason":"Forbidden"}`))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"kind":"Project","metadata":{"name":"preview-app"}}`))
+	}))
+	defer local.Close()
+	a := &Agent{Config: Config{Profiles: []agentprotocol.Profile{{Name: "workload", WorkspaceIDs: []string{"w"}, Namespaces: []string{"preview-*"}, ClusterScope: true, DeniedNamespaces: []string{"preview-agent"}}}}, Local: map[string]*http.Client{"workload": local.Client()}, KubernetesURL: local.URL}
+	task := agentprotocol.Request{Profile: "workload", WorkspaceID: "w", Namespace: "preview-app", Method: "GET", URI: "/apis/project.openshift.io/v1/projects/preview-app", Deadline: time.Now().Add(time.Minute)}
+	if result := a.Execute(context.Background(), task); result.Error != "" || result.Status != http.StatusForbidden {
+		t.Fatalf("project lookup was blocked by agent: %+v", result)
+	}
+	task.Method = "POST"
+	task.URI = "/apis/project.openshift.io/v1/projectrequests"
+	task.ContentType = "application/json"
+	task.Body = []byte(`{"apiVersion":"project.openshift.io/v1","kind":"ProjectRequest","metadata":{"name":"preview-app"}}`)
+	if result := a.Execute(context.Background(), task); result.Error != "" || result.Status != http.StatusCreated {
+		t.Fatalf("project request was blocked by agent: %+v", result)
+	}
+	for _, target := range []string{"preview-other", "preview-agent"} {
+		task.Body = []byte(`{"apiVersion":"project.openshift.io/v1","kind":"ProjectRequest","metadata":{"name":"` + target + `"}}`)
+		if result := a.Execute(context.Background(), task); result.ErrorCode != "cluster.agent_scope_denied" {
+			t.Fatalf("scope escape accepted: %+v", result)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("out-of-scope request reached API: calls=%d", calls)
+	}
+}

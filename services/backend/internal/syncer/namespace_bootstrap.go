@@ -87,7 +87,7 @@ func bootstrapNamespace(ctx context.Context, input planInput, name string) (bool
 		// OpenShift may hide an absent project behind Forbidden. Requesting the
 		// project is safe: its API rejects existing projects without changing RBAC.
 		if !apierrors.IsNotFound(getErr) && !apierrors.IsForbidden(getErr) {
-			return false, getErr
+			return false, &resourceAccessError{identity: core.Identity{ClusterID: input.Cluster.ID, APIVersion: "project.openshift.io/v1", Kind: "Project", Name: name, ClusterScoped: true}, action: "get", err: getErr}
 		}
 		request := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "project.openshift.io/v1", "kind": "ProjectRequest", "metadata": map[string]any{"name": name}}}
 		_, createErr := client.Dynamic.Resource(projectRequestResource).Create(ctx, request, metav1.CreateOptions{})

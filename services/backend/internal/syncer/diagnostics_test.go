@@ -127,3 +127,12 @@ func TestClusterScopeRequirementHasSpecificDiagnostic(t *testing.T) {
 		t.Fatal("wrapper leaked into user-facing cause")
 	}
 }
+
+func TestAgentScopeDenialExplainsOpenShiftBootstrapPolicy(t *testing.T) {
+	identity := core.Identity{ClusterID: "cluster", APIVersion: "project.openshift.io/v1", Kind: "Project", Name: "loki-prd", ClusterScoped: true}
+	err := &planStageError{stage: "cluster", err: &resourceAccessError{identity: identity, action: "get", err: &kube.AgentError{Code: "cluster.agent_scope_denied", Message: "private local details"}}}
+	issue := PlanFailureDiagnostic(err)
+	if issue.Code != "cluster.agent_scope_denied" || issue.Resource == nil || *issue.Resource != identity || issue.Action != "get" || !strings.Contains(issue.Remediation, "clusterScope") || !strings.Contains(issue.Remediation, "Update the agent") || strings.Contains(issue.Summary, "private") {
+		t.Fatalf("agent scope diagnosis missing or unsafe: %+v", issue)
+	}
+}

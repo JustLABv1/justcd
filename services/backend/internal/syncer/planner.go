@@ -110,6 +110,10 @@ func statusIssue(stage string, err error, at time.Time) store.ApplicationStatusI
 				issue.Code = agent.ErrorCode()
 				issue.Summary = "The cluster agent could not complete the Kubernetes plan check."
 				issue.Remediation = "Check the target cluster agent and its access profiles, then refresh the plan."
+				if agent.ErrorCode() == "cluster.agent_scope_denied" {
+					issue.Summary = "The cluster agent's local profile denied the Kubernetes request."
+					issue.Remediation = "Check the local agent profile's workspace, allowed namespaces, and denied namespaces. OpenShift project creation through a static workload profile requires that profile's clusterScope permission and an agent version supporting bound project requests; managed deployment profiles use their separate provisioning policy. Update the agent or its local policy, then refresh the plan."
+				}
 			} else if ClassifyRetryError(err).ErrorCode == "dependency.connection_failed" {
 				issue.Code = "kubernetes.connection_failed"
 				issue.Summary = "The Kubernetes API connection failed. Check cluster connectivity."

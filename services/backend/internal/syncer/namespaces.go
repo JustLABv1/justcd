@@ -11,6 +11,7 @@ import (
 	"github.com/justlab/justcd/services/backend/internal/core"
 	"github.com/justlab/justcd/services/backend/internal/kube"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -53,6 +54,27 @@ func addNamespaceCreations(ctx context.Context, input planInput, plan *core.Plan
 	for _, name := range names {
 		if explicit[name] || input.ManagedNamespaces[name] {
 			continue
+		}
+		// ProjectRequest creates both the project and requester access. OpenShift
+		// does not honor dry-run for this endpoint, so use the same opt-in
+		// bootstrap as repository PRs before attempting workload reads.
+		workloadClient := input.NamespaceClients[name]
+		if workloadClient != nil && workloadClient.Mapper != nil {
+			_, mappingErr := workloadClient.Mapper.RESTMapping(schema.GroupKind{Group: projectRequestResource.Group, Kind: "ProjectRequest"}, projectRequestResource.Version)
+			if mappingErr == nil {
+				if input.AuthorizeNamespaceBootstrap != nil {
+					if err := input.AuthorizeNamespaceBootstrap(ctx); err != nil {
+						return err
+					}
+				}
+				if _, err := bootstrapNamespace(ctx, input, name); err != nil {
+					return err
+				}
+				continue
+			}
+			if !meta.IsNoMatchError(mappingErr) {
+				return mappingErr
+			}
 		}
 		client, err := namespaceProvisioningClient(input, name)
 		if err != nil {

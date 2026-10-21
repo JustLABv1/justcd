@@ -1,11 +1,13 @@
 package clusteragent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"encoding/pem"
 	"github.com/justlab/justcd/services/backend/internal/agentprotocol"
 	"k8s.io/client-go/rest"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -178,5 +180,84 @@ func TestRejectInvalidConfiguredClusterIdentity(t *testing.T) {
 		if err == nil {
 			t.Error("invalid cluster identity accepted")
 		}
+	}
+}
+
+func TestExecuteBoundOpenShiftBootstrap(t *testing.T) {
+	calls := 0
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == "GET" {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"kind":"Status","reason":"Forbidden"}`))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"kind":"Project","metadata":{"name":"preview-app"}}`))
+	}))
+	defer local.Close()
+	a := &Agent{Config: Config{Profiles: []agentprotocol.Profile{{Name: "workload", WorkspaceIDs: []string{"w"}, Namespaces: []string{"preview-*"}, ClusterScope: true, DeniedNamespaces: []string{"preview-agent"}}}}, Local: map[string]*http.Client{"workload": local.Client()}, KubernetesURL: local.URL}
+	task := agentprotocol.Request{Profile: "workload", WorkspaceID: "w", Namespace: "preview-app", Method: "GET", URI: "/apis/project.openshift.io/v1/projects/preview-app", Deadline: time.Now().Add(time.Minute)}
+	if result := a.Execute(context.Background(), task); result.Error != "" || result.Status != http.StatusForbidden {
+		t.Fatalf("project lookup was blocked by agent: %+v", result)
+	}
+	task.Method = "POST"
+	task.URI = "/apis/project.openshift.io/v1/projectrequests"
+	task.ContentType = "application/json"
+	task.Body = []byte(`{"apiVersion":"project.openshift.io/v1","kind":"ProjectRequest","metadata":{"name":"preview-app"}}`)
+	if result := a.Execute(context.Background(), task); result.Error != "" || result.Status != http.StatusCreated {
+		t.Fatalf("project request was blocked by agent: %+v", result)
+	}
+	for _, target := range []string{"preview-other", "preview-agent"} {
+		task.Body = []byte(`{"apiVersion":"project.openshift.io/v1","kind":"ProjectRequest","metadata":{"name":"` + target + `"}}`)
+		if result := a.Execute(context.Background(), task); result.ErrorCode != "cluster.agent_scope_denied" {
+			t.Fatalf("scope escape accepted: %+v", result)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("out-of-scope request reached API: calls=%d", calls)
+	}
+}
+
+func TestExecuteWildcardProfileOpenShiftBootstrapAndScopeDiagnostics(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	defer slog.SetDefault(previous)
+	calls := 0
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer local.Close()
+	profile := agentprotocol.Profile{Name: "default", WorkspaceIDs: []string{"2009cb82c12aafa7da94ce15ed637093"}, Namespaces: []string{"*"}, ClusterScope: true}
+	a := &Agent{Config: Config{Profiles: []agentprotocol.Profile{profile}}, Local: map[string]*http.Client{"default": local.Client()}, KubernetesURL: local.URL}
+	task := agentprotocol.Request{Profile: "default", WorkspaceID: profile.WorkspaceIDs[0], Namespace: "justapps-prd", Method: "GET", URI: "/apis/project.openshift.io/v1/projects/justapps-prd", Deadline: time.Now().Add(time.Minute)}
+	if result := a.Execute(context.Background(), task); result.Error != "" {
+		t.Fatalf("wildcard profile project lookup failed: %+v", result)
+	}
+	task.Method = "POST"
+	task.URI = "/apis/project.openshift.io/v1/projectrequests"
+	task.Body = []byte(`{"apiVersion":"project.openshift.io/v1","kind":"ProjectRequest","metadata":{"name":"justapps-prd"}}`)
+	if result := a.Execute(context.Background(), task); result.Error != "" {
+		t.Fatalf("wildcard profile project creation failed: %+v", result)
+	}
+	// A different cluster API is still rejected rather than silently promoting
+	// all namespace-routed requests to cluster scope.
+	task.Method = "GET"
+	task.URI = "/api/v1/nodes?labelSelector=private-value"
+	task.Body = nil
+	result := a.Execute(context.Background(), task)
+	if result.ErrorCode != "cluster.agent_scope_denied" || !strings.Contains(result.Error, "namespace-scoped route") || calls != 2 {
+		t.Fatalf("unrestricted cluster request accepted: %+v calls=%d", result, calls)
+	}
+	var warning map[string]any
+	if err := json.Unmarshal(logs.Bytes(), &warning); err != nil {
+		t.Fatal(err)
+	}
+	if warning["method"] != "GET" || warning["path"] != "/api/v1/nodes" || warning["clusterScope"] != false || warning["profileClusterScope"] != true || strings.Contains(logs.String(), "private-value") {
+		t.Fatalf("scope diagnostic missing context or leaked query: %s", logs.String())
 	}
 }

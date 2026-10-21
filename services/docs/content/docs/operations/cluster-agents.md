@@ -237,6 +237,19 @@ profiles:
 ```
 
 `kubernetes.serverUrl` overrides the endpoint discovered from the Pod environment.
+
+For OpenShift applications with `createNamespaces: true`, project bootstrap uses
+the workload profile's identity. The agent allows a named Project lookup for
+the bound namespace. Creating its ProjectRequest additionally requires
+`clusterScope: true` on that same local static profile and Kubernetes permission
+to create `projectrequests.project.openshift.io`. Both calls enforce namespace
+matching and protected namespace exclusions. Upgrade the agent together with the
+backend to use this routing. Managed deployment credentials continue to use the
+separate local provisioning policy instead of direct project requests.
+The backend marks the validated Project lookup and ProjectRequest as
+cluster-scoped tasks while retaining the workload profile and bound namespace;
+ordinary workload requests remain namespace-scoped.
+
 Omit it to use the in-cluster endpoint. The configured endpoint must use HTTPS
 and its certificate must match the endpoint hostname.
 

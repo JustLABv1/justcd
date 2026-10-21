@@ -3,6 +3,7 @@
 package agentprotocol
 
 import (
+	"encoding/json"
 	"errors"
 	"net/url"
 	"strings"
@@ -192,6 +193,42 @@ func Validate(r Request, p Profile) error {
 			return errors.New("managed deployment credentials cannot manage authentication or authorization")
 		}
 	}
+	// OpenShift project bootstrap uses the workload identity so requester access
+	// is granted to that account. Bind these cluster API calls to the routed
+	// namespace rather than requiring a different, broader workload identity.
+	if parts[0] == "apis" && len(parts) >= 3 && parts[1] == "project.openshift.io" && parts[2] == "v1" {
+		project := ""
+		if len(tail) == 2 && tail[0] == "projects" && r.Method == "GET" {
+			project = tail[1]
+		} else if len(tail) == 1 && tail[0] == "projectrequests" && r.Method == "POST" {
+			var object struct {
+				APIVersion string `json:"apiVersion"`
+				Kind       string `json:"kind"`
+				Metadata   struct {
+					Name string `json:"name"`
+				} `json:"metadata"`
+			}
+			if json.Unmarshal(r.Body, &object) != nil || object.APIVersion != "project.openshift.io/v1" || object.Kind != "ProjectRequest" || !validNamespace(object.Metadata.Name) {
+				return errors.New("invalid OpenShift project request")
+			}
+			project = object.Metadata.Name
+			if !p.ClusterScope {
+				return errors.New("OpenShift project creation requires a local cluster-scope profile")
+			}
+		}
+		if project != "" {
+			if !validNamespace(project) || ProtectedNamespace(project) || namespaceAllowed(p.DeniedNamespaces, project) {
+				return errors.New("OpenShift project is protected by the local agent profile")
+			}
+			// A promoted bootstrap task still belongs to its bound namespace.
+			// Recheck local policy even when the backend marked the API call as
+			// cluster-scoped; the enrolled backend policy may be stale.
+			if (r.Namespace != "" || !r.ClusterScope) && (r.Namespace != project || !namespaceAllowed(p.Namespaces, project)) {
+				return errors.New("OpenShift project does not match the authorized namespace")
+			}
+			return nil
+		}
+	}
 	namespace := ""
 	if len(tail) >= 3 && tail[0] == "namespaces" {
 		namespace = tail[1]
@@ -220,8 +257,13 @@ func Validate(r Request, p Profile) error {
 		if r.Namespace != namespace || !namespaceAllowed(p.Namespaces, namespace) {
 			return errors.New("namespace is not authorized by the local agent profile")
 		}
-	} else if namespace == "" && (!r.ClusterScope || !p.ClusterScope) {
-		return errors.New("cluster-scoped resources require a local cluster-scope profile")
+	} else if namespace == "" {
+		if !r.ClusterScope {
+			return errors.New("cluster-scoped resource was sent through a namespace-scoped route")
+		}
+		if !p.ClusterScope {
+			return errors.New("cluster-scoped resources require a local cluster-scope profile")
+		}
 	}
 	return nil
 }

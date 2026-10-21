@@ -130,3 +130,77 @@ func TestManagedProfilePolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestBoundOpenShiftProjectBootstrap(t *testing.T) {
+	base := Profile{Name: "default", WorkspaceIDs: []string{"w"}, Namespaces: []string{"preview-*"}, ClusterScope: true, DeniedNamespaces: []string{"preview-agent"}}
+	for _, tc := range []struct {
+		name, method, path, target, body string
+		clusterScope, managed, allowed   bool
+	}{
+		{name: "read bound project", method: "GET", path: "projects/preview-app", allowed: true},
+		{name: "create bound project", method: "POST", path: "projectrequests", target: "preview-app", allowed: true},
+		{name: "promoted bound read", method: "GET", path: "projects/preview-app", clusterScope: true, allowed: true},
+		{name: "promoted bound creation", method: "POST", path: "projectrequests", target: "preview-app", clusterScope: true, allowed: true},
+		{name: "promoted mismatched read", method: "GET", path: "projects/preview-other", clusterScope: true},
+		{name: "promoted mismatched creation", method: "POST", path: "projectrequests", target: "preview-other", clusterScope: true},
+		{name: "other project read", method: "GET", path: "projects/preview-other"},
+		{name: "other project creation", method: "POST", path: "projectrequests", target: "preview-other"},
+		{name: "protected project", method: "POST", path: "projectrequests", target: "preview-agent"},
+		{name: "protected project read", method: "GET", path: "projects/preview-agent", clusterScope: true},
+		{name: "protected project cluster creation", method: "POST", path: "projectrequests", target: "preview-agent", clusterScope: true},
+		{name: "collection read", method: "GET", path: "projects"},
+		{name: "project deletion", method: "DELETE", path: "projects/preview-app"},
+		{name: "subresource", method: "GET", path: "projects/preview-app/status"},
+		{name: "managed identity", method: "POST", path: "projectrequests", target: "preview-app", managed: true},
+		{name: "malformed body", method: "POST", path: "projectrequests", body: "{"},
+		{name: "missing name", method: "POST", path: "projectrequests"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := base
+			if tc.managed {
+				p.ClusterScope = false
+				p.Namespaces = []string{"preview-app"}
+				p.DeploymentCredentials = &DeploymentCredentials{LifetimeSeconds: 600}
+			}
+			body := tc.body
+			if body == "" && tc.method == "POST" {
+				body = `{"apiVersion":"project.openshift.io/v1","kind":"ProjectRequest","metadata":{"name":"` + tc.target + `"}}`
+			}
+			r := Request{Profile: p.Name, WorkspaceID: "w", Namespace: "preview-app", Method: tc.method, URI: "/apis/project.openshift.io/v1/" + tc.path, Body: []byte(body), ClusterScope: tc.clusterScope, Deadline: time.Now().Add(time.Minute)}
+			if err := Validate(r, p); (err == nil) != tc.allowed {
+				t.Fatalf("allowed=%v err=%v", tc.allowed, err)
+			}
+		})
+	}
+	p := base
+	p.ClusterScope = false
+	r := Request{Profile: p.Name, WorkspaceID: "w", Namespace: "preview-app", Method: "POST", URI: "/apis/project.openshift.io/v1/projectrequests", Body: []byte(`{"apiVersion":"project.openshift.io/v1","kind":"ProjectRequest","metadata":{"name":"preview-app"}}`), Deadline: time.Now().Add(time.Minute)}
+	if Validate(r, p) == nil {
+		t.Fatal("project creation bypassed local cluster scope policy")
+	}
+	r.Method = "GET"
+	r.URI = "/apis/project.openshift.io/v1/projects/preview-app"
+	r.Body = nil
+	if err := Validate(r, p); err != nil {
+		t.Fatal("bound project lookup should use namespace scope", err)
+	}
+}
+
+func TestPromotedProjectBootstrapRechecksChangedLocalPolicy(t *testing.T) {
+	r := Request{Profile: "default", WorkspaceID: "w", Namespace: "preview-app", ClusterScope: true, Method: "POST", URI: "/apis/project.openshift.io/v1/projectrequests", Body: []byte(`{"apiVersion":"project.openshift.io/v1","kind":"ProjectRequest","metadata":{"name":"preview-app"}}`), Deadline: time.Now().Add(time.Minute)}
+	p := Profile{Name: "default", WorkspaceIDs: []string{"w"}, Namespaces: []string{"*"}, ClusterScope: true}
+	if err := Validate(r, p); err != nil {
+		t.Fatal(err)
+	}
+	// Enrollment may still report the old wildcard after an operator narrows
+	// local policy. The promoted task must obey the current local allowlist.
+	p.Namespaces = []string{"different-namespace"}
+	if Validate(r, p) == nil {
+		t.Fatal("promoted project request bypassed narrowed local namespace policy")
+	}
+	p.Namespaces = []string{"*"}
+	p.WorkspaceIDs = []string{"different-workspace"}
+	if Validate(r, p) == nil {
+		t.Fatal("promoted project request bypassed local workspace policy")
+	}
+}

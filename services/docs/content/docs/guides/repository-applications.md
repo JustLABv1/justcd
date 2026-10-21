@@ -320,6 +320,20 @@ Access denials for existing namespaces or namespace provisioning still fail the
 plan. A missing namespace appears as a cluster-scoped Create change and
 requires the existing owner approval, including with `auto-safe` sync.
 
+On OpenShift, `createNamespaces: true` instead requests a project through
+`project.openshift.io/v1/ProjectRequest` before workload planning, using the
+resolved workload credential so the project's access bindings belong to the
+account that deploys workloads. This applies to Git-discovered and manual
+applications. A missing or hidden project may return Forbidden on lookup;
+JustCD then submits a project request, which rejects an existing project without
+changing its access bindings. The credential must be allowed to create project
+requests. A denied request never falls back to bare Namespace creation.
+Project requests cannot safely be dry-run, so project creation happens during
+planning when this option is enabled, even if the workload plan later fails or
+is not approved. Workload deployment still follows the normal approval policy.
+Repository PR environments retain their additional owner-controlled namespace
+creation policy. Existing projects are not adopted or modified.
+
 Existing namespaces are left untouched. Automatically created namespaces are
 shared infrastructure, not application-owned resources, and are never pruned or
 deleted during app decommissioning. Explicit Namespace manifests remain under

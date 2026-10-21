@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/justlab/justcd/services/backend/internal/core"
 	"github.com/justlab/justcd/services/backend/internal/store"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -104,7 +105,10 @@ func bootstrapNamespace(ctx context.Context, input planInput, name string) (bool
 			return false, checkBootstrapNamespace(project, name)
 		}
 		// Never bypass a denied ProjectRequest by creating a bare Namespace.
-		return createErr == nil, createErr
+		if createErr != nil {
+			return false, &resourceAccessError{identity: core.Identity{ClusterID: input.Cluster.ID, APIVersion: "project.openshift.io/v1", Kind: "ProjectRequest", Name: name, ClusterScoped: true}, action: "create", err: createErr}
+		}
+		return true, nil
 	}
 	if !meta.IsNoMatchError(err) {
 		return false, err

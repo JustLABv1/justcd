@@ -3,6 +3,7 @@ package syncer
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -201,7 +202,8 @@ type planInput struct {
 	Selection          core.PlanSelection
 	ReviewFingerprint  string
 	// Only namespaces confirmed absent and validated for reviewed creation.
-	MissingNamespaces map[string]bool
+	MissingNamespaces           map[string]bool
+	AuthorizeNamespaceBootstrap func(context.Context) error
 }
 
 func (s *Service) BuildPlan(ctx context.Context, applicationID, actorID string) (store.PlanRecord, error) {
@@ -436,7 +438,19 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 		}
 	}
 	// Validate prerequisites before workload reads: a credential may not have
-	// workload access until the namespace exists. Planning must not create it.
+	// workload access until the namespace exists. OpenShift project requests
+	// bootstrap requester access; ordinary Kubernetes creation stays dry-run.
+	input.AuthorizeNamespaceBootstrap = func(ctx context.Context) error {
+		_, _, err := s.Store.ReviewByPreviewApplication(ctx, app.ID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		// Preserve the owner-controlled PR policy on manual plan refreshes too.
+		return s.BootstrapRepositoryPRNamespaces(ctx, app.ID)
+	}
 	prerequisites := core.Plan{}
 	if err := addNamespaceCreations(ctx, input, &prerequisites, desired); err != nil {
 		return core.Plan{}, nil, &planStageError{stage: "cluster", err: err}

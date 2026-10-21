@@ -1,7 +1,10 @@
 package kube
 
 import (
+	"context"
 	"github.com/justlab/justcd/services/backend/internal/agentprotocol"
+	"github.com/justlab/justcd/services/backend/internal/clusteragent"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -17,6 +20,31 @@ func TestUnknownWritesRequireReview(t *testing.T) {
 		if err.Retryable() != tc.transient {
 			t.Fatalf("%s %s incorrectly retryable", tc.method, tc.uri)
 		}
+	}
+}
+
+func TestPromotedBootstrapIsRevalidatedByLocalAgent(t *testing.T) {
+	calls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"kind":"Project","metadata":{"name":"justapps-prd"}}`))
+	}))
+	defer upstream.Close()
+	enrolled := agentprotocol.Profile{Name: "default", WorkspaceIDs: []string{"w"}, Namespaces: []string{"*"}, ClusterScope: true}
+	a := &clusteragent.Agent{Config: clusteragent.Config{Profiles: []agentprotocol.Profile{enrolled}}, Local: map[string]*http.Client{"default": upstream.Client()}, KubernetesURL: upstream.URL}
+	task := agentprotocol.Request{Profile: "default", WorkspaceID: "w", Namespace: "justapps-prd", Method: "POST", URI: "/apis/project.openshift.io/v1/projectrequests", Body: []byte(`{"apiVersion":"project.openshift.io/v1","kind":"ProjectRequest","metadata":{"name":"justapps-prd"}}`), Deadline: time.Now().Add(time.Minute)}
+	if err := routeProjectBootstrap(&task, &enrolled); err != nil || !task.ClusterScope {
+		t.Fatalf("backend route failed: %+v %v", task, err)
+	}
+	if result := a.Execute(context.Background(), task); result.Error != "" || result.Status != http.StatusCreated {
+		t.Fatalf("agent rejected valid backend route: %+v", result)
+	}
+	// Change local policy after enrollment. The backend still has the wildcard,
+	// but a new task must not reach Kubernetes under the narrowed local policy.
+	a.Config.Profiles[0].Namespaces = []string{"different-namespace"}
+	if result := a.Execute(context.Background(), task); result.ErrorCode != "cluster.agent_scope_denied" || calls != 1 {
+		t.Fatalf("stale enrollment bypassed current agent policy: %+v calls=%d", result, calls)
 	}
 }
 

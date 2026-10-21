@@ -139,6 +139,10 @@ func TestBoundOpenShiftProjectBootstrap(t *testing.T) {
 	}{
 		{name: "read bound project", method: "GET", path: "projects/preview-app", allowed: true},
 		{name: "create bound project", method: "POST", path: "projectrequests", target: "preview-app", allowed: true},
+		{name: "promoted bound read", method: "GET", path: "projects/preview-app", clusterScope: true, allowed: true},
+		{name: "promoted bound creation", method: "POST", path: "projectrequests", target: "preview-app", clusterScope: true, allowed: true},
+		{name: "promoted mismatched read", method: "GET", path: "projects/preview-other", clusterScope: true},
+		{name: "promoted mismatched creation", method: "POST", path: "projectrequests", target: "preview-other", clusterScope: true},
 		{name: "other project read", method: "GET", path: "projects/preview-other"},
 		{name: "other project creation", method: "POST", path: "projectrequests", target: "preview-other"},
 		{name: "protected project", method: "POST", path: "projectrequests", target: "preview-agent"},
@@ -179,5 +183,24 @@ func TestBoundOpenShiftProjectBootstrap(t *testing.T) {
 	r.Body = nil
 	if err := Validate(r, p); err != nil {
 		t.Fatal("bound project lookup should use namespace scope", err)
+	}
+}
+
+func TestPromotedProjectBootstrapRechecksChangedLocalPolicy(t *testing.T) {
+	r := Request{Profile: "default", WorkspaceID: "w", Namespace: "preview-app", ClusterScope: true, Method: "POST", URI: "/apis/project.openshift.io/v1/projectrequests", Body: []byte(`{"apiVersion":"project.openshift.io/v1","kind":"ProjectRequest","metadata":{"name":"preview-app"}}`), Deadline: time.Now().Add(time.Minute)}
+	p := Profile{Name: "default", WorkspaceIDs: []string{"w"}, Namespaces: []string{"*"}, ClusterScope: true}
+	if err := Validate(r, p); err != nil {
+		t.Fatal(err)
+	}
+	// Enrollment may still report the old wildcard after an operator narrows
+	// local policy. The promoted task must obey the current local allowlist.
+	p.Namespaces = []string{"different-namespace"}
+	if Validate(r, p) == nil {
+		t.Fatal("promoted project request bypassed narrowed local namespace policy")
+	}
+	p.Namespaces = []string{"*"}
+	p.WorkspaceIDs = []string{"different-workspace"}
+	if Validate(r, p) == nil {
+		t.Fatal("promoted project request bypassed local workspace policy")
 	}
 }

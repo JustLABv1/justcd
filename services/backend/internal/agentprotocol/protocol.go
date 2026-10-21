@@ -220,7 +220,10 @@ func Validate(r Request, p Profile) error {
 			if !validNamespace(project) || ProtectedNamespace(project) || namespaceAllowed(p.DeniedNamespaces, project) {
 				return errors.New("OpenShift project is protected by the local agent profile")
 			}
-			if !r.ClusterScope && (r.Namespace != project || !namespaceAllowed(p.Namespaces, project)) {
+			// A promoted bootstrap task still belongs to its bound namespace.
+			// Recheck local policy even when the backend marked the API call as
+			// cluster-scoped; the enrolled backend policy may be stale.
+			if (r.Namespace != "" || !r.ClusterScope) && (r.Namespace != project || !namespaceAllowed(p.Namespaces, project)) {
 				return errors.New("OpenShift project does not match the authorized namespace")
 			}
 			return nil

@@ -7,27 +7,61 @@ import { HugeiconsIcon } from "@hugeicons/react"
 import { ArrowLeft01Icon, ArrowRight01Icon, CenterFocusIcon, Maximize01Icon, MinusSignIcon, PlusSignIcon, CubeIcon } from "@hugeicons/core-free-icons"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { Disclosure } from "@/components/ui/collapsible"
 import { Switch } from "@/components/ui/switch"
 import { EmptyState } from "@/components/ui-kit"
-import { aggregateRuntime, connectionSignal, mapNodeHeightFor, mapNodeWidth, resourceURLs, supportingTopologyResource, topologyCanvasResources, podSummary, topologyUpstream, topologySceneLayout, topologyVisibleEdges, topologyHierarchy, topologyScope, type ConnectionSignal, type RuntimeSignal } from "@/lib/topology-map"
+import { aggregateRuntime, connectionSignal, mapNodeHeightFor, mapNodeWidth, resourceURLs, supportingTopologyResource, podSummary, topologyUpstream, topologyVisibleEdges, topologyHierarchy, topologyScope, type ConnectionSignal, type RuntimeSignal } from "@/lib/topology-map"
+import { packedTopologyScene, type TopologyGroup } from "@/lib/topology-map"
+import { routeTopologyDependencies, type RoutedConnection } from "@/lib/topology-routing"
 import type { SyncState } from "@/lib/topology-view"
 import type { ResourceTopology, TopologyNode } from "@/lib/types"
 import styles from "./topology-canvas.module.css"
 
 type MapNodeData = {
   resource: TopologyNode; icon: typeof CubeIcon; runtime: RuntimeSignal; runtimeLabel: string
-  podStatus: string | null; context: boolean; backLabel: string | null; sync: SyncState; syncLabel: string; childCount: number; childLabel: string; dimmed: boolean; canEnter: boolean
+  compact: boolean; podStatus: string | null; context: boolean; backLabel: string | null; sync: SyncState; syncLabel: string; childCount: number; childLabel: string; dimmed: boolean; canEnter: boolean
   onEnter: (id: string, animate: boolean) => void; onInspect: (id: string) => void
 }
-type MapNode = Node<MapNodeData, "resource">
-type MapEdge = Edge<{ signal: ConnectionSignal; relation: string; active: boolean; dependency: boolean }, "relationship">
+type ResourceMapNode = Node<MapNodeData, "resource">
+type MapNode = ResourceMapNode | Node<{ group: TopologyGroup }, "cluster">
+type MapEdge = Edge<{ signal: ConnectionSignal; relation: string; active: boolean; dependency: boolean; route?: RoutedConnection | null }, "relationship">
 const signalLabels: Record<RuntimeSignal, string> = { healthy: "Healthy", progressing: "Not ready / progressing", degraded: "Needs attention", unknown: "Health unknown or not applicable" }
+
+/** Interpolate model positions, so nodes and obstacle-routed edges move together.
+ * The scene settles after a layout change; health refreshes do not restart it. */
+function useFloatingLayout(target: ReadonlyMap<string, XYPosition>, paused: boolean) {
+  const [displayed, setDisplayed] = useState(target)
+  const current = useRef(target)
+  useEffect(() => {
+    const from = current.current
+    if (from.size === target.size && [...target].every(([id, p]) => from.get(id)?.x === p.x && from.get(id)?.y === p.y)) return
+    const duration = paused || window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 280
+    const start = performance.now()
+    let frame: number
+    const tick = (now: number) => {
+      const progress = duration ? Math.min(1, (now - start) / duration) : 1
+      const t = 1 - Math.pow(1 - progress, 3)
+      const next = new Map([...target].map(([id, to]) => {
+        const previous = from.get(id) ?? to
+        return [id, { x: previous.x + (to.x - previous.x) * t, y: previous.y + (to.y - previous.y) * t }] as const
+      }))
+      current.current = next
+      setDisplayed(next)
+      if (progress < 1) frame = requestAnimationFrame(tick)
+    }
+    frame = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frame)
+  }, [target, paused])
+  return displayed
+}
 
 function ResourceNode({ data, selected }: NodeProps<Node<MapNodeData, "resource">>) {
   const { resource, runtime, childCount } = data
   const urls = resourceURLs(resource)
-  return <div className={`${styles.node} ${selected ? styles.selected : ""} ${data.dimmed ? styles.dimmed : ""}`} data-runtime={runtime} data-sync={data.sync} data-network={Boolean(resource.routingHealth)} data-context={data.context}>
+  return <div className={`${styles.node} ${selected ? styles.selected : ""} ${data.dimmed ? styles.dimmed : ""}`} data-runtime={runtime} data-sync={data.sync} data-network={Boolean(resource.routingHealth)} data-context={data.context} data-compact={data.compact}>
+    <Handle id="source-top" type="source" position={Position.Top} isConnectable={false} className={styles.topHandle} />
+    <Handle id="target-top" type="target" position={Position.Top} isConnectable={false} className={styles.topHandle} />
+    <Handle id="source-bottom" type="source" position={Position.Bottom} isConnectable={false} className={styles.bottomHandle} />
+    <Handle id="target-bottom" type="target" position={Position.Bottom} isConnectable={false} className={styles.bottomHandle} />
     <Handle id="target-left" type="target" position={Position.Left} isConnectable={false} className={styles.targetHandle} />
     <Handle id="source-right" type="source" position={Position.Right} isConnectable={false} className={styles.sourceHandle} />
     <Handle id="target-right" type="target" position={Position.Right} isConnectable={false} className={styles.sourceHandle} />
@@ -59,7 +93,10 @@ function ResourceNode({ data, selected }: NodeProps<Node<MapNodeData, "resource"
 }
 
 function RelationshipEdge(props: EdgeProps<MapEdge>) {
-  const [path, labelX, labelY] = getBezierPath(props)
+  const fallback = getBezierPath(props)
+  const route = props.data?.route
+  const [path, labelX, labelY] = route ? [route.path, route.labelX, route.labelY] : fallback
+  if (route === null) return null
   const { signal = "unknown", relation = "", active = false, dependency = false } = props.data ?? {}
   return <g className={`${styles.relationship} ${active ? styles.activeEdge : ""}`} data-signal={signal} data-dependency={dependency}>
     <title>{relation} · {signal === "syncing" ? "Applying deployment" : signalLabels[signal]}</title>
@@ -69,7 +106,11 @@ function RelationshipEdge(props: EdgeProps<MapEdge>) {
   </g>
 }
 
-const nodeTypes = { resource: ResourceNode }
+function ResourceGroup({ data }: NodeProps<Node<{ group: TopologyGroup }, "cluster">>) {
+  return <div className={styles.resourceGroup}><div className={styles.groupHeading}><span title={data.group.title}>{data.group.title}</span><span>{data.group.resourceIds.length}</span></div></div>
+}
+
+const nodeTypes = { resource: ResourceNode, cluster: ResourceGroup }
 const edgeTypes = { relationship: RelationshipEdge }
 const ease = (t: number) => 1 - Math.pow(1 - t, 3)
 const scopeKey = (parentId: string | null) => parentId ?? "__application__"
@@ -86,8 +127,9 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
   const [positions, setPositions] = useState<Record<string, XYPosition>>({})
   const [moving, setMoving] = useState(false)
   const [paused, setPaused] = useState(false)
-  const [dependencies, setDependencies] = useState(false)
+  const [dependencies, setDependencies] = useState(true)
   const [replicaSets, setReplicaSets] = useState(false)
+  const [frame, setFrame] = useState({ width: 0, height: 0 })
   const savedViews = useRef(new Map<string, Viewport>())
   const navigation = useRef(0)
   const pendingView = useRef<{ viewport?: Viewport; duration: number } | null>(null)
@@ -106,21 +148,29 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
   const scoped = globalView ? [...graph.nodes] : [...topologyScope(graph, parentId, replicaSets), ...context]
   const matches = (node: TopologyNode) => `${node.identity.kind} ${node.identity.namespace} ${node.identity.name}`.toLowerCase().includes(query.trim().toLowerCase())
   const inFilter = (node: TopologyNode) => (!focus || !selectedId || related.has(node.id)) && (mode === "all" || (mode === "observed" ? ["kubernetes", "sample"].includes(node.source) : ["create", "update", "delete", "failed", "syncing"].includes(stateFor(node))))
+  // Inventory is always visible in the overview. Drill-down adds only actual
+  // dependencies of the current scope, without pulling in unrelated workloads.
+  const scopedIds = new Set(scoped.map(node => node.id))
   const supportCandidates = graph.nodes.filter(supportingTopologyResource)
-  const available = [...new Map([...scoped, ...supportCandidates].map((node) => [node.id, node])).values()]
-  const canvasResources = topologyCanvasResources(available, graph.edges, dependencies)
-  const scopedSupport = parentId && !globalView ? new Set(topologyCanvasResources(available, graph.edges, true).map((node) => node.id)) : null
-  const supporting = supportCandidates.filter((node) => (!scopedSupport || scopedSupport.has(node.id)) && inFilter(node) && (!query.trim() || matches(node)))
-  const supportGroups = [...new Set(supporting.map((node) => node.identity.kind))].sort().map((kind) => ({ kind, nodes: supporting.filter((node) => node.identity.kind === kind).sort((a, b) => a.identity.namespace.localeCompare(b.identity.namespace) || a.identity.name.localeCompare(b.identity.name)) }))
-  // Search and filters also keep supporting inventory in its separate list.
-  const shown = canvasResources.filter(inFilter)
-  const selectedResource = graph.nodes.find((node) => node.id === selectedId)
-  if (selectedResource && !supportingTopologyResource(selectedResource) && !shown.some((node) => node.id === selectedId)) shown.push(selectedResource)
-  const visible = new Set(shown.map((node) => node.id))
-  const sceneEdges = topologyVisibleEdges(graph, visible).filter((edge) => dependencies || ["owns", "selects", "routes to"].includes(edge.relation))
-  // Camera animation renders must not rerun graph ordering. Status refreshes can
-  // update measurements, while the existing viewport remains untouched.
-  const layout = topologySceneLayout(graph, parentId, globalView, shown.map((node) => node.id), dependencies)
+  const linkedIds = new Set(scopedIds)
+  if (parentId && !globalView) {
+    let changed = true
+    while (changed) {
+      changed = false
+      for (const edge of graph.edges) for (const [from, to] of [[edge.from, edge.to], [edge.to, edge.from]]) {
+        if (linkedIds.has(from) && !linkedIds.has(to) && supportCandidates.some(node => node.id === to)) { linkedIds.add(to); changed = true }
+      }
+    }
+  }
+  const available = [...new Map([...scoped, ...supportCandidates.filter(node => !parentId || globalView || linkedIds.has(node.id))].map(node => [node.id, node])).values()]
+  const shown = available.filter(inFilter)
+  const selectedResource = graph.nodes.find(node => node.id === selectedId)
+  if (selectedResource && !shown.some(node => node.id === selectedId)) shown.push(selectedResource)
+  const visible = new Set(shown.map(node => node.id))
+  const sceneEdges = topologyVisibleEdges(graph, visible).filter(edge => dependencies || ["owns", "selects", "routes to"].includes(edge.relation) || edge.from === selectedId || edge.to === selectedId)
+  const overview = packedTopologyScene(graph, shown.map(node => node.id), { width: frame.width || 1200, height: frame.height || 600 })
+  const layout = overview.positions
+  const floatingLayout = useFloatingLayout(layout, paused)
   const runtime = useMemo(() => new Map(graph.nodes.map((node) => [node.id, aggregateRuntime(node, hierarchy.descendants(node.id))])), [graph, hierarchy])
   const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches
 
@@ -160,16 +210,20 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
     const pods = hierarchy.descendants(resource.id).filter((node) => node.identity.kind === "Pod")
     const isContext = contextIds.has(resource.id)
     return {
-      id: resource.id, type: "resource", position: positions[`${scopeKey(parentId)}:${resource.id}`] ?? { ...layout.get(resource.id)! },
+      id: resource.id, type: "resource", position: positions[`${scopeKey(parentId)}:${resource.id}`] ?? { ...(floatingLayout.get(resource.id) ?? layout.get(resource.id))! },
       selected: selectedId === resource.id, width: mapNodeWidth, height: mapNodeHeightFor(resource),
       measured: { width: mapNodeWidth, height: mapNodeHeightFor(resource) },
       // Shared Button owns keyboard activation; the wrapper is only the draggable canvas object.
       focusable: false, draggable: true,
-      data: { resource, podStatus: resource.identity.kind === "Pod" ? resource.healthSummary?.failureReason ?? resource.readiness ?? resource.phase ?? null : podSummary(pods), context: isContext, backLabel: resource.id === parentId && !globalView ? "Back to previous view" : null, icon: iconFor(resource.identity.kind), runtime: runtime.get(resource.id)!, runtimeLabel: describeNode(resource), sync: stateFor(resource), syncLabel: syncLabels[stateFor(resource)], childCount: pods.length || children.length,
+      data: { resource, compact: supportingTopologyResource(resource), podStatus: resource.identity.kind === "Pod" ? resource.healthSummary?.failureReason ?? resource.readiness ?? resource.phase ?? null : podSummary(pods), context: isContext, backLabel: resource.id === parentId && !globalView ? "Back to previous view" : null, icon: iconFor(resource.identity.kind), runtime: runtime.get(resource.id)!, runtimeLabel: describeNode(resource), sync: stateFor(resource), syncLabel: syncLabels[stateFor(resource)], childCount: pods.length || children.length,
         childLabel: pods.length ? `${pods.length} pods · ${children.length} direct controllers or children` : [...new Set(children.map((node) => node.identity.kind))].map((kind) => `${children.filter((node) => node.identity.kind === kind).length} ${kind}`).join(" · "), canEnter: resource.id === parentId && !globalView || !isContext && children.length > 0 && resource.id !== parentId,
+        // React Flow stores the handler; it is invoked only on user activation.
+        // eslint-disable-next-line react-hooks/refs
         dimmed: Boolean(query.trim() && !matches(resource)) || Boolean(selectedId && !related.has(resource.id)), onEnter: handleEnter, onInspect: onSelect },
     }
   })
+  for (const group of overview?.groups ?? []) nodes.unshift({ id: `__${group.id}`, type: "cluster", position: { x: group.x, y: group.y }, width: group.width, height: group.height, measured: { width: group.width, height: group.height }, style: { width: group.width, height: group.height }, draggable: false, selectable: false, focusable: false, zIndex: -1, data: { group } })
+  const dependencyRoutes = routeTopologyDependencies(nodes.filter((node): node is ResourceMapNode => node.type === "resource").map(node => ({ id: node.id, x: node.position.x, y: node.position.y, width: node.width!, height: node.height! + (node.data.backLabel || node.data.context ? 20 : 0), compact: node.data.compact })), sceneEdges.filter(edge => !["owns", "selects", "routes to"].includes(edge.relation)).map(edge => ({ id: JSON.stringify([edge.from, edge.to, edge.relation]), from: edge.from, to: edge.to })))
   const edges: MapEdge[] = sceneEdges.map((edge) => {
     const from = graph.nodes.find((node) => node.id === edge.from)!, to = graph.nodes.find((node) => node.id === edge.to)!
     const dependency = !["owns", "selects", "routes to"].includes(edge.relation)
@@ -184,39 +238,55 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
     const signal = dependency ? "unknown" : trafficStatus ? connectionSignal(trafficStatus, trafficStatus, sync, failed) : connectionSignal(edge.relation === "owns" ? runtime.get(to.id)! : runtime.get(from.id)!, runtime.get(to.id)!, sync, failed)
     const active = edge.from === selectedId || edge.to === selectedId
     const forward = (nodes.find((node) => node.id === edge.from)?.position.x ?? 0) <= (nodes.find((node) => node.id === edge.to)?.position.x ?? 0)
+    const sourcePosition = nodes.find(node => node.id === edge.from)!.position, targetPosition = nodes.find(node => node.id === edge.to)!.position
+    const vertical = dependency && Math.abs(sourcePosition.y - targetPosition.y) > Math.abs(sourcePosition.x - targetPosition.x) * 0.7
+    const downward = sourcePosition.y < targetPosition.y
+    const route = dependency ? dependencyRoutes.get(JSON.stringify([edge.from, edge.to, edge.relation])) : undefined
     const relation = edge.viaReplicaSet ? "owns via ReplicaSet" : edge.relation
-    return { id: JSON.stringify([edge.from, edge.to, edge.relation]), source: edge.from, target: edge.to, sourceHandle: forward ? "source-right" : "source-left", targetHandle: forward ? "target-left" : "target-right", type: "relationship", focusable: true, selectable: false,
+    return { id: JSON.stringify([edge.from, edge.to, edge.relation]), source: edge.from, target: edge.to, sourceHandle: route?.sourceHandle ?? (vertical ? downward ? "source-bottom" : "source-top" : forward ? "source-right" : "source-left"), targetHandle: route?.targetHandle ?? (vertical ? downward ? "target-top" : "target-bottom" : forward ? "target-left" : "target-right"), type: "relationship", focusable: true, selectable: false,
       ariaLabel: `${from.identity.name} ${relation} ${to.identity.name}: ${signal === "syncing" ? "Applying deployment" : signalLabels[signal]}`,
-      data: { signal, relation, active, dependency }, style: { opacity: selectedId && !active ? 0.35 : 1 } }
+      data: { signal, relation, active, dependency, route }, style: { opacity: selectedId && !active ? 0.35 : 1 } }
   })
 
-  // Fit only when navigating/filtering, never on live observations or node status changes.
-  const viewKey = JSON.stringify([parentId, query.trim(), mode, focus, replicaSets, dependencies, focus ? selectedId : null])
+  // Status-only observations retain the camera. Structural layout changes,
+  // navigation, and resizing fit the new geometry.
+  const viewKey = JSON.stringify([[...layout].map(([id, position]) => [id, position.x, position.y]), frame.width, frame.height, parentId, query.trim(), mode, focus, replicaSets, dependencies, focus ? selectedId : null])
   useEffect(() => {
-    if (!initialized || appliedView.current === viewKey && !pendingView.current) return
-    const frame = requestAnimationFrame(() => {
+    if (!frame.width || !initialized || appliedView.current === viewKey && !pendingView.current) return
+    const animationFrame = requestAnimationFrame(() => {
       const pending = pendingView.current
       pendingView.current = null
       appliedView.current = viewKey
       if (pending?.viewport) void flow.setViewport(pending.viewport, { duration: pending.duration, ease })
       else {
-        const targets = query.trim() ? nodes.filter((node) => matches(node.data.resource)) : nodes
+        const targets = query.trim() ? nodes.filter((node) => node.type === "resource" && matches(node.data.resource)) : nodes
         const canvas = root.current?.querySelector(".react-flow")
         if (targets.length && canvas) {
           const x = Math.min(...targets.map((node) => node.position.x)), y = Math.min(...targets.map((node) => node.position.y))
-          const width = Math.max(...targets.map((node) => node.position.x + mapNodeWidth)) - x
-          const height = Math.max(...targets.map((node) => node.position.y + mapNodeHeightFor(node.data.resource))) - y
+          const width = Math.max(...targets.map((node) => node.position.x + (node.width ?? mapNodeWidth))) - x
+          const height = Math.max(...targets.map((node) => node.position.y + (node.height ?? 192))) - y
           // Use the new layout directly; React Flow's measured nodes can still belong
           // to the outgoing scene during this commit.
-          const camera = getViewportForBounds({ x, y, width, height }, canvas.clientWidth, canvas.clientHeight, 0.15, 1.1, 0.15)
+          const camera = getViewportForBounds({ x, y, width, height }, canvas.clientWidth, canvas.clientHeight, 0.7, 1.1, 0.06)
           void flow.setViewport(camera, { duration: pending?.duration ?? 0, ease })
         }
       }
     })
-    return () => cancelAnimationFrame(frame)
+    return () => cancelAnimationFrame(animationFrame)
     // Data refreshes intentionally retain the user's camera and dragged positions.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewKey, initialized])
+
+  useEffect(() => {
+    const canvas = root.current?.querySelector(".react-flow")
+    if (!canvas) return
+    const observer = new ResizeObserver(([entry]) => {
+      const width = Math.round(entry.contentRect.width), height = Math.round(entry.contentRect.height)
+      setFrame(previous => previous.width === width && previous.height === height ? previous : { width, height })
+    })
+    observer.observe(canvas)
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => () => { ++navigation.current }, [])
 
@@ -232,7 +302,7 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
 
   function centerSelection(event: MouseEvent) {
     const node = selectedId ? flow.getNode(selectedId) : undefined
-    if (node) void flow.setCenter(node.position.x + mapNodeWidth / 2, node.position.y + mapNodeHeightFor(node.data.resource) / 2, { zoom: Math.max(0.8, flow.getZoom()), duration: event.detail && !reducedMotion() ? 240 : 0, ease })
+    if (node?.type === "resource") void flow.setCenter(node.position.x + mapNodeWidth / 2, node.position.y + mapNodeHeightFor(node.data.resource) / 2, { zoom: Math.max(0.8, flow.getZoom()), duration: event.detail && !reducedMotion() ? 240 : 0, ease })
   }
 
   return <div ref={root} className={`${styles.canvas} ${paused ? styles.paused : ""} relative min-w-0`}>
@@ -242,7 +312,7 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
         {validPath.map((id, index) => <span key={id} className="inline-flex min-w-0 items-center gap-1"><HugeiconsIcon icon={ArrowRight01Icon} className="size-3 text-muted-foreground" aria-hidden="true" /><Button variant="ghost" size="sm" className="max-w-40 truncate" aria-current={id === parentId ? "location" : undefined} disabled={id === parentId} onClick={(event) => back(index + 1, event.detail !== 0)}>{graph.nodes.find((node) => node.id === id)?.identity.name}</Button></span>)}
       </nav>
       <div className="flex flex-wrap items-center gap-4">
-        <label className="inline-flex items-center gap-2 text-xs text-muted-foreground"><Switch checked={dependencies} onCheckedChange={setDependencies} aria-label="Show configuration dependencies" />Dependencies</label>
+        <label className="inline-flex items-center gap-2 text-xs text-muted-foreground"><Switch checked={dependencies} onCheckedChange={setDependencies} aria-label="Show dependency connections" />Dependencies</label>
         {parentId && !globalView && (hierarchy.children.get(parentId) ?? []).some((node) => node.identity.kind === "ReplicaSet") && <label className="inline-flex items-center gap-2 text-xs text-muted-foreground"><Switch checked={replicaSets} onCheckedChange={setReplicaSets} aria-label="Show ReplicaSets" />ReplicaSets</label>}
       <Button variant="ghost" size="xs" aria-pressed={paused} onClick={() => setPaused(!paused)}>{paused ? "Resume animation" : "Pause animation"}</Button></div>
     </div>
@@ -251,7 +321,6 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
       <ReactFlow<MapNode, MapEdge> nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} onNodesChange={onNodesChange}
         nodesConnectable={false} edgesReconnectable={false} nodesFocusable={false} deleteKeyCode={null} selectionKeyCode={null}
         minZoom={0.15} maxZoom={2} zoomOnDoubleClick={false} panOnDrag panOnScroll zoomOnScroll={false} zoomOnPinch
-        onInit={(instance) => { void instance.fitView({ padding: 0.15, maxZoom: 1.1 }) }}
         tabIndex={0} onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return
           const offset: Record<string, XYPosition> = { ArrowLeft: { x: 64, y: 0 }, ArrowRight: { x: -64, y: 0 }, ArrowUp: { x: 0, y: 64 }, ArrowDown: { x: 0, y: -64 } }
@@ -262,7 +331,7 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
         }}
         aria-label="Interactive application topology. Drag resources to arrange them. Drag the background or use arrow keys to pan. Pinch or use the controls to zoom. Home fits the view; Escape returns to the parent group."
         className={moving ? styles.entering : undefined}>
-        {!shown.length && <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center p-6"><EmptyState title={supporting.length && !globalView ? "Configuration resources" : graph.nodes.length ? "No matching resources" : "No resources to show yet"} description={supporting.length && !globalView ? "This application has no traffic or workload nodes in this view. Inspect its supporting resources below." : graph.nodes.length ? "Try another filter or return to the application." : "Build a plan to discover resources and their relationships."} /></div>}
+        {!shown.length && <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center p-6"><EmptyState title={graph.nodes.length ? "No matching resources" : "No resources to show yet"} description={graph.nodes.length ? "Try another filter or return to the application." : "Build a plan to discover resources and their relationships."} /></div>}
       </ReactFlow>
       <div className="absolute right-3 bottom-3 z-10 flex max-w-[calc(100%-24px)] flex-wrap items-center gap-0.5 rounded-lg border bg-card/95 p-1 shadow-sm" role="group" aria-label="Canvas view controls">
         {parentId && <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Back to parent group" onClick={(event) => back(validPath.length - 1, event.detail !== 0)} />}><HugeiconsIcon icon={ArrowLeft01Icon} aria-hidden="true" /></TooltipTrigger><TooltipContent>Back to parent</TooltipContent></Tooltip>}
@@ -274,18 +343,10 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
       </div>
     </div>
     <div className="flex flex-wrap justify-between gap-2 border-t px-4 py-2 text-xs text-muted-foreground"><p>Drag to pan or arrange · Pinch to zoom · Click a parent to explore</p><p role="status" aria-live="polite">{shown.length} resources · {parentId ? graph.nodes.find((node) => node.id === parentId)?.identity.name : "Application overview"}</p></div>
-    {supporting.length > 0 && <section aria-label="Supporting topology resources" className="border-t bg-card/80 px-4 py-3">
-      <Disclosure summary={<span>Configuration &amp; supporting resources <span className="text-muted-foreground">({supporting.length})</span>{supporting.some((node) => ["create", "update", "delete", "failed", "syncing"].includes(stateFor(node))) && <span className="ml-2 text-xs text-warning-foreground">Changes pending</span>}</span>}>
-        <p className="mb-3 text-xs text-muted-foreground">Grouped separately to keep traffic paths readable. Enable Dependencies to show connected configuration on the map.</p>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{supportGroups.map(({ kind, nodes: resources }) => <Disclosure key={kind} className="min-w-0 rounded-lg border bg-background/50 p-3" summary={<span className="inline-flex items-center gap-2"><HugeiconsIcon icon={iconFor(kind)} className="size-4 text-muted-foreground" aria-hidden="true" />{kind}<span className="text-muted-foreground">{resources.length}</span></span>}>
-          <div className="space-y-1">{resources.map((resource) => <Button key={resource.id} variant="ghost" className="h-auto w-full justify-between gap-2 whitespace-normal px-2 py-2 text-left text-xs" aria-label={`Inspect ${resource.identity.kind} ${resource.identity.name}`} aria-current={selectedId === resource.id ? "true" : undefined} onClick={() => onSelect(resource.id)}><span className="min-w-0 break-all">{resource.identity.name}<span className="mt-0.5 block text-muted-foreground">{resource.identity.namespace || "Cluster scope"}</span></span><span className="shrink-0 text-muted-foreground">{syncLabels[stateFor(resource)]}</span></Button>)}</div>
-        </Disclosure>)}</div>
-      </Disclosure>
-    </section>}
     <div aria-label="Connection status legend" className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t px-4 py-3 text-xs text-muted-foreground">
       <span className="font-medium text-foreground">Connections</span>
       {([["healthy", "Backend ready"], ["syncing", "Applying"], ["progressing", "Not ready / progressing"], ["degraded", "Needs attention"], ["unknown", "Idle / unknown"]] as const).map(([signal, label]) => <span key={signal} className="inline-flex items-center gap-1.5"><i className={styles.legendLine} data-signal={signal} aria-hidden="true" />{label}</span>)}
-      <span>{dependencies ? "Dashed = configuration dependency" : "Configuration grouped below · Click an Ingress to explore generated Routes"}</span>
+      <span>{dependencies ? "Dashed = configuration dependency" : "Select a resource to trace its dependencies · All resources stay visible"}</span>
     </div>
   </div>
 }

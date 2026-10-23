@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.15.0'
+          python-version: '3.15.1'
       - name: Install chart packaging dependency
         run: python -m pip install PyYAML==6.0.3
       - name: Install Helm

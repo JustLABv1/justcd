@@ -1,6 +1,7 @@
 package syncer
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 )
@@ -256,6 +258,11 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		return finishFailure(errors.New("plan changed after approval while sync was queued"), "stale")
 	}
 	input, err := s.loadPlanInput(ctx, app)
+	if err != nil {
+		return finishFailure(err, "failed")
+	}
+	input.Selection = record.Plan.Selection
+	input.IgnoreRules, err = s.Store.IgnoreRules(ctx, app.ID)
 	if err != nil {
 		return finishFailure(err, "failed")
 	}
@@ -513,6 +520,7 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 		resourceClient = client.Dynamic.Resource(mapping.Resource)
 	}
 	var existingUID types.UID
+	resourceVersion := change.LiveResourceVersion
 	if change.Kind == core.Create {
 		if _, err := resourceClient.Get(ctx, resource.Identity.Name, metav1.GetOptions{}); err == nil {
 			return fmt.Errorf("create target %s %s/%s appeared after plan review; create a new plan", resource.Identity.Kind, resource.Identity.Namespace, resource.Identity.Name)
@@ -524,10 +532,11 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 		if err != nil {
 			return fmt.Errorf("recheck update target %s %s/%s: %w", resource.Identity.Kind, resource.Identity.Namespace, resource.Identity.Name, err)
 		}
-		if err := validateUpdatePreconditions(resource.Identity, change.LiveUID, change.LiveResourceVersion, applicationID, string(current.GetUID()), current.GetResourceVersion(), current.GetLabels()["justcd.io/application-id"]); err != nil {
+		if err := validateUpdateTarget(current, change, applicationID, ignoredPathsFor(input, resource.Identity)); err != nil {
 			return err
 		}
 		existingUID = current.GetUID()
+		resourceVersion = current.GetResourceVersion()
 	}
 	object, err := render.NormalizedObject(resource)
 	if err != nil {
@@ -551,7 +560,7 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 		current.Manifest = resource.Manifest
 		return s.Store.UpsertManagedResource(ctx, applicationID, current)
 	}
-	object.SetResourceVersion(change.LiveResourceVersion)
+	object.SetResourceVersion(resourceVersion)
 	body, err = object.MarshalJSON()
 	if err != nil {
 		return err
@@ -584,6 +593,30 @@ func applyPatchOptions(change core.Change, fieldManager string) metav1.PatchOpti
 		options.Force = &force
 	}
 	return options
+}
+
+// Validate reviewed configuration rather than the review-time version: controllers
+// may update status while earlier resources in a long rollout are applied. The
+// subsequent PATCH still pins the freshly checked version to reject write races.
+func validateUpdateTarget(current *unstructured.Unstructured, change core.Change, applicationID string, ignoredPaths []string) error {
+	if len(change.Before) == 0 {
+		return validateUpdatePreconditions(change.Identity, change.LiveUID, change.LiveResourceVersion, applicationID, string(current.GetUID()), current.GetResourceVersion(), current.GetLabels()["justcd.io/application-id"])
+	}
+	if err := validateUpdatePreconditions(change.Identity, change.LiveUID, current.GetResourceVersion(), applicationID, string(current.GetUID()), current.GetResourceVersion(), current.GetLabels()["justcd.io/application-id"]); err != nil {
+		return err
+	}
+	canonical, err := render.CanonicalLive(current, change.Identity.ClusterID, applicationID, change.Identity.ClusterScoped)
+	if err != nil {
+		return err
+	}
+	actual, reviewed, err := render.ServerSideComparisonManifests(canonical.Manifest, change.Before, ignoredPaths)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(actual, reviewed) {
+		return fmt.Errorf("update target %s %s/%s changed after plan review; create a new plan", change.Identity.Kind, change.Identity.Namespace, change.Identity.Name)
+	}
+	return nil
 }
 
 func validateUpdatePreconditions(identity core.Identity, expectedUID, expectedResourceVersion, applicationID, actualUID, actualResourceVersion, actualOwner string) error {

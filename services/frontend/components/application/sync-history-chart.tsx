@@ -12,7 +12,6 @@ import {
 } from "@/components/ui/chart"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Disclosure } from "@/components/ui/collapsible"
 import { ErrorDetailsButton } from "@/components/error-details"
 import { summarizeSyncHistory } from "@/lib/sync-history"
 import { useSyncHistory, type SyncHistoryState } from "@/hooks/use-sync-history"
@@ -243,26 +242,7 @@ export function SyncHistoryChartView({
           </Button>
         )}
       </div>
-      {history && totals && totals.total > 0 && (
-        <Disclosure summary="View history as text">
-          <ol className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
-            {history.buckets.map((bucket) => (
-              <li key={bucket.startedAt}>
-                <span className="font-medium text-foreground">
-                  {bucketLabel(bucket.startedAt)}
-                </span>
-                <br />
-                {outcomes
-                  .map(
-                    (outcome) =>
-                      `${bucket[outcome]} ${config[outcome].label.toLowerCase()}`
-                  )
-                  .join(" · ")}
-              </li>
-            ))}
-          </ol>
-        </Disclosure>
-      )}
+
     </Card>
   )
 }

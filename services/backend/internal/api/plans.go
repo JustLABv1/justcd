@@ -339,7 +339,7 @@ func (s *Server) approvePlanNow(w http.ResponseWriter, r *http.Request) {
 // Approval authorizes this exact snapshot; auto-safe configuration authorizes
 // the system to queue it once all required approvals have been recorded.
 func shouldAutoApplyApprovedPlan(app store.Application, plan core.Plan, approved int) bool {
-	return app.SyncPolicy == "auto-safe" && !app.AutoSyncPaused && !app.Decommissioning && !app.ConfigurationMissing && plan.Rollback == nil && !plan.Decommission && core.RequiredApprovalCount(plan) > 0 && approved >= core.RequiredApprovalCount(plan)
+	return (app.SyncPolicy == "auto-safe" || app.SyncPolicy == "auto") && !app.AutoSyncPaused && !app.Decommissioning && !app.ConfigurationMissing && plan.Rollback == nil && !plan.Decommission && core.RequiredApprovalCount(plan) > 0 && approved >= core.RequiredApprovalCount(plan)
 }
 
 func (s *Server) queueApprovedAutoSync(r *http.Request, app store.Application, record store.PlanRecord, approvalIDs []string) (store.Operation, error) {

@@ -2134,7 +2134,7 @@ func (s *Store) MarkApplicationSynced(ctx context.Context, id, revision, health 
 }
 
 func (s *Store) PauseAutoSync(ctx context.Context, id string) error {
-	result, err := s.DB.ExecContext(ctx, `UPDATE applications SET auto_sync_paused=TRUE,health='degraded',last_checked_at=NOW(),updated_at=NOW() WHERE id=$1 AND sync_policy='auto-safe'`, id)
+	result, err := s.DB.ExecContext(ctx, `UPDATE applications SET auto_sync_paused=TRUE,health='degraded',last_checked_at=NOW(),updated_at=NOW() WHERE id=$1 AND sync_policy IN ('auto-safe', 'auto')`, id)
 	if err != nil {
 		return err
 	}
@@ -3325,7 +3325,7 @@ func (s *Store) QueueOperation(ctx context.Context, applicationID, planID, actor
 		if paused || configurationMissing {
 			return Operation{}, errors.New("automatic reconciliation is paused or the Git definition is missing")
 		}
-		if syncPolicy != "auto-safe" {
+		if syncPolicy != "auto-safe" && syncPolicy != "auto" {
 			return Operation{}, errors.New("automatic reconciliation is no longer enabled")
 		}
 	}
@@ -3705,7 +3705,7 @@ func (s *Store) FinishOperationWithRetry(ctx context.Context, id, applicationID,
 	if _, err := tx.ExecContext(ctx, `UPDATE plans SET status=$2 WHERE id=(SELECT plan_id FROM operations WHERE id=$1)`, id, planStatus); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE applications SET retry_attempt_count=$2,retry_last_error_code=$3,retry_next_at=$4,retry_terminal_reason=$5,health='degraded',auto_sync_paused=auto_sync_paused OR ($3 IN ('cluster.agent_unknown_outcome','operation.interrupted')) OR ($4::timestamptz IS NULL AND (sync_policy='auto-safe' OR EXISTS(SELECT 1 FROM operations WHERE id=$6 AND operation_type='rollback'))),last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, applicationID, attempt, errorCode, nextRetryAt, terminalReason, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET retry_attempt_count=$2,retry_last_error_code=$3,retry_next_at=$4,retry_terminal_reason=$5,health='degraded',auto_sync_paused=auto_sync_paused OR ($3 IN ('cluster.agent_unknown_outcome','operation.interrupted')) OR ($4::timestamptz IS NULL AND (sync_policy IN ('auto-safe', 'auto') OR EXISTS(SELECT 1 FROM operations WHERE id=$6 AND operation_type='rollback'))),last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, applicationID, attempt, errorCode, nextRetryAt, terminalReason, id); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) SELECT actor_id,operation_type||'.failed','application',application_id,jsonb_build_object('operationId',id,'planId',plan_id,'message',message,'attemptCount',attempt_count,'errorCode',error_code,'nextRetryAt',next_retry_at,'terminalReason',terminal_reason,'completed',jsonb_array_length(COALESCE(NULLIF(progress->'completed','null'::jsonb),'[]'::jsonb)),'total',progress->'total','rollbackCheckpointId',rollback_checkpoint_id,'interrupted',error_code='operation.interrupted') FROM operations WHERE id=$1`, id); err != nil {

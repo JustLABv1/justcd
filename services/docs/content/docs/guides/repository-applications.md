@@ -195,7 +195,7 @@ Existing manual applications are never implicitly adopted or overwritten.
 | `spec.destination.cluster` | Required existing cluster name or ID |
 | `spec.destination.namespace` | Required namespace already bound to the workspace |
 | `spec.ignoreResources` | Optional list of whole-resource exclusions; defaults to empty |
-| `spec.syncPolicy` | `manual` (default) or `auto-safe` |
+| `spec.syncPolicy` | `manual` (default), `auto-safe`, or `auto` |
 | `spec.pollSeconds` | Application drift-check interval, 30–86400; defaults to 300 |
 
 The Git source and revision are inherited from the repository connection. This
@@ -691,3 +691,13 @@ Git** and cannot be overwritten in the UI/API. Removing the declaration restores
 inheritance and allows UI editing; omission preserves policies that were configured
 outside Git. See [notification routing](/guides/notifications#routing-in-justcdyaml) for
 validation, defaults, and reconciliation behavior.
+
+### Full automatic sync
+
+Set `spec.syncPolicy: auto` to automatically apply creates and updates, including
+cluster-scoped changes and ownership takeovers, without sync approval. Deletions
+always require at least one approval and honor higher configured deletion approval
+counts. Plans containing deletions wait for approval as a whole, then apply
+automatically after the final approval. Pause controls, deployment schedules,
+guardrails, and authorization remain enforced. Rollback and application
+decommissioning retain their separate review workflows.

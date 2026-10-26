@@ -138,7 +138,7 @@ export function ApplicationCard({
       )}
       <footer className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-1 pt-3 text-xs text-muted-foreground">
         <span className="truncate" title={`${app.revision} · ${app.manifestPath || "."} · ${app.syncPolicy}`}>
-          <span className="font-mono">{revision}</span> · {rendererLabel[app.renderer]} · {app.autoSyncPaused ? "paused" : app.syncPolicy === "auto-safe" ? "auto-safe" : "manual"}
+          <span className="font-mono">{revision}</span> · {rendererLabel[app.renderer]} · {app.autoSyncPaused ? "paused" : app.syncPolicy}
         </span>
         <span className={stalled ? "font-medium text-warning-foreground dark:text-warning" : ""} title={app.lastCheckedAt ? new Date(app.lastCheckedAt).toLocaleString() : undefined}>
           {stalled ? "Checks stalled · " : "Checked "}{ago(app.lastCheckedAt, now)}

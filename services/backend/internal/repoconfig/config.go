@@ -254,8 +254,8 @@ func Discover(root string) ([]Definition, error) {
 		if d.Spec.SyncPolicy == "" {
 			d.Spec.SyncPolicy = "manual"
 		}
-		if d.Spec.SyncPolicy != "manual" && d.Spec.SyncPolicy != "auto-safe" {
-			return fail(fmt.Errorf("syncPolicy must be manual or auto-safe"))
+		if d.Spec.SyncPolicy != "manual" && d.Spec.SyncPolicy != "auto-safe" && d.Spec.SyncPolicy != "auto" {
+			return fail(fmt.Errorf("syncPolicy must be manual, auto-safe, or auto"))
 		}
 		if d.Spec.PollSeconds == 0 {
 			d.Spec.PollSeconds = 300

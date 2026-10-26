@@ -235,7 +235,7 @@ export type Application = {
   clusterId: string
   clusterName?: string
   namespaces: NamespaceBinding[]
-  syncPolicy: "manual" | "auto-safe"
+  syncPolicy: "manual" | "auto-safe" | "auto"
   pollSeconds: number
   retryPolicy: RetryPolicy
   retryAttemptCount: number
@@ -324,7 +324,7 @@ export type ApplicationGroup = {
   kustomizeNamespaceOverride: boolean
   helmValuesFiles: string[]
   helmValuesYaml: string
-  syncPolicy: "manual" | "auto-safe"
+  syncPolicy: "manual" | "auto-safe" | "auto"
   pollSeconds: number
   createdAt: string
   updatedAt: string

@@ -69,8 +69,8 @@ func cleanGroupSource(input *applicationGroupInput) error {
 	if input.SyncPolicy == "" {
 		input.SyncPolicy = "manual"
 	}
-	if input.SyncPolicy != "manual" && input.SyncPolicy != "auto-safe" {
-		return errors.New("syncPolicy must be manual or auto-safe")
+	if input.SyncPolicy != "manual" && input.SyncPolicy != "auto-safe" && input.SyncPolicy != "auto" {
+		return errors.New("syncPolicy must be manual, auto-safe, or auto")
 	}
 	if input.PollSeconds == 0 {
 		input.PollSeconds = 300
@@ -264,7 +264,7 @@ func (s *Server) updateApplicationGroup(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if input.SyncPolicy != "manual" && input.SyncPolicy != "auto-safe" || input.PollSeconds < 30 || input.PollSeconds > 86400 {
+	if input.SyncPolicy != "manual" && input.SyncPolicy != "auto-safe" && input.SyncPolicy != "auto" || input.PollSeconds < 30 || input.PollSeconds > 86400 {
 		writeError(w, http.StatusBadRequest, "invalid reconciliation settings")
 		return
 	}

@@ -22,7 +22,7 @@ import { useSyncHistory } from "@/hooks/use-sync-history"
 import { tone } from "@/components/health-tone"
 import { ago } from "@/lib/relative-time"
 import { applicationAttentionReason } from "@/lib/application-status"
-import { clusterHealth, gitSourceHealth, isCheckStalled, overallLevel, type ConnectionHealth, type HealthLevel } from "@/lib/connection-health"
+import { clusterHealth, gitSourceHealth, isCheckStalled, type ConnectionHealth, type HealthLevel } from "@/lib/connection-health"
 
 function TrailingLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
@@ -108,32 +108,15 @@ export default function OverviewPage() {
         health: gitSourceHealth(source, applications),
       })),
     ].sort((a, b) => ["critical", "warning", "unknown", "healthy"].indexOf(a.health.level) - ["critical", "warning", "unknown", "healthy"].indexOf(b.health.level))
-    const connectionsDown = rows.filter((row) => row.health.level === "critical").length
-    const connectionsWarn = rows.filter((row) => row.health.level === "warning" || row.health.level === "unknown").length
-    const level = overallLevel([
-      connectionsDown ? "critical" : connectionsWarn ? "warning" : "healthy",
-      attention.some((app) => app.health === "failed" || app.health === "error" || app.healthCondition?.status === "Degraded") ? "critical" : attention.length || stalled.length ? "warning" : "healthy",
-      health.failed.length ? "warning" : "healthy",
-    ])
-    return { attention, synced, other, stalled, rows, connectionsDown, connectionsWarn, level }
+    return { attention, synced, other, stalled, rows }
   }, [applications, health, now])
 
   const total = applications.length
   const qs = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : ""
   const listHref = (status?: string) => (workspaceId ? `/applications${qs}${status ? `&status=${status}` : ""}` : "/workspaces")
   const connectionsHref = workspaceId ? `/workspaces/${workspaceId}?tab=connections` : "/workspaces"
-  const { attention, synced, other, stalled, rows, connectionsDown, connectionsWarn, level } = model
-
-  const problems: string[] = []
-  if (connectionsDown) problems.push(`${connectionsDown} connection${connectionsDown === 1 ? "" : "s"} down`)
-  if (connectionsWarn) problems.push(`${connectionsWarn} connection${connectionsWarn === 1 ? "" : "s"} degraded`)
-  if (attention.length) problems.push(`${attention.length} application${attention.length === 1 ? " needs" : "s need"} attention`)
-  if (stalled.length) problems.push(`${stalled.length} with stalled checks`)
-  if (health.approvalTotal) problems.push(`${health.approvalTotal} approval${health.approvalTotal === 1 ? "" : "s"} waiting`)
+  const { attention, synced, other, stalled, rows } = model
   const failedLabels = { clusters: "clusters", gitSources: "Git sources", approvals: "approvals" } as const
-  const headline = !workspaceId ? "No workspace selected"
-    : level === "healthy" ? (total || rows.length ? "Everything is running smoothly" : "Nothing connected yet")
-    : level === "critical" ? "Action required" : "Some things need a look"
 
   return (
     <>
@@ -156,25 +139,7 @@ export default function OverviewPage() {
         <CollectionSkeleton />
       ) : (
         <div className="space-y-6">
-          <section
-            role={level === "healthy" ? "status" : "alert"}
-            className={`flex flex-wrap items-center gap-4 rounded-xl border p-4 sm:p-5 ${tone[level].border} ${tone[level].bg}`}
-          >
-            <span aria-hidden="true" className={`grid size-10 shrink-0 place-items-center rounded-full bg-background/60 ${tone[level].text}`}>
-              <HugeiconsIcon icon={tone[level].icon} strokeWidth={2} className="size-5" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <h2 className="text-base font-semibold">{headline}</h2>
-              <p className="mt-0.5 text-sm text-muted-foreground">
-                {problems.length ? problems.join(" · ") : "All connections respond, no applications need attention, and no reviews are waiting."}
-              </p>
-              {health.failed.length > 0 && (
-                <p className="mt-1 text-sm text-warning-foreground dark:text-warning">
-                  Could not load {health.failed.map((key) => failedLabels[key]).join(", ")}; their status is not included above.
-                </p>
-              )}
-            </div>
-          </section>
+          {health.failed.length > 0 && <p role="status" className="text-sm text-muted-foreground">Could not load {health.failed.map((key) => failedLabels[key]).join(", ")}. Some metrics may be incomplete.</p>}
 
           <WorkspaceMetrics total={total} healthy={synced} other={other} attention={attention} stalled={stalled} connections={rows} health={health} now={now} applicationsHref={listHref("synced")} attentionHref={listHref("attention")} connectionsHref={connectionsHref} />
 

@@ -30,7 +30,7 @@ export function BackgroundTaskStatus({
 }) {
   const { isDismissed, dismiss } = useProgressDismissals()
   const active = tasks.filter(taskPending)
-  const displayed = active.length ? active : tasks.slice(0, 1).filter((task) => !isDismissed(`task:${task.id}`) && !planTaskHasOperation(task, operations))
+  const displayed = active.length ? active : tasks.slice(0, 1).filter((task) => (task.kind !== "approval" || task.status !== "succeeded") && !isDismissed(`task:${task.id}`) && !planTaskHasOperation(task, operations))
   if (!displayed.length && !error) return null
   return (
     <section

@@ -52,7 +52,7 @@ export function ApprovalRequestPeople({
     <Collapsible
       open={open}
       onOpenChange={setOpen}
-      className="mt-4 border-t pt-3"
+      className="mt-3 border-t pt-3 text-sm"
     >
       <CollapsibleTrigger>
         Approvers · {summary?.approvedApprovals ?? approved} of{" "}

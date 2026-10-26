@@ -16,7 +16,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/justcd-api .
 
 # Build a signed Alpine package until the stable repository includes Expat 2.9.
-FROM alpine:3.24.2 AS expat
+FROM alpine:3.24.3 AS expat
 RUN apk add --no-cache alpine-sdk
 WORKDIR /src/expat
 COPY packaging/expat/APKBUILD ./
@@ -29,7 +29,7 @@ RUN abuild-keygen -a -n \
     && find /packages -name 'libexpat-*.apk' -exec cp {} /out/ \; \
     && rm -f /root/.abuild/*.rsa
 
-FROM alpine:3.24.2 AS runtime
+FROM alpine:3.24.3 AS runtime
 COPY --from=expat /out/keys/ /etc/apk/keys/
 COPY --from=expat /out/libexpat-*.apk /tmp/expat/
 RUN apk upgrade --no-cache \

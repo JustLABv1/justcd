@@ -215,7 +215,7 @@ export default function NewApplicationGroupPage() {
           </div>
         </Panel> },
         { title: "Reconciliation", content: <Panel title="Reconciliation" description="All targets inherit these defaults."><div className="grid gap-4 p-5 sm:grid-cols-2">
-          <FormField label="Sync policy" htmlFor="group-policy"><FormSelect id="group-policy" value={syncPolicy} onValueChange={setSyncPolicy} items={[{ value: "manual", label: "Manual · review each sync" }, { value: "auto-safe", label: "Auto-safe · apply non-destructive changes" }]} /></FormField>
+          <FormField label="Sync policy" htmlFor="group-policy"><FormSelect id="group-policy" value={syncPolicy} onValueChange={setSyncPolicy} items={[{ value: "manual", label: "Manual · review each sync" }, { value: "auto-safe", label: "Auto-safe · apply non-destructive changes" }, { value: "auto", label: "Auto · approve deletions only" }]} /></FormField>
           <FormField label="Poll interval (seconds)" htmlFor="group-poll"><Input id="group-poll" type="number" min={30} max={86400} value={pollSeconds} onChange={(event) => setPollSeconds(event.target.value)} /></FormField>
         </div></Panel> },
         { title: "Review", content: <Panel title="Review" description="This creates configuration only. It does not change any cluster."><div className="space-y-4 p-5">
@@ -226,7 +226,7 @@ export default function NewApplicationGroupPage() {
             { label: "Git revision", value: revision || "—" },
             { label: "Renderer", value: rendererLabel },
             { label: renderer === "helm" ? "Chart path" : "Shared Kustomize path", value: <span className="font-mono">{manifestPath || "—"}</span> },
-            { label: "Sync policy", value: syncPolicy === "auto-safe" ? "Auto-safe" : "Manual" },
+            { label: "Sync policy", value: syncPolicy === "auto" ? "Auto" : syncPolicy === "auto-safe" ? "Auto-safe" : "Manual" },
             { label: "Poll interval (seconds)", value: pollSeconds },
             ...targets.map((target, index) => ({ label: `Target ${index + 1}`, value: <>{target.name || "—"} <span className="font-normal text-muted-foreground">· {clusters.find((cluster) => cluster.id === target.clusterId)?.name ?? "no cluster"} / {target.namespaces.join(", ") || "no namespace"}</span></> })),
           ]} />

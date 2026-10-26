@@ -52,6 +52,10 @@ func setReviewReasons(plan *core.Plan, app store.Application, clusterFallback bo
 		}
 		add("takeover", "safeguard.takeover", "These changes transfer Kubernetes field ownership and require owner approval for the entire plan.", takeover)
 	case "deletion":
+		if app.SyncPolicy == "auto" {
+			add("deletion", "safeguard.auto_deletion", "Auto sync requires at least one approval for deletions and honors higher deletion policy counts.", deleted)
+			break
+		}
 		add("deletion", policyRule("deletion"), "These deletions select the effective deletion policy for the entire plan.", deleted)
 	default:
 		if !clusterFallback {

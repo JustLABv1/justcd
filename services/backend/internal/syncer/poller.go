@@ -155,7 +155,7 @@ func (s *Service) reconcileApplication(parent context.Context, logger *slog.Logg
 		}
 		return
 	}
-	if app.SyncPolicy != "auto-safe" {
+	if app.SyncPolicy != "auto-safe" && app.SyncPolicy != "auto" {
 		if app.RetryNextAt != nil || app.RetryTerminalReason != "" {
 			_ = s.Store.ResetApplicationRetry(ctx, app.ID)
 		}

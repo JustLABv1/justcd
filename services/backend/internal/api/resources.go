@@ -920,8 +920,8 @@ func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 	if input.SyncPolicy == "" {
 		input.SyncPolicy = "manual"
 	}
-	if input.SyncPolicy != "manual" && input.SyncPolicy != "auto-safe" {
-		writeError(w, http.StatusBadRequest, "syncPolicy must be manual or auto-safe")
+	if input.SyncPolicy != "manual" && input.SyncPolicy != "auto-safe" && input.SyncPolicy != "auto" {
+		writeError(w, http.StatusBadRequest, "syncPolicy must be manual, auto-safe, or auto")
 		return
 	}
 	if input.PollSeconds == 0 {

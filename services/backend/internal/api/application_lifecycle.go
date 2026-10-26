@@ -87,7 +87,7 @@ func (s *Server) retryApplication(w http.ResponseWriter, r *http.Request) {
 			terminalReason = "manual_retry_failed"
 		}
 		_ = s.Store.RecordApplicationRetry(r.Context(), app.ID, 0, classification.ErrorCode, nil, terminalReason)
-		if app.SyncPolicy == "auto-safe" {
+		if app.SyncPolicy == "auto-safe" || app.SyncPolicy == "auto" {
 			_ = s.Store.PauseAutoSync(r.Context(), app.ID)
 		}
 		writePlanFailure(w, http.StatusUnprocessableEntity, "could not rebuild a fresh reconciliation plan", app.ID, err)
@@ -288,7 +288,7 @@ func (s *Server) updateApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if input.SyncPolicy != "manual" && input.SyncPolicy != "auto-safe" {
+	if input.SyncPolicy != "manual" && input.SyncPolicy != "auto-safe" && input.SyncPolicy != "auto" {
 		writeError(w, http.StatusBadRequest, "invalid sync policy")
 		return
 	}

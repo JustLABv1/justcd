@@ -179,7 +179,7 @@ export default function NewApplicationPage() {
         </div></Panel> },
         { title: "Sync policy", content: <Panel title="Sync policy" description="Choose how often to check Git for changes and what may be applied automatically."><div className="space-y-4 p-5">
           <div className="grid gap-4 sm:grid-cols-2">
-            <FormField label="Sync policy" htmlFor="policy"><FormSelect id="policy" value={syncPolicy} onValueChange={setSyncPolicy} items={[{ value: "manual", label: "Manual · review each sync" }, { value: "auto-safe", label: "Auto-safe · apply non-destructive changes" }]} /></FormField>
+            <FormField label="Sync policy" htmlFor="policy"><FormSelect id="policy" value={syncPolicy} onValueChange={setSyncPolicy} items={[{ value: "manual", label: "Manual · review each sync" }, { value: "auto-safe", label: "Auto-safe · apply non-destructive changes" }, { value: "auto", label: "Auto · approve deletions only" }]} /></FormField>
             <FormField label="Poll interval (seconds)" htmlFor="poll" hint="Auto-safe still pauses for every deletion and cluster-wide change."><Input id="poll" type="number" min={30} max={86400} value={pollSeconds} onChange={(event) => setPollSeconds(event.target.value)} /></FormField>
           </div>
           <Disclosure summary="Advanced: retry policy" className="rounded-lg border p-3">
@@ -206,7 +206,7 @@ export default function NewApplicationPage() {
             { label: "Cluster", value: clusterName || "—" },
             { label: "Namespaces", value: namespaces.length ? namespaces.join(", ") : "—" },
             { label: "Create missing namespaces", value: createNamespaces ? "Yes" : "No" },
-            { label: "Sync policy", value: syncPolicy === "auto-safe" ? "Auto-safe" : "Manual" },
+            { label: "Sync policy", value: syncPolicy === "auto" ? "Auto" : syncPolicy === "auto-safe" ? "Auto-safe" : "Manual" },
             { label: "Poll interval (seconds)", value: pollSeconds },
             { label: "Retry policy", value: retryPolicy.enabled ? `Up to ${retryPolicy.maxAttempts} attempts` : "Disabled" },
           ]} />

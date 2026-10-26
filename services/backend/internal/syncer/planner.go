@@ -607,6 +607,17 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 	if err != nil {
 		return core.Plan{}, nil, err
 	}
+	setSyncApprovalPolicy(&plan, app, policy)
+	if err := s.evaluateGuardrails(ctx, app, &plan, desired); err != nil {
+		return core.Plan{}, nil, err
+	}
+	if err := core.RefreshDigest(&plan); err != nil {
+		return core.Plan{}, nil, err
+	}
+	return plan, desired, nil
+}
+
+func setSyncApprovalPolicy(plan *core.Plan, app store.Application, policy store.ApprovalPolicy) {
 	kind := "sync"
 	rule := policy.Sync
 	hasDeletes, hasClusterScoped, hasTakeover := false, false, false
@@ -632,15 +643,19 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 		count := max(1, rule.RequiredApprovals)
 		kind, rule = "takeover", store.ApprovalRule{RequiredApprovals: count, ApproverRoles: []string{"owner"}, ApproverUserIDs: []string{}}
 	}
-	setApprovalRule(&plan, kind, rule)
-	setReviewReasons(&plan, app, hasClusterScoped && policy.Sync.RequiredApprovals == 0 && !hasDeletes)
-	if err := s.evaluateGuardrails(ctx, app, &plan, desired); err != nil {
-		return core.Plan{}, nil, err
+	if app.SyncPolicy == "auto" {
+		if hasDeletes {
+			kind, rule = "deletion", policy.Deletion
+			rule.RequiredApprovals = max(1, rule.RequiredApprovals)
+			if len(rule.ApproverRoles) == 0 && len(rule.ApproverUserIDs) == 0 {
+				rule.ApproverRoles = []string{"owner"}
+			}
+		} else {
+			kind, rule = "sync", store.ApprovalRule{}
+		}
 	}
-	if err := core.RefreshDigest(&plan); err != nil {
-		return core.Plan{}, nil, err
-	}
-	return plan, desired, nil
+	setApprovalRule(plan, kind, rule)
+	setReviewReasons(plan, app, hasClusterScoped && policy.Sync.RequiredApprovals == 0 && !hasDeletes)
 }
 
 func setApprovalRule(plan *core.Plan, kind string, rule store.ApprovalRule) {

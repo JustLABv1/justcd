@@ -15,6 +15,7 @@ func TestApprovedAutoSyncEligibility(t *testing.T) {
 		approvals  int
 		want       bool
 	}{
+		{name: "auto final approval", changeApp: func(a *store.Application) { a.SyncPolicy = "auto" }, approvals: 2, want: true},
 		{name: "final approval", approvals: 2, want: true},
 		{name: "partial approval", approvals: 1},
 		{name: "manual", changeApp: func(a *store.Application) { a.SyncPolicy = "manual" }, approvals: 2},

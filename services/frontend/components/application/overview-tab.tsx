@@ -222,7 +222,7 @@ export function OverviewTab({
             </dd>
             <dt className="text-muted-foreground">Sync policy</dt>
             <dd>
-              {application.syncPolicy === "auto-safe"
+              {application.syncPolicy === "auto" ? "Auto · approve deletions only" : application.syncPolicy === "auto-safe"
                 ? "Auto-safe"
                 : "Manual sync"}
               {application.autoSyncPaused ? " · Auto-sync paused" : ""}

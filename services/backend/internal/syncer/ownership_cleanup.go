@@ -17,6 +17,15 @@ import (
 	"sigs.k8s.io/structured-merge-diff/v7/value"
 )
 
+// AppliedResourceError means Kubernetes accepted Apply but its follow-up failed.
+// Callers must not describe this as a write that never happened.
+type AppliedResourceError struct{ Cause error }
+
+func (e *AppliedResourceError) Error() string {
+	return "Kubernetes apply succeeded, but ownership cleanup failed: " + e.Cause.Error()
+}
+func (e *AppliedResourceError) Unwrap() error { return e.Cause }
+
 // Force only transfers fields included in an Apply request. Fields omitted from
 // that request can remain owned by the same manager's earlier Update operation.
 // Remove those leftovers and retire the Update entry, preserving shared fields.
@@ -49,21 +58,51 @@ func finishOwnershipMigration(ctx context.Context, rc dynamic.ResourceInterface,
 		result, err = finishOwnershipMigrationStep(ctx, rc, name, current, options, legacyManagers...)
 		return err
 	})
-	return result, err
+	if err != nil {
+		return result, &AppliedResourceError{Cause: err}
+	}
+	return result, nil
 }
 
 // Status and its ownership may change without invalidating the reviewed spec.
-// Everything else, including UID, labels and other managers, remains guarded.
+// Deployment revision bookkeeping is also ignored; configuration and relevant
+// ownership remain guarded. Cleanup is rebuilt from the fresh object.
 func ownershipMigrationState(object *unstructured.Unstructured) map[string]interface{} {
 	state := object.DeepCopy()
 	delete(state.Object, "status")
 	state.SetResourceVersion("")
+	deployment := state.GetAPIVersion() == "apps/v1" && state.GetKind() == "Deployment"
+	if deployment {
+		annotations := state.GetAnnotations()
+		delete(annotations, "deployment.kubernetes.io/revision")
+		if len(annotations) == 0 {
+			unstructured.RemoveNestedField(state.Object, "metadata", "annotations")
+		} else {
+			state.SetAnnotations(annotations)
+		}
+	}
 	entries := state.GetManagedFields()
 	retained := make([]metav1.ManagedFieldsEntry, 0, len(entries))
 	for _, entry := range entries {
-		if entry.Subresource != "status" {
-			retained = append(retained, entry)
+		if entry.Subresource == "status" {
+			continue
 		}
+		entry.Time = nil
+		// The deployment controller writes revision metadata through the main
+		// endpoint. Ignore only that field, preserving all its other ownership.
+		if deployment && entry.Manager == "kube-controller-manager" && entry.Operation == metav1.ManagedFieldsOperationUpdate && entry.FieldsType == "FieldsV1" && entry.FieldsV1 != nil {
+			fields := fieldpath.NewSet()
+			if fields.FromJSON(strings.NewReader(string(entry.FieldsV1.Raw))) == nil {
+				fields = fields.Difference(fieldpath.NewSet(fieldpath.MakePathOrDie("metadata", "annotations", "deployment.kubernetes.io/revision")))
+				if fields.Empty() {
+					continue
+				}
+				if raw, err := fields.ToJSON(); err == nil {
+					entry.FieldsV1 = &metav1.FieldsV1{Raw: raw}
+				}
+			}
+		}
+		retained = append(retained, entry)
 	}
 	state.SetManagedFields(retained)
 	return state.Object

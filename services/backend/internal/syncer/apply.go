@@ -488,6 +488,10 @@ func safeApplyFailure(cause error, progress store.OperationProgress, operationTy
 	if len(operationType) > 0 && operationType[0] == "rollback" {
 		name = "Rollback"
 	}
+	var appliedError *AppliedResourceError
+	if errors.As(cause, &appliedError) {
+		return fmt.Sprintf("%s stopped after Kubernetes applied the current resource, but ownership cleanup failed. %d of %d resources fully completed; the current resource may be partially applied. No automatic rollback was attempted. Review cluster state and rebuild the plan.", name, len(progress.Completed), progress.Total)
+	}
 	if len(progress.Completed) > 0 {
 		reason := ""
 		if cause != nil && strings.Contains(cause.Error(), "changed after") {
@@ -569,6 +573,10 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 	patchOptions := applyPatchOptions(change, fieldManager)
 	applied, err := applyWithOwnershipMigration(ctx, resourceClient, resource.Identity.Name, body, patchOptions)
 	if err != nil {
+		var appliedError *AppliedResourceError
+		if errors.As(err, &appliedError) {
+			return fmt.Errorf("post-apply cleanup failed for %s %s/%s: %w", resource.Identity.Kind, resource.Identity.Namespace, resource.Identity.Name, err)
+		}
 		return fmt.Errorf("server-side apply failed for %s %s/%s: %w", resource.Identity.Kind, resource.Identity.Namespace, resource.Identity.Name, err)
 	}
 	s.checkpoint("resource.applied")

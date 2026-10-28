@@ -2,11 +2,13 @@ package syncer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
 	"strings"
 
+	"github.com/justlab/justcd/services/backend/internal/render"
 	jsonpatch "gopkg.in/evanphx/json-patch.v5"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -20,6 +22,18 @@ import (
 // AppliedResourceError means Kubernetes accepted Apply but its follow-up failed.
 // Callers must not describe this as a write that never happened.
 type AppliedResourceError struct{ Cause error }
+type resourceStageKey struct{}
+type ownershipChangedError struct{ Paths []string }
+
+func (e *ownershipChangedError) Error() string {
+	return "ownership migration target changed after apply; create a new plan"
+}
+func reportResourceStage(ctx context.Context, stage string, applied bool) error {
+	if report, ok := ctx.Value(resourceStageKey{}).(func(string, bool) error); ok {
+		return report(stage, applied)
+	}
+	return nil
+}
 
 func (e *AppliedResourceError) Error() string {
 	return "Kubernetes apply succeeded, but ownership cleanup failed: " + e.Cause.Error()
@@ -36,6 +50,9 @@ func finishOwnershipMigration(ctx context.Context, rc dynamic.ResourceInterface,
 	if applied == nil || len(options.DryRun) > 0 {
 		return finishOwnershipMigrationStep(ctx, rc, name, applied, options, legacyManagers...)
 	}
+	if err := reportResourceStage(ctx, "ownership_cleanup", true); err != nil {
+		return applied, &AppliedResourceError{Cause: err}
+	}
 	current := applied
 	var result *unstructured.Unstructured
 	attempt := 0
@@ -49,7 +66,10 @@ func finishOwnershipMigration(ctx context.Context, rc dynamic.ResourceInterface,
 			// Retry only cleanup, and only if desired state and field ownership
 			// are unchanged. Never replay Apply against a new resource version.
 			if !reflect.DeepEqual(ownershipMigrationState(applied), ownershipMigrationState(fresh)) {
-				return fmt.Errorf("ownership migration target %s changed after apply; create a new plan", name)
+				before, _ := json.Marshal(ownershipMigrationState(applied))
+				after, _ := json.Marshal(ownershipMigrationState(fresh))
+				paths, _ := render.ChangedJSONPointers(before, after)
+				return &ownershipChangedError{Paths: paths}
 			}
 			current = fresh
 		}

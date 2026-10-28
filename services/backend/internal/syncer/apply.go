@@ -147,6 +147,19 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 			return s.Store.OperationByID(finishCtx, operationID)
 		}
 		message := safeApplyFailure(cause, operation.Progress, operation.Type)
+		var appliedError *AppliedResourceError
+		if errors.As(cause, &appliedError) && operation.Progress.Current != nil {
+			for i := range operation.Progress.Resources {
+				r := &operation.Progress.Resources[i]
+				if r.Identity.Key() == operation.Progress.Current.Key() {
+					r.MutationApplied, r.Stage, r.ReasonCode = true, "ownership_cleanup", "ownership_cleanup_failed"
+					var changed *ownershipChangedError
+					if errors.As(cause, &changed) {
+						r.ReasonCode, r.ChangedPaths = "live_state_changed_after_apply", changed.Paths
+					}
+				}
+			}
+		}
 		operation.Progress.Stop(message)
 		if err := s.Store.SetOperationProgress(finishCtx, operationID, operation.Progress); err != nil {
 			return operation, errors.Join(cause, err)
@@ -381,7 +394,18 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		if err := beginResource(resource.Identity); err != nil {
 			return finishFailure(err, "failed")
 		}
-		if err := s.applyResource(ctx, input, app.ID, resource, change); err != nil {
+		report := func(stage string, applied bool) error {
+			for i := range operation.Progress.Resources {
+				r := &operation.Progress.Resources[i]
+				if r.Identity.Key() == resource.Identity.Key() {
+					r.Stage = stage
+					r.MutationApplied = r.MutationApplied || applied
+				}
+			}
+			return s.Store.SetOperationProgress(ctx, operationID, operation.Progress)
+		}
+		stepCtx := context.WithValue(ctx, resourceStageKey{}, report)
+		if err := s.applyResource(stepCtx, input, app.ID, resource, change); err != nil {
 			return finishFailure(err, "failed")
 		}
 		if err := completeResource(resource.Identity); err != nil {
@@ -509,6 +533,9 @@ func safeApplyFailure(cause error, progress store.OperationProgress, operationTy
 }
 
 func (s *Service) applyResource(ctx context.Context, input planInput, applicationID string, resource core.Resource, change core.Change) error {
+	if err := reportResourceStage(ctx, "checking_live", false); err != nil {
+		return err
+	}
 	mapping, err := input.Mapper.Mapper.RESTMapping(groupKind(resource.Identity), groupVersion(resource.Identity))
 	if err != nil {
 		return err
@@ -551,12 +578,18 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 	if err != nil {
 		return err
 	}
+	if err := reportResourceStage(ctx, "applying", false); err != nil {
+		return err
+	}
 	if change.Kind == core.Create {
 		applied, err := resourceClient.Create(ctx, object, metav1.CreateOptions{FieldManager: "justcd/" + applicationID})
 		if err != nil {
 			return fmt.Errorf("create failed for %s %s/%s: %w", resource.Identity.Kind, resource.Identity.Namespace, resource.Identity.Name, err)
 		}
 		s.checkpoint("resource.applied")
+		if err := reportResourceStage(ctx, "recording", true); err != nil {
+			return err
+		}
 		current, err := render.CanonicalLive(applied, input.Cluster.ID, applicationID, resource.Identity.ClusterScoped)
 		if err != nil {
 			return err
@@ -580,6 +613,9 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 		return fmt.Errorf("server-side apply failed for %s %s/%s: %w", resource.Identity.Kind, resource.Identity.Namespace, resource.Identity.Name, err)
 	}
 	s.checkpoint("resource.applied")
+	if err := reportResourceStage(ctx, "recording", true); err != nil {
+		return err
+	}
 	if applied.GetUID() != existingUID {
 		return fmt.Errorf("update target %s %s/%s was replaced during apply; create a new plan", resource.Identity.Kind, resource.Identity.Namespace, resource.Identity.Name)
 	}

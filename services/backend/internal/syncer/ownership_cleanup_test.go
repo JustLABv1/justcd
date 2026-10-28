@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/justlab/justcd/services/backend/internal/core"
@@ -137,6 +138,21 @@ func TestOwnershipCleanupConflictAfterSuccessfulApply(t *testing.T) {
 					var appliedError *AppliedResourceError
 					if !errors.As(err, &appliedError) {
 						t.Fatalf("missing successful-apply context: %v", err)
+					}
+					if concurrent == "spec" || concurrent == "revision and spec" {
+						var changed *ownershipChangedError
+						if !errors.As(err, &changed) || len(changed.Paths) == 0 {
+							t.Fatalf("missing changed paths: %v", err)
+						}
+						found := false
+						for _, path := range changed.Paths {
+							if strings.HasPrefix(path, "/spec") {
+								found = true
+							}
+						}
+						if !found {
+							t.Fatalf("spec change missing: %v", changed.Paths)
+						}
 					}
 					if err == nil {
 						t.Fatal("unsafe or failed cleanup reported success")

@@ -523,6 +523,9 @@ export type Operation = {
       identity: Identity
       action: string
       status: "queued" | "running" | "retrying" | "succeeded" | "failed" | "skipped"
+      mutationApplied?: boolean
+      reasonCode?: string
+      changedPaths?: string[]
       stage?: string
       attemptCount: number
       startedAt?: string

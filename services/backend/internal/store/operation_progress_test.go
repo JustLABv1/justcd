@@ -133,3 +133,29 @@ func TestProgressRejectsCyclicPlan(t *testing.T) {
 		t.Fatal("unsafe plan produced queued progress")
 	}
 }
+
+func TestStopPreservesPartialApplyDetails(t *testing.T) {
+	identity := core.Identity{Kind: "Deployment", Namespace: "team", Name: "api"}
+	p := OperationProgress{Total: 2, Current: &identity, Resources: []ResourceProgress{
+		{Identity: identity, Status: "running", Stage: "ownership_cleanup", MutationApplied: true, ReasonCode: "live_state_changed_after_apply", ChangedPaths: []string{"/spec/replicas"}},
+		{Identity: core.Identity{Name: "next"}, Status: "queued"},
+	}}
+	p.Stop("Cleanup failed")
+	op := Operation{Status: "failed", Progress: p}
+	op.NormalizeProgress()
+	encoded, err := json.Marshal(op.Progress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded OperationProgress
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	partial := decoded.Resources[0]
+	if partial.Status != "failed" || !partial.MutationApplied || partial.Stage != "ownership_cleanup" || partial.ReasonCode != "live_state_changed_after_apply" || !reflect.DeepEqual(partial.ChangedPaths, []string{"/spec/replicas"}) {
+		t.Fatalf("lost partial apply: %+v", partial)
+	}
+	if len(decoded.Completed) != 0 || decoded.Resources[1].Status != "skipped" || decoded.Resources[1].MutationApplied {
+		t.Fatalf("incorrect completion counts: %+v", decoded)
+	}
+}

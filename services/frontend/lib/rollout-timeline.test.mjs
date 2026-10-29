@@ -92,3 +92,21 @@ test("empty and historical progress are safe; identity includes the cluster and 
     rolloutResourceKey({ ...first.identity, apiVersion: "apps/v1" })
   )
 })
+
+test("partial apply stays distinct from completion and skipped work", async () => {
+  const { rolloutStatus, rolloutSummary, resourceStageStatus } =
+    await import("./rollout-timeline.ts")
+  const partial = resource("a", "failed", {
+    mutationApplied: true,
+    stage: "ownership_cleanup",
+  })
+  assert.equal(rolloutStatus(partial), "Applied · follow-up failed")
+  assert.equal(resourceStageStatus(partial, "applying"), "complete")
+  assert.equal(resourceStageStatus(partial, "ownership_cleanup"), "failed")
+  assert.equal(resourceStageStatus(partial, "recording"), "not started")
+  assert.equal(
+    rolloutSummary([partial, resource("b", "skipped")]),
+    "1 applied · 0 fully completed · 1 not attempted"
+  )
+  assert.equal(rolloutStatus(resource("old", "failed")), "failed")
+})

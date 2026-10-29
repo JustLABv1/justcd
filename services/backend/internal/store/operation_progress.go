@@ -8,14 +8,17 @@ import (
 )
 
 type ResourceProgress struct {
-	Identity     core.Identity `json:"identity"`
-	Action       string        `json:"action"`
-	Status       string        `json:"status"`
-	Stage        string        `json:"stage,omitempty"`
-	AttemptCount int           `json:"attemptCount"`
-	StartedAt    *time.Time    `json:"startedAt,omitempty"`
-	FinishedAt   *time.Time    `json:"finishedAt,omitempty"`
-	Message      string        `json:"message,omitempty"`
+	Identity        core.Identity `json:"identity"`
+	Action          string        `json:"action"`
+	Status          string        `json:"status"`
+	Stage           string        `json:"stage,omitempty"`
+	AttemptCount    int           `json:"attemptCount"`
+	StartedAt       *time.Time    `json:"startedAt,omitempty"`
+	FinishedAt      *time.Time    `json:"finishedAt,omitempty"`
+	MutationApplied bool          `json:"mutationApplied,omitempty"`
+	ReasonCode      string        `json:"reasonCode,omitempty"`
+	ChangedPaths    []string      `json:"changedPaths,omitempty"`
+	Message         string        `json:"message,omitempty"`
 }
 
 func NewOperationProgress(plan core.Plan) (OperationProgress, error) {
@@ -60,7 +63,7 @@ func (p *OperationProgress) CompleteResource(identity core.Identity) {
 	for i := range p.Resources {
 		r := &p.Resources[i]
 		if r.Identity.Key() == identity.Key() {
-			r.Status, r.FinishedAt = "succeeded", &now
+			r.Status, r.Stage, r.MutationApplied, r.FinishedAt = "succeeded", "complete", true, &now
 		}
 	}
 }
@@ -73,7 +76,7 @@ func (p *OperationProgress) Stop(message string) {
 		r := &p.Resources[i]
 		switch r.Status {
 		case "queued":
-			r.Status, r.Message = "skipped", "Not attempted"
+			r.Status, r.Message, r.ReasonCode = "skipped", "Not attempted because the operation stopped before this resource.", "operation_stopped"
 		case "running", "retrying":
 			r.Status, r.Message = "failed", message
 		default:

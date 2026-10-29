@@ -3,7 +3,9 @@ package syncer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/justlab/justcd/services/backend/internal/core"
@@ -26,7 +28,7 @@ import (
 
 func TestOwnershipCleanupConflictAfterSuccessfulApply(t *testing.T) {
 	for _, kind := range []string{"Ingress", "Deployment"} {
-		for _, concurrent := range []string{"status", "spec", "labels", "replacement", "ownership", "persistent conflict", "forbidden"} {
+		for _, concurrent := range []string{"status", "revision", "revision and spec", "controller ownership", "annotation", "timestamp", "spec", "labels", "replacement", "ownership", "persistent conflict", "forbidden"} {
 			t.Run(kind+"/"+concurrent, func(t *testing.T) {
 				apiVersion, group, plural := "networking.k8s.io/v1", "networking.k8s.io", "ingresses"
 				spec := map[string]interface{}{"tls": []interface{}{map[string]interface{}{"secretName": "new-tls"}}}
@@ -48,6 +50,26 @@ func TestOwnershipCleanupConflictAfterSuccessfulApply(t *testing.T) {
 				fresh.Object["status"] = map[string]interface{}{"observedGeneration": int64(2)}
 				fresh.SetManagedFields(append(fresh.GetManagedFields(), metav1.ManagedFieldsEntry{Manager: "controller", Operation: metav1.ManagedFieldsOperationUpdate, Subresource: "status", APIVersion: apiVersion, FieldsType: "FieldsV1", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:status":{}}`)}}))
 				switch concurrent {
+				case "revision", "revision and spec", "controller ownership":
+					annotations := fresh.GetAnnotations()
+					annotations["deployment.kubernetes.io/revision"] = "10"
+					fresh.SetAnnotations(annotations)
+					fresh.SetManagedFields(append(fresh.GetManagedFields(), metav1.ManagedFieldsEntry{Manager: "kube-controller-manager", Operation: metav1.ManagedFieldsOperationUpdate, APIVersion: apiVersion, FieldsType: "FieldsV1", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:metadata":{"f:annotations":{"f:deployment.kubernetes.io/revision":{}}}}`)}}))
+					if concurrent == "controller ownership" {
+						entries := fresh.GetManagedFields()
+						entries[len(entries)-1].FieldsV1 = &metav1.FieldsV1{Raw: []byte(`{"f:metadata":{"f:annotations":{"f:deployment.kubernetes.io/revision":{}}},"f:spec":{}}`)}
+						fresh.SetManagedFields(entries)
+					}
+					if concurrent == "revision and spec" {
+						fresh.Object["spec"] = map[string]interface{}{"changed": "concurrently"}
+					}
+				case "annotation":
+					fresh.SetAnnotations(map[string]string{"obsolete": "remove", "external": "changed"})
+				case "timestamp":
+					entries := fresh.GetManagedFields()
+					now := metav1.Now()
+					entries[0].Time = &now
+					fresh.SetManagedFields(entries)
 				case "spec":
 					fresh.Object["spec"] = map[string]interface{}{"changed": "concurrently"}
 				case "labels":
@@ -101,15 +123,37 @@ func TestOwnershipCleanupConflictAfterSuccessfulApply(t *testing.T) {
 					return true, result, nil
 				})
 				rc := client.Resource(schema.GroupVersionResource{Group: group, Version: "v1", Resource: plural}).Namespace("team")
-				_, err := applyWithOwnershipMigration(context.Background(), rc, "gateway", []byte(`{}`), metav1.PatchOptions{FieldManager: "justcd/app"})
+				result, err := applyWithOwnershipMigration(context.Background(), rc, "gateway", []byte(`{}`), metav1.PatchOptions{FieldManager: "justcd/app"})
 				if applyCalls != 1 {
 					t.Fatalf("Apply was replayed %d times", applyCalls)
 				}
-				if concurrent == "status" {
+				if concurrent == "status" || concurrent == "timestamp" || (concurrent == "revision" && kind == "Deployment") {
 					if err != nil || cleanupCalls != 2 || getCalls != 1 {
-						t.Fatalf("status-only update was not recovered: %v (%d patches, %d gets)", err, cleanupCalls, getCalls)
+						t.Fatalf("controller bookkeeping update was not recovered: %v (%d patches, %d gets)", err, cleanupCalls, getCalls)
+					}
+					if concurrent == "revision" && result.GetAnnotations()["deployment.kubernetes.io/revision"] != "10" {
+						t.Fatal("controller revision was not preserved")
 					}
 				} else {
+					var appliedError *AppliedResourceError
+					if !errors.As(err, &appliedError) {
+						t.Fatalf("missing successful-apply context: %v", err)
+					}
+					if concurrent == "spec" || concurrent == "revision and spec" {
+						var changed *ownershipChangedError
+						if !errors.As(err, &changed) || len(changed.Paths) == 0 {
+							t.Fatalf("missing changed paths: %v", err)
+						}
+						found := false
+						for _, path := range changed.Paths {
+							if strings.HasPrefix(path, "/spec") {
+								found = true
+							}
+						}
+						if !found {
+							t.Fatalf("spec change missing: %v", changed.Paths)
+						}
+					}
 					if err == nil {
 						t.Fatal("unsafe or failed cleanup reported success")
 					}

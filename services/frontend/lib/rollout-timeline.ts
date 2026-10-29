@@ -57,3 +57,38 @@ export function rolloutFocusResource(
     }, undefined) ?? resources[0]
   )
 }
+
+export function rolloutStatus(resource: RolloutResource) {
+  return resource.status === "failed" && resource.mutationApplied
+    ? "Applied · follow-up failed"
+    : resource.status
+}
+export function rolloutSummary(resources: readonly RolloutResource[]) {
+  const applied = resources.filter(
+    (r) => r.mutationApplied || r.status === "succeeded"
+  ).length
+  const complete = resources.filter((r) => r.status === "succeeded").length
+  const skipped = resources.filter((r) => r.status === "skipped").length
+  return `${applied} applied · ${complete} fully completed · ${skipped} not attempted`
+}
+export const resourceStages = [
+  { id: "checking_live", label: "Check live state" },
+  { id: "applying", label: "Apply to Kubernetes" },
+  { id: "ownership_cleanup", label: "Clean up field ownership" },
+  { id: "recording", label: "Record completion" },
+] as const
+export function resourceStageStatus(resource: RolloutResource, stage: string) {
+  if (resource.status === "succeeded") return "complete"
+  const current = resourceStages.findIndex((s) => s.id === resource.stage)
+  const index = resourceStages.findIndex((s) => s.id === stage)
+  if (resource.mutationApplied && stage === "applying") return "complete"
+  if (
+    current < 0 ||
+    resource.status === "skipped" ||
+    resource.status === "queued"
+  )
+    return "not started"
+  if (index < current) return "complete"
+  if (index > current) return "not started"
+  return resource.status === "failed" ? "failed" : "running"
+}

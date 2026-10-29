@@ -2,6 +2,7 @@ package syncer
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -50,5 +51,18 @@ func TestResourceVersionChangedBetweenPreflightAndStepStopsSync(t *testing.T) {
 	err := validateUpdatePreconditions(identity, "uid-1", "17", "app-a", "uid-1", "18", "app-a")
 	if err == nil || !strings.Contains(err.Error(), "changed after plan review") {
 		t.Fatalf("expected stale resource-version precondition to stop the step, got %v", err)
+	}
+}
+
+func TestCleanupFailureReportsAlreadyAppliedResource(t *testing.T) {
+	for _, completed := range []int{0, 1} {
+		progress := store.OperationProgress{Total: 2, Completed: make([]core.Identity, completed)}
+		cause := fmt.Errorf("resource: %w", &AppliedResourceError{Cause: errors.New("target changed after apply")})
+		message := safeApplyFailure(cause, progress)
+		for _, fragment := range []string{"Kubernetes applied the current resource", "ownership cleanup failed", "No automatic rollback", fmt.Sprintf("%d of 2", completed)} {
+			if !strings.Contains(message, fragment) {
+				t.Fatalf("missing %q in %q", fragment, message)
+			}
+		}
 	}
 }

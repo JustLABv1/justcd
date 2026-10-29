@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/tooltip"
 import { RunProgressStages } from "@/components/application/run-progress"
 import { StatusBadge } from "@/components/ui-kit"
+import { rolloutSummary } from "@/lib/rollout-timeline"
 import { syncRunProgress } from "@/lib/run-progress"
 import type { Identity, Operation, PlanRecord } from "@/lib/types"
 
@@ -44,7 +45,11 @@ export function OperationBar({
   onUpdated,
   onReviewResource,
   scheduleActions,
+  onCreatePlan,
+  canCreatePlan,
 }: {
+  onCreatePlan?: () => void
+  canCreatePlan?: boolean
   operation: Operation
   scheduleActions?: ReactNode
   plan?: PlanRecord
@@ -139,7 +144,9 @@ export function OperationBar({
             : operation.message}
         </span>
         <span className="ml-auto text-sm text-muted-foreground tabular-nums">
-          {completed} / {total} resources
+          {operation.progress?.resources?.length
+            ? rolloutSummary(operation.progress.resources)
+            : `${completed} / ${total} resources`}
         </span>
         {operation.status === "running" &&
           operation.progress?.phase !== "complete" &&
@@ -159,6 +166,15 @@ export function OperationBar({
           )}
         {(failed || terminal) && (
           <div className="flex shrink-0 items-center gap-2">
+            {failed && onCreatePlan && (
+              <Button
+                size="sm"
+                disabled={!canCreatePlan}
+                onClick={onCreatePlan}
+              >
+                Create fresh plan
+              </Button>
+            )}
             {failed && (
               <div className="flex items-center gap-2">
                 {canRestoreState ? (

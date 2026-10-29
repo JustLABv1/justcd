@@ -20,6 +20,10 @@ import {
 import { Switch } from "@/components/ui/switch"
 import {
   rolloutFocusResource,
+  rolloutStatus,
+  rolloutSummary,
+  resourceStages,
+  resourceStageStatus,
   rolloutResourceKey,
   type RolloutResource,
 } from "@/lib/rollout-timeline"
@@ -35,6 +39,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Badge } from "@/components/reui/badge"
 import { StatusBadge } from "@/components/ui-kit"
 import { resourceLabel, sameIdentity } from "@/components/application/helpers"
 import { syncRunProgress } from "@/lib/run-progress"
@@ -124,7 +129,10 @@ export function RolloutPanel({
   // Retain the reported sequence. Status changes never reorder timeline rows.
   const filtered = resources.filter(
     (resource) =>
-      (status === "all" || resource.status === status) &&
+      (status === "all" ||
+        (status === "partial"
+          ? resource.status === "failed" && resource.mutationApplied
+          : resource.status === status)) &&
       resourceLabel(resource.identity)
         .toLowerCase()
         .includes(query.toLowerCase())
@@ -228,15 +236,6 @@ export function RolloutPanel({
     status,
     scrollRequest,
   ])
-  const succeeded = resources.filter(
-    (resource) => resource.status === "succeeded"
-  ).length
-  const failed = resources.filter(
-    (resource) => resource.status === "failed"
-  ).length
-  const skipped = resources.filter(
-    (resource) => resource.status === "skipped"
-  ).length
   const progress = syncRunProgress(operation, plan)
   return (
     <Sheet open={open} onOpenChange={changeOpen}>
@@ -249,15 +248,7 @@ export function RolloutPanel({
             </span>
           </p>
           <p className="text-xs text-muted-foreground">
-            {succeeded} succeeded
-            {failed > 0 && (
-              <span className="font-medium text-destructive">
-                {" "}
-                · {failed} failed
-              </span>
-            )}{" "}
-            · {resources.length - succeeded - failed - skipped} pending
-            {skipped > 0 && ` · ${skipped} skipped`}
+            {rolloutSummary(resources)}
           </p>
         </div>
         <SheetTrigger render={<Button variant="outline" size="sm" />}>
@@ -277,7 +268,7 @@ export function RolloutPanel({
             <StatusBadge status={operation.status} />
           </SheetTitle>
           <SheetDescription>
-            {succeeded} / {resources.length} resources succeeded · Elapsed{" "}
+            {rolloutSummary(resources)} · Elapsed{" "}
             {elapsed(operation.startedAt, operation.finishedAt)}
           </SheetDescription>
         </SheetHeader>
@@ -320,6 +311,7 @@ export function RolloutPanel({
                   }}
                   items={[
                     { value: "all", label: "All statuses" },
+                    { value: "partial", label: "Applied · follow-up failed" },
                     ...[
                       "failed",
                       "running",
@@ -381,7 +373,7 @@ export function RolloutPanel({
               </p>
               <p aria-live="polite" className="sr-only">
                 {following && selected
-                  ? `${selected.identity.name}: ${selected.status}`
+                  ? `${selected.identity.name}: ${rolloutStatus(selected)}`
                   : ""}
               </p>
             </div>
@@ -473,7 +465,17 @@ export function RolloutPanel({
                           </TimelineContent>
                         </TimelineHeader>
                         <span className="shrink-0">
-                          <StatusBadge status={resource.status} />
+                          {resource.status === "failed" &&
+                          resource.mutationApplied ? (
+                            <Badge
+                              variant="warning-light"
+                              className="max-w-36 text-right whitespace-normal"
+                            >
+                              {rolloutStatus(resource)}
+                            </Badge>
+                          ) : (
+                            <StatusBadge status={resource.status} />
+                          )}
                         </span>
                       </Button>
                       {expanded && selected && (
@@ -488,7 +490,13 @@ export function RolloutPanel({
                             <dt className="text-muted-foreground">Action</dt>
                             <dd>{selected.action.replaceAll("_", " ")}</dd>
                             <dt className="text-muted-foreground">Stage</dt>
-                            <dd>{selected.stage || "Queued"}</dd>
+                            <dd>
+                              {resourceStages.find(
+                                (stage) => stage.id === selected.stage
+                              )?.label ??
+                                selected.stage ??
+                                "Queued"}
+                            </dd>
                             <dt className="text-muted-foreground">Attempt</dt>
                             <dd>{selected.attemptCount || "Not attempted"}</dd>
                             <dt className="text-muted-foreground">Duration</dt>
@@ -501,6 +509,68 @@ export function RolloutPanel({
                                 : "Not started"}
                             </dd>
                           </dl>
+                          {selected.action === "update" && (
+                            <ol
+                              aria-label="Resource steps"
+                              className="mt-4 space-y-2 text-sm"
+                            >
+                              {resourceStages.map((stage) => (
+                                <li
+                                  key={stage.id}
+                                  className="flex justify-between gap-3"
+                                >
+                                  <span>{stage.label}</span>
+                                  <span
+                                    className={
+                                      resourceStageStatus(
+                                        selected,
+                                        stage.id
+                                      ) === "failed"
+                                        ? "text-destructive"
+                                        : "text-muted-foreground"
+                                    }
+                                  >
+                                    {resourceStageStatus(selected, stage.id)}
+                                  </span>
+                                </li>
+                              ))}
+                            </ol>
+                          )}
+                          {selected.mutationApplied &&
+                            selected.status === "failed" && (
+                              <p className="mt-4 text-sm font-medium">
+                                Kubernetes accepted the changes. Follow-up did
+                                not finish; no automatic rollback was attempted.
+                              </p>
+                            )}
+                          {selected.reasonCode && (
+                            <p className="mt-3 text-sm text-muted-foreground">
+                              {selected.reasonCode ===
+                              "live_state_changed_after_apply"
+                                ? "Live configuration or field ownership changed between apply and cleanup."
+                                : selected.reasonCode ===
+                                    "ownership_cleanup_failed"
+                                  ? "Field ownership cleanup could not finish."
+                                  : selected.reasonCode === "operation_stopped"
+                                    ? "The operation stopped before this resource was attempted."
+                                    : selected.reasonCode.replaceAll("_", " ")}
+                            </p>
+                          )}
+                          {Boolean(selected.changedPaths?.length) && (
+                            <div className="mt-3 text-sm">
+                              <p className="font-medium">Changed fields</p>
+                              <ul className="mt-1 space-y-1">
+                                {selected.changedPaths!.map((path) => (
+                                  <li
+                                    key={path}
+                                    className="font-mono text-xs break-all"
+                                  >
+                                    {path}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
                           {selected.message && (
                             <p
                               className={`mt-4 text-sm break-words ${selected.status === "failed" ? "text-destructive" : "text-muted-foreground"}`}

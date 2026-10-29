@@ -167,8 +167,22 @@ func (s *Service) reconcileUpdatePlan(ctx context.Context, input planInput, plan
 			options.DryRun = []string{metav1.DryRunAll}
 			applied, err = applyWithOwnershipMigration(ctx, rc, change.Identity.Name, body, options)
 		}
+		if immutableStatefulSetUpdate(change.Identity, err) {
+			change.Takeover = false
+			change.RecreationRequired = true
+			if err := s.planStatefulSetRecreation(ctx, input, plan, change, object); err != nil {
+				return err
+			}
+			changes = append(changes, *change)
+			continue
+		}
 		if err != nil {
 			return &resourceAccessError{identity: change.Identity, action: "patch (dry-run)", err: err}
+		}
+		for _, selected := range plan.Selection.Recreations {
+			if selected.Identity.Key() == change.Identity.Key() {
+				return errors.New("StatefulSet no longer requires recreation; refresh the plan")
+			}
 		}
 		current, ok := liveByKey[change.Identity.Key()]
 		if !ok {
@@ -196,6 +210,17 @@ func (s *Service) reconcileUpdatePlan(ctx context.Context, input planInput, plan
 		}
 		change.Before, change.After, change.ChangedPaths = before, after, paths
 		changes = append(changes, *change)
+	}
+	for _, selected := range plan.Selection.Recreations {
+		found := false
+		for _, change := range changes {
+			if change.Identity.Key() == selected.Identity.Key() && change.Recreation != nil {
+				found = true
+			}
+		}
+		if !found {
+			return errors.New("recreation selection no longer matches an immutable StatefulSet update")
+		}
 	}
 	plan.Changes = changes
 	return nil

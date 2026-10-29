@@ -243,7 +243,7 @@ func Validate(r Request, p Profile) error {
 	// namespaces (especially the enrollment/profile credential Secrets).
 	if namespace == "" && len(tail) > 0 && len(p.DeniedNamespaces) > 0 {
 		switch tail[0] {
-		case "secrets", "configmaps", "pods", "services", "serviceaccounts", "persistentvolumeclaims", "deployments", "statefulsets", "daemonsets", "replicasets", "jobs", "cronjobs", "roles", "rolebindings", "ingresses", "networkpolicies":
+		case "secrets", "configmaps", "pods", "services", "serviceaccounts", "persistentvolumeclaims", "deployments", "statefulsets", "controllerrevisions", "daemonsets", "replicasets", "jobs", "cronjobs", "roles", "rolebindings", "ingresses", "networkpolicies":
 			return errors.New("cross-namespace collections are disabled when protected namespaces are configured")
 		}
 	}

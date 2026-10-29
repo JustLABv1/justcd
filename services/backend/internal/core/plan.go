@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"slices"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Binding ties one namespace to one credential reference. Secrets stay outside plans.
@@ -62,19 +64,40 @@ const (
 	Delete ChangeKind = "delete"
 )
 
+// RecreationDependency contains metadata only and is included in the plan digest.
+type RecreationDependency struct {
+	Kind   string                  `json:"kind"`
+	Name   string                  `json:"name"`
+	UID    string                  `json:"uid"`
+	Owners []metav1.OwnerReference `json:"owners"`
+}
+
+// StatefulSetRecreation is an explicitly reviewed delete/create operation.
+type StatefulSetRecreation struct {
+	PropagationPolicy string                 `json:"propagationPolicy"`
+	Dependencies      []RecreationDependency `json:"dependencies,omitempty"`
+}
+type RecreationSelection struct {
+	Identity          Identity `json:"identity"`
+	PropagationPolicy string   `json:"propagationPolicy"`
+}
+
 type Change struct {
-	Kind                ChangeKind      `json:"kind"`
-	Takeover            bool            `json:"takeover,omitempty"`
-	Identity            Identity        `json:"identity"`
-	LiveUID             string          `json:"liveUid,omitempty"`
-	LiveResourceVersion string          `json:"liveResourceVersion,omitempty"`
-	DesiredFingerprint  string          `json:"desiredFingerprint,omitempty"`
-	LiveFingerprint     string          `json:"liveFingerprint,omitempty"`
-	Before              json.RawMessage `json:"before,omitempty"`
-	After               json.RawMessage `json:"after,omitempty"`
-	ChangedPaths        []string        `json:"changedPaths,omitempty"`
-	IgnoredPaths        []string        `json:"ignoredPaths,omitempty"`
-	IgnoreReason        string          `json:"ignoreReason,omitempty"`
+	RecreationRequired  bool                   `json:"recreationRequired,omitempty"`
+	RecreationBlocked   string                 `json:"recreationBlocked,omitempty"`
+	Recreation          *StatefulSetRecreation `json:"recreation,omitempty"`
+	Kind                ChangeKind             `json:"kind"`
+	Takeover            bool                   `json:"takeover,omitempty"`
+	Identity            Identity               `json:"identity"`
+	LiveUID             string                 `json:"liveUid,omitempty"`
+	LiveResourceVersion string                 `json:"liveResourceVersion,omitempty"`
+	DesiredFingerprint  string                 `json:"desiredFingerprint,omitempty"`
+	LiveFingerprint     string                 `json:"liveFingerprint,omitempty"`
+	Before              json.RawMessage        `json:"before,omitempty"`
+	After               json.RawMessage        `json:"after,omitempty"`
+	ChangedPaths        []string               `json:"changedPaths,omitempty"`
+	IgnoredPaths        []string               `json:"ignoredPaths,omitempty"`
+	IgnoreReason        string                 `json:"ignoreReason,omitempty"`
 }
 
 type FieldExclusion struct {
@@ -83,9 +106,10 @@ type FieldExclusion struct {
 }
 
 type PlanSelection struct {
-	KeepNamespaces bool             `json:"keepNamespaces,omitempty"`
-	Resources      []Identity       `json:"resources,omitempty"`
-	Fields         []FieldExclusion `json:"fields,omitempty"`
+	Recreations    []RecreationSelection `json:"recreations,omitempty"`
+	KeepNamespaces bool                  `json:"keepNamespaces,omitempty"`
+	Resources      []Identity            `json:"resources,omitempty"`
+	Fields         []FieldExclusion      `json:"fields,omitempty"`
 }
 
 type IgnoreRule struct {
@@ -375,6 +399,17 @@ func AuthorizeApply(plan Plan, approval *DeletionApproval, now time.Time) error 
 // RequiredApprovalCount preserves the one-owner approval behavior for plans
 // written before approval policies were added.
 func RequiredApprovalCount(plan Plan) int {
+	// Destructive recreation can never become approval-free, including legacy
+	// callers that have not populated the resolved approval policy fields.
+	hasRecreation := false
+	for _, change := range plan.Changes {
+		if change.Recreation != nil {
+			hasRecreation = true
+		}
+	}
+	if hasRecreation && plan.RequiredApprovals < 1 {
+		return 1
+	}
 	if plan.RequiredApprovals > 0 {
 		return plan.RequiredApprovals
 	}
@@ -424,6 +459,12 @@ func AuthorizeApplyMany(plan Plan, approvals []DeletionApproval, now time.Time) 
 	var deletes []Change
 	var privileged []Change
 	for _, change := range plan.Changes {
+		if change.RecreationRequired && change.Recreation == nil {
+			return errors.New("StatefulSet update requires an explicitly reviewed recreation policy or exclusion")
+		}
+		if change.RecreationBlocked != "" {
+			return errors.New(change.RecreationBlocked)
+		}
 		if change.Kind == Delete {
 			deletes = append(deletes, change)
 		}

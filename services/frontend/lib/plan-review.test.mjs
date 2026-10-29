@@ -151,3 +151,11 @@ test("current plans stop being actionable at their expiry deadline", () => {
   for (const status of ["applied", "stale", "failed"])
     assert.equal(planReviewStatus({ ...record, status }, deadline + 1), status)
 })
+
+test("server-detected StatefulSet recreation is visible even outside advisory paths", () => {
+  const candidate = change("update", { identity: { apiVersion: "apps/v1", kind: "StatefulSet", namespace: "team", name: "db" }, recreationRequired: true })
+  assert.ok(makeEntry(candidate, false).risks.includes("replacement"))
+  const selected = { ...candidate, recreation: { propagationPolicy: "Background" } }
+  assert.ok(makeEntry(selected, false).risks.includes("deletion"))
+  assert.ok(!makeEntry(selected, true).risks.includes("deletion"))
+})

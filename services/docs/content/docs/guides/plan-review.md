@@ -42,7 +42,7 @@ rule provenance is unavailable until refreshed. Actual policy changes continue
 invalidating the plan.
 
 Immutable-field warnings are evidence-based advisory warnings, not a replacement
-operation. The current backend does not automatically delete/recreate resources.
+operation. StatefulSets can be explicitly selected for reviewed recreation as described below; other resources are not automatically deleted/recreated.
 The frontend checks known Deployment/DaemonSet/StatefulSet selector paths,
 StatefulSet service/claim templates, Job selector/template, RBAC roleRef, and
 immutable Secret/ConfigMap data against the reviewed payload. Redacted values
@@ -125,3 +125,61 @@ SavePlan/PlanByID/ListPlans roundtrips through JSONB and upgraded schemas.
 The browser checks exercise the actual ChangesTab review and shared group
 navigator; authenticated policy edits, real approvals and live adoption remain
 covered by backend authorization/integration tests rather than synthetic actions.
+
+## Recreate an immutable StatefulSet
+
+When Kubernetes rejects an existing StatefulSet update because its spec contains
+immutable changes, JustCD preserves a blocked review entry. It cannot be approved
+or applied until you exclude it or choose a deletion propagation policy and save
+**Save selection**. The selection applies only to that exact resource and
+review snapshot. Refreshing the plan resets the choice; normal polling preserves
+it only while the snapshot remains identical and unexpired.
+
+- **Orphan:** retain dependent Pods and ControllerRevisions. JustCD waits for the
+  old owner references to be removed, creates the replacement, and waits for
+  adoption. The selector and governing Service must remain unchanged. The new
+  controller's update strategy can still restart Pods.
+- **Foreground:** Kubernetes deletes dependent Pods before removing the old
+  controller. JustCD also checks that the reviewed dependents are gone before
+  creating the replacement.
+- **Background:** Kubernetes removes the controller and garbage-collects its
+  dependents asynchronously. JustCD waits for the reviewed dependents to be
+  deleted before creating the replacement, preventing overlap with garbage
+  collection of the old controller.
+
+Cascading deletion can interrupt every replica. It provides neither ordered Pod
+shutdown nor eviction-based PodDisruptionBudget protection. Finalizers on
+StatefulSets and StatefulSets managed by another controller block this workflow;
+manage their cleanup or parent operator separately.
+
+Both live and desired `persistentVolumeClaimRetentionPolicy.whenDeleted` and
+`whenScaled` must be `Retain` (omitted defaults are accepted). PVC owner references
+that could cause workload deletion to delete claims also block recreation. Change
+retention independently and wait for the StatefulSet controller to reconcile
+those references before retrying. JustCD never deletes a PVC in this workflow.
+Existing claims are reused by Kubernetes naming rules: claim-template edits do
+not resize or migrate existing PVCs. Renaming a claim template can allocate new,
+empty storage; review the diff and migrate data separately.
+
+Saving a policy creates a new digest and requires fresh workspace-owner approval,
+with at least one approval and the higher effective sync/deletion policy count.
+Automatic sync cannot bypass that approval. Field exclusions and persistent field
+ignores cannot be combined with recreation because a new object needs its full
+manifest. Planning checks create and delete permissions with dry runs. Create
+validation uses a generated temporary name because the real name already exists;
+name-specific admission checks may still reject the actual replacement.
+
+The credential needs StatefulSet get/patch/create/delete plus namespaced get/list
+access to Pods, PVCs, and `apps/v1` ControllerRevisions. The bundled agent chart
+includes ControllerRevision access; existing installations may need an RBAC update.
+A missing permission blocks the operation before deletion. Dependency identities
+and owner references are digest-bound and rechecked immediately before deletion.
+
+The operation timeline shows deletion, dependency cleanup, creation, and (for
+Orphan) adoption. Each wait is bounded to five minutes; JustCD does not remove
+finalizers or force-delete dependent Pods. Application health continues to report
+rollout readiness after controller recreation. If a delete request has been sent
+and a later step fails, the operation stops with an explicit incomplete-recreation
+message and no automatic retry. Inspect the live controller, Pods, and PVCs and
+use the pre-operation recovery checkpoint to build a fresh recovery plan. Other
+resources already applied remain changed; there is no automatic rollback.

@@ -37,6 +37,8 @@ func setReviewReasons(plan *core.Plan, app store.Application, clusterFallback bo
 		plan.ApprovalReasons = append(plan.ApprovalReasons, core.ApprovalReason{Code: code, Rule: rule, Description: description, Resources: resources})
 	}
 	switch plan.ApprovalKind {
+	case "recreation":
+		add("recreation", "safeguard.statefulset_recreation", "StatefulSet deletion and recreation requires owner approval and honors the higher sync and deletion policy count. Review propagation policy, Pod disruption, and PVC retention.", all)
 	case "rollback":
 		add("rollback", "safeguard.rollback", "Every rollback requires distinct workspace owner approval, including a target with no resource changes.", all)
 		if len(deleted) > 0 {

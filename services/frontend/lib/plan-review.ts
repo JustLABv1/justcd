@@ -70,7 +70,7 @@ export function hiddenChangedPaths(
 }
 
 // Evidence only: Kubernetes rejects these well-known immutable updates. JustCD
-// does not automatically delete/recreate them, and CRD immutability is unknown.
+// requires an explicit policy and approval to recreate StatefulSets, and CRD immutability is unknown.
 export function immutablePaths(change: Change): string[] {
   if (change.kind !== "update" || !change.before || !change.after) return []
   const rules: Record<string, string[]> = {
@@ -132,8 +132,8 @@ export function makeEntry(
 ): ReviewEntry {
   const paths = immutablePaths(change),
     risks: Risk[] = []
-  if (!ignored && change.kind === "delete") risks.push("deletion")
-  if (!ignored && paths.length) risks.push("replacement")
+  if (!ignored && (change.kind === "delete" || change.recreation)) risks.push("deletion")
+  if (!ignored && (paths.length || change.recreationRequired)) risks.push("replacement")
   if (!ignored && change.takeover) risks.push("ownership")
   if (!ignored && change.identity.clusterScoped) risks.push("cluster")
   const retained = ignored && plan?.decommission && plan.selection?.keepNamespaces && change.identity.apiVersion === "v1" && change.identity.kind === "Namespace" && change.identity.clusterScoped

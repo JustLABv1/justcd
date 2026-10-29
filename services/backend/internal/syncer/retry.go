@@ -32,6 +32,10 @@ type RetryDecision struct {
 func retryJitterSample() float64 { return rand.Float64() }
 
 func ClassifyRetryError(err error) RetryClassification {
+	var recreation *recreationFailure
+	if errors.As(err, &recreation) {
+		return RetryClassification{ErrorCode: recreation.ErrorCode(), TerminalReason: "statefulset_recreation_requires_review"}
+	}
 	if err == nil {
 		return RetryClassification{ErrorCode: "operation.unknown_failure", TerminalReason: "unknown_failure"}
 	}

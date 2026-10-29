@@ -8,17 +8,18 @@ import (
 )
 
 type ResourceProgress struct {
-	Identity        core.Identity `json:"identity"`
-	Action          string        `json:"action"`
-	Status          string        `json:"status"`
-	Stage           string        `json:"stage,omitempty"`
-	AttemptCount    int           `json:"attemptCount"`
-	StartedAt       *time.Time    `json:"startedAt,omitempty"`
-	FinishedAt      *time.Time    `json:"finishedAt,omitempty"`
-	MutationApplied bool          `json:"mutationApplied,omitempty"`
-	ReasonCode      string        `json:"reasonCode,omitempty"`
-	ChangedPaths    []string      `json:"changedPaths,omitempty"`
-	Message         string        `json:"message,omitempty"`
+	PropagationPolicy string        `json:"propagationPolicy,omitempty"`
+	Identity          core.Identity `json:"identity"`
+	Action            string        `json:"action"`
+	Status            string        `json:"status"`
+	Stage             string        `json:"stage,omitempty"`
+	AttemptCount      int           `json:"attemptCount"`
+	StartedAt         *time.Time    `json:"startedAt,omitempty"`
+	FinishedAt        *time.Time    `json:"finishedAt,omitempty"`
+	MutationApplied   bool          `json:"mutationApplied,omitempty"`
+	ReasonCode        string        `json:"reasonCode,omitempty"`
+	ChangedPaths      []string      `json:"changedPaths,omitempty"`
+	Message           string        `json:"message,omitempty"`
 }
 
 func NewOperationProgress(plan core.Plan) (OperationProgress, error) {
@@ -34,7 +35,15 @@ func NewOperationProgress(plan core.Plan) (OperationProgress, error) {
 	}
 	for _, change := range changes {
 		if !seen[change.Identity.Key()] {
-			p.Resources = append(p.Resources, ResourceProgress{Identity: change.Identity, Action: string(change.Kind), Status: "queued"})
+			action := string(change.Kind)
+			if change.Recreation != nil {
+				action = "recreate"
+			}
+			entry := ResourceProgress{Identity: change.Identity, Action: action, Status: "queued"}
+			if change.Recreation != nil {
+				entry.PropagationPolicy = change.Recreation.PropagationPolicy
+			}
+			p.Resources = append(p.Resources, entry)
 			seen[change.Identity.Key()] = true
 		}
 	}

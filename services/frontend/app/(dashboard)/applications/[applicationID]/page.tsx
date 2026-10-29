@@ -32,7 +32,7 @@ import { useToast } from "@/components/toast-provider"
 import { APIError, api, apiDelete, apiPost, errorMessage, taskError } from "@/lib/api"
 import { BranchTestControls } from "@/components/branch-test-controls"
 import { PullRequestsWorkspace } from "@/components/pull-requests-workspace"
-import type { Application, ApplicationHealthTransition, BackgroundTask, FieldExclusion, Identity, IgnoreRule, IgnoreSelector, ListResponse, ManagedResource, Operation, OwnershipConflict, PlanApprovalSummary, PlanRecord, Workspace, WorkspaceMember, ResourceTopology, RollbackTarget } from "@/lib/types"
+import type { RecreationSelection, Application, ApplicationHealthTransition, BackgroundTask, FieldExclusion, Identity, IgnoreRule, IgnoreSelector, ListResponse, ManagedResource, Operation, OwnershipConflict, PlanApprovalSummary, PlanRecord, Workspace, WorkspaceMember, ResourceTopology, RollbackTarget } from "@/lib/types"
 
 export default function ApplicationDetailPage() {
   const { applicationID } = useParams<{ applicationID: string }>()
@@ -58,7 +58,7 @@ export default function ApplicationDetailPage() {
   const [resumeRevision, setResumeRevision] = useState("")
   const [ignoreRules, setIgnoreRules] = useState<IgnoreRule[]>([])
   const [ignoreSelectors, setIgnoreSelectors] = useState<IgnoreSelector[]>([])
-  const [selectionDraft, setSelectionDraft] = useState<{ planId: string; resources: Identity[]; fields: FieldExclusion[] } | null>(null)
+  const [selectionDraft, setSelectionDraft] = useState<{ planId: string; resources: Identity[]; fields: FieldExclusion[]; recreations?: RecreationSelection[] } | null>(null)
   const [ignoreReasons, setIgnoreReasons] = useState<Record<string, string>>({})
   const [approvalSummary, setApprovalSummary] = useState<PlanApprovalSummary | null>(null)
   const [approvalError, setApprovalError] = useState<{ planId: string; cause: unknown } | null>(null)
@@ -101,17 +101,16 @@ export default function ApplicationDetailPage() {
   const selectionDraftForPlan = activePlan && selectionDraft?.planId === activePlan.id ? selectionDraft : null
   const selectionResources = selectionDraftForPlan?.resources ?? activePlan?.plan.selection?.resources ?? []
   const selectionFields = selectionDraftForPlan?.fields ?? activePlan?.plan.selection?.fields ?? []
-  function setSelectionResources(next: Identity[] | ((current: Identity[]) => Identity[])) {
+  const selectionRecreations = selectionDraftForPlan?.recreations ?? activePlan?.plan.selection?.recreations ?? []
+  function setRecreation(identity: Identity, policy: string) {
     if (!activePlan) return
-    setSelectionDraft((draft) => {
-      const base = draft?.planId === activePlan.id ? draft : { planId: activePlan.id, resources: activePlan.plan.selection?.resources ?? [], fields: activePlan.plan.selection?.fields ?? [] }
-      return { ...base, resources: typeof next === "function" ? next(base.resources) : next }
-    })
+    setSelectionDraft({ planId: activePlan.id, resources: selectionResources, fields: selectionFields, recreations: [...selectionRecreations.filter(item => !sameIdentity(item.identity, identity)), ...(policy ? [{ identity, propagationPolicy: policy as RecreationSelection["propagationPolicy"] }] : [])] })
+    setApprovalSummary(null)
   }
   function setSelectionFields(next: FieldExclusion[] | ((current: FieldExclusion[]) => FieldExclusion[])) {
     if (!activePlan) return
     setSelectionDraft((draft) => {
-      const base = draft?.planId === activePlan.id ? draft : { planId: activePlan.id, resources: activePlan.plan.selection?.resources ?? [], fields: activePlan.plan.selection?.fields ?? [] }
+      const base = draft?.planId === activePlan.id ? draft : { planId: activePlan.id, resources: activePlan.plan.selection?.resources ?? [], fields: activePlan.plan.selection?.fields ?? [], recreations: activePlan.plan.selection?.recreations ?? [] }
       return { ...base, fields: typeof next === "function" ? next(base.fields) : next }
     })
   }
@@ -439,7 +438,9 @@ export default function ApplicationDetailPage() {
   }
 
   function toggleResourceExclusion(identity: Identity) {
-    setSelectionResources((current) => current.some((item) => sameIdentity(item, identity)) ? current.filter((item) => !sameIdentity(item, identity)) : [...current, identity])
+    if (!activePlan) return
+    const removing = selectionResources.some(item => sameIdentity(item, identity))
+    setSelectionDraft({ planId: activePlan.id, resources: removing ? selectionResources.filter(item => !sameIdentity(item, identity)) : [...selectionResources, identity], fields: selectionFields, recreations: removing ? selectionRecreations : selectionRecreations.filter(item => !sameIdentity(item.identity, identity)) })
     setApprovalSummary(null)
   }
 
@@ -456,7 +457,8 @@ export default function ApplicationDetailPage() {
     const originalFields = activePlan.plan.selection?.fields ?? []
     const resources = (items: Identity[]) => items.map(diffId).sort().join("\n")
     const fields = (items: FieldExclusion[]) => items.map((item) => `${diffId(item.identity)}\n${item.path}`).sort().join("\n")
-    return resources(selectionResources) !== resources(originalResources) || fields(selectionFields) !== fields(originalFields)
+    const recreations = (items: RecreationSelection[]) => items.map(item => `${diffId(item.identity)}:${item.propagationPolicy}`).sort().join("\n")
+    return resources(selectionResources) !== resources(originalResources) || fields(selectionFields) !== fields(originalFields) || recreations(selectionRecreations) !== recreations(activePlan.plan.selection?.recreations ?? [])
   })()
 
   async function keepDecommissionNamespaces(keepNamespaces: boolean) {
@@ -476,7 +478,7 @@ export default function ApplicationDetailPage() {
     if (!activePlan || !selectionDirty) return
     setBusy(true); setPendingAction("selection"); setError(null); setApprovalSummary(null)
     try {
-      const plan = await apiPost<PlanRecord>(`/api/v1/plans/${encodeURIComponent(activePlan.id)}/selections`, { resources: selectionResources, fields: selectionFields })
+      const plan = await apiPost<PlanRecord>(`/api/v1/plans/${encodeURIComponent(activePlan.id)}/selections`, { resources: selectionResources, fields: selectionFields, recreations: selectionRecreations })
       setActivePlan(plan)
       setPlans((current) => [plan, ...current.filter((item) => item.id !== plan.id)])
       toast.success(`A new immutable plan is ready with ${plan.plan.changes.length} change${plan.plan.changes.length === 1 ? "" : "s"} to apply.`)
@@ -807,8 +809,8 @@ export default function ApplicationDetailPage() {
           <ChangesTab plans={plans} activePlan={activePlan} onSelectPlan={(id) => { setApprovalSummary(null); setActivePlan(plans.find((plan) => plan.id === id) ?? null) }} plansLoading={pendingData.plans} plansError={plansError} retryingPlans={retryingPlans} onRetryPlans={() => void retryPlans()}
             decommissioning={application.decommissioning} canDeploy={canDeploy} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} hasOwnershipConflict={Boolean(ownershipConflict)}
             onReviewOwnershipConflict={() => setConflictOpen(true)} reviewResource={reviewResource} onReviewResourceChange={setReviewResource}
-            selectionResources={selectionResources} selectionFields={selectionFields} selectionDirty={selectionDirty} onToggleResource={toggleResourceExclusion} onToggleField={toggleFieldExclusion}
-            onResetSelection={() => { setSelectionResources(activePlan?.plan.selection?.resources ?? []); setSelectionFields(activePlan?.plan.selection?.fields ?? []) }} onSaveSelection={() => void savePlanSelection()} onKeepNamespacesChange={(keep) => void keepDecommissionNamespaces(keep)}
+            selectionRecreations={selectionRecreations} onRecreationChange={setRecreation} selectionResources={selectionResources} selectionFields={selectionFields} selectionDirty={selectionDirty} onToggleResource={toggleResourceExclusion} onToggleField={toggleFieldExclusion}
+            onResetSelection={() => setSelectionDraft(null)} onSaveSelection={() => void savePlanSelection()} onKeepNamespacesChange={(keep) => void keepDecommissionNamespaces(keep)}
             ignoreRules={ignoreRules} ignoreReasons={ignoreReasons} onIgnoreReasonChange={(key, reason) => setIgnoreReasons((current) => ({ ...current, [key]: reason }))} onSaveIgnore={(identity, path, reason) => void saveIgnoreRule(identity, path, reason)} onRemoveRule={removeIgnoreRule}
             requiredApprovals={requiredApprovals} approvedApprovals={approvedApprovals} approvalsComplete={approvalsComplete} approverRoles={displayedApproverRoles} approverMembers={displayedApproverMembers} approvalSummary={currentApprovalSummary} approvalError={approvalError && approvalError.planId === activePlanId ? approvalError.cause : null}
             autoApplyAfterApproval={(application.syncPolicy === "auto-safe" || application.syncPolicy === "auto") && !application.autoSyncPaused && !application.decommissioning && !activePlan?.plan.rollback && !activePlan?.plan.decommission}

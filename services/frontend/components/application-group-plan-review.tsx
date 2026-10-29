@@ -176,7 +176,8 @@ export function ApplicationGroupPlanReview({
                       />
                     </div>
                   )}
-                  {entry.immutablePaths.length > 0 && (
+                  {change.recreationRequired && <p role="alert" className="bg-destructive/5 p-3 text-sm">{change.recreation ? `Delete and recreate StatefulSet using ${change.recreation.propagationPolicy} propagation. Review Pod disruption and retained PVCs in the child plan.` : "Immutable StatefulSet update is blocked. Open the child plan to select a recreation policy or exclude it."}{change.recreationBlocked ? ` ${change.recreationBlocked}` : ""}</p>}
+                  {!change.recreationRequired && entry.immutablePaths.length > 0 && (
                     <p role="alert" className="bg-warning/10 p-3 text-sm">
                       Immutable-field update: {entry.immutablePaths.join(", ")}.
                       Kubernetes may reject this update; deletion/recreation

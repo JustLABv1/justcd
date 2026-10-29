@@ -93,7 +93,7 @@ func (s *Service) reconcileApplication(parent context.Context, logger *slog.Logg
 		return
 	}
 	checkStarted := time.Now()
-	record, err := s.BuildPlan(ctx, app.ID, systemActorID)
+	record, err := s.buildPollPlan(ctx, app)
 	if err != nil {
 		s.Metrics.RecordReconciliation("failed", time.Since(checkStarted))
 		observability.MarkError(span, err)
@@ -171,4 +171,24 @@ func (s *Service) reconcileApplication(parent context.Context, logger *slog.Logg
 	} else if healthErr := s.RefreshApplicationHealth(ctx, app); healthErr != nil && ctx.Err() == nil {
 		logger.WarnContext(ctx, "could not fully refresh Kubernetes application health", "applicationId", app.ID, "error", healthErr)
 	}
+}
+
+// Keep an explicit recreation review intact while its exact snapshot remains
+// current. Never carry destructive intent to a different commit or changed live state.
+func (s *Service) buildPollPlan(ctx context.Context, app store.Application) (store.PlanRecord, error) {
+	plans, err := s.Store.ListPlans(ctx, app.ID, 1)
+	if err != nil {
+		return store.PlanRecord{}, err
+	}
+	if len(plans) > 0 {
+		record := plans[0]
+		if record.Status == "current" && time.Now().Before(record.ExpiresAt) && len(record.Plan.Selection.Recreations) > 0 {
+			fresh, err := s.RecheckPlan(ctx, app, record)
+			if err == nil && fresh.Digest == record.Plan.Digest {
+				_, err = s.Store.DB.ExecContext(ctx, `UPDATE applications SET health=$2,status_issues='[]'::jsonb,last_checked_at=NOW(),updated_at=NOW() WHERE id=$1`, app.ID, healthForPlan(fresh))
+				return record, err
+			}
+		}
+	}
+	return s.BuildPlan(ctx, app.ID, systemActorID)
 }

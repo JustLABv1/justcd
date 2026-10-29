@@ -93,3 +93,12 @@ func TestRedactManifestMasksSensitiveKeysInOtherKinds(t *testing.T) {
 		t.Fatalf("ordinary non-secret fields should remain visible: %s", redacted)
 	}
 }
+
+func TestPlanViewPreservesReviewedStatefulSetRecreation(t *testing.T) {
+	change := core.Change{Kind: core.Update, Identity: core.Identity{APIVersion: "apps/v1", Kind: "StatefulSet", Namespace: "team", Name: "db"}, RecreationRequired: true, Recreation: &core.StatefulSetRecreation{PropagationPolicy: "Foreground", Dependencies: []core.RecreationDependency{{Kind: "PersistentVolumeClaim", Name: "data-db-0", UID: "pvc-uid"}}}}
+	view := toPlanView(store.PlanRecord{Plan: core.Plan{Changes: []core.Change{change}}})
+	got := view.Plan.Changes[0]
+	if !got.RecreationRequired || got.Recreation == nil || got.Recreation.PropagationPolicy != "Foreground" || got.Recreation.Dependencies[0].UID != "pvc-uid" {
+		t.Fatalf("review omitted destructive operation evidence: %+v", got)
+	}
+}

@@ -22,7 +22,7 @@ import {
   rolloutFocusResource,
   rolloutStatus,
   rolloutSummary,
-  resourceStages,
+  resourceStagesFor,
   resourceStageStatus,
   rolloutResourceKey,
   type RolloutResource,
@@ -488,10 +488,10 @@ export function RolloutPanel({
                           </h3>
                           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
                             <dt className="text-muted-foreground">Action</dt>
-                            <dd>{selected.action.replaceAll("_", " ")}</dd>
+                            <dd>{selected.action.replaceAll("_", " ")}{selected.propagationPolicy ? ` · ${selected.propagationPolicy}` : ""}</dd>
                             <dt className="text-muted-foreground">Stage</dt>
                             <dd>
-                              {resourceStages.find(
+                              {resourceStagesFor(selected).find(
                                 (stage) => stage.id === selected.stage
                               )?.label ??
                                 selected.stage ??
@@ -509,12 +509,12 @@ export function RolloutPanel({
                                 : "Not started"}
                             </dd>
                           </dl>
-                          {selected.action === "update" && (
+                          {(selected.action === "update" || selected.action === "recreate") && (
                             <ol
                               aria-label="Resource steps"
                               className="mt-4 space-y-2 text-sm"
                             >
-                              {resourceStages.map((stage) => (
+                              {resourceStagesFor(selected).map((stage) => (
                                 <li
                                   key={stage.id}
                                   className="flex justify-between gap-3"

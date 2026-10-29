@@ -207,6 +207,12 @@ func (s *Server) approvePlanNow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "plan has changed; review it again before approving")
 		return
 	}
+	for _, change := range record.Plan.Changes {
+		if change.RecreationRequired && (change.Recreation == nil || change.RecreationBlocked != "") {
+			writeError(w, http.StatusConflict, "select a safe StatefulSet recreation policy or exclude the update before approving")
+			return
+		}
+	}
 	required := core.RequiredApprovalCount(record.Plan)
 	if required == 0 {
 		writeError(w, http.StatusConflict, "this plan does not require approval")
@@ -504,7 +510,7 @@ func (s *Server) createPlanSelection(w http.ResponseWriter, r *http.Request) {
 		if err := decodeJSON(w, r, &selection); err != nil {
 			return
 		}
-		if len(selection.Resources) > 0 || len(selection.Fields) > 0 {
+		if len(selection.Resources) > 0 || len(selection.Fields) > 0 || len(selection.Recreations) > 0 {
 			writeError(w, http.StatusBadRequest, "deletion plans only support the keepNamespaces option")
 			return
 		}
@@ -529,7 +535,7 @@ func (s *Server) createPlanSelection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "namespace retention is only available for deletion plans")
 		return
 	}
-	if len(input.Resources) > 10000 || len(input.Fields) > 10000 {
+	if len(input.Resources) > 10000 || len(input.Fields) > 10000 || len(input.Recreations) > 1000 {
 		writeError(w, http.StatusBadRequest, "plan selection contains too many exclusions")
 		return
 	}
@@ -601,6 +607,37 @@ func (s *Server) createPlanSelection(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "field exclusion must target a changed field in this plan; arrays can only be excluded as a whole")
 			return
 		}
+	}
+	seenRecreations := map[string]bool{}
+	for i := range input.Recreations {
+		selected := &input.Recreations[i]
+		if selected.Identity.ClusterID == "" {
+			selected.Identity.ClusterID = app.ClusterID
+		}
+		key := selected.Identity.Key()
+		valid := false
+		for _, change := range baseline.Changes {
+			if change.Identity.Key() == key && change.RecreationRequired && change.Kind == core.Update {
+				valid = true
+			}
+		}
+		if !valid || seenRecreations[key] || (selected.PropagationPolicy != "Orphan" && selected.PropagationPolicy != "Foreground" && selected.PropagationPolicy != "Background") {
+			writeError(w, http.StatusBadRequest, "recreation must select a unique immutable StatefulSet update and Orphan, Foreground, or Background propagation")
+			return
+		}
+		for _, identity := range input.Resources {
+			if identity.Key() == key {
+				writeError(w, http.StatusBadRequest, "cannot both recreate and exclude a StatefulSet")
+				return
+			}
+		}
+		for _, field := range input.Fields {
+			if field.Identity.Key() == key {
+				writeError(w, http.StatusBadRequest, "cannot recreate a StatefulSet with excluded fields")
+				return
+			}
+		}
+		seenRecreations[key] = true
 	}
 	newRecord, err := s.Syncer.BuildPlanWithSelection(r.Context(), app, currentUser(r).ID, input)
 	if err != nil {

@@ -620,9 +620,12 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 func setSyncApprovalPolicy(plan *core.Plan, app store.Application, policy store.ApprovalPolicy) {
 	kind := "sync"
 	rule := policy.Sync
-	hasDeletes, hasClusterScoped, hasTakeover := false, false, false
+	hasDeletes, hasClusterScoped, hasTakeover, hasRecreation := false, false, false, false
 	for _, change := range plan.Changes {
-		if change.Kind == core.Delete {
+		if change.RecreationRequired {
+			hasRecreation = true
+		}
+		if change.Kind == core.Delete || change.Recreation != nil {
 			hasDeletes = true
 		}
 		if change.Identity.ClusterScoped {
@@ -654,6 +657,9 @@ func setSyncApprovalPolicy(plan *core.Plan, app store.Application, policy store.
 			kind, rule = "sync", store.ApprovalRule{}
 		}
 	}
+	if hasRecreation {
+		kind, rule = "recreation", store.ApprovalRule{RequiredApprovals: max(1, rule.RequiredApprovals, policy.Sync.RequiredApprovals, policy.Deletion.RequiredApprovals), ApproverRoles: []string{"owner"}, ApproverUserIDs: []string{}}
+	}
 	setApprovalRule(plan, kind, rule)
 	setReviewReasons(plan, app, hasClusterScoped && policy.Sync.RequiredApprovals == 0 && !hasDeletes)
 }
@@ -670,6 +676,9 @@ func setApprovalRule(plan *core.Plan, kind string, rule store.ApprovalRule) {
 }
 
 func normalizeSelection(selection core.PlanSelection) core.PlanSelection {
+	sort.Slice(selection.Recreations, func(i, j int) bool {
+		return selection.Recreations[i].Identity.Key() < selection.Recreations[j].Identity.Key()
+	})
 	sort.Slice(selection.Resources, func(i, j int) bool { return selection.Resources[i].Key() < selection.Resources[j].Key() })
 	resources := selection.Resources[:0]
 	for _, identity := range selection.Resources {

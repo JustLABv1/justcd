@@ -110,3 +110,13 @@ test("partial apply stays distinct from completion and skipped work", async () =
   )
   assert.equal(rolloutStatus(resource("old", "failed")), "failed")
 })
+
+test("recreation timeline separates deletion, creation, and optional adoption", async () => {
+  const { resourceStagesFor, resourceStageStatus, rolloutStatus } = await import("./rollout-timeline.ts")
+  const orphan = resource("db", "running", { action: "recreate", propagationPolicy: "Orphan", stage: "waiting_statefulset_dependents", mutationApplied: true })
+  assert.ok(resourceStagesFor(orphan).some(s => s.id === "waiting_statefulset_adoption"))
+  assert.ok(!resourceStagesFor({ ...orphan, propagationPolicy: "Background" }).some(s => s.id === "waiting_statefulset_adoption"))
+  assert.equal(resourceStageStatus(orphan, "deleting_statefulset"), "complete")
+  assert.equal(resourceStageStatus(orphan, "recreating_statefulset"), "not started")
+  assert.equal(rolloutStatus({ ...orphan, status: "failed" }), "Recreation incomplete")
+})

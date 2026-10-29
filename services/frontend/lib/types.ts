@@ -356,7 +356,11 @@ export type OwnershipConflict = {
   hasOwnerReferences: boolean
 }
 
+export type RecreationSelection = { identity: Identity; propagationPolicy: "Orphan" | "Foreground" | "Background" }
 export type Change = {
+  recreationRequired?: boolean
+  recreationBlocked?: string
+  recreation?: { propagationPolicy: RecreationSelection["propagationPolicy"]; dependencies?: { kind: string; name: string; uid: string; owners: unknown }[] }
   kind: "create" | "update" | "delete"
   takeover?: boolean
   identity: Identity
@@ -372,7 +376,7 @@ export type Change = {
 }
 
 export type FieldExclusion = { identity: Identity; path: string }
-export type PlanSelection = { keepNamespaces?: boolean; resources?: Identity[]; fields?: FieldExclusion[] }
+export type PlanSelection = { recreations?: RecreationSelection[]; keepNamespaces?: boolean; resources?: Identity[]; fields?: FieldExclusion[] }
 export type IgnoreRule = {
   managedByGit?: boolean
   id: string
@@ -523,6 +527,7 @@ export type Operation = {
       identity: Identity
       action: string
       status: "queued" | "running" | "retrying" | "succeeded" | "failed" | "skipped"
+      propagationPolicy?: "Orphan" | "Foreground" | "Background"
       mutationApplied?: boolean
       reasonCode?: string
       changedPaths?: string[]

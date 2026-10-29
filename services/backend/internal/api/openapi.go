@@ -609,8 +609,8 @@ paths:
         '204': { description: Rule deleted }
   /plans/{planID}/selections:
     post:
-      summary: Create a new immutable plan excluding selected resources or changed fields
-      description: Decommission plans accept only keepNamespaces (boolean), restricted to workspace owners. The option retains explicitly managed Namespace resources while deleting other app resources. This creates a new immutable snapshot requiring fresh approval; live state is rechecked during approval and apply.
+      summary: Create a new immutable plan with exclusions or reviewed StatefulSet recreation
+      description: Normal plans accept resources and fields exclusions and recreations entries with identity and propagationPolicy (Orphan, Foreground, Background). Recreation must target an immutable StatefulSet update, cannot combine with field exclusions, and requires Retain PVC policies and safe claim owner references. It creates a fresh owner-approved plan using the higher sync/deletion approval count. Decommission plans accept only keepNamespaces (boolean), restricted to workspace owners. The option retains explicitly managed Namespace resources while deleting other app resources. This creates a new immutable snapshot requiring fresh approval; live state is rechecked during approval and apply.
       responses:
         '201': { description: Selected plan snapshot }
         '409': { description: Source plan is stale; includes refreshed plan }

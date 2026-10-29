@@ -60,7 +60,7 @@ export function rolloutFocusResource(
 
 export function rolloutStatus(resource: RolloutResource) {
   return resource.status === "failed" && resource.mutationApplied
-    ? "Applied · follow-up failed"
+    ? resource.action === "recreate" ? "Recreation incomplete" : "Applied · follow-up failed"
     : resource.status
 }
 export function rolloutSummary(resources: readonly RolloutResource[]) {
@@ -77,10 +77,21 @@ export const resourceStages = [
   { id: "ownership_cleanup", label: "Clean up field ownership" },
   { id: "recording", label: "Record completion" },
 ] as const
+export function resourceStagesFor(resource: RolloutResource) {
+  return resource.action === "recreate" ? [
+    { id: "checking_live", label: "Check reviewed state and PVC safety" },
+    { id: "deleting_statefulset", label: "Delete StatefulSet with reviewed policy" },
+    { id: "waiting_statefulset_dependents", label: "Wait for deletion or orphaning" },
+    { id: "recreating_statefulset", label: "Create replacement StatefulSet" },
+    ...(resource.propagationPolicy === "Orphan" ? [{ id: "waiting_statefulset_adoption", label: "Wait for orphan adoption" }] : []),
+    { id: "recording", label: "Record completion" },
+  ] : resourceStages
+}
 export function resourceStageStatus(resource: RolloutResource, stage: string) {
   if (resource.status === "succeeded") return "complete"
-  const current = resourceStages.findIndex((s) => s.id === resource.stage)
-  const index = resourceStages.findIndex((s) => s.id === stage)
+  const stages = resourceStagesFor(resource)
+  const current = stages.findIndex((s) => s.id === resource.stage)
+  const index = stages.findIndex((s) => s.id === stage)
   if (resource.mutationApplied && stage === "applying") return "complete"
   if (
     current < 0 ||

@@ -63,6 +63,14 @@ func (s *Service) ApplyWithApprovals(ctx context.Context, planID, actorID string
 	if err := s.Store.CheckPlanGuardrails(ctx, record.ID); err != nil {
 		return store.Operation{}, err
 	}
+	for _, change := range record.Plan.Changes {
+		if change.RecreationRequired && change.Recreation == nil {
+			return store.Operation{}, errors.New("select a StatefulSet recreation policy or exclude the update before applying")
+		}
+		if change.RecreationBlocked != "" {
+			return store.Operation{}, errors.New(change.RecreationBlocked)
+		}
+	}
 	required := core.RequiredApprovalCount(record.Plan)
 	if required > 0 {
 		if len(approvalIDs) < required {
@@ -140,7 +148,8 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 	finishFailure := func(cause error, planStatus string) (store.Operation, error) {
 		finishCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if errors.Is(cause, store.ErrOperationCancelled) {
+		var incompleteRecreation *recreationFailure
+		if errors.Is(cause, store.ErrOperationCancelled) && !errors.As(cause, &incompleteRecreation) {
 			if err := s.Store.FinishCancelledOperation(finishCtx, operation); err != nil {
 				return operation, err
 			}
@@ -157,6 +166,13 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 					if errors.As(cause, &changed) {
 						r.ReasonCode, r.ChangedPaths = "live_state_changed_after_apply", changed.Paths
 					}
+				}
+			}
+		}
+		if errors.As(cause, &incompleteRecreation) && operation.Progress.Current != nil {
+			for i := range operation.Progress.Resources {
+				if operation.Progress.Resources[i].Identity.Key() == operation.Progress.Current.Key() {
+					operation.Progress.Resources[i].ReasonCode = "statefulset_recreation_incomplete"
 				}
 			}
 		}
@@ -508,6 +524,10 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 }
 
 func safeApplyFailure(cause error, progress store.OperationProgress, operationType ...string) string {
+	var recreation *recreationFailure
+	if errors.As(cause, &recreation) {
+		return recreation.Error()
+	}
 	name := "Sync"
 	if len(operationType) > 0 && operationType[0] == "rollback" {
 		name = "Rollback"
@@ -559,6 +579,12 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 			return fmt.Errorf("recheck create target %s %s/%s: %w", resource.Identity.Kind, resource.Identity.Namespace, resource.Identity.Name, err)
 		}
 	} else if change.Kind == core.Update {
+		if change.RecreationRequired && change.Recreation == nil {
+			return errors.New("StatefulSet recreation policy is required")
+		}
+		if change.Recreation != nil {
+			return s.recreateStatefulSet(ctx, input, applicationID, resource, change, resourceClient)
+		}
 		current, err := resourceClient.Get(ctx, resource.Identity.Name, metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("recheck update target %s %s/%s: %w", resource.Identity.Kind, resource.Identity.Namespace, resource.Identity.Name, err)

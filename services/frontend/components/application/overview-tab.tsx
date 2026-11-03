@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button"
 import { Disclosure } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
 import { StatusBadge } from "@/components/ui-kit"
+import { ago } from "@/lib/relative-time"
+import type { ApplicationStatus } from "@/lib/application-status"
 import { applicationResourceNodes } from "@/lib/topology-view"
 import { SyncHistoryChart } from "@/components/application/sync-history-chart"
 import type {
@@ -41,6 +43,7 @@ function SectionLoading({ label }: { label: string }) {
 
 export function OverviewTab({
   application,
+  status,
   latestPlan,
   plansError,
   retryingPlans,
@@ -56,6 +59,7 @@ export function OverviewTab({
   onSelectTab,
 }: {
   application: Application
+  status: ApplicationStatus
   latestPlan?: PlanRecord
   plansError: unknown | null
   retryingPlans: boolean
@@ -75,7 +79,8 @@ export function OverviewTab({
     { create: 0, update: 0, delete: 0 }
   )
   const current = latestPlan?.status === "current"
-  const blocked = (application.statusIssues?.length ?? 0) > 0
+  const blocked = status.blocked
+  const lastSync = operations.find((operation) => operation.status === "succeeded")
   const resources = topology ? applicationResourceNodes(topology) : []
   const observed = resources.filter((node) => node.source === "kubernetes").length
   const planLabel =
@@ -240,8 +245,11 @@ export function OverviewTab({
             {application.lastSyncedRevision && (
               <>
                 <dt className="text-muted-foreground">Last synced</dt>
-                <dd className="font-mono text-xs break-all">
-                  {application.lastSyncedRevision.slice(0, 12)}
+                <dd className="break-all">
+                  {lastSync?.finishedAt && <span>{ago(lastSync.finishedAt)} · </span>}
+                  <span className="font-mono text-xs" title={application.lastSyncedRevision}>
+                    {application.lastSyncedRevision.slice(0, 12)}
+                  </span>
                 </dd>
               </>
             )}
@@ -271,7 +279,7 @@ export function OverviewTab({
           .join(",")}
         onViewActivity={() => onSelectTab("activity")}
       />
-      <section
+      {(pending.operations || operationsError != null || operations.length > 0) && <section
         aria-label="Recent activity"
         className="rounded-xl border bg-card"
       >
@@ -312,12 +320,8 @@ export function OverviewTab({
               </li>
             ))}
           </ol>
-        ) : (
-          <p className="px-5 pb-5 text-sm text-muted-foreground">
-            No operations recorded yet.
-          </p>
-        )}
-      </section>
+        ) : null}
+      </section>}
     </div>
   )
 }

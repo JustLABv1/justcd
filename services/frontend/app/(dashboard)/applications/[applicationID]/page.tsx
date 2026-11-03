@@ -17,6 +17,7 @@ import { OperationBar, type RollbackRequest } from "@/components/application/ope
 import { OverviewTab } from "@/components/application/overview-tab"
 import { OwnershipConflictDialog } from "@/components/application/ownership-conflict-dialog"
 import { applicationResourceNodes } from "@/lib/topology-view"
+import { deriveApplicationStatus } from "@/lib/application-status"
 import { RuntimeHealthStrip } from "@/components/application/runtime-health"
 import { SettingsTab } from "@/components/application/settings-tab"
 import { ApplicationDetailSkeleton } from "@/components/application-detail-skeleton"
@@ -26,7 +27,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { ResourceMap } from "@/components/resource-map"
-import { PageHeading, StatusBadge } from "@/components/ui-kit"
+import { PageHeading } from "@/components/ui-kit"
 import { ErrorDetailsButton } from "@/components/error-details"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
@@ -730,10 +731,11 @@ export default function ApplicationDetailPage() {
     ? !canApprove
     : !canDeploy || (namespaceMismatch && !application.kustomizeNamespaceOverride))))
   const aiInAttention: boolean = Boolean(application?.statusIssues?.length) && activeTab === "overview"
+  const appStatus = application ? deriveApplicationStatus(application, { plan: latestPlan ?? null, conflictCount: ownershipConflict ? ownershipConflicts.length : 0 }) : null
   const planBlockedByNamespace = Boolean(application && namespaceMismatch && !application.kustomizeNamespaceOverride)
 
   return <>
-    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.clusterName || application.clusterId} / ${application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"}${application.autoSyncPaused ? " · Auto-sync paused" : ""}` : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Sync <StatusBadge status={application.health} /></span><DeploymentScheduleNotice key={application.id} layout="chip" scope="applications" id={application.id} onViewSchedule={() => { selectTab("overview"); window.setTimeout(() => document.getElementById("deployment-schedule")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" }), 0) }} /></div>} metadata={application && <RuntimeHealthStrip application={application} healthHistory={healthHistory} reconnecting={Boolean(topologyError)} />} actions={application && <>
+    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.clusterName || application.clusterId} / ${application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"}` : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><DeploymentScheduleNotice key={application.id} layout="chip" scope="applications" id={application.id} onViewSchedule={() => { selectTab("overview"); window.setTimeout(() => document.getElementById("deployment-schedule")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" }), 0) }} /></div>} metadata={application && <RuntimeHealthStrip application={application} status={appStatus!} healthHistory={healthHistory} reconnecting={Boolean(topologyError)} />} actions={application && <>
       {!aiInAttention && <AIAssistant key={`ai-${application.id}-${activeTab}-${activePlan?.id}-${activePlan?.plan.digest}`} workspaceId={application.workspaceId} applicationId={application.id} planId={activePlan?.id} features={activeTab === "changes" ? ["plan", "drift", "ask"] : activeTab === "activity" ? ["summary", "ask"] : ["diagnose", "ask"]} operations={activeTab === "activity" ? operations : undefined} />}
       {pendingData.workspace && <span role="status" className="text-sm text-muted-foreground">Loading permissions…</span>}
       {planBlockedByNamespace && !application.configurationMissing && !application.decommissioning && canDeploy
@@ -765,7 +767,7 @@ export default function ApplicationDetailPage() {
           {[
             { id: "overview", label: "Overview" },
             { id: "topology", label: "Resources", count: pendingData.topology ? undefined : topology ? applicationResourceNodes(topology).length : undefined },
-            { id: "changes", label: "Changes", count: pendingData.plans || plansError != null ? undefined : latestPlan?.status === "current" ? latestPlan.plan.changes.length + (latestPlan.plan.ignored?.length ?? 0) : latestPlan ? undefined : 0 },
+            { id: "changes", label: "Changes", count: pendingData.plans || plansError != null ? undefined : appStatus?.plan.state === "current" ? latestPlan!.plan.changes.length + (latestPlan?.plan.ignored?.length ?? 0) : latestPlan ? undefined : 0 },
             { id: "activity", label: "Activity" },
             { id: "pull-requests", label: "Pull requests" },
             { id: "settings", label: "Settings" },
@@ -786,7 +788,7 @@ export default function ApplicationDetailPage() {
     </>}
     {!loading && application && <>
         <TabsContent value="overview" className="outline-none">
-          <OverviewTab application={application} latestPlan={latestPlan} plansError={plansError} retryingPlans={retryingPlans} topology={topology} topologyError={topologyError} pending={{ topology: pendingData.topology, plans: pendingData.plans, operations: pendingData.operations }} operations={operations} operationsError={operationsError} canRefreshPlan={!createPlanDisabled} creatingPlan={pendingAction === "create-plan"} onCreatePlan={() => void createPlan()} onRetryPlans={() => void retryPlans()} onSelectTab={selectTab} />
+          <OverviewTab status={appStatus!} application={application} latestPlan={latestPlan} plansError={plansError} retryingPlans={retryingPlans} topology={topology} topologyError={topologyError} pending={{ topology: pendingData.topology, plans: pendingData.plans, operations: pendingData.operations }} operations={operations} operationsError={operationsError} canRefreshPlan={!createPlanDisabled} creatingPlan={pendingAction === "create-plan"} onCreatePlan={() => void createPlan()} onRetryPlans={() => void retryPlans()} onSelectTab={selectTab} />
           <div id="deployment-schedule" className="mt-5 scroll-mt-5"><DeploymentSchedulePanel key={application.id} scope="applications" id={application.id} canEdit={canApprove} /></div>
         </TabsContent>
 

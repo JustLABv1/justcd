@@ -86,13 +86,13 @@ export function SyncHistoryChartView({
               ? "Loading sync history…"
               : result.error
                 ? "Sync history unavailable"
-                : totals
+                : totals && totals.total > 0
                   ? `${totals.total} runs in the last ${label}${totals.successRate == null ? "" : ` · ${totals.successRate.toFixed(1)}% succeeded`}`
                   : ""}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-4">
-          <ul
+          {totals?.total !== 0 && <ul
             aria-label="Run outcomes"
             className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground"
           >
@@ -106,7 +106,7 @@ export function SyncHistoryChartView({
                 {config[outcome].label}
               </li>
             ))}
-          </ul>
+          </ul>}
           <ToggleGroup
             aria-label="Sync history period"
             value={[range]}
@@ -139,16 +139,9 @@ export function SyncHistoryChartView({
           <ErrorDetailsButton error={result.error} />
         </div>
       ) : totals?.total === 0 ? (
-        <div className="flex h-56 items-center justify-center p-5 text-center">
-          <div>
-            <p className="text-sm font-medium">
-              No sync runs in the last {label}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Syncs and rollbacks will appear here as they are recorded.
-            </p>
-          </div>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          No sync runs in the last {label}. Syncs and rollbacks appear here once recorded.
+        </p>
       ) : (
         history && (
           <div className="px-2 pt-4">

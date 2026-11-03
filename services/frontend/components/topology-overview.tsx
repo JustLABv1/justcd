@@ -68,7 +68,7 @@ export function TopologyOverview({ graph, selectedId, onSelect, query, mode, isC
             const state = stateFor(node)
             const note = isConflict(node) ? "Owned elsewhere" : state === "unknown" || state === "observed" ? toneFor(node).includes("text-destructive") ? healthFor(node) : "" : syncLabels[state]
             return <li key={node.id}>
-              <Button type="button" variant={selectedId === node.id ? "secondary" : "ghost"} aria-pressed={selectedId === node.id} className="h-auto w-full justify-start gap-3 rounded-none px-4 py-2 text-left whitespace-normal" onClick={() => onSelect(node.id)}>
+              <Button type="button" variant={selectedId === node.id ? "secondary" : "ghost"} aria-pressed={selectedId === node.id} className="h-auto w-full justify-start gap-3 rounded-none px-4 py-2 text-left whitespace-normal focus-visible:ring-inset" onClick={() => onSelect(node.id)}>
                 <HugeiconsIcon icon={iconFor(node.identity.kind)} strokeWidth={1.6} className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-medium break-all">{node.identity.name}</span>

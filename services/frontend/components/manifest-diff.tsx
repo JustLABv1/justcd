@@ -17,7 +17,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { FormSelect } from "@/components/ui/form-select"
 import { DiffText, useDiffSyntax } from "@/components/diff-text"
-import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { VirtualReviewList } from "@/components/virtual-review-list"
 import { Button } from "@/components/ui/button"
 import {

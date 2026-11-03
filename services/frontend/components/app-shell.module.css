@@ -10,6 +10,14 @@
   font-weight: 500;
   transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
 }
+.navItemCollapsed {
+  justify-content: center;
+  gap: 0;
+  width: 44px;
+  height: 44px;
+  margin-inline: auto;
+  padding: 0;
+}
 .navItem[aria-current="page"] {
   color: var(--primary);
   background: color-mix(in srgb, var(--primary) 10%, var(--card));

@@ -21,8 +21,8 @@ const toneClass: Record<Tone, string> = {
 }
 
 function AttentionRow({ tone, icon, title, children, actions, alert = false }: { tone: Tone; icon: IconSvgElement; title: ReactNode; children?: ReactNode; actions?: ReactNode; alert?: boolean }) {
-  return <li role={alert ? "alert" : "status"} className="flex flex-wrap items-start gap-x-3 gap-y-2 px-4 py-3">
-    <HugeiconsIcon icon={icon} strokeWidth={2} aria-hidden="true" className={`mt-0.5 size-4 shrink-0 ${toneClass[tone]}`} />
+  return <li role={alert ? "alert" : "status"} className={`flex flex-wrap gap-x-3 gap-y-2 px-4 py-3 ${children ? "items-start" : "items-center"}`}>
+    <HugeiconsIcon icon={icon} strokeWidth={2} aria-hidden="true" className={`${children ? "mt-0.5" : ""} size-4 shrink-0 ${toneClass[tone]}`} />
     <div className="min-w-0 flex-1">
       <p className="text-sm font-medium">{title}</p>
       {children}
@@ -85,7 +85,8 @@ export function AttentionBar({ application, canApprove, busy, hasPendingOperatio
   onKeepPin: () => void
   onResume: () => void
 }) {
-  const issues = application.statusIssues ?? []
+  // Ownership conflicts are summarised by their own row with a direct action.
+  const issues = (application.statusIssues ?? []).filter((issue) => !(conflictCount > 0 && issue.code === "kubernetes.ownership_conflict"))
   const paused = Boolean(application.autoSyncPaused && !application.branchTest)
   const mismatch = namespaceMismatch && !application.kustomizeNamespaceOverride
   if (!issues.length && plansError == null && !conflictCount && !mismatch && !application.decommissioning && !paused) return null
@@ -98,9 +99,7 @@ export function AttentionBar({ application, canApprove, busy, hasPendingOperatio
         <Button size="sm" loading={retryingPlans} onClick={onRetryPlans}>Retry</Button>
         <ErrorDetailsButton error={plansError} />
       </>} />}
-      {conflictCount > 0 && <AttentionRow alert tone="warning" icon={AlertCircleIcon} title={`${conflictCount} existing resource${conflictCount === 1 ? "" : "s"} block${conflictCount === 1 ? "s" : ""} sync`} actions={<Button size="sm" variant="outline" onClick={onReviewConflicts}>Review conflicts</Button>}>
-        <p className="mt-0.5 text-sm text-muted-foreground">Rendered resources already exist in Kubernetes but are not managed by this application.</p>
-      </AttentionRow>}
+      {conflictCount > 0 && <AttentionRow alert tone="warning" icon={AlertCircleIcon} title={`${conflictCount} existing resource${conflictCount === 1 ? " is" : "s are"} owned elsewhere and block${conflictCount === 1 ? "s" : ""} sync`} actions={<Button size="sm" variant="outline" onClick={onReviewConflicts}>Review conflicts</Button>} />}
       {mismatch && <AttentionRow alert tone="warning" icon={AlertCircleIcon} title={`Kustomize namespace ${kustomizeNamespace} differs from the JustCD target ${application.namespaces[0]?.namespace}`} actions={application.applicationGroupId
         ? <Button size="sm" variant="outline" render={<Link href={`/application-groups/${application.applicationGroupId}`} />}>Review group settings</Button>
         : <Button size="sm" variant="outline" onClick={onReviewNamespaceSetting}>Review namespace setting</Button>}>

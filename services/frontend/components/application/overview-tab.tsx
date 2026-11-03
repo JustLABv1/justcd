@@ -78,7 +78,8 @@ export function OverviewTab({
     (acc, change) => ({ ...acc, [change.kind]: acc[change.kind] + 1 }),
     { create: 0, update: 0, delete: 0 }
   )
-  const current = latestPlan?.status === "current"
+  const current = status.plan.state === "current" && latestPlan !== undefined
+  const outdated = status.plan.state === "stale" || status.plan.state === "expired"
   const blocked = status.blocked
   const lastSync = operations.find((operation) => operation.status === "succeeded")
   const resources = topology ? applicationResourceNodes(topology) : []
@@ -93,7 +94,7 @@ export function OverviewTab({
       : current
         ? `${blocked ? "Last known plan · " : ""}${latestPlan.plan.changes.length} change${latestPlan.plan.changes.length === 1 ? "" : "s"}`
         : latestPlan
-          ? `Plan ${latestPlan.status}`
+          ? outdated ? status.plan.state === "expired" ? "Plan expired" : "Plan out of date" : `Plan ${latestPlan.status}`
           : "No plan yet"
 
   return (
@@ -172,13 +173,24 @@ export function OverviewTab({
                       Retry loading
                     </Button>
                   ) : latestPlan ? (
-                    <Button
-                      variant={current && !blocked ? "default" : "outline"}
-                      onClick={() => onSelectTab("changes")}
-                    >
-                      {current ? "Review changes" : "View plan"}
-                      {trailingArrow}
-                    </Button>
+                    <>
+                      {outdated && (
+                        <Button
+                          loading={creatingPlan}
+                          disabled={!canRefreshPlan}
+                          onClick={onCreatePlan}
+                        >
+                          Refresh plan
+                        </Button>
+                      )}
+                      <Button
+                        variant={current && !blocked ? "default" : "outline"}
+                        onClick={() => onSelectTab("changes")}
+                      >
+                        {current ? "Review changes" : "View plan"}
+                        {trailingArrow}
+                      </Button>
+                    </>
                   ) : (
                     <Button
                       loading={creatingPlan}

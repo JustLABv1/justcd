@@ -50,8 +50,6 @@ export type ApplicationStatus = {
   parts: string[]
 }
 
-const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`
-
 /** One derivation of "how is this application doing", shared by every component. */
 export function deriveApplicationStatus(
   application: Application,
@@ -68,12 +66,11 @@ export function deriveApplicationStatus(
   const changes = plan?.plan.changes.length ?? 0
   const paused = Boolean(application.autoSyncPaused && !application.branchTest)
   const blocked = problems > 0 || conflictCount > 0
+  // The attention bar and plan card carry the detail; keep this to the headline.
   const parts = [
-    problems > 0 && plural(problems, "problem"),
-    conflictCount > 0 && `${conflictCount} owned elsewhere`,
+    blocked && "Sync blocked",
     reliable && observed && runtimeStatus !== "Unknown" && `Runtime ${runtimeStatus.toLowerCase()}`,
-    !reliable && "Runtime not observed",
-    (state === "stale" || state === "expired") && changes > 0 && `Plan ${state}`,
+    !reliable && !blocked && "Runtime not observed",
     paused && "Auto-sync paused",
   ].filter((part): part is string => Boolean(part))
   return {

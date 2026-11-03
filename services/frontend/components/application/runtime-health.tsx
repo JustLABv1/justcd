@@ -22,10 +22,10 @@ export function RuntimeHealthStrip({ application, healthHistory, status, reconne
     <Button type="button" variant="ghost" size="sm" className="-ml-2 h-auto min-h-8 flex-wrap justify-start gap-x-2 py-1 whitespace-normal" aria-label="Status and runtime health details" onClick={() => setOpen(true)}>
       <HugeiconsIcon icon={HeartCheckIcon} strokeWidth={1.8} aria-hidden="true" />
       <StatusBadge status={status.sync} />
-      {status.parts.length > 0 && <span className="text-muted-foreground">{status.parts.join(" · ")}</span>}
+      {status.parts.length > 0 && <span className="text-muted-foreground">{status.parts.slice(0, 2).join(" · ")}{status.parts.length > 2 ? ` · +${status.parts.length - 2}` : ""}</span>}
       <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={1.8} aria-hidden="true" />
     </Button>
-    <span className={freshness.stale || reconnecting ? "text-warning-foreground dark:text-warning" : ""} title={condition?.observedAt ? new Date(condition.observedAt).toLocaleString() : undefined}>{freshness.label}{reconnecting ? " · Reconnecting" : freshness.stale && condition?.observedAt ? " · Stale" : " · Auto-updating"}{condition?.status === "Partial" ? " · Partial observation" : ""}</span>
+    <span className={freshness.stale || reconnecting ? "text-warning-foreground dark:text-warning" : ""} title={condition?.observedAt ? `${new Date(condition.observedAt).toLocaleString()} · Updates automatically` : undefined}>{freshness.label.replace("Runtime observed", "Observed")}{reconnecting ? " · Reconnecting" : freshness.stale && condition?.observedAt ? " · Stale" : ""}{condition?.status === "Partial" ? " · Partial observation" : ""}</span>
     <AppDialog open={open} onOpenChange={setOpen} variant="info" size="lg" title="Status and runtime health" description="Runtime readiness is separate from Git sync state. Partial means some runtime resources could not be assessed; configuration objects do not need workload health checks.">
       <div className="space-y-4">
         <StatusBadge status={condition?.status ?? "Unknown"} />

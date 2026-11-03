@@ -16,13 +16,13 @@ export function PageHeading({
   metadata,
 }: {
   title: string
-  description?: string
+  description?: ReactNode
   actions?: ReactNode
   badge?: ReactNode
   metadata?: ReactNode
 }) {
   return (
-    <header className="mb-5 flex shrink-0 flex-wrap items-center justify-between gap-x-6 gap-y-4">
+    <header className="mb-5 flex shrink-0 flex-wrap items-start justify-between gap-x-6 gap-y-4">
       <div className="min-w-0 flex-1 basis-64">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <h1 className="min-w-0 break-words text-2xl font-semibold leading-tight tracking-tight sm:text-[28px]">{title}</h1>

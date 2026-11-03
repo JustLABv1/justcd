@@ -142,7 +142,7 @@ export function DeploymentSchedulePanel({ scope, id, canEdit, layout = "panel" }
       </form>
     </AppDialog>
   </>
-  return layout === "settings" ? content : <Panel surface="flat" title="Deployment schedule" description="When deployments can start, and any freezes that take precedence.">{content}</Panel>
+  return layout === "settings" ? content : <Panel title="Deployment schedule" description="When deployments can start, and any freezes that take precedence."><div className="p-5">{content}</div></Panel>
 }
 
 export function ScheduledOperationActions({ operation, canOverride, canCancel, onUpdated }: { operation: Operation; canOverride: boolean; canCancel: boolean; onUpdated: () => Promise<void> }) {

@@ -225,10 +225,10 @@ export function SyncHistoryChartView({
         )
       )}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
+        {totals?.total !== 0 && <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
           Syncs and rollbacks grouped by start time. Success rate includes
           succeeded, failed and cancelled runs; active runs are excluded.
-        </p>
+        </p>}
         {onViewActivity && (
           <Button variant="ghost" size="sm" onClick={onViewActivity}>
             View activity

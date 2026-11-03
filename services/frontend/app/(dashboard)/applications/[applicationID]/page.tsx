@@ -49,7 +49,7 @@ export default function ApplicationDetailPage() {
   const [plans, setPlans] = useState<PlanRecord[]>([])
   const [activePlan, setActivePlan] = useState<PlanRecord | null>(null)
   const [resources, setResources] = useState<ManagedResource[]>([])
-  const [topologyView, setTopologyView] = useState<"graph" | "list">("graph")
+  const [topologyView, setTopologyView] = useState<"overview" | "graph" | "list">("overview")
   const [topology, setTopology] = useState<ResourceTopology | null>(null)
   const [topologyError, setTopologyError] = useState<unknown | null>(null)
   const [topologyRefreshing, setTopologyRefreshing] = useState(false)
@@ -119,7 +119,8 @@ export default function ApplicationDetailPage() {
   useEffect(() => {
     const readTab = () => {
       const value = new URLSearchParams(window.location.search).get("tab")
-      setTopologyView(value === "components" || new URLSearchParams(window.location.search).get("view") === "list" ? "list" : "graph")
+      const viewParam = new URLSearchParams(window.location.search).get("view")
+      setTopologyView(value === "components" || viewParam === "list" ? "list" : viewParam === "graph" ? "graph" : "overview")
       setActiveTab(value === "components" ? "topology" : ["overview", "topology", "changes", "activity", "pull-requests", "settings"].includes(value ?? "") ? value! : "overview")
     }
     readTab()
@@ -792,7 +793,7 @@ export default function ApplicationDetailPage() {
         <TabsContent value="topology" className="outline-none">
       {pendingData.topology || pendingData.resources || pendingData.plans || pendingData.operations ? <SectionLoading label="Loading the resource map" /> : <>
       {topologyError && <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 p-3 text-sm"><span>Runtime updates interrupted. Retrying automatically; the map retains the last available observation.</span><ErrorDetailsButton error={topologyError} /></div>}
-      <ResourceMap view={topologyView} onViewChange={(view) => { setTopologyView(view); const url = new URL(window.location.href); url.searchParams.set("tab", "topology"); if (view === "list") url.searchParams.set("view", "list"); else url.searchParams.delete("view"); window.history.pushState(null, "", url) }} canManageResources={canApprove} resourceActionsDisabled={busy || hasPendingOperation} onResourceActionComplete={async () => { setApplication(await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`)); await refreshSummary() }} application={application} plan={plans[0]?.status === "current" ? plans[0] : null} inventory={resources} operations={operations} topology={topology} refreshing={topologyRefreshing} onRefresh={() => {
+      <ResourceMap stalePlan={plans[0] && plans[0].status !== "current" && plans[0].status !== "applied" ? plans[0] : null} conflicts={ownershipConflict ? ownershipConflicts.map((item) => item.identity) : []} onReviewConflicts={() => setConflictOpen(true)} view={topologyView} onViewChange={(view) => { setTopologyView(view); const url = new URL(window.location.href); url.searchParams.set("tab", "topology"); if (view !== "overview") url.searchParams.set("view", view); else url.searchParams.delete("view"); window.history.pushState(null, "", url) }} canManageResources={canApprove} resourceActionsDisabled={busy || hasPendingOperation} onResourceActionComplete={async () => { setApplication(await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`)); await refreshSummary() }} application={application} plan={plans[0]?.status === "current" ? plans[0] : null} inventory={resources} operations={operations} topology={topology} refreshing={topologyRefreshing} onRefresh={() => {
         setTopologyRefreshing(true)
         void api<ResourceTopology>(`/api/v1/applications/${encodeURIComponent(applicationID)}/topology?refresh=1`).then((result) => {
           setTopology(result); setTopologyError(null)

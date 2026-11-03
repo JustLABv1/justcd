@@ -36,6 +36,10 @@ type Server struct {
 	aiMu          sync.Mutex
 	aiRequests    map[string]time.Time
 	aiActive      map[string]bool
+	triageMu      sync.Mutex
+	triageRuns    map[string]*triageRun
+	triageLast    map[string]time.Time
+	triagePending map[string]triagePending
 	dummyHash     string
 	agentMu       sync.Mutex
 	agentPolls    map[string]bool

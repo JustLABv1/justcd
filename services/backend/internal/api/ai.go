@@ -20,6 +20,8 @@ func (s *Server) aiRoutes() {
 	s.Mux.Handle("POST /api/v1/admin/ai/test", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.testAIConnection)))))
 	s.Mux.Handle("GET /api/v1/workspaces/{workspaceID}/ai", s.requireAuth(http.HandlerFunc(s.workspaceAI)))
 	s.Mux.Handle("PUT /api/v1/workspaces/{workspaceID}/ai", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.workspaceAI))))
+	s.Mux.Handle("GET /api/v1/workspaces/{workspaceID}/ai/triage", s.requireAuth(http.HandlerFunc(s.getTriage)))
+	s.Mux.Handle("POST /api/v1/workspaces/{workspaceID}/ai/triage", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.postTriage))))
 	s.Mux.Handle("POST /api/v1/workspaces/{workspaceID}/ai/analyze", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.analyzeAI))))
 }
 func (s *Server) getAISettings(w http.ResponseWriter, r *http.Request) {
@@ -118,16 +120,25 @@ func (s *Server) workspaceAI(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodPut {
 		var input struct {
-			Enabled bool `json:"enabled"`
+			Enabled    *bool `json:"enabled"`
+			AutoTriage *bool `json:"autoTriage"`
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1024)
-		if json.NewDecoder(r.Body).Decode(&input) != nil {
+		if json.NewDecoder(r.Body).Decode(&input) != nil || (input.Enabled == nil && input.AutoTriage == nil) {
 			writeError(w, 400, "invalid workspace AI settings")
 			return
 		}
-		if err := s.Store.SetWorkspaceAI(r.Context(), id, currentUser(r).ID, input.Enabled); err != nil {
-			writeStoreError(w, "could not update workspace AI settings")
-			return
+		if input.Enabled != nil {
+			if err := s.Store.SetWorkspaceAI(r.Context(), id, currentUser(r).ID, *input.Enabled); err != nil {
+				writeStoreError(w, "could not update workspace AI settings")
+				return
+			}
+		}
+		if input.AutoTriage != nil {
+			if err := s.Store.SetWorkspaceAIAutoTriage(r.Context(), id, currentUser(r).ID, *input.AutoTriage); err != nil {
+				writeStoreError(w, "could not update workspace AI settings")
+				return
+			}
 		}
 	}
 	enabled, err := s.Store.WorkspaceAIEnabled(r.Context(), id)
@@ -140,7 +151,14 @@ func (s *Server) workspaceAI(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, "could not load AI availability")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"enabled": enabled, "available": settings.Enabled, "model": settings.Model})
+	autoTriage := false
+	if enabled {
+		if autoTriage, err = s.Store.WorkspaceAIAutoTriage(r.Context(), id); err != nil {
+			writeStoreError(w, "could not load workspace AI settings")
+			return
+		}
+	}
+	writeJSON(w, 200, map[string]any{"enabled": enabled, "available": settings.Enabled, "model": settings.Model, "autoTriage": autoTriage})
 }
 func (s *Server) takeAISlot(w http.ResponseWriter, r *http.Request) bool {
 	s.aiMu.Lock()
@@ -273,18 +291,41 @@ func (s *Server) analyzeAI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.releaseAISlot(currentUser(r).ID)
+	// Clients that accept NDJSON get stage updates instead of one long silent wait.
+	stream := strings.Contains(r.Header.Get("Accept"), "application/x-ndjson")
+	started := false
+	emit := func(value map[string]any) {
+		raw, _ := json.Marshal(value)
+		_, _ = w.Write(append(raw, '\n'))
+		_ = http.NewResponseController(w).Flush()
+	}
+	if stream {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Accel-Buffering", "no")
+		w.WriteHeader(200)
+		started = true
+		emit(map[string]any{"stage": "collecting"})
+	}
+	fail := func(code int, message string) {
+		if started {
+			emit(map[string]any{"error": message, "status": code})
+			return
+		}
+		writeError(w, code, message)
+	}
 	var apps []store.Application
 	if input.ApplicationID != "" {
 		app, e := s.Store.ApplicationByID(r.Context(), input.ApplicationID)
 		if e != nil || app.WorkspaceID != workspace {
-			writeError(w, 404, "application not found in this workspace")
+			fail(404, "application not found in this workspace")
 			return
 		}
 		apps = []store.Application{app}
 	} else if input.GroupID != "" {
 		group, e := s.Store.ApplicationGroupByID(r.Context(), input.GroupID)
 		if e != nil || group.WorkspaceID != workspace {
-			writeError(w, 404, "deployment group not found in this workspace")
+			fail(404, "deployment group not found in this workspace")
 			return
 		}
 		apps, err = s.Store.ApplicationsByGroupID(r.Context(), group.ID)
@@ -292,11 +333,11 @@ func (s *Server) analyzeAI(w http.ResponseWriter, r *http.Request) {
 		apps, err = s.Store.ListApplications(r.Context(), workspace)
 	}
 	if err != nil {
-		writeStoreError(w, "could not load AI scope")
+		fail(500, "could not load AI scope")
 		return
 	}
 	if len(apps) > 30 {
-		writeError(w, 400, "scope exceeds 30 applications; choose an application or a smaller deployment group")
+		fail(400, "scope exceeds 30 applications; choose an application or a smaller deployment group")
 		return
 	}
 	evidence := []ai.Evidence{{ID: "scope", Label: "Analysis scope", URL: "/workspaces/" + workspace, Data: map[string]any{"workspaceId": workspace, "applicationCount": len(apps), "collectedAt": time.Now().UTC(), "limitations": []string{"Stored observations and recent history are bounded. Diagnosis may include live events and explicitly opted-in log tails. Metrics, raw Helm values, Secret/ConfigMap contents, environment values, commands, and arbitrary custom-resource specs are excluded. Log redaction is best-effort.", "Manifest projections omit fields that may affect behavior. Missing evidence does not prove a setting is absent from Kubernetes."}}}}
@@ -304,17 +345,20 @@ func (s *Server) analyzeAI(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	for _, app := range apps {
 		if err := s.appendAIApplication(analysisCtx, &evidence, app, input); err != nil {
-			writeError(w, 400, err.Error())
+			fail(400, err.Error())
 			return
 		}
 	}
 	if err = s.Store.Audit(r.Context(), currentUser(r).ID, "ai.analysis_requested", "workspace", workspace, map[string]any{"feature": input.Feature, "applicationId": input.ApplicationID, "groupId": input.GroupID, "model": settings.Model, "includeLogs": input.IncludeLogs}); err != nil {
-		writeStoreError(w, "could not audit AI request")
+		fail(500, "could not audit AI request")
 		return
+	}
+	if started {
+		emit(map[string]any{"stage": "analyzing"})
 	}
 	result, err := ai.Analyze(analysisCtx, settings, task+input.Question, evidence, input.History)
 	if err != nil {
-		writeError(w, 502, err.Error())
+		fail(502, err.Error())
 		return
 	}
 	result.Limitations = append(result.Limitations, "Analysis uses bounded snapshots and filtered manifests. Raw Helm values, Secret/ConfigMap contents, environment values, commands, and arbitrary custom-resource specs are excluded; omitted fields can affect diagnosis.")
@@ -328,6 +372,10 @@ func (s *Server) analyzeAI(w http.ResponseWriter, r *http.Request) {
 	}
 	for i := range result.Limitations {
 		result.Limitations[i] = redactAPIErrorMessage(result.Limitations[i])
+	}
+	if started {
+		emit(map[string]any{"result": result})
+		return
 	}
 	writeJSON(w, 200, result)
 }

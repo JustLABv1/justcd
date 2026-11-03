@@ -36,6 +36,12 @@ type Finding struct {
 	Title       string   `json:"title"`
 	Detail      string   `json:"detail"`
 	EvidenceIDs []string `json:"evidenceIds"`
+	// Optional triage fields. They are ignored by other analyses.
+	ApplicationID string `json:"applicationId,omitempty"`
+	Severity      string `json:"severity,omitempty"`
+	Impact        string `json:"impact,omitempty"`
+	Action        string `json:"action,omitempty"`
+	ActionTab     string `json:"actionTab,omitempty"`
 }
 type Result struct {
 	Summary     string          `json:"summary"`

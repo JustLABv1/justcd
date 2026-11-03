@@ -607,3 +607,34 @@ export type DeploymentSchedule = {
   managedByGit: boolean
   decision: { allowed: boolean; reasons: string[]; nextAllowedAt?: string }
 }
+
+export type TriageSeverity = "critical" | "high" | "medium" | "low"
+export type TriageItem = {
+  applicationId: string
+  applicationName: string
+  severity: TriageSeverity
+  category: string
+  headline: string
+  detail?: string
+  impact: string
+  action: string
+  actionTab: string
+  facts?: string[]
+  evidenceIds?: string[]
+}
+export type Triage = {
+  state: "idle" | "running" | "ready" | "error"
+  stage?: string
+  source: "ai" | "rules"
+  stale: boolean
+  available: boolean
+  autoTriage: boolean
+  trigger?: string
+  model?: string
+  generatedAt?: string
+  summary?: string
+  items: TriageItem[]
+  limitations: string[]
+  attentionCount: number
+  error?: string
+}

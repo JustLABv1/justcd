@@ -223,7 +223,7 @@ export function AIPanel() {
   )
 }
 
-type Policy = { enabled: boolean; available: boolean; model: string }
+type Policy = { enabled: boolean; available: boolean; model: string; autoTriage?: boolean }
 export function WorkspaceAIPolicy({ workspaceId }: { workspaceId: string }) {
   const toast = useToast()
   const [policy, setPolicy] = useState<Policy | null>(null)
@@ -240,18 +240,22 @@ export function WorkspaceAIPolicy({ workspaceId }: { workspaceId: string }) {
       })
     return () => controller.abort()
   }, [path, tick])
-  async function change(enabled: boolean) {
+  async function change(update: { enabled?: boolean; autoTriage?: boolean }) {
     setBusy(true)
     setError(null)
     try {
       setPolicy(
         await api<Policy>(path, {
           method: "PUT",
-          body: JSON.stringify({ enabled }),
+          body: JSON.stringify(update),
         })
       )
       window.dispatchEvent(new Event("justcd:ai-policy-updated"))
-      toast.success(enabled ? "Workspace AI enabled" : "Workspace AI disabled")
+      toast.success(
+        update.autoTriage !== undefined
+          ? update.autoTriage ? "Automatic prioritization enabled" : "Automatic prioritization disabled"
+          : update.enabled ? "Workspace AI enabled" : "Workspace AI disabled"
+      )
     } catch (cause) {
       setError(cause)
       toast.error(errorMessage(cause), cause)
@@ -293,7 +297,26 @@ export function WorkspaceAIPolicy({ workspaceId }: { workspaceId: string }) {
                 id="workspace-ai-enabled"
                 checked={policy.enabled}
                 disabled={busy}
-                onCheckedChange={(enabled) => void change(enabled)}
+                onCheckedChange={(enabled) => void change({ enabled })}
+              />
+            </div>
+            <div className="flex items-start justify-between gap-5">
+              <div className="space-y-1">
+                <label htmlFor="workspace-ai-auto-triage" className="text-sm font-medium">
+                  Prioritize applications automatically
+                </label>
+                <p className="text-sm leading-6 text-muted-foreground">
+                  Ranks the applications that need attention on the dashboard and keeps
+                  the ranking up to date after changes settle (at most every 10 minutes).
+                  Sends a compact status summary per application, not manifests or logs.
+                  Uses AI tokens in the background.
+                </p>
+              </div>
+              <Switch
+                id="workspace-ai-auto-triage"
+                checked={Boolean(policy.autoTriage)}
+                disabled={busy || !policy.enabled}
+                onCheckedChange={(autoTriage) => void change({ autoTriage })}
               />
             </div>
             <p className="text-sm leading-6 text-muted-foreground">

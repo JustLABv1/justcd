@@ -1,6 +1,7 @@
 "use client"
 
 import { DeploymentScheduleNotice } from "@/components/deployment-schedule-notice"
+import { TriageList, TriageStatus, useTriage } from "@/components/ai-triage"
 import Link from "next/link"
 import { useEffect, useMemo, useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
@@ -116,6 +117,10 @@ export default function OverviewPage() {
   const listHref = (status?: string) => (workspaceId ? `/applications${qs}${status ? `&status=${status}` : ""}` : "/workspaces")
   const connectionsHref = workspaceId ? `/workspaces/${workspaceId}?tab=connections` : "/workspaces"
   const { attention, synced, other, stalled, rows } = model
+  const triage = useTriage(workspaceId ?? "")
+  const ranked = new Set(triage.triage?.items.map((item) => item.applicationId) ?? [])
+  // Applications ranked by triage are shown there; the rest (for example stalled checks) keep the plain rows.
+  const rest = [...attention, ...stalled].filter((app) => !ranked.has(app.id))
   const failedLabels = { clusters: "clusters", gitSources: "Git sources", approvals: "approvals" } as const
 
   return (
@@ -147,11 +152,13 @@ export default function OverviewPage() {
             <Panel
               title="Needs attention"
               description="Applications with drift, runtime problems, pauses, or stalled checks."
-              action={<TrailingLink href={listHref("attention")}>View all</TrailingLink>}
+              action={<div className="flex flex-wrap items-center justify-end gap-3"><TriageStatus triage={triage.triage} starting={triage.starting} onRun={() => void triage.run()} /><TrailingLink href={listHref("attention")}>View all</TrailingLink></div>}
             >
-              {attention.length + stalled.length ? (
-                <ul className="divide-y">
-                  {[...attention, ...stalled].slice(0, 6).map((app) => {
+              {triage.triage && triage.triage.items.length > 0 && <TriageList triage={triage.triage} attentionHref={listHref("attention")} />}
+              {triage.error && !triage.triage && <p role="status" className="px-5 py-3 text-xs text-muted-foreground">Priority ranking is unavailable right now.</p>}
+              {rest.length ? (
+                <ul className={`divide-y ${triage.triage?.items.length ? "border-t" : ""}`}>
+                  {rest.slice(0, 6).map((app) => {
                     const reason = applicationAttentionReason(app) ?? `No check ${ago(app.lastCheckedAt || app.createdAt, now)} (every ${app.pollSeconds}s expected)`
                     return (
                       <li key={app.id}>
@@ -177,7 +184,7 @@ export default function OverviewPage() {
                     )
                   })}
                 </ul>
-              ) : (
+              ) : triage.triage?.items.length ? null : (
                 <EmptyState
                   title={total ? "Nothing needs attention" : "A fresh start"}
                   description={total ? "No drift, degradation, pauses, or stalled checks." : "Create your first application to start delivering."}

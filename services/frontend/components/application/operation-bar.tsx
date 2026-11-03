@@ -47,7 +47,9 @@ export function OperationBar({
   scheduleActions,
   onCreatePlan,
   canCreatePlan,
+  aiAction,
 }: {
+  aiAction?: ReactNode
   onCreatePlan?: () => void
   canCreatePlan?: boolean
   operation: Operation
@@ -166,6 +168,7 @@ export function OperationBar({
           )}
         {(failed || terminal) && (
           <div className="flex shrink-0 items-center gap-2">
+            {failed && aiAction}
             {failed && onCreatePlan && (
               <Button
                 size="sm"

@@ -4,7 +4,7 @@ import Link from "next/link"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { AiMagicIcon } from "@hugeicons/core-free-icons"
 import { useEffect, useId, useRef, useState } from "react"
-import { api } from "@/lib/api"
+import { api, apiStream } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Textarea } from "@/components/ui/textarea"
@@ -43,7 +43,14 @@ export function AIAssistant({
   operations,
   contextVersion = "",
   presentation = "dialog",
+  buttonLabel,
+  autoRun,
+  initialOperationId = "",
 }: {
+  buttonLabel?: string
+  /** Run this feature as soon as the dialog opens (for one-click explanations). */
+  autoRun?: Feature
+  initialOperationId?: string
   workspaceId: string
   applicationId?: string
   groupId?: string
@@ -59,9 +66,12 @@ export function AIAssistant({
   const [error, setError] = useState<unknown>(null)
   const [result, setResult] = useState<Analysis | null>(null)
   const [question, setQuestion] = useState("")
-  const [operationId, setOperationId] = useState("")
+  const [operationId, setOperationId] = useState(initialOperationId)
   const [includeLogs, setIncludeLogs] = useState(false)
   const [busy, setBusy] = useState<Feature | null>(null)
+  const [stage, setStage] = useState("")
+  const [elapsed, setElapsed] = useState(0)
+  const autoRan = useRef(false)
   const [history, setHistory] = useState<{ role: string; content: string }[]>(
     []
   )
@@ -97,25 +107,23 @@ export function AIAssistant({
     request.current = controller
     setError(null)
     setResult(null)
+    setStage("collecting")
+    setElapsed(0)
     setBusy(feature)
     try {
-      const response = await api<Analysis>(
+      const response = await apiStream<Analysis>(
         `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/ai/analyze`,
         {
-          method: "POST",
-          signal: controller.signal,
-          body: JSON.stringify({
-            feature,
-            includeLogs: feature === "diagnose" && includeLogs,
-            applicationId,
-            groupId,
-            planId:
-              feature === "plan" || feature === "drift" ? planId : undefined,
-            operationId: feature === "summary" ? operationId : undefined,
-            question: feature === "ask" ? question : undefined,
-            history: feature === "ask" ? history : undefined,
-          }),
-        }
+          feature,
+          includeLogs: feature === "diagnose" && includeLogs,
+          applicationId,
+          groupId,
+          planId: feature === "plan" || feature === "drift" ? planId : undefined,
+          operationId: feature === "summary" ? operationId : undefined,
+          question: feature === "ask" ? question : undefined,
+          history: feature === "ask" ? history : undefined,
+        },
+        { signal: controller.signal, onStage: setStage }
       )
       if (controller.signal.aborted) return
       setResult(response)
@@ -136,7 +144,19 @@ export function AIAssistant({
     }
   }
 
+  useEffect(() => {
+    if (!busy) return
+    const timer = window.setInterval(() => setElapsed((value) => value + 1), 1000)
+    return () => window.clearInterval(timer)
+  }, [busy])
   const enabled = availability?.available && availability.enabled
+  useEffect(() => {
+    if (!open || !enabled || !autoRun || autoRan.current) return
+    autoRan.current = true
+    void analyze(autoRun)
+    // analyze reads current state; it is intentionally started once per mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, enabled, autoRun])
   // Optional AI takes no space in delivery workflows until configured.
   if (!enabled && presentation === "dialog") return null
   const content = (
@@ -268,7 +288,11 @@ export function AIAssistant({
           role="status"
           className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground"
         >
-          <span>Analyzing scoped deployment evidence…</span>
+          <span>
+            {stage === "analyzing"
+              ? `Waiting for ${availability?.model ?? "the model"} · ${elapsed}s (usually 10–40s)`
+              : "Collecting deployment evidence…"}
+          </span>
           <Button
             variant="ghost"
             size="sm"
@@ -350,7 +374,7 @@ export function AIAssistant({
       setBusy(null)
     }
   }
-  const actionLabel = features.includes("plan")
+  const actionLabel = buttonLabel ?? (features.includes("plan")
     ? "Explain with AI"
     : features.includes("summary")
       ? "Summarize with AI"
@@ -358,7 +382,7 @@ export function AIAssistant({
         ? "Compare with AI"
         : features.includes("diagnose")
           ? "Diagnose with AI"
-          : "Ask AI"
+          : "Ask AI")
   return (
     <>
       <Button

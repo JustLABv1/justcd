@@ -42,10 +42,12 @@ async function proxy(
     body:
       request.method === "GET" || request.method === "HEAD"
         ? undefined
-        : await request.arrayBuffer(),
+        : request.body,
+    duplex: "half",
+    signal: request.signal,
     cache: "no-store",
     redirect: "manual",
-  })
+  } as RequestInit & { duplex: "half" })
 
   const responseHeaders = new Headers()
   for (const name of [

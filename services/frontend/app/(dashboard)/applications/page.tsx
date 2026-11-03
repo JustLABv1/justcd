@@ -43,6 +43,7 @@ function ApplicationsContent() {
           variant="default"
           icon={Add01Icon}
           items={[
+            { label: "From a template", icon: Add01Icon, href: workspaceId ? `/applications/publish?workspaceId=${encodeURIComponent(workspaceId)}` : "/applications/publish" },
             { label: "New application", icon: Add01Icon, href: workspaceId ? `/applications/new?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces" },
             { label: "New deployment group", icon: Layers01Icon, href: workspaceId ? `/application-groups/new?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces" },
           ]}

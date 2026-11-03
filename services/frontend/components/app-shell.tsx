@@ -111,7 +111,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (!user) return
     let active = true
     const segments = pathname.split("/").filter(Boolean)
-    const applicationId = segments[0] === "applications" && segments[1] && segments[1] !== "new" ? segments[1] : null
+    const applicationId = segments[0] === "applications" && segments[1] && !["new", "publish"].includes(segments[1]) ? segments[1] : null
     void Promise.resolve().then(async () => {
       const [list, application] = await Promise.all([
         api<ListResponse<Workspace>>("/api/v1/workspaces").then((response) => response.items, () => null),
@@ -250,7 +250,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {group.items.map((item) => <Link key={item.href} href={item.href} aria-current={isNavSelected(item.href, pathname) ? "page" : undefined} className={`${styles.navItem} shrink-0 !px-3 !py-2 !text-xs`}><HugeiconsIcon icon={item.icon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />{item.label}</Link>)}
           </div>)}
         </nav>
-        <main style={{ paddingBottom: "calc(2rem + var(--toast-clearance, 0px))" }} className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") ? "max-w-none" : "max-w-[1440px]"} px-5 pb-7 pt-5 sm:px-8 sm:pb-8 sm:pt-6 lg:pt-9 ${pathname === "/audit" ? "lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden" : ""}`}>
+        <main style={{ paddingBottom: "calc(2rem + var(--toast-clearance, 0px))" }} className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") && !pathname.endsWith("/publish") ? "max-w-none" : "max-w-[1440px]"} px-5 pb-7 pt-5 sm:px-8 sm:pb-8 sm:pt-6 lg:pt-9 ${pathname === "/audit" ? "lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden" : ""}`}>
           {crumbs.length > 1 && <nav aria-label="Breadcrumb" className="mb-4 shrink-0 text-sm">
             <ol className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               {crumbs.map((crumb, index) => <li key={`${crumb.label}-${index}`} className="flex min-w-0 max-w-full items-center gap-2">
@@ -360,6 +360,8 @@ function pageCrumbs(pathname: string, workspace: Workspace | null, application: 
   if (parts[0] === "applications") {
     if (!parts[1]) return [{ label: "Applications" }]
     if (parts[1] === "new") return [{ label: "Applications", href: "/applications" }, { label: "New application" }]
+    if (parts[1] === "publish") return [{ label: "Applications", href: "/applications" }, { label: "Templates" }]
+    if (parts[2] === "publish") return [{ label: "Applications", href: "/applications" }, { label: application?.name ?? "Application", href: `/applications/${parts[1]}` }, { label: "Publish a new version" }]
     return [{ label: "Applications", href: "/applications" }, { label: application?.name ?? "Application" }]
   }
   if (parts[0] === "settings" && parts[1] === "security") return [{ label: "Account security" }]

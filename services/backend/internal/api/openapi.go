@@ -8,6 +8,85 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /publishing/templates:
+    get:
+      summary: List supported application templates (authenticated)
+      responses:
+        '200': {description: Built-in Shiny, Streamlit and Shiny Geospatial template definitions and versions}
+  /publishing/limits:
+    get:
+      summary: Read the active publishing archive limits (authenticated)
+      responses:
+        '200':
+          description: Configured compressed and expanded byte limits
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  archiveBytes: {type: integer, default: 104857600}
+                  expandedBytes: {type: integer, default: 524288000}
+  /publishing:
+    post:
+      summary: Create a managed application or upload a complete new source snapshot (workspace owner)
+      description: Creates a private GitLab repository, protected CI variables or Vault references, generated build files, and a manual JustCD application. CI builds and publishes asynchronously. Existing unrelated repositories are never adopted. On partial setup failures, retry the same archive and settings. A new source upload must supply updateApplicationId and reuse the original configuration.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [metadata, archive]
+              properties:
+                archive: {type: string, format: binary, description: ZIP archive; default 100 MiB compressed and 500 MiB expanded; limits configurable on the server}
+                metadata:
+                  type: object
+                  required: [workspaceId, clusterId, gitlabUrl, group, gitlabToken, config]
+                  properties:
+                    workspaceId: {type: string}
+                    clusterId: {type: string}
+                    updateApplicationId: {type: string}
+                    gitlabUrl: {type: string, format: uri}
+                    group: {type: string}
+                    gitlabToken: {type: string, writeOnly: true}
+                    gitReadToken: {type: string, writeOnly: true, description: Required for initial publishing; encrypted in the JustCD credential store}
+                    registryUser: {type: string, writeOnly: true}
+                    registryPassword: {type: string, writeOnly: true}
+                    config:
+                      type: object
+                      required: [name, runtime, entryPoint, baseImage, builderImage, registryImage, namespace, secretMode]
+                      properties:
+                        templateId: {type: string, enum: [shiny, streamlit, shiny-geospatial]}
+                        name: {type: string}
+                        runtime: {type: string, enum: [shiny, streamlit]}
+                        entryPoint: {type: string}
+                        baseImage: {type: string}
+                        builderImage: {type: string}
+                        registryImage: {type: string}
+                        namespace: {type: string}
+                        host: {type: string}
+                        pullSecret: {type: string}
+                        secretMode: {type: string, enum: [variables, vault]}
+                        vaultAddress: {type: string}
+                        vaultRole: {type: string}
+                        vaultPath: {type: string}
+                        runnerTag: {type: string}
+      responses:
+        '201': {description: Application registered and pipeline started; returns applicationId, projectUrl, repositoryUrl, pipelineUrl, and non-secret publication configuration}
+        '400': {description: Invalid source archive, configuration or target}
+        '403': {description: Workspace owner and CSRF required}
+        '413': {description: Archive, expanded source or metadata exceeds configured limits}
+        '409': {description: Concurrent publication, unrelated existing project or settings mismatch}
+        '502': {description: GitLab setup or pipeline failure; provider secrets are not returned}
+  /applications/{applicationID}/publication:
+    parameters:
+      - {name: applicationID, in: path, required: true, schema: {type: string}}
+    get:
+      summary: Read non-secret managed publication settings for a source update (workspace owner)
+      responses:
+        '200': {description: Publication configuration, workspaceId, and clusterId; no credentials}
+        '403': {description: Workspace owner required}
+        '404': {description: Application was not created with guided publishing}
   /workspaces/{workspaceID}/deployment-schedule:
     parameters:
       - { name: workspaceID, in: path, required: true, schema: { type: string } }

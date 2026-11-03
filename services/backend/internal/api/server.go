@@ -145,6 +145,10 @@ func (s *Server) routes() {
 	s.Mux.Handle("PUT /api/v1/repository-configurations/{repositoryID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateRepositoryConfiguration))))
 	s.Mux.Handle("POST /api/v1/repository-configurations/{repositoryID}/reconcile", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.reconcileRepositoryConfiguration))))
 	s.Mux.Handle("GET /api/v1/git-sources", s.requireAuth(http.HandlerFunc(s.listGitSources)))
+	s.Mux.Handle("GET /api/v1/applications/{applicationID}/publication", s.requireAuth(http.HandlerFunc(s.getPublication)))
+	s.Mux.Handle("GET /api/v1/publishing/templates", s.requireAuth(http.HandlerFunc(s.getPublishingTemplates)))
+	s.Mux.Handle("GET /api/v1/publishing/limits", s.requireAuth(http.HandlerFunc(s.getPublishingLimits)))
+	s.Mux.Handle("POST /api/v1/publishing", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.publishApplication))))
 	s.Mux.Handle("POST /api/v1/git-sources", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createGitSource))))
 	s.Mux.Handle("PUT /api/v1/git-sources/{sourceID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateGitSource))))
 	s.Mux.Handle("GET /api/v1/git-sources/{sourceID}/push-webhook", s.requireAuth(http.HandlerFunc(s.getGitPushWebhook)))
@@ -236,6 +240,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != "GET" && r.Method != "HEAD" && r.Method != "OPTIONS" {
 		limit := int64(2 << 20)
+		if r.URL.Path == "/api/v1/publishing" {
+			limit = s.Config.PublishingLimits.WithDefaults().ArchiveBytes + publishMultipartOverhead
+		}
 		if strings.HasPrefix(r.URL.Path, "/api/v1/agents/tasks/") && strings.HasSuffix(r.URL.Path, "/result") {
 			limit = 12 << 20
 		}

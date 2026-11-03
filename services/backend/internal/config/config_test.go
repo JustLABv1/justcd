@@ -31,3 +31,36 @@ func TestShutdownGracePeriod(t *testing.T) {
 		})
 	}
 }
+
+func TestPublishingLimits(t *testing.T) {
+	t.Setenv("JUSTCD_ENV", "development")
+	t.Setenv("JUSTCD_DATABASE_URL", "postgres://test.invalid/justcd")
+	t.Setenv("JUSTCD_ENCRYPTION_KEY", strings.Repeat("a", 32))
+	t.Setenv("JUSTCD_OTEL_ENABLED", "false")
+	t.Setenv("JUSTCD_PUBLISH_MAX_ARCHIVE_MIB", "")
+	t.Setenv("JUSTCD_PUBLISH_MAX_EXPANDED_MIB", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PublishingLimits.ArchiveBytes != 100<<20 || cfg.PublishingLimits.ExpandedBytes != 500<<20 {
+		t.Fatal("unexpected publishing defaults")
+	}
+	for _, key := range []string{"JUSTCD_PUBLISH_MAX_ARCHIVE_MIB", "JUSTCD_PUBLISH_MAX_EXPANDED_MIB"} {
+		for _, value := range []string{"0", "-1", "1.5", "10241", "9223372036854775807", "invalid"} {
+			t.Run(key+value, func(t *testing.T) {
+				t.Setenv(key, value)
+				if _, err := Load(); err == nil || !strings.Contains(err.Error(), key) {
+					t.Fatal("invalid publishing limit accepted", err)
+				}
+			})
+		}
+	}
+	t.Setenv("JUSTCD_PUBLISH_MAX_ARCHIVE_MIB", "250")
+	t.Setenv("JUSTCD_PUBLISH_MAX_EXPANDED_MIB", "1024")
+	t.Setenv("JUSTCD_PUBLISH_TEMP_DIR", "/tmp/publishing")
+	cfg, err = Load()
+	if err != nil || cfg.PublishingLimits.ArchiveBytes != 250<<20 || cfg.PublishingLimits.ExpandedBytes != 1024<<20 || cfg.PublishingTempDir != "/tmp/publishing" {
+		t.Fatal("configured limits not applied", err)
+	}
+}

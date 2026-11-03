@@ -97,6 +97,12 @@ docs:
     tls: []
 
 backend:
+  publishing:
+    maxArchiveMiB: 100
+    maxExpandedMiB: 500
+    # Empty uses the OS temporary directory. Use extraVolumes/extraVolumeMounts
+    # for a disk-backed directory with enough space for concurrent uploads.
+    tempDir: ""
   replicaCount: 1
   # All replicas must use the same PostgreSQL database and encryption key.
   strategy:

@@ -2,6 +2,7 @@
   "title": "Guides",
   "pages": [
     "workflow",
+    "publish-applications",
     "controls",
     "pull-requests",
     "test-branch",

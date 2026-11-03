@@ -745,6 +745,7 @@ export default function ApplicationDetailPage() {
         </Tooltip>
         : <Button loading={pendingAction === "create-plan"} loadingText="Calculating plan…" onClick={() => void createPlan()} disabled={createPlanDisabled}><HugeiconsIcon icon={RefreshIcon} strokeWidth={1.8} aria-hidden="true" />Refresh plan</Button>}
       {canApprove && <ActionMenu label="More actions" items={[
+        ...(application.labels?.["justcd.io/published"] === "true" ? [{ label: "Upload new version", icon: Edit02Icon, disabled: busy || application.decommissioning, onSelect: () => router.push(`/applications/${applicationID}/publish`) }] : []),
         ...(!application.decommissioning && !application.repositoryConfigurationId ? [{ label: "Edit application", icon: Edit02Icon, disabled: busy || hasPendingOperation || Boolean(application.branchTest), onSelect: () => router.push(`/applications/${applicationID}/edit`) }] : []),
         ...(!application.branchTest ? [{ label: "Test branch…", icon: TestTubeIcon, disabled: busy || hasPendingOperation || application.decommissioning || Boolean(application.configurationMissing) || Boolean(application.rollbackResumeAvailable) || Boolean(application.applicationGroupId), onSelect: () => setBranchTestOpen(true) }] : []),
         ...(!application.autoSyncPaused ? [{ label: "Pause auto-sync", icon: PauseIcon, separatorBefore: true, disabled: busy || hasPendingOperation, onSelect: () => void pauseSync() }] : []),

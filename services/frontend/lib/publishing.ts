@@ -25,6 +25,7 @@ export type PublishingProfileSettings = {
   group: string
   clusterId: string
   namespace: string
+  webServerImage?: string
   baseImage: string
   builderImage: string
   registryPrefix: string

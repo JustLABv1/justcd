@@ -40,6 +40,9 @@ type Config = {
   name: string
   runtime: string
   entryPoint: string
+  buildCommand?: string
+  outputDir?: string
+  webServerImage?: string
   baseImage: string
   builderImage: string
   registryImage: string
@@ -116,6 +119,10 @@ export default function PublishApplicationPage() {
           templateId: template.id,
           runtime: template.runtime,
           entryPoint: template.entryPoint,
+          buildCommand:
+            template.runtime === "python-static" ? "python build_html.py" : "",
+          outputDir: template.runtime === "python-static" ? "dist" : "",
+          webServerImage: "",
         }))
       })
       .catch((cause) => {
@@ -331,6 +338,12 @@ export default function PublishApplicationPage() {
             templateId: template.id,
             runtime: template.runtime,
             entryPoint: template.entryPoint,
+            buildCommand:
+              template.runtime === "python-static"
+                ? "python build_html.py"
+                : "",
+            outputDir: template.runtime === "python-static" ? "dist" : "",
+            webServerImage: "",
             baseImage: "",
           }))
           setSelectedTemplate(template)
@@ -421,14 +434,29 @@ export default function PublishApplicationPage() {
                         true,
                         "regional-statistics"
                       )}
-                      {textField(
-                        "entryPoint",
-                        config.runtime === "shiny"
-                          ? "Shiny app directory"
-                          : "Python entry point",
-                        config.runtime === "shiny"
-                          ? "Use . for an app at the archive root, or a path such as src/regionalsteckbrief. Include renv.lock or packages.txt at the root."
-                          : "For example app.py. Include requirements.txt at the archive root."
+                      {config.runtime === "python-static" ? (
+                        <>
+                          {textField(
+                            "buildCommand",
+                            "Build command",
+                            "Runs in CI. requirements.txt is installed when present."
+                          )}
+                          {textField(
+                            "outputDir",
+                            "Output directory",
+                            "Relative directory containing index.html and generated assets."
+                          )}
+                        </>
+                      ) : (
+                        textField(
+                          "entryPoint",
+                          config.runtime === "shiny"
+                            ? "Shiny app directory"
+                            : "Python entry point",
+                          config.runtime === "shiny"
+                            ? "Use . for an app at the archive root, or a path such as src/regionalsteckbrief. Include renv.lock or packages.txt at the root."
+                            : "For example app.py. Include requirements.txt at the archive root."
+                        )
                       )}
                       <FormField
                         label="Application ZIP"
@@ -541,11 +569,19 @@ export default function PublishApplicationPage() {
                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                       {textField(
                         "baseImage",
-                        "Runtime base image",
+                        config.runtime === "python-static"
+                          ? "Python build image"
+                          : "Runtime base image",
                         "Must provide R/Shiny or Python and your required system libraries and certificate trust. Pin an approved version or digest.",
                         true,
                         "artifactory.example.com/platform/shiny-geospatial:4.4.2"
                       )}
+                      {config.runtime === "python-static" &&
+                        textField(
+                          "webServerImage",
+                          "Static web server image",
+                          "Unprivileged NGINX-compatible image: port 8080, /usr/share/nginx/html, UID 1001 and OpenShift arbitrary UID support."
+                        )}
                       {textField(
                         "builderImage",
                         "CI builder image",

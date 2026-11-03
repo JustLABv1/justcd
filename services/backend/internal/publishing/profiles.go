@@ -6,6 +6,7 @@ import (
 )
 
 type ProfileSettings struct {
+	WebServerImage string `json:"webServerImage,omitempty"`
 	TemplateID     string `json:"templateId"`
 	GitLabURL      string `json:"gitlabUrl"`
 	Group          string `json:"group"`
@@ -44,6 +45,11 @@ func (s ProfileSettings) Resolve(name, entry string) (Config, error) {
 		host = name + "." + s.HostSuffix
 	}
 	c := Config{TemplateID: s.TemplateID, Name: name, Runtime: template.Runtime, EntryPoint: entry, BaseImage: s.BaseImage, BuilderImage: s.BuilderImage, RegistryImage: s.RegistryPrefix + "/" + name, Namespace: s.Namespace, Host: host, PullSecret: s.PullSecret, RunnerTag: s.RunnerTag, SecretMode: s.SecretMode, VaultAddress: s.VaultAddress, VaultRole: s.VaultRole, VaultPath: s.VaultPath}
+	if c.Runtime == "python-static" {
+		c.WebServerImage = s.WebServerImage
+		c.BuildCommand = "python " + template.EntryPoint
+		c.OutputDir = "dist"
+	}
 	return c, c.Validate()
 }
 func (s ProfileSettings) Validate() error {

@@ -46,21 +46,24 @@ func SizeLabel(n int64) string      { return fmt.Sprintf("%g MiB", float64(n)/(1
 const Version = "1"
 
 type Config struct {
-	TemplateID    string `json:"templateId,omitempty"`
-	Name          string `json:"name"`
-	Runtime       string `json:"runtime"`
-	EntryPoint    string `json:"entryPoint"`
-	BaseImage     string `json:"baseImage"`
-	BuilderImage  string `json:"builderImage"`
-	RegistryImage string `json:"registryImage"`
-	Namespace     string `json:"namespace"`
-	Host          string `json:"host"`
-	PullSecret    string `json:"pullSecret"`
-	SecretMode    string `json:"secretMode"`
-	VaultAddress  string `json:"vaultAddress"`
-	VaultRole     string `json:"vaultRole"`
-	VaultPath     string `json:"vaultPath"`
-	RunnerTag     string `json:"runnerTag"`
+	BuildCommand   string `json:"buildCommand,omitempty"`
+	OutputDir      string `json:"outputDir,omitempty"`
+	WebServerImage string `json:"webServerImage,omitempty"`
+	TemplateID     string `json:"templateId,omitempty"`
+	Name           string `json:"name"`
+	Runtime        string `json:"runtime"`
+	EntryPoint     string `json:"entryPoint"`
+	BaseImage      string `json:"baseImage"`
+	BuilderImage   string `json:"builderImage"`
+	RegistryImage  string `json:"registryImage"`
+	Namespace      string `json:"namespace"`
+	Host           string `json:"host"`
+	PullSecret     string `json:"pullSecret"`
+	SecretMode     string `json:"secretMode"`
+	VaultAddress   string `json:"vaultAddress"`
+	VaultRole      string `json:"vaultRole"`
+	VaultPath      string `json:"vaultPath"`
+	RunnerTag      string `json:"runnerTag"`
 }
 
 type File struct {
@@ -79,8 +82,8 @@ func (c Config) Validate() error {
 	if !namePattern.MatchString(c.Name) || !namePattern.MatchString(c.Namespace) {
 		return errors.New("application and namespace must be lowercase DNS names (at most 63 characters)")
 	}
-	if c.Runtime != "shiny" && c.Runtime != "streamlit" {
-		return errors.New("select Shiny or Streamlit")
+	if c.Runtime != "shiny" && c.Runtime != "streamlit" && c.Runtime != "python-static" {
+		return errors.New("select Shiny, Streamlit, or a Python static website")
 	}
 	if c.TemplateID != "" {
 		found := false
@@ -101,6 +104,19 @@ func (c Config) Validate() error {
 		if !imagePattern.MatchString(image) {
 			return errors.New("runtime, builder, and destination image references are required and must not contain whitespace")
 		}
+	}
+	if c.Runtime == "python-static" {
+		if strings.TrimSpace(c.BuildCommand) == "" || len(c.BuildCommand) > 2048 || strings.ContainsRune(c.BuildCommand, '\x00') {
+			return errors.New("a static website build command of at most 2048 characters is required")
+		}
+		if c.OutputDir == "." || !safePath(c.OutputDir) || !filePattern.MatchString(c.OutputDir) {
+			return errors.New("output directory must be a relative subdirectory such as dist, without traversal or spaces")
+		}
+		if !imagePattern.MatchString(c.WebServerImage) {
+			return errors.New("an approved unprivileged webserver image is required for static websites")
+		}
+	} else if c.BuildCommand != "" || c.OutputDir != "" || c.WebServerImage != "" {
+		return errors.New("static build settings are only supported by the Python static website template")
 	}
 	// Destination has no tag: every build receives its own source revision tag.
 	last := path.Base(c.RegistryImage)
@@ -286,11 +302,17 @@ func Generate(c Config, source []File) ([]File, error) {
 		}
 		cmd, _ := json.Marshal([]string{"R", "-e", fmt.Sprintf("shiny::runApp('%s', host='0.0.0.0', port=3838)", c.EntryPoint)})
 		docker += "RUN chgrp -R 0 /app && chmod -R g=u /app\nENV HOME=/tmp\nUSER 1001\nEXPOSE 3838\nCMD " + string(cmd) + "\n"
-	} else {
+	} else if c.Runtime == "streamlit" {
 		port = 8501
 		docker += "RUN python -m pip install --no-cache-dir -r requirements.txt\nRUN chgrp -R 0 /app && chmod -R g=u /app\nENV HOME=/tmp\nUSER 1001\nEXPOSE 8501\n"
 		cmd, _ := json.Marshal([]string{"python", "-m", "streamlit", "run", c.EntryPoint, "--server.address=0.0.0.0", "--server.port=8501"})
 		docker += "CMD " + string(cmd) + "\n"
+	}
+	if c.Runtime == "python-static" {
+		port = 8080
+		command, _ := json.Marshal([]string{"sh", "-c", c.BuildCommand})
+		prepare, _ := json.Marshal([]string{"python", "-c", staticOutputScript, c.OutputDir, "/justcd-site"})
+		docker = "FROM " + c.BaseImage + " AS site-build\nUSER 0\nWORKDIR /app\nCOPY source/ /app/\nRUN if [ -f requirements.txt ]; then python -m pip install --no-cache-dir -r requirements.txt; fi\nRUN " + string(command) + "\nRUN " + string(prepare) + "\n\nFROM " + c.WebServerImage + " AS site-runtime\nCOPY --from=site-build /justcd-site/ /usr/share/nginx/html/\nUSER 1001\nEXPOSE 8080\n"
 	}
 	add("Dockerfile", docker)
 	add(".dockerignore", ".git\ndeploy\n.justcd\n")
@@ -399,3 +421,23 @@ func pipeline(c Config) string {
       git push "$CI_REPOSITORY_URL" "HEAD:$CI_DEFAULT_BRANCH"
 `
 }
+
+// Runs inside the isolated Python build stage, never in the JustCD API. Only
+// validated static output is copied into the final webserver image.
+const staticOutputScript = `import itertools, shutil, sys
+from pathlib import Path
+root = Path.cwd().resolve()
+source = root / sys.argv[1]
+resolved = source.resolve()
+if resolved == root or root not in resolved.parents:
+    raise SystemExit("Static output must stay inside the project directory")
+if not source.is_dir() or not (source / "index.html").is_file():
+    raise SystemExit("Static build must produce index.html inside the configured output directory")
+for item in itertools.chain((source,), source.rglob("*")):
+    if item.is_symlink() or not (item.is_file() or item.is_dir()):
+        raise SystemExit("Static output cannot contain links or special files")
+target = Path(sys.argv[2])
+shutil.copytree(source, target)
+for item in itertools.chain((target,), target.rglob("*")):
+    item.chmod(0o755 if item.is_dir() else 0o644)
+`

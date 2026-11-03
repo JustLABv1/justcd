@@ -263,7 +263,7 @@ func (s *Server) resolvePublishingProfile(w http.ResponseWriter, r *http.Request
 	// A profile request contains only analyst-owned fields. In particular, raw
 	// credentials, image references and destinations are never accepted as overrides.
 	if in.Config != (publishing.Config{}) || in.ClusterID != "" || in.GitLabURL != "" || in.Group != "" || in.GitLabToken != "" || in.GitReadToken != "" || in.RegistryUser != "" || in.RegistryPassword != "" {
-		writeError(w, 400, "profile publishing accepts only profileId, workspaceId, name, entryPoint, and updateApplicationId")
+		writeError(w, 400, "profile publishing accepts only profileId, workspaceId, name, entryPoint, buildCommand, outputDir, and updateApplicationId")
 		return nil, false
 	}
 	p, err := s.Store.PublishingProfile(r.Context(), in.ProfileID)
@@ -296,15 +296,31 @@ func (s *Server) resolvePublishingProfile(w http.ResponseWriter, r *http.Request
 			writeStoreError(w, "could not read publication configuration")
 			return nil, false
 		}
-		if (in.Name != "" && in.Name != app.Name) || (in.EntryPoint != "" && in.EntryPoint != config.EntryPoint) {
-			writeError(w, 400, "source updates must retain the application name and entry point")
+		if (in.Name != "" && in.Name != app.Name) || (in.EntryPoint != "" && in.EntryPoint != config.EntryPoint) || (in.BuildCommand != "" && in.BuildCommand != config.BuildCommand) || (in.OutputDir != "" && in.OutputDir != config.OutputDir) {
+			writeError(w, 400, "source updates must retain the application name, entry point, and build settings")
 			return nil, false
 		}
 		in.Name, in.EntryPoint = app.Name, config.EntryPoint
+		in.BuildCommand, in.OutputDir = config.BuildCommand, config.OutputDir
 	}
 	cfg, err := p.Settings.Resolve(in.Name, in.EntryPoint)
 	if err != nil {
 		writeError(w, 400, err.Error())
+		return nil, false
+	}
+	if cfg.Runtime == "python-static" {
+		if in.BuildCommand != "" {
+			cfg.BuildCommand = in.BuildCommand
+		}
+		if in.OutputDir != "" {
+			cfg.OutputDir = in.OutputDir
+		}
+		if e := cfg.Validate(); e != nil {
+			writeError(w, 400, e.Error())
+			return nil, false
+		}
+	} else if in.BuildCommand != "" || in.OutputDir != "" {
+		writeError(w, 400, "static build settings require a Python static website profile")
 		return nil, false
 	}
 	secrets, err := s.loadPublishingSecrets(r, p)
@@ -330,7 +346,7 @@ func publicationResult(p store.PublishedApplication, syncPolicy string) map[stri
 	result := map[string]any{"applicationId": p.ApplicationID, "projectUrl": p.ProjectURL, "repositoryUrl": p.RepositoryURL, "pipelineUrl": p.PipelineURL, "syncPolicy": syncPolicy, "applicationUrl": url}
 	if p.ProfileID != nil {
 		result["profileId"] = *p.ProfileID
-		result["config"] = map[string]string{"name": cfg.Name, "runtime": cfg.Runtime, "entryPoint": cfg.EntryPoint, "templateId": cfg.TemplateID}
+		result["config"] = map[string]string{"name": cfg.Name, "runtime": cfg.Runtime, "entryPoint": cfg.EntryPoint, "templateId": cfg.TemplateID, "buildCommand": cfg.BuildCommand, "outputDir": cfg.OutputDir}
 	} else {
 		result["config"] = cfg
 		result["gitlabUrl"] = p.GitLabURL

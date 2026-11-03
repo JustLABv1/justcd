@@ -20,6 +20,8 @@ import (
 )
 
 type publishInput struct {
+	BuildCommand        string            `json:"buildCommand"`
+	OutputDir           string            `json:"outputDir"`
 	ProfileID           string            `json:"profileId"`
 	Name                string            `json:"name"`
 	EntryPoint          string            `json:"entryPoint"`

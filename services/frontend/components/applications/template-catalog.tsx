@@ -18,7 +18,7 @@ export type ApplicationTemplate = {
   id: string
   name: string
   description: string
-  runtime: "shiny" | "streamlit"
+  runtime: "shiny" | "streamlit" | "python-static"
   category: "R" | "Python" | "Geospatial"
   entryPoint: string
   detail: string
@@ -36,7 +36,8 @@ export function TemplateGlyph({
       aria-hidden="true"
       className={`inline-flex size-10 shrink-0 items-center justify-center rounded-xl bg-background ${className}`}
     >
-      {template.category === "Geospatial" ? (
+      {template.category === "Geospatial" ||
+      template.runtime === "python-static" ? (
         <HugeiconsIcon
           icon={Globe02Icon}
           className="size-5 text-emerald-600 dark:text-emerald-400"
@@ -120,7 +121,7 @@ export function TemplateCatalog({
             placeholder="Search templates…"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            className="h-10 rounded-xl border-border bg-card pr-4 dark:border-transparent dark:bg-muted/50 pl-10 text-sm shadow-none focus-visible:ring-2"
+            className="h-10 rounded-xl border-border bg-card pr-4 pl-10 text-sm shadow-none focus-visible:ring-2 dark:border-transparent dark:bg-muted/50"
           />
         </div>
         <ToggleGroup
@@ -159,7 +160,7 @@ export function TemplateCatalog({
             variant="ghost"
             onClick={() => onSelect(template)}
             aria-label={`Use ${template.name} template`}
-            className="group h-auto min-h-32 w-full items-start justify-start gap-3.5 rounded-2xl border-border bg-card p-5 dark:border-transparent dark:bg-muted/45 text-left whitespace-normal transition-colors duration-150 hover:bg-accent focus-visible:ring-2 dark:hover:bg-muted/75"
+            className="group h-auto min-h-32 w-full items-start justify-start gap-3.5 rounded-2xl border-border bg-card p-5 text-left whitespace-normal transition-colors duration-150 hover:bg-accent focus-visible:ring-2 dark:border-transparent dark:bg-muted/45 dark:hover:bg-muted/75"
           >
             <TemplateGlyph template={template} />
             <span className="min-w-0 flex-1 space-y-2">
@@ -186,7 +187,7 @@ export function TemplateCatalog({
       {!loading && !error && !visible.length && (
         <div
           role="status"
-          className="rounded-3xl border border-border bg-card px-6 dark:bg-muted/40 py-12 text-center"
+          className="rounded-3xl border border-border bg-card px-6 py-12 text-center dark:bg-muted/40"
         >
           <p className="font-medium">No templates found</p>
           <p className="mt-2 text-sm text-muted-foreground">

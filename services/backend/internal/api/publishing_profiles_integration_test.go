@@ -38,7 +38,7 @@ func profileSource(t *testing.T, version string) []byte {
 	t.Helper()
 	var b bytes.Buffer
 	w := zip.NewWriter(&b)
-	for name, value := range map[string]string{"app.R": "# " + version, "packages.txt": "shiny\n"} {
+	for name, value := range map[string]string{"app.R": "# " + version, "packages.txt": "shiny\n", "build_html.py": "# static build", "build.py": "# custom static build"} {
 		f, e := w.Create(name)
 		if e != nil {
 			t.Fatal(e)
@@ -51,6 +51,11 @@ func profileSource(t *testing.T, version string) []byte {
 	return b.Bytes()
 }
 func TestIntegrationPublishingProfilesLifecycleAndDelegation(t *testing.T) {
+	for _, runtime := range []string{"shiny", "python-static"} {
+		t.Run(runtime, func(t *testing.T) { testPublishingProfileLifecycle(t, runtime) })
+	}
+}
+func testPublishingProfileLifecycle(t *testing.T, runtime string) {
 	dsn := os.Getenv("JUSTCD_E2E_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("set JUSTCD_E2E_DATABASE_URL to a disposable PostgreSQL database")
@@ -72,6 +77,10 @@ func TestIntegrationPublishingProfilesLifecycleAndDelegation(t *testing.T) {
 	}
 	s := &Server{Store: db, EncryptionKey: []byte("0123456789abcdef0123456789abcdef")}
 	settings := publishing.ProfileSettings{TemplateID: "shiny", GitLabURL: "https://gitlab.invalid", Group: "analytics", ClusterID: "profile-cluster", Namespace: "analytics", BaseImage: "registry.invalid/base/shiny:1", BuilderImage: "registry.invalid/base/builder:1", RegistryPrefix: "registry.invalid/apps", HostSuffix: "apps.example.invalid", SecretMode: "variables", SyncPolicy: "auto-safe"}
+	if runtime == "python-static" {
+		settings.TemplateID = runtime
+		settings.WebServerImage = "registry.invalid/base/nginx:1"
+	}
 	body := map[string]any{"name": "Analytics development", "description": "Approved internal analytics apps", "enabled": true, "settings": settings, "secrets": publishingSecrets{GitLabToken: "profile-api-secret", GitReadToken: "profile-read-secret", RegistryUser: "registry-user", RegistryPassword: "profile-registry-secret"}}
 	save := func(method, user, id string, body any) *httptest.ResponseRecorder {
 		return profileRequest(t, s.savePublishingProfile, method, "/api/v1/test", user, body, "profiles", id)
@@ -208,6 +217,10 @@ func TestIntegrationPublishingProfilesLifecycleAndDelegation(t *testing.T) {
 		return w
 	}
 	metadata := map[string]any{"workspaceId": "profiles", "profileId": profile.ID, "name": "report", "entryPoint": "."}
+	if runtime == "python-static" {
+		metadata["buildCommand"] = "python build.py"
+		metadata["outputDir"] = "public"
+	}
 	bad := map[string]any{"workspaceId": "profiles", "profileId": profile.ID, "name": "report", "config": map[string]string{"baseImage": "attacker/image"}}
 	if got := publish("profile-analyst", bad, "v1").Code; got != 400 {
 		t.Fatal("profile infrastructure override accepted", got)
@@ -244,6 +257,16 @@ func TestIntegrationPublishingProfilesLifecycleAndDelegation(t *testing.T) {
 	if e != nil || source.CredentialID == nil || *source.CredentialID != profile.GitReadCredentialID || countCredentials() != 2 {
 		t.Fatal("Git read credential not shared by reference")
 	}
+	if runtime == "python-static" {
+		saved, err := db.PublishedApplication(ctx, "profiles", source.RepositoryURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cfg publishing.Config
+		if err := json.Unmarshal(saved.Config, &cfg); err != nil || cfg.BuildCommand != "python build.py" || cfg.OutputDir != "public" || cfg.WebServerImage != settings.WebServerImage {
+			t.Fatal("static build configuration not retained", cfg, err)
+		}
+	}
 	// An in-use profile cannot change destinations/images or be deleted.
 	changed := settings
 	changed.BaseImage = "registry.invalid/changed:1"
@@ -269,6 +292,13 @@ func TestIntegrationPublishingProfilesLifecycleAndDelegation(t *testing.T) {
 		t.Fatal("stale profile edit accepted", got)
 	}
 	update := map[string]any{"workspaceId": "profiles", "profileId": profile.ID, "updateApplicationId": app.ID}
+	if runtime == "python-static" {
+		update["buildCommand"] = "python changed.py"
+		if got := publish("profile-analyst", update, "v1").Code; got != 400 {
+			t.Fatal("source update changed build command", got)
+		}
+		delete(update, "buildCommand")
+	}
 	retried := publish("profile-analyst", update, "v1")
 	if retried.Code != 201 || pipelines != 2 || lastRegistryToken != "rotated-registry-secret" {
 		t.Fatal("credential rotation did not rebuild unchanged source", retried.Body.String())

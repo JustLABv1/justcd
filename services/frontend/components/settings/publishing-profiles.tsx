@@ -23,6 +23,7 @@ const emptySettings: PublishingProfileSettings = {
   group: "",
   clusterId: "",
   namespace: "",
+  webServerImage: "",
   baseImage: "",
   builderImage: "",
   registryPrefix: "",
@@ -329,7 +330,7 @@ function ProfileEditor({
       <Input
         id={`profile-${key}`}
         required={required}
-        value={settings[key]}
+        value={settings[key] ?? ""}
         onChange={(event) => patch({ [key]: event.target.value })}
         placeholder={placeholder}
       />
@@ -494,9 +495,17 @@ function ProfileEditor({
             )}
             {field(
               "baseImage",
-              "Application runtime image",
+              settings.templateId === "python-static"
+                ? "Python build image"
+                : "Application runtime image",
               "Approved R/Shiny or Python image, including native dependencies and internal certificate trust."
             )}
+            {settings.templateId === "python-static" &&
+              field(
+                "webServerImage",
+                "Static web server image",
+                "Approved unprivileged NGINX-compatible image: port 8080, document root /usr/share/nginx/html, supporting UID 1001 and OpenShift arbitrary UIDs."
+              )}
             {field(
               "builderImage",
               "CI builder image",

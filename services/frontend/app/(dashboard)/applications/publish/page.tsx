@@ -38,6 +38,8 @@ export default function PublishApplicationPage() {
   const [profiles, setProfiles] = useState<ApprovedPublishingProfile[]>([])
   const [profileId, setProfileId] = useState("")
   const [name, setName] = useState("")
+  const [buildCommand, setBuildCommand] = useState("python build_html.py")
+  const [outputDir, setOutputDir] = useState("dist")
   const [entryPoint, setEntryPoint] = useState("")
   const [file, setFile] = useState<File | null>(null)
   const [busy, setBusy] = useState(false)
@@ -104,7 +106,15 @@ export default function PublishApplicationPage() {
     try {
       setResult(
         await publishProject<PublicationResult>(
-          { workspaceId, profileId: profile.id, name, entryPoint },
+          {
+            workspaceId,
+            profileId: profile.id,
+            name,
+            entryPoint,
+            ...(template?.runtime === "python-static"
+              ? { buildCommand, outputDir }
+              : {}),
+          },
           file,
           limits
         )
@@ -180,6 +190,8 @@ export default function PublishApplicationPage() {
             setMethod(null)
             setTemplate(next)
             setEntryPoint(next.entryPoint)
+            setBuildCommand("python build_html.py")
+            setOutputDir("dist")
             setFile(null)
             setProfileId("")
             setError(null)
@@ -398,7 +410,7 @@ export default function PublishApplicationPage() {
             htmlFor="publish-archive"
             hint={
               limits
-                ? `Up to ${publishingSize(limits.archiveBytes)} compressed and ${publishingSize(limits.expandedBytes)} expanded. Include ${template.runtime === "shiny" ? "renv.lock or packages.txt" : "requirements.txt"} at the archive root. Remove local credentials before uploading.`
+                ? `Up to ${publishingSize(limits.archiveBytes)} compressed and ${publishingSize(limits.expandedBytes)} expanded. ${template.runtime === "python-static" ? "Optionally include requirements.txt" : "Include " + (template.runtime === "shiny" ? "renv.lock or packages.txt" : "requirements.txt")} at the archive root. Remove local credentials before uploading.`
                 : "Loading upload limits…"
             }
           >
@@ -413,31 +425,60 @@ export default function PublishApplicationPage() {
               disabled={busy || !limits || !profile}
             />
           </PublishingField>
-          <PublishingCard>
-            <Disclosure summary="Application entry point">
-              <div className="max-w-lg">
-                <label
-                  htmlFor="publish-entry"
-                  className="mb-2 block text-sm font-medium"
-                >
-                  {template.runtime === "shiny"
-                    ? "Shiny app directory"
-                    : "Python entry file"}
-                </label>
+          {template.runtime === "python-static" ? (
+            <div className="grid gap-4 md:grid-cols-2">
+              <PublishingField
+                label="Build command"
+                htmlFor="publish-build-command"
+                hint="Runs in CI after installing requirements.txt, when present."
+              >
                 <Input
-                  id="publish-entry"
+                  id="publish-build-command"
                   required
-                  value={entryPoint}
-                  onChange={(event) => setEntryPoint(event.target.value)}
+                  value={buildCommand}
+                  onChange={(event) => setBuildCommand(event.target.value)}
                 />
-                <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                  {template.runtime === "shiny"
-                    ? "Use . for an app at the archive root, or a folder such as src/regionalsteckbrief."
-                    : "Relative path to your Streamlit app, for example app.py."}
-                </p>
-              </div>
-            </Disclosure>
-          </PublishingCard>
+              </PublishingField>
+              <PublishingField
+                label="Output directory"
+                htmlFor="publish-output-dir"
+                hint="Relative folder containing the generated index.html and assets, for example dist."
+              >
+                <Input
+                  id="publish-output-dir"
+                  required
+                  value={outputDir}
+                  onChange={(event) => setOutputDir(event.target.value)}
+                />
+              </PublishingField>
+            </div>
+          ) : (
+            <PublishingCard>
+              <Disclosure summary="Application entry point">
+                <div className="max-w-lg">
+                  <label
+                    htmlFor="publish-entry"
+                    className="mb-2 block text-sm font-medium"
+                  >
+                    {template.runtime === "shiny"
+                      ? "Shiny app directory"
+                      : "Python entry file"}
+                  </label>
+                  <Input
+                    id="publish-entry"
+                    required
+                    value={entryPoint}
+                    onChange={(event) => setEntryPoint(event.target.value)}
+                  />
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                    {template.runtime === "shiny"
+                      ? "Use . for an app at the archive root, or a folder such as src/regionalsteckbrief."
+                      : "Relative path to your Streamlit app, for example app.py."}
+                  </p>
+                </div>
+              </Disclosure>
+            </PublishingCard>
+          )}
           {profile && (
             <div className="space-y-1 px-1 text-sm leading-6 text-muted-foreground">
               {profile.description && <p>{profile.description}</p>}

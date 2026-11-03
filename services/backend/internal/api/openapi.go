@@ -96,6 +96,8 @@ paths:
                     profileId: {type: string, description: Approved workspace profile; infrastructure overrides are rejected}
                     name: {type: string, description: Application name for initial profile publishing}
                     entryPoint: {type: string, description: Optional relative app entry point}
+                    buildCommand: {type: string, description: Python static website build command}
+                    outputDir: {type: string, description: Static output directory containing index.html}
                     workspaceId: {type: string}
                     clusterId: {type: string}
                     updateApplicationId: {type: string}
@@ -109,10 +111,13 @@ paths:
                       type: object
                       required: [name, runtime, entryPoint, baseImage, builderImage, registryImage, namespace, secretMode]
                       properties:
-                        templateId: {type: string, enum: [shiny, streamlit, shiny-geospatial]}
+                        templateId: {type: string, enum: [shiny, streamlit, shiny-geospatial, python-static]}
                         name: {type: string}
-                        runtime: {type: string, enum: [shiny, streamlit]}
+                        runtime: {type: string, enum: [shiny, streamlit, python-static]}
                         entryPoint: {type: string}
+                        buildCommand: {type: string}
+                        outputDir: {type: string}
+                        webServerImage: {type: string, description: Required for python-static; unprivileged NGINX-compatible image on port 8080}
                         baseImage: {type: string}
                         builderImage: {type: string}
                         registryImage: {type: string}
@@ -1036,11 +1041,12 @@ components:
           type: object
           required: [templateId, gitlabUrl, group, clusterId, namespace, baseImage, builderImage, registryPrefix, secretMode, syncPolicy]
           properties:
-            templateId: {type: string, enum: [shiny, streamlit, shiny-geospatial]}
+            templateId: {type: string, enum: [shiny, streamlit, shiny-geospatial, python-static]}
             gitlabUrl: {type: string, format: uri}
             group: {type: string}
             clusterId: {type: string}
             namespace: {type: string}
+            webServerImage: {type: string, description: Required for python-static; unprivileged NGINX-compatible image on port 8080}
             baseImage: {type: string}
             builderImage: {type: string}
             registryPrefix: {type: string}

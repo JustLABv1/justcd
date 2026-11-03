@@ -232,6 +232,11 @@ func TestCatalogTemplatesMatchRuntime(t *testing.T) {
 		cfg.TemplateID = template.ID
 		cfg.Runtime = template.Runtime
 		cfg.EntryPoint = template.EntryPoint
+		if cfg.Runtime == "python-static" {
+			cfg.BuildCommand = "python build_html.py"
+			cfg.OutputDir = "dist"
+			cfg.WebServerImage = "registry.example.com/nginx:1"
+		}
 		if err := cfg.Validate(); err != nil {
 			t.Fatal(template.ID, err)
 		}
@@ -240,5 +245,79 @@ func TestCatalogTemplatesMatchRuntime(t *testing.T) {
 	cfg.TemplateID = "streamlit"
 	if cfg.Validate() == nil {
 		t.Fatal("mismatched template runtime accepted")
+	}
+}
+
+func TestStaticWebsiteRecipe(t *testing.T) {
+	c := config()
+	c.TemplateID, c.Runtime, c.EntryPoint = "python-static", "python-static", "build_html.py"
+	c.BuildCommand, c.OutputDir, c.WebServerImage = "python build_html.py\n# FROM evil", "dist", "registry.example.com/nginx:1"
+	files, err := Generate(c, []File{{Path: "source/build_html.py", Content: "print('hello')", Encoding: "text"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var docker, deployment string
+	for _, f := range files {
+		if f.Path == "Dockerfile" {
+			docker = f.Content
+		}
+		if f.Path == ".justcd/deployment.yaml" {
+			deployment = f.Content
+		}
+	}
+	if !strings.Contains(docker, `RUN ["sh","-c","python build_html.py\n# FROM evil"]`) || !strings.Contains(docker, "COPY --from=site-build /justcd-site/ /usr/share/nginx/html/") || !strings.Contains(deployment, "containerPort: 8080") {
+		t.Fatal("incorrect static recipe", docker, deployment)
+	}
+	for _, dir := range []string{".", "../dist", "/dist", "dist/../out", ""} {
+		c.OutputDir = dir
+		if c.Validate() == nil {
+			t.Fatal("unsafe output accepted", dir)
+		}
+	}
+}
+func TestStaticOutputPreparation(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 unavailable")
+	}
+	for _, mode := range []string{"valid", "missing-index", "symlink", "escape"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			out := root + "/dist"
+			target := t.TempDir() + "/site"
+			if err := os.Mkdir(out, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if mode != "missing-index" {
+				if err := os.WriteFile(out+"/index.html", []byte("hello"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "symlink" {
+				if err := os.Symlink("index.html", out+"/linked.html"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			dir := "dist"
+			if mode == "escape" {
+				dir = "../"
+			}
+			cmd := exec.Command(python, "-c", staticOutputScript, dir, target)
+			cmd.Dir = root
+			output, err := cmd.CombinedOutput()
+			if mode != "valid" {
+				if err == nil {
+					t.Fatal("unsafe output accepted", mode)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err, string(output))
+			}
+			info, err := os.Stat(target + "/index.html")
+			if err != nil || info.Mode().Perm() != 0644 {
+				t.Fatal("output not readable by arbitrary UID", err)
+			}
+		})
 	}
 }

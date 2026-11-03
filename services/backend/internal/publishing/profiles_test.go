@@ -37,3 +37,16 @@ func TestProfileRejectsInvalidDestinations(t *testing.T) {
 		}
 	}
 }
+
+func TestStaticProfileDefaults(t *testing.T) {
+	s := profileSettings()
+	s.TemplateID = "python-static"
+	if s.Validate() == nil {
+		t.Fatal("missing server image accepted")
+	}
+	s.WebServerImage = "registry.example.com/nginx:1"
+	c, err := s.Resolve("report", "")
+	if err != nil || c.BuildCommand != "python build_html.py" || c.OutputDir != "dist" || c.WebServerImage != s.WebServerImage {
+		t.Fatal("static defaults missing", c, err)
+	}
+}

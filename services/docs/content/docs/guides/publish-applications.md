@@ -265,3 +265,67 @@ as other application builds. They are not executed by the JustCD backend.
 Published source updates retain the original build command and output directory.
 Static websites serve generated files; request-time Python APIs need a separate
 application runtime template. Regenerate and publish again to refresh content.
+
+## Reuse an existing Git project
+
+After selecting a template, choose **Use existing Git project**. Connect the
+repository under the workspace's Git sources first; JustCD reuses that connection
+and its read credential. This path supports HTTPS GitLab repositories and an
+existing branch. Choose the branch and application directory (`.` for the root,
+`apps/report` for a nested project). The application entry point is relative to
+that directory.
+
+Select an approved publishing profile, or configure the destination and images
+manually as a workspace owner. For manual setup, a GitLab API token is used only
+for the request and never stored. Profile-based proposals require a workspace
+deployer role and a repository inside the profile's configured GitLab origin and
+group. Images supplied for existing CI must remain under the profile’s registry
+prefix. Repositories shared from another workspace cannot be modified here.
+
+**Inspect repository** reports an existing Dockerfile, `.gitlab-ci.yml`, and
+possible manifests. Then choose the appropriate route:
+
+- **Source only:** JustCD proposes the template Dockerfile, a GitLab build pipeline,
+  and deployment templates. Shiny and Streamlit dependency checks still apply.
+- **Existing Dockerfile:** JustCD uses it unchanged, with the selected application
+  directory as its build context. It adds missing CI and deployment templates.
+- **Existing pipeline:** JustCD preserves the complete build. Supply the immutable
+  image reference it produces (`registry/repository/image@sha256:…`); the proposal
+  adds deployment manifests referencing that digest. Future image updates remain
+  the responsibility of your existing pipeline or Git changes.
+- **Existing deployment files:** Workspace owners can choose **Use existing
+  manifests**. The standard application wizard opens with workspace, Git source,
+  branch, name, and manifest directory prefilled. Choose YAML, Kustomize, or Helm
+  there as appropriate. No merge request or build changes are necessary.
+
+**Review proposed files** displays every addition and its contents. Creation
+rechecks the commit and settings; changes require a new review. The proposal
+uses create-only actions on a new `justcd/setup-*` branch and opens a merge request.
+It never writes the target branch or replaces existing files. Conflicts involving
+existing generated paths, symlinks, or submodules are rejected.
+
+JustCD also registers an ordinary Git application pointing to `deploy/<app-name>`
+with **manual** deployment. Review and merge the proposal, finish the initial
+build if using generated CI, then plan and apply through JustCD. The deployment
+path is populated by the first successful generated build, so it will not render
+until that build completes. The source is not enrolled in ZIP replacement
+publishing; future changes come through your existing Git workflow.
+
+For generated CI, a repository maintainer must configure protected
+`REGISTRY_USER` and `REGISTRY_PASSWORD` variables (or the selected Vault
+integration), protect the selected branch, and enable CI job-token repository
+pushes before merging. Existing secrets and project settings are never changed.
+After merging, start the selected branch pipeline manually if it did not run
+automatically (for example, after a fast-forward merge of the CI-skipped proposal).
+The generated job uses rootless BuildKit and commits the immutable image digest
+only if the source branch still matches the built commit. Existing Dockerfiles
+must expose the selected template's port (3838 for Shiny, 8501 for Streamlit,
+8080 for static websites) and support the platform's unprivileged user policy.
+
+Publishing profiles supply bootstrap defaults for this Git workflow. Their
+credentials are not copied into the repository, and later profile edits or
+credential rotation do not rewrite the existing project's CI configuration.
+
+The proposal uses GitLab's [batch commit API](https://docs.gitlab.com/api/commits/#create-a-commit)
+with `start_sha` and create-only actions, followed by the
+[merge request API](https://docs.gitlab.com/api/merge_requests/#create-a-merge-request).

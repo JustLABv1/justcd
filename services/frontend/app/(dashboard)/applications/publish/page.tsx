@@ -9,6 +9,7 @@ import {
   TemplateGlyph,
   type ApplicationTemplate,
 } from "@/components/applications/template-catalog"
+import { ExistingProject } from "@/components/applications/existing-project"
 import { ArchiveUpload } from "@/components/applications/archive-upload"
 import {
   PublishingCard,
@@ -31,7 +32,7 @@ import type { ListResponse, Workspace } from "@/lib/types"
 
 export default function PublishApplicationPage() {
   const { limits, error: limitsError } = usePublishingLimits()
-  const [method, setMethod] = useState<"profile" | null>(null)
+  const [method, setMethod] = useState<"profile" | "existing" | null>(null)
   const [template, setTemplate] = useState<ApplicationTemplate | null>(null)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [workspaceId, setWorkspaceId] = useState("")
@@ -201,6 +202,17 @@ export default function PublishApplicationPage() {
       </div>
     )
   const manualURL = `/applications/publish/manual?workspaceId=${encodeURIComponent(workspaceId)}&templateId=${encodeURIComponent(template.id)}`
+  if (method === "existing")
+    return (
+      <ExistingProject
+        key={`${workspaceId}-${template.id}`}
+        workspaceId={workspaceId}
+        owner={workspace?.role === "owner"}
+        template={template}
+        profiles={choices}
+        onBack={() => setMethod(null)}
+      />
+    )
   if (!method)
     return (
       <div className="space-y-5 pb-5">
@@ -220,7 +232,8 @@ export default function PublishApplicationPage() {
               How would you like to publish {template.name}?
             </h1>
             <p className="mt-1 text-sm leading-6 text-muted-foreground">
-              Choose a publishing profile or configure the setup yourself.
+              Create a new project from a ZIP, or reuse an existing Git
+              repository.
             </p>
           </div>
         </header>
@@ -243,9 +256,31 @@ export default function PublishApplicationPage() {
             />
           </PublishingField>
         </div>
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-3">
           <PublishingCard contentClassName="flex h-full flex-col items-start gap-3">
-            <h2 className="text-base font-medium">Use a publishing profile</h2>
+            <h2 className="text-base font-medium">
+              Use an existing Git project
+            </h2>
+            <p className="flex-1 text-sm leading-6 text-muted-foreground">
+              Keep your repository and existing build files. Inspect what is
+              there and add missing files through a merge request.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Works with a GitLab repository you already have.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!workspaceId}
+              onClick={() => setMethod("existing")}
+            >
+              Use existing Git project
+            </Button>
+          </PublishingCard>
+          <PublishingCard contentClassName="flex h-full flex-col items-start gap-3">
+            <h2 className="text-base font-medium">
+              New project from ZIP with a profile
+            </h2>
             <p className="flex-1 text-sm leading-6 text-muted-foreground">
               Use an administrator-approved runtime and destination. Repository,
               build settings, and credentials are already configured.
@@ -257,19 +292,19 @@ export default function PublishApplicationPage() {
                   ? `${choices.length} ${choices.length === 1 ? "profile available" : "profiles available"} for ${template.name}`
                   : `No profile configured for ${template.name} in this workspace.`}
             </p>
-            <div className="flex flex-wrap items-center gap-4">
-              <Button
-                type="button"
-                disabled={loading || !choices.length}
-                onClick={() => setMethod("profile")}
-              >
-                Use publishing profile
-              </Button>
-              {management}
-            </div>
+            {management}
+            <Button
+              type="button"
+              disabled={loading || !choices.length}
+              onClick={() => setMethod("profile")}
+            >
+              Use publishing profile
+            </Button>
           </PublishingCard>
           <PublishingCard contentClassName="flex h-full flex-col items-start gap-3">
-            <h2 className="text-base font-medium">Manual setup</h2>
+            <h2 className="text-base font-medium">
+              New project from ZIP, manual setup
+            </h2>
             <p className="flex-1 text-sm leading-6 text-muted-foreground">
               Set up GitLab, build images, registry access, secrets, and the
               deployment destination with a guided wizard.
@@ -280,7 +315,11 @@ export default function PublishApplicationPage() {
                 : "Manual setup requires a workspace owner."}
             </p>
             {workspace?.role === "owner" ? (
-              <Button variant="outline" render={<Link href={manualURL} />}>
+              <Button
+                variant="outline"
+                nativeButton={false}
+                render={<Link href={manualURL} />}
+              >
                 Set up manually
               </Button>
             ) : (
@@ -398,7 +437,11 @@ export default function PublishApplicationPage() {
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-1">
                 {management}
                 {workspace?.role === "owner" && (
-                  <Button variant="outline" render={<Link href={manualURL} />}>
+                  <Button
+                    variant="outline"
+                    nativeButton={false}
+                    render={<Link href={manualURL} />}
+                  >
                     Set up manually
                   </Button>
                 )}

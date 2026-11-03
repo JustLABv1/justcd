@@ -25,6 +25,7 @@ type GitLab struct {
 	TempDir string
 }
 type Project struct {
+	CIConfigPath  string `json:"ci_config_path"`
 	ID            int    `json:"id"`
 	WebURL        string `json:"web_url"`
 	RepositoryURL string `json:"http_url_to_repo"`

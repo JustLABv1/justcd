@@ -219,9 +219,9 @@ export function TemplateCatalog({
         </Button>
       )}
       <p className="text-sm leading-6 text-muted-foreground">
-        Each template creates a private GitLab project and an image build for
-        your existing Kubernetes or OpenShift environment. Your platform’s
-        credentials and approval rules stay in control.
+        Create a new GitLab project from your application ZIP, or reuse an
+        existing repository and build. Your platform’s credentials and
+        deployment approval rules stay in control.
       </p>
     </div>
   )

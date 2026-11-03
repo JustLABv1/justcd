@@ -55,6 +55,43 @@ paths:
         '204': {description: Profile and credentials deleted}
         '403': {description: Workspace owner and CSRF required}
         '409': {description: Profile or credentials are in use; disable instead}
+  /publishing/repository/inspect:
+    post:
+      summary: Inspect an owned GitLab repository at a pinned branch commit without changing it
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RepositoryPublishingInput'}
+      responses:
+        '200': {description: Commit SHA and detected Dockerfile, GitLab pipeline, and possible deployment files}
+        '400': {description: Invalid repository, branch, or profile configuration}
+        '403': {description: Workspace owner required for manual settings; deployer required for profiles}
+        '404': {description: Git source or profile not owned by this workspace}
+  /publishing/repository/plan:
+    post:
+      summary: Review create-only additions for an existing GitLab project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RepositoryPublishingInput'}
+      responses:
+        '200': {description: Proposed files and contents, prerequisites, and review hash; no repository writes}
+        '400': {description: Unsafe path, conflicting existing file, or invalid build configuration}
+  /publishing/repository:
+    post:
+      summary: Create a merge request and register a manual-sync application using the existing Git source
+      description: Recomputes the reviewed plan. Never overwrites existing files, CI variables, project settings, or the target branch. Generated build prerequisites must be configured before merging. Profile infrastructure is a bootstrap snapshot, not a managed ZIP publication.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RepositoryPublishingInput'}
+      responses:
+        '201': {description: applicationId, mergeRequestUrl, manifestPath, and CI prerequisites}
+        '409': {description: Stale review hash, existing conflicting application, or application registration failure; a registration failure may include the created merge request URL for recovery}
+        '502': {description: GitLab proposal could not be created}
   /publishing/templates:
     get:
       summary: List supported application templates (authenticated)
@@ -1058,6 +1095,27 @@ components:
             vaultRole: {type: string}
             vaultPath: {type: string}
             syncPolicy: {type: string, enum: [manual, auto-safe]}
+    RepositoryPublishingInput:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, sourceId, revision, appDir]
+      properties:
+        workspaceId: {type: string}
+        sourceId: {type: string, description: Existing Git source owned by this workspace; shared sources cannot be modified}
+        revision: {type: string, description: Existing branch to inspect and target}
+        appDir: {type: string, description: Repository-relative build context; use . for the root}
+        profileId: {type: string, description: Optional approved profile; restricts writes to its GitLab origin and group}
+        name: {type: string, description: App name when using a profile}
+        entryPoint: {type: string}
+        buildCommand: {type: string}
+        outputDir: {type: string}
+        gitlabToken: {type: string, writeOnly: true, description: Manual setup only; API token used for this request and never persisted}
+        clusterId: {type: string, description: Manual setup only}
+        config:
+          type: object
+          description: Manual publishing Config; same fields as ZIP publishing. Unused base or builder images may be omitted when reusing existing builds.
+        image: {type: string, description: Required when keeping existing CI; immutable registry image reference with sha256 digest}
+        planHash: {type: string, description: Required for creation; hash returned by the unchanged reviewed plan}
     DeploymentWindow:
       type: object
       additionalProperties: false

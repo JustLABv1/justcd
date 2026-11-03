@@ -53,10 +53,14 @@ export default function NewApplicationPage() {
   useEffect(() => { if (error) errorRef.current?.scrollIntoView({ block: "nearest" }) }, [error])
 
   useEffect(() => {
-    const queryWorkspace = new URLSearchParams(window.location.search).get("workspaceId") ?? ""
+    const query = new URLSearchParams(window.location.search)
+    const queryWorkspace = query.get("workspaceId") ?? ""
     let active = true
     api<ListResponse<Workspace>>("/api/v1/workspaces").then((workspaceResult) => {
       if (!active) return
+      if (query.get("revision")) setRevision(query.get("revision")!)
+      if (query.get("manifestPath")) setManifestPath(query.get("manifestPath")!)
+      if (query.get("name")) setName(query.get("name")!)
       const writable = workspaceResult.items.filter((workspace) => workspace.role !== "viewer")
       setWorkspaces(writable)
       setWorkspaceId(writable.find((workspace) => workspace.id === queryWorkspace)?.id ?? writable[0]?.id ?? "")
@@ -73,7 +77,8 @@ export default function NewApplicationPage() {
     ]).then(([sourceList, clusterList]) => {
       if (!active) return
       setSources(sourceList.items)
-      setSourceId(sourceList.items[0]?.id ?? "")
+      const preferredSource = new URLSearchParams(window.location.search).get("sourceId")
+      setSourceId(sourceList.items.find(source => source.id === preferredSource)?.id ?? sourceList.items[0]?.id ?? "")
       setClusters(clusterList.items)
       setClusterId(clusterList.items[0]?.id ?? "")
       setError(null)
@@ -140,7 +145,7 @@ export default function NewApplicationPage() {
     <div ref={errorRef}>{error != null && <ErrorNotice error={error} />}</div>
     <form className="max-w-4xl space-y-5" onSubmit={submit} noValidate>
       <Wizard step={wizard.step} onStepChange={wizard.setStep} idPrefix="new-app" steps={[
-        { title: "Source", content: <Panel title="Source" description="Select the workspace repository and the Git revision to render."><div className="grid gap-4 p-5 sm:grid-cols-2">
+        { title: "Source", content: <Panel title="Source" description="Select the workspace repository and the Git revision to render."><div className="grid min-w-0 gap-4 p-5 sm:grid-cols-2 [&>*]:min-w-0">
           <div className="space-y-2">
             <FormField label="Workspace" htmlFor="workspace"><FormSelect id="workspace" value={workspaceId} onValueChange={(value) => { if (value !== workspaceId && (sourceId || clusterId || namespaces.length)) setWorkspaceNotice("Git source, cluster and namespace selections were reset for the new workspace."); setWorkspaceId(value); setSourceId(""); setSources([]); setClusterId(""); setClusters([]); setBindings([]); setNamespaces([]); setNamespaceHelmValues({}); setNamespaceManifestPaths({}); setTargetManifestPath("") }} placeholder="Select workspace" required items={workspaces.map((workspace) => ({ value: workspace.id, label: workspace.name }))} /></FormField>
           </div>
@@ -149,7 +154,7 @@ export default function NewApplicationPage() {
           <FormField label="Application name" htmlFor="name" hint="Lowercase letters, numbers, dots, and dashes."><Input id="name" placeholder="billing-api" value={name} onChange={(event) => setName(event.target.value)} required pattern="[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?" /></FormField>
           <FormField label="Git revision" htmlFor="revision" hint="Branch, tag, or commit; JustCD pins the reviewed commit SHA."><Input id="revision" placeholder="main" value={revision} onChange={(event) => setRevision(event.target.value)} required /></FormField>
         </div></Panel> },
-        { title: "Renderer", content: <Panel title="Renderer" description="Choose how the repository path is turned into Kubernetes manifests."><div className="grid gap-4 p-5 sm:grid-cols-2">
+        { title: "Renderer", content: <Panel title="Renderer" description="Choose how the repository path is turned into Kubernetes manifests."><div className="grid min-w-0 gap-4 p-5 sm:grid-cols-2 [&>*]:min-w-0">
           <FormField label="Renderer" htmlFor="renderer"><FormSelect id="renderer" value={renderer} onValueChange={setRenderer} items={[{ value: "yaml", label: "Plain YAML / JSON" }, { value: "kustomize", label: "Kustomize build" }, { value: "helm", label: "Helm template" }]} /></FormField>
           <FormField label={renderer === "helm" ? "Chart path" : renderer === "kustomize" ? "Shared Kustomize path" : "Manifest path"} htmlFor="path" hint={renderer === "helm" ? "Repository-relative Helm chart directory." : renderer === "kustomize" ? "Fallback Kustomize entry point. Cluster and namespace paths can select complete overlays." : "Repository-relative directory or file."}><Input id="path" placeholder="deploy/" value={manifestPath} onChange={(event) => setManifestPath(event.target.value)} required /></FormField>
           {renderer === "kustomize" && <div className="sm:col-span-2"><KustomizeOptions idPrefix="new-app-kustomize" namespaceOverride={kustomizeNamespaceOverride} onNamespaceOverrideChange={setKustomizeNamespaceOverride} helmEnabled={kustomizeHelmEnabled} onHelmEnabledChange={setKustomizeHelmEnabled} /></div>}

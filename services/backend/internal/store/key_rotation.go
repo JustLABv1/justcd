@@ -20,6 +20,7 @@ func (s *Store) RotateEncryptionKey(ctx context.Context, oldKey, newKey []byte) 
 		return 0, err
 	}
 	targets := []struct{ table, column, id, purpose string }{
+		{"ai_settings", "api_key_cipher", "singleton::text", "'ai:instance'"},
 		{"credentials", "secret_cipher", "id", "'credential:'||id"},
 		{"oidc_providers", "client_secret_cipher", "id", "'oidc-provider:'||id"},
 		{"source_control_connections", "webhook_secret_cipher", "id", "'source-control-webhook:'||id"},

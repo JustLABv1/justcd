@@ -308,7 +308,7 @@ function pageCrumbs(pathname: string, workspace: Workspace | null, application: 
   }
   if (parts[0] === "settings" && parts[1] === "security") return [{ label: "Account security" }]
   if (parts[0] === "settings") {
-    const section = { "git-sources": "Git sources", clusters: "Clusters", namespaces: "Namespace access", credentials: "Credentials", oidc: "OIDC providers", users: "Local users" }[parts[1] as "git-sources"]
+    const section = { "git-sources": "Git sources", clusters: "Clusters", namespaces: "Namespace access", credentials: "Credentials", ai: "AI", oidc: "OIDC providers", users: "Local users" }[parts[1] as "git-sources"]
     return parts[1] ? [{ label: "Instance settings", href: "/settings" }, { label: section ?? "Section" }] : [{ label: "Instance settings" }]
   }
   if (parts[0] === "onboarding") return [{ label: "Get started" }]

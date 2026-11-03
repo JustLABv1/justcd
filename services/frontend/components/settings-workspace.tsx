@@ -20,6 +20,7 @@ import { GitSourcePanel } from "@/components/settings/git-source-panel"
 import { NamespacePanel } from "@/components/settings/namespace-panel"
 import { OIDCPanel } from "@/components/settings/oidc-panel"
 import { PlatformUsersPanel } from "@/components/settings/users-panel"
+import { AIPanel } from "@/components/settings/ai-panel"
 import { MaintenancePanel } from "@/components/settings/maintenance-panel"
 import { LoadErrorNotice, SectionSkeleton, type ActionRunner } from "@/components/settings/shared"
 import type {
@@ -36,7 +37,7 @@ import type {
 const workspaceSections = ["git-sources", "clusters", "namespaces", "credentials", "shares"]
 
 const navGroups = [
-  { title: "Instance", ids: ["maintenance"] },
+  { title: "Instance", ids: ["maintenance", "ai"] },
   { title: "Delivery", ids: ["git-sources", "clusters", "namespaces"] },
   { title: "Security & access", ids: ["credentials", "shares", "oidc", "users"] },
 ]
@@ -73,6 +74,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
     { id: "shares", title: "Sharing", description: "Review connection offers and workspace access" },
     { id: "oidc", title: "OIDC providers", description: "Organization sign-in and group mapping", adminOnly: true },
     { id: "users", title: "Platform users", description: "Accounts and access on this JustCD instance", adminOnly: true },
+    { id: "ai", title: "AI", description: "LiteLLM connection and model settings", adminOnly: true },
     { id: "maintenance", title: "Maintenance", description: "Restrict access while administrators work on the instance", adminOnly: true },
   ]
   const visibleSections = sections.filter((item) => workspaceScoped ? workspaceSections.includes(item.id) : !workspaceSections.includes(item.id))
@@ -351,6 +353,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
               </>
             ) : (
               <div className="settings-content min-w-0">
+                {section === "ai" && user?.isAdmin && <AIPanel />}
                 {section === "maintenance" && user?.isAdmin && <MaintenancePanel />}
                 {workspaceScoped && workspace && scopeLoading && <SectionSkeleton label="Loading workspace connections" />}
                 {workspaceScoped && workspace && section === "credentials" && !scopeLoading && (

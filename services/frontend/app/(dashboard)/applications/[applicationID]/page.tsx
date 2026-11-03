@@ -1,5 +1,6 @@
 "use client"
 
+import { AIAssistant } from "@/components/ai-assistant"
 import { DeploymentScheduleNotice } from "@/components/deployment-schedule-notice"
 import { DeploymentSchedulePanel, ScheduledOperationActions } from "@/components/deployment-schedule"
 import { useParams, useRouter } from "next/navigation"
@@ -146,7 +147,7 @@ export default function ApplicationDetailPage() {
     const results = await Promise.allSettled([
       api<ListResponse<Workspace>>("/api/v1/workspaces").then((value) => { if (current()) setWorkspace(value.items.find((item) => item.id === app.workspaceId) ?? null) }).finally(() => done("workspace")),
       api<ListResponse<WorkspaceMember>>(`/api/v1/workspaces/${encodeURIComponent(app.workspaceId)}/members`).catch(() => ({ items: [] as WorkspaceMember[] })).then((value) => { if (current()) setWorkspaceMembers(value.items) }),
-      api<ListResponse<PlanRecord>>(`${appPath}/plans`).then((value) => { if (current()) { setPlansError(null); setPlans(value.items); setActivePlan((selected) => selected ? value.items.find((item) => item.id === selected.id) ?? value.items[0] ?? null : value.items[0] ?? null) } }).catch((cause) => { if (current()) setPlansError(cause) }).finally(() => done("plans")),
+      api<ListResponse<PlanRecord>>(`${appPath}/plans`).then((value) => { if (current()) { setPlansError(null); setPlans(value.items); setActivePlan((selected) => selected ? value.items.find((item) => item.id === selected.id) ?? value.items[0] ?? null : value.items.find((item) => item.id === new URLSearchParams(window.location.search).get("planId")) ?? value.items[0] ?? null) } }).catch((cause) => { if (current()) setPlansError(cause) }).finally(() => done("plans")),
       api<ListResponse<ManagedResource>>(`${appPath}/resources`).then((value) => { if (current()) setResources(value.items) }).finally(() => done("resources")),
       api<ListResponse<Operation>>(`${appPath}/operations`).then((value) => { if (current()) { setOperations(value.items); setOperationsError(null) } }).catch((cause) => { if (current()) setOperationsError(cause) }).finally(() => done("operations")),
       api<ListResponse<ApplicationHealthTransition>>(`${appPath}/health-history`).then((value) => { if (current()) setHealthHistory(value.items) }).catch(() => { if (current()) setHealthHistory([]) }),
@@ -731,6 +732,7 @@ export default function ApplicationDetailPage() {
 
   return <>
     <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.clusterName || application.clusterId} / ${application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"}${application.autoSyncPaused ? " · Auto-sync paused" : ""}` : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Sync <StatusBadge status={application.health} /></span><DeploymentScheduleNotice key={application.id} layout="chip" scope="applications" id={application.id} onViewSchedule={() => { selectTab("overview"); window.setTimeout(() => document.getElementById("deployment-schedule")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" }), 0) }} /></div>} metadata={application && <RuntimeHealthStrip application={application} healthHistory={healthHistory} reconnecting={Boolean(topologyError)} />} actions={application && <>
+      <AIAssistant key={`ai-${application.id}-${activeTab}-${activePlan?.id}-${activePlan?.plan.digest}`} workspaceId={application.workspaceId} applicationId={application.id} planId={activePlan?.id} features={activeTab === "changes" ? ["plan", "drift", "ask"] : activeTab === "activity" ? ["summary", "ask"] : ["diagnose", "ask"]} operations={activeTab === "activity" ? operations : undefined} />
       {pendingData.workspace && <span role="status" className="text-sm text-muted-foreground">Loading permissions…</span>}
       {planBlockedByNamespace && !application.configurationMissing && !application.decommissioning && canDeploy
         ? <Tooltip>

@@ -4,10 +4,62 @@ description: "Create a private GitLab project, build an image in CI, and registe
 ---
 
 Choose **Applications → New → From a template**. The searchable catalog offers
-Shiny, Streamlit, and Shiny Geospatial. Select a template to open its guided
-configuration. Workspace owners can upload a
-complete application ZIP and follow six steps: application, repository, build,
-secrets, deployment, and review. JustCD generates the Dockerfile, GitLab pipeline,
+Shiny, Streamlit, and Shiny Geospatial. After selecting a template, choose
+**Use a publishing profile** or **Manual setup**. Workspace owners can use the
+manual wizard whether or not profiles exist; deployers use approved profiles. With an enabled publishing profile, workspace owners and deployers
+choose a workspace, application name, and approved destination, then upload their
+complete application ZIP. Infrastructure credentials and build configuration are
+resolved on the server. An optional entry-point setting supports nested app folders.
+
+## Configure publishing profiles
+
+Open **Workspace settings → Publishing profiles** as a workspace owner or instance
+administrator. Create a profile for each approved template/destination combination:
+
+- A name and description analysts can understand, such as “Analytics development.”
+- A supported template, existing workspace cluster and namespace binding.
+- Approved runtime and builder image references, GitLab HTTPS origin/group,
+  registry prefix, and optional runner tag / image pull secret.
+- An optional OpenShift domain suffix. App `report` uses `report.<suffix>`.
+  This creates a direct TLS route and does not configure SSO.
+- Deployment behavior: `auto-safe` follows normal workspace approval rules after
+  a successful build; `manual` waits for an authorized plan review and apply.
+- A provisioning API token and separate Git repository read token, plus registry
+  credentials or references to an existing Vault secret.
+
+Profile secrets use JustCD's encrypted credential store. Only owners/admins can
+create, inspect configuration, update, or delete profiles. Secret values are never
+returned, including when editing. Leave secret fields blank to retain their stored
+values. The analyst profile list contains only names, descriptions, template and
+approved destination metadata; it omits image references, GitLab configuration,
+credential references and secrets.
+
+Workspace **deployers** and owners can publish through enabled profiles. Viewers
+cannot publish. A request cannot override a profile's cluster, namespace, image,
+registry, GitLab location, sync policy, or secrets. The selected workspace must
+still have cluster access and the namespace binding at publishing time.
+
+Each application retains its original profile. Uploading a new version reuses its
+settings and stored credentials; no token prompt is shown. Credential rotation
+updates the shared Git read credential by reference and refreshes registry CI
+variables on subsequent publishing requests. Vault secret lifecycle remains with
+Vault. Disabling a profile blocks new applications and source updates; it does
+not stop existing workloads or cancel already-started CI builds.
+
+Infrastructure settings are locked after the first application uses a profile.
+Names, descriptions, enabled state and credentials remain editable. Create another
+profile for infrastructure changes. Updates use optimistic version checks, and
+in-use profiles cannot be deleted. Deleting an unused profile also removes its
+private credentials; references elsewhere prevent deletion.
+
+The original six-step wizard remains available to workspace owners through
+**Manual setup** on the publishing-options screen, whether or not profiles exist. Legacy manual
+applications still require a provisioning token when uploading new source.
+
+## Advanced manual setup
+
+Workspace owners can upload a complete application ZIP and follow six steps:
+application, repository, build, secrets, deployment, and review. JustCD generates the Dockerfile, GitLab pipeline,
 and Kubernetes deployment template. Application code runs only in CI and the
 selected cluster, never inside the JustCD API process.
 
@@ -19,8 +71,9 @@ selected cluster, never inside the JustCD API process.
   is recommended. A provisioning token needs API access, project creation in the
   selected group, protected branch configuration, commits, variables, and pipelines.
 - A separate group access token with `read_repository` that can read newly created
-  private projects. JustCD stores only this read credential, encrypted using its
-  existing credential store. The provisioning token is used for the request only.
+  private projects. Profile credentials are stored encrypted. In advanced manual
+  setup, only the read credential is retained; the provisioning token is used for
+  the request only.
 - A compatible GitLab runner and an approved rootless BuildKit image containing
   `buildctl-daemonless.sh`, `git`, `jq`, a POSIX shell, and internal CA trust.
   An example builder Dockerfile is supplied in `services/backend/packaging/publisher`.
@@ -96,7 +149,9 @@ build environment, so restrict runner credentials to the application's needs.
 **GitLab CI/CD variables** creates protected `REGISTRY_USER` and masked/protected
 `REGISTRY_PASSWORD` project variables through the GitLab API. The password must be
 at least eight characters without whitespace. Values are never committed to Git
-or retained in JustCD. The publishing branch is protected before CI starts.
+as source files. Profiles retain registry credentials encrypted in JustCD so
+analysts can publish subsequent versions; advanced manual setup uses them for the
+request only. The publishing branch is protected before CI starts.
 
 **Vault** references an existing KV v2 secret through GitLab's native OIDC/Vault
 integration. This requires a GitLab tier that supports external Vault secrets.
@@ -125,8 +180,9 @@ CI job token. It checks that the source commit is still the branch head before
 publishing the deployment manifest. Newer source uploads prevent stale builds
 from replacing the desired release. There is no force push.
 
-The registered JustCD application uses `main`, renderer `yaml`, path `deploy`,
-and **manual** sync. Before the first successful build, this path contains only
+The registered JustCD application uses `main`, renderer `yaml`, and path `deploy`.
+Profile applications use the administrator-selected sync policy; advanced manual
+publishing uses **manual** sync. Before the first successful build, this path contains only
 `.gitkeep`, so planning may report no manifests. After the pipeline succeeds,
 calculate a plan and apply it through normal workspace approval controls.
 
@@ -141,7 +197,8 @@ It must still be validated against the target cluster's SCC/admission policies.
 
 On an application created by this flow, choose **More actions → Upload new
 version**. Upload the complete source snapshot and provide a GitLab provisioning
-token. Existing runtime settings, registry variables/Vault references, Git read
+token for legacy manual applications. Profile applications use stored credentials.
+Existing runtime settings, registry variables/Vault references, Git read
 credential, and deployment target are reused. Files absent from the new source
 snapshot are removed from `source/`. The existing deployment manifest is retained
 until the new build succeeds. Review and apply the new plan to deploy it.

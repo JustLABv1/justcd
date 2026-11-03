@@ -18,3 +18,52 @@ export async function publishProject<T>(
   body.append("archive", archive)
   return api<T>("/api/v1/publishing", { method: "POST", body })
 }
+
+export type PublishingProfileSettings = {
+  templateId: string
+  gitlabUrl: string
+  group: string
+  clusterId: string
+  namespace: string
+  baseImage: string
+  builderImage: string
+  registryPrefix: string
+  hostSuffix: string
+  pullSecret: string
+  runnerTag: string
+  secretMode: string
+  vaultAddress: string
+  vaultRole: string
+  vaultPath: string
+  syncPolicy: string
+}
+export type PublishingProfile = {
+  id: string
+  workspaceId: string
+  name: string
+  description: string
+  enabled: boolean
+  settings: PublishingProfileSettings
+  version: number
+  applications: number
+}
+export type ApprovedPublishingProfile = {
+  id: string
+  name: string
+  description: string
+  templateId: string
+  clusterId: string
+  clusterName: string
+  namespace: string
+  hostSuffix: string
+  syncPolicy: string
+}
+export type PublicationResult = {
+  applicationId: string
+  profileId?: string
+  projectUrl: string
+  repositoryUrl: string
+  pipelineUrl: string
+  syncPolicy: string
+  applicationUrl: string
+}

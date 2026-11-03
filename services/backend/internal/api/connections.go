@@ -29,6 +29,10 @@ func (s *Server) updateCredential(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "instance administrator role required")
 		return
 	}
+	if c.Kind == "publishing" {
+		writeError(w, 400, "manage this credential through its publishing profile")
+		return
+	}
 	var input struct {
 		Name      string            `json:"name"`
 		ExpiresAt *string           `json:"expiresAt"`

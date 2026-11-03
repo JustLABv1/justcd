@@ -360,6 +360,7 @@ function pageCrumbs(pathname: string, workspace: Workspace | null, application: 
   if (parts[0] === "applications") {
     if (!parts[1]) return [{ label: "Applications" }]
     if (parts[1] === "new") return [{ label: "Applications", href: "/applications" }, { label: "New application" }]
+    if (parts[1] === "publish" && parts[2] === "manual") return [{ label: "Applications", href: "/applications" }, { label: "Templates", href: "/applications/publish" }, { label: "Manual publishing" }]
     if (parts[1] === "publish") return [{ label: "Applications", href: "/applications" }, { label: "Templates" }]
     if (parts[2] === "publish") return [{ label: "Applications", href: "/applications" }, { label: application?.name ?? "Application", href: `/applications/${parts[1]}` }, { label: "Publish a new version" }]
     return [{ label: "Applications", href: "/applications" }, { label: application?.name ?? "Application" }]

@@ -145,15 +145,8 @@ func (g GitLab) Prepare(ctx context.Context, p Project, files []File, variables 
 	if !settings.JobPush {
 		return errors.New("GitLab must support and enable CI job-token repository pushes (GitLab 18.4+ recommended)")
 	}
-	for _, v := range variables {
-		err := g.request(ctx, "POST", prefix+"/variables", v, nil)
-		var pe *ProviderError
-		if errors.As(err, &pe) && pe.Status == 400 {
-			err = g.request(ctx, "PUT", prefix+"/variables/"+url.PathEscape(v.Key), v, nil)
-		}
-		if err != nil {
-			return err
-		}
+	if err := g.SetVariables(ctx, p, variables); err != nil {
+		return err
 	}
 	var branch struct {
 		Commit struct {
@@ -346,4 +339,20 @@ func writeCommit(ctx context.Context, w io.Writer, metadata map[string]string, a
 	}
 	_, err = io.WriteString(w, "]}")
 	return err
+}
+
+func (g GitLab) SetVariables(ctx context.Context, p Project, variables []Variable) error {
+	prefix := "/projects/" + strconv.Itoa(p.ID)
+	for _, v := range variables {
+		err := g.request(ctx, "POST", prefix+"/variables", v, nil)
+		var pe *ProviderError
+		if errors.As(err, &pe) && pe.Status == 400 {
+			err = g.request(ctx, "PUT", prefix+"/variables/"+url.PathEscape(v.Key), v, nil)
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

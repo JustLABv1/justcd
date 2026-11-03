@@ -27,24 +27,25 @@ const sessionCookieName = "justcd_session"
 const csrfCookieName = "justcd_csrf"
 
 type Server struct {
-	Store         *store.Store
-	Config        config.Config
-	EncryptionKey []byte
-	Logger        *slog.Logger
-	Metrics       *observability.Metrics
-	Syncer        *syncer.Service
-	aiMu          sync.Mutex
-	aiRequests    map[string]time.Time
-	aiActive      map[string]bool
-	triageMu      sync.Mutex
-	triageRuns    map[string]*triageRun
-	triageLast    map[string]time.Time
-	triagePending map[string]triagePending
-	dummyHash     string
-	agentMu       sync.Mutex
-	agentPolls    map[string]bool
-	agentRequests map[string][]time.Time
-	Mux           *http.ServeMux
+	Store          *store.Store
+	PublishingHTTP *http.Client
+	Config         config.Config
+	EncryptionKey  []byte
+	Logger         *slog.Logger
+	Metrics        *observability.Metrics
+	Syncer         *syncer.Service
+	aiMu           sync.Mutex
+	aiRequests     map[string]time.Time
+	aiActive       map[string]bool
+	triageMu       sync.Mutex
+	triageRuns     map[string]*triageRun
+	triageLast     map[string]time.Time
+	triagePending  map[string]triagePending
+	dummyHash      string
+	agentMu        sync.Mutex
+	agentPolls     map[string]bool
+	agentRequests  map[string][]time.Time
+	Mux            *http.ServeMux
 }
 
 func New(s *store.Store, cfg config.Config, logger *slog.Logger) (*Server, error) {
@@ -146,6 +147,11 @@ func (s *Server) routes() {
 	s.Mux.Handle("POST /api/v1/repository-configurations/{repositoryID}/reconcile", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.reconcileRepositoryConfiguration))))
 	s.Mux.Handle("GET /api/v1/git-sources", s.requireAuth(http.HandlerFunc(s.listGitSources)))
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}/publication", s.requireAuth(http.HandlerFunc(s.getPublication)))
+	s.Mux.Handle("GET /api/v1/publishing/profiles", s.requireAuth(http.HandlerFunc(s.listApprovedPublishingProfiles)))
+	s.Mux.Handle("GET /api/v1/workspaces/{workspaceID}/publishing-profiles", s.requireAuth(http.HandlerFunc(s.listPublishingProfiles)))
+	s.Mux.Handle("POST /api/v1/workspaces/{workspaceID}/publishing-profiles", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.savePublishingProfile))))
+	s.Mux.Handle("PUT /api/v1/workspaces/{workspaceID}/publishing-profiles/{profileID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.savePublishingProfile))))
+	s.Mux.Handle("DELETE /api/v1/workspaces/{workspaceID}/publishing-profiles/{profileID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.deletePublishingProfile))))
 	s.Mux.Handle("GET /api/v1/publishing/templates", s.requireAuth(http.HandlerFunc(s.getPublishingTemplates)))
 	s.Mux.Handle("GET /api/v1/publishing/limits", s.requireAuth(http.HandlerFunc(s.getPublishingLimits)))
 	s.Mux.Handle("POST /api/v1/publishing", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.publishApplication))))

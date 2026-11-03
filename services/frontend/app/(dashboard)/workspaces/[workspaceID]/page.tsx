@@ -15,6 +15,7 @@ import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
+import { PublishingProfiles } from "@/components/settings/publishing-profiles"
 import { WorkspaceSettings } from "@/components/workspace-settings"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { EmptyState, FormField, PageHeading, Panel } from "@/components/ui-kit"
@@ -45,7 +46,7 @@ function WorkspaceSettingsPage() {
   const requestedTab = searchParams.get("tab")
   const isOwner = workspace?.role === "owner"
   const activeTab = isOwner
-    ? (["general", "members", "policies", "notifications", "ai"].includes(requestedTab ?? "") ? requestedTab! : "general")
+    ? (["general", "members", "policies", "notifications", "ai", "publishing"].includes(requestedTab ?? "") ? requestedTab! : "general")
     : requestedTab === "ai" ? "ai" : "members"
 
   // Preserve old bookmarks without keeping the duplicate connections directory.
@@ -130,9 +131,11 @@ function WorkspaceSettingsPage() {
           {isOwner && <TabsTrigger value="general">General</TabsTrigger>}
           <TabsTrigger value="ai">AI</TabsTrigger>
           <TabsTrigger value="members">Members &amp; access <Badge size="xs" variant="secondary">{members.length}</Badge></TabsTrigger>
+          {isOwner && <TabsTrigger value="publishing">Publishing profiles</TabsTrigger>}
           {isOwner && <TabsTrigger value="policies">Deployment policies</TabsTrigger>}
           {isOwner && <TabsTrigger value="notifications">Notifications</TabsTrigger>}
         </TabsList>
+      {isOwner && <TabsContent value="publishing"><PublishingProfiles key={workspaceID} workspaceId={workspaceID} /></TabsContent>}
       <TabsContent value="ai" className="space-y-5">{isOwner && <WorkspaceAIPolicy key={workspaceID} workspaceId={workspaceID} />}<AIAssistant presentation="inline" key={`chat-${workspaceID}`} workspaceId={workspaceID} /></TabsContent>
       <TabsContent value="members" className="min-w-0">
         <AppDialog open={memberOpen} onOpenChange={setMemberOpen} busy={memberBusy} size="md" title="Add member" description="Give a teammate access to this workspace.">

@@ -8,6 +8,53 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /publishing/profiles:
+    get:
+      summary: List enabled publishing destinations without infrastructure or credentials (workspace deployer)
+      parameters:
+        - {name: workspaceId, in: query, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Profile ids, names, descriptions, template ids, destination display metadata, and sync policies}
+        '403': {description: Workspace deployer or owner required}
+  /workspaces/{workspaceID}/publishing-profiles:
+    parameters:
+      - {name: workspaceID, in: path, required: true, schema: {type: string}}
+    get:
+      summary: List workspace profile configuration without secret values (owner)
+      responses:
+        '200': {description: Full profile settings, enabled state, version and application count; credential references and ciphertext omitted}
+        '403': {description: Workspace owner required}
+    post:
+      summary: Create an administrator-configured publishing profile (owner)
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/PublishingProfileInput'}}}
+      responses:
+        '201': {description: Profile created and credentials stored encrypted}
+        '400': {description: Invalid template, settings, credentials or namespace binding}
+        '403': {description: Workspace owner and CSRF required}
+        '409': {description: Profile name already exists}
+  /workspaces/{workspaceID}/publishing-profiles/{profileID}:
+    parameters:
+      - {name: workspaceID, in: path, required: true, schema: {type: string}}
+      - {name: profileID, in: path, required: true, schema: {type: string}}
+    put:
+      summary: Edit a profile, disable publishing, or rotate credentials (owner)
+      description: Supply the current version. Blank secret fields retain stored values. In-use infrastructure settings are immutable; create a new profile for changes.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/PublishingProfileInput'}}}
+      responses:
+        '200': {description: Profile saved with incremented version; no secret values returned}
+        '403': {description: Workspace owner and CSRF required}
+        '404': {description: Profile not found in workspace}
+        '409': {description: Stale version, duplicate name or in-use infrastructure change}
+    delete:
+      summary: Delete an unused publishing profile and its private credentials (owner)
+      responses:
+        '204': {description: Profile and credentials deleted}
+        '403': {description: Workspace owner and CSRF required}
+        '409': {description: Profile or credentials are in use; disable instead}
   /publishing/templates:
     get:
       summary: List supported application templates (authenticated)
@@ -28,8 +75,8 @@ paths:
                   expandedBytes: {type: integer, default: 524288000}
   /publishing:
     post:
-      summary: Create a managed application or upload a complete new source snapshot (workspace owner)
-      description: Creates a private GitLab repository, protected CI variables or Vault references, generated build files, and a manual JustCD application. CI builds and publishes asynchronously. Existing unrelated repositories are never adopted. On partial setup failures, retry the same archive and settings. A new source upload must supply updateApplicationId and reuse the original configuration.
+      summary: Create a managed application or upload a complete new source snapshot
+      description: Creates a private GitLab repository, protected CI variables or Vault references, generated build files, and a manual JustCD application. CI builds and publishes asynchronously. Workspace deployers may use an enabled administrator-configured profile with profileId, name and entryPoint. Infrastructure fields and credentials are resolved server-side and cannot be overridden. Manual configuration requires a workspace owner. Existing unrelated repositories are never adopted. On partial setup failures, retry the same archive and settings. A new source upload must supply updateApplicationId and reuse the original configuration.
       requestBody:
         required: true
         content:
@@ -41,8 +88,14 @@ paths:
                 archive: {type: string, format: binary, description: ZIP archive; default 100 MiB compressed and 500 MiB expanded; limits configurable on the server}
                 metadata:
                   type: object
-                  required: [workspaceId, clusterId, gitlabUrl, group, gitlabToken, config]
+                  required: [workspaceId]
+                  oneOf:
+                    - required: [profileId]
+                    - required: [clusterId, gitlabUrl, group, gitlabToken, config]
                   properties:
+                    profileId: {type: string, description: Approved workspace profile; infrastructure overrides are rejected}
+                    name: {type: string, description: Application name for initial profile publishing}
+                    entryPoint: {type: string, description: Optional relative app entry point}
                     workspaceId: {type: string}
                     clusterId: {type: string}
                     updateApplicationId: {type: string}
@@ -82,7 +135,7 @@ paths:
     parameters:
       - {name: applicationID, in: path, required: true, schema: {type: string}}
     get:
-      summary: Read non-secret managed publication settings for a source update (workspace owner)
+      summary: Read managed publication settings for a source update (profile deployer or manual owner)
       responses:
         '200': {description: Publication configuration, workspaceId, and clusterId; no credentials}
         '403': {description: Workspace owner required}
@@ -963,6 +1016,42 @@ paths:
         '409': { description: Issuer change rejected for a provider with linked users }
 components:
   schemas:
+    PublishingProfileInput:
+      type: object
+      required: [name, enabled, settings]
+      properties:
+        name: {type: string, maxLength: 100}
+        description: {type: string, maxLength: 1000}
+        enabled: {type: boolean}
+        version: {type: integer, description: Current version required for updates}
+        secrets:
+          type: object
+          writeOnly: true
+          properties:
+            gitlabToken: {type: string, writeOnly: true}
+            gitReadToken: {type: string, writeOnly: true}
+            registryUser: {type: string, writeOnly: true}
+            registryPassword: {type: string, writeOnly: true}
+        settings:
+          type: object
+          required: [templateId, gitlabUrl, group, clusterId, namespace, baseImage, builderImage, registryPrefix, secretMode, syncPolicy]
+          properties:
+            templateId: {type: string, enum: [shiny, streamlit, shiny-geospatial]}
+            gitlabUrl: {type: string, format: uri}
+            group: {type: string}
+            clusterId: {type: string}
+            namespace: {type: string}
+            baseImage: {type: string}
+            builderImage: {type: string}
+            registryPrefix: {type: string}
+            hostSuffix: {type: string}
+            pullSecret: {type: string}
+            runnerTag: {type: string}
+            secretMode: {type: string, enum: [variables, vault]}
+            vaultAddress: {type: string}
+            vaultRole: {type: string}
+            vaultPath: {type: string}
+            syncPolicy: {type: string, enum: [manual, auto-safe]}
     DeploymentWindow:
       type: object
       additionalProperties: false

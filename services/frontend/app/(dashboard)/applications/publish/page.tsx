@@ -1,19 +1,7 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { ArchiveUpload } from "@/components/applications/archive-upload"
-import { FormSelect } from "@/components/ui/form-select"
-import { CheckboxCard, PageHeading } from "@/components/ui-kit"
-import {
-  SummaryList,
-  Wizard,
-  WizardFooter,
-  useWizard,
-} from "@/components/applications/wizard"
-import { ErrorNotice } from "@/components/workspace-ui"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { ArrowLeft01Icon } from "@hugeicons/core-free-icons"
 import {
@@ -21,105 +9,67 @@ import {
   TemplateGlyph,
   type ApplicationTemplate,
 } from "@/components/applications/template-catalog"
+import { ArchiveUpload } from "@/components/applications/archive-upload"
 import {
-  PublishingField as FormField,
-  PublishingSection as Panel,
+  PublishingCard,
+  PublishingField,
 } from "@/components/applications/publishing-fields"
-import { api } from "@/lib/api"
-import { publishProject, publishingSize } from "@/lib/publishing"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { FormSelect } from "@/components/ui/form-select"
+import { Disclosure } from "@/components/ui/collapsible"
+import { ErrorNotice } from "@/components/workspace-ui"
 import { usePublishingLimits } from "@/hooks/use-publishing-limits"
-import type {
-  Cluster,
-  ListResponse,
-  NamespaceBinding,
-  Workspace,
-} from "@/lib/types"
-
-type Config = {
-  templateId?: string
-  name: string
-  runtime: string
-  entryPoint: string
-  baseImage: string
-  builderImage: string
-  registryImage: string
-  namespace: string
-  host: string
-  pullSecret: string
-  secretMode: string
-  vaultAddress: string
-  vaultRole: string
-  vaultPath: string
-  runnerTag: string
-}
-type Publication = {
-  applicationId: string
-  projectUrl: string
-  repositoryUrl: string
-  pipelineUrl: string
-}
-const initialConfig: Config = {
-  name: "",
-  runtime: "shiny",
-  entryPoint: ".",
-  baseImage: "",
-  builderImage: "",
-  registryImage: "",
-  namespace: "",
-  host: "",
-  pullSecret: "",
-  secretMode: "variables",
-  vaultAddress: "",
-  vaultRole: "",
-  vaultPath: "",
-  runnerTag: "",
-}
+import { api } from "@/lib/api"
+import {
+  publishProject,
+  publishingSize,
+  type ApprovedPublishingProfile,
+  type PublicationResult,
+} from "@/lib/publishing"
+import type { ListResponse, Workspace } from "@/lib/types"
 
 export default function PublishApplicationPage() {
   const { limits, error: limitsError } = usePublishingLimits()
-  const [selectedTemplate, setSelectedTemplate] =
-    useState<ApplicationTemplate | null>(null)
-  const wizard = useWizard(6, "publish-app")
+  const [method, setMethod] = useState<"profile" | null>(null)
+  const [template, setTemplate] = useState<ApplicationTemplate | null>(null)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [workspaceId, setWorkspaceId] = useState("")
-  const [clusters, setClusters] = useState<Cluster[]>([])
-  const [clusterId, setClusterId] = useState("")
-  const [bindings, setBindings] = useState<NamespaceBinding[]>([])
-  const [config, setConfig] = useState(initialConfig)
-  const [gitlabUrl, setGitlabUrl] = useState("")
-  const [group, setGroup] = useState("")
-  const [gitlabToken, setGitlabToken] = useState("")
-  const [gitReadToken, setGitReadToken] = useState("")
-  const [registryUser, setRegistryUser] = useState("")
-  const [registryPassword, setRegistryPassword] = useState("")
+  const [profiles, setProfiles] = useState<ApprovedPublishingProfile[]>([])
+  const [profileId, setProfileId] = useState("")
+  const [name, setName] = useState("")
+  const [entryPoint, setEntryPoint] = useState("")
   const [file, setFile] = useState<File | null>(null)
-  const [acknowledged, setAcknowledged] = useState(false)
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<unknown>(null)
-  const [result, setResult] = useState<Publication | null>(null)
-  const errorRef = useRef<HTMLDivElement>(null)
-  const patch = (values: Partial<Config>) =>
-    setConfig((current) => ({ ...current, ...values }))
-
+  const [result, setResult] = useState<PublicationResult | null>(null)
+  const workspace = workspaces.find((item) => item.id === workspaceId)
+  const choices = profiles.filter(
+    (profile) => profile.templateId === template?.id
+  )
+  const profile = choices.find((item) => item.id === profileId) ?? choices[0]
   useEffect(() => {
     let active = true
     api<ListResponse<Workspace>>("/api/v1/workspaces")
       .then(({ items }) => {
         if (!active) return
-        const owners = items.filter((item) => item.role === "owner")
-        setWorkspaces(owners)
+        const allowed = items.filter(
+          (item) => item.role === "owner" || item.role === "deployer"
+        )
         const preferred = new URLSearchParams(window.location.search).get(
           "workspaceId"
         )
+        setWorkspaces(allowed)
         setWorkspaceId(
-          owners.find((item) => item.id === preferred)?.id ??
-            owners[0]?.id ??
+          allowed.find((item) => item.id === preferred)?.id ??
+            allowed[0]?.id ??
             ""
         )
       })
-      .catch((cause) => active && setError(cause))
-      .finally(() => active && setLoading(false))
+      .catch((cause) => {
+        if (active) setError(cause)
+      })
     return () => {
       active = false
     }
@@ -127,697 +77,396 @@ export default function PublishApplicationPage() {
   useEffect(() => {
     if (!workspaceId) return
     let active = true
-    api<ListResponse<Cluster>>(
-      `/api/v1/clusters?workspaceId=${encodeURIComponent(workspaceId)}`
+    api<ListResponse<ApprovedPublishingProfile>>(
+      `/api/v1/publishing/profiles?workspaceId=${encodeURIComponent(workspaceId)}`
     )
-      .then(({ items }) => {
-        if (!active) return
-        setClusters(items)
-        setClusterId(items[0]?.id ?? "")
+      .then((result) => {
+        if (active) {
+          setProfiles(result.items)
+          setError(null)
+        }
       })
-      .catch((cause) => active && setError(cause))
+      .catch((cause) => {
+        if (active) setError(cause)
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
     return () => {
       active = false
     }
   }, [workspaceId])
-  useEffect(() => {
-    if (!workspaceId || !clusterId) return
-    let active = true
-    api<ListResponse<NamespaceBinding>>(
-      `/api/v1/clusters/${encodeURIComponent(clusterId)}/bindings?workspaceId=${encodeURIComponent(workspaceId)}`
-    )
-      .then(({ items }) => {
-        if (!active) return
-        setBindings(items)
-        setConfig((current) => ({
-          ...current,
-          namespace: items[0]?.namespace ?? "",
-        }))
-      })
-      .catch((cause) => active && setError(cause))
-    return () => {
-      active = false
-    }
-  }, [workspaceId, clusterId])
-  useEffect(() => {
-    if (error) errorRef.current?.focus()
-  }, [error])
-
-  const checkStep = (step: number) => {
-    const problem =
-      step === 1 && (!workspaceId || !file)
-        ? "Choose a workspace and upload your application ZIP."
-        : step === 5 && (!clusterId || !config.namespace)
-          ? "Choose an available cluster and namespace."
-          : step === 6 && !acknowledged
-            ? "Confirm the publishing actions before continuing."
-            : ""
-    if (problem) {
-      setError(new Error(problem))
-      return false
-    }
-    return true
-  }
   async function publish(event: React.FormEvent) {
     event.preventDefault()
-    if (!wizard.isLast || !wizard.validateAll()) return
-    for (let step = 1; step <= 6; step++)
-      if (!checkStep(step)) {
-        wizard.setStep(step)
-        return
-      }
-    if (!file || !limits || busy) return
+    if (!file || !limits || !profile || !template || busy) return
     setBusy(true)
     setError(null)
     try {
-      const publication = await publishProject<Publication>(
-        {
-          workspaceId,
-          clusterId,
-          gitlabUrl: gitlabUrl.replace(/\/$/, ""),
-          group,
-          gitlabToken,
-          gitReadToken,
-          registryUser: config.secretMode === "variables" ? registryUser : "",
-          registryPassword:
-            config.secretMode === "variables" ? registryPassword : "",
-          config,
-        },
-        file,
-        limits
+      setResult(
+        await publishProject<PublicationResult>(
+          { workspaceId, profileId: profile.id, name, entryPoint },
+          file,
+          limits
+        )
       )
-      setResult(publication)
-      setGitlabToken("")
-      setGitReadToken("")
-      setRegistryPassword("")
-      setFile(null)
     } catch (cause) {
       setError(cause)
     } finally {
       setBusy(false)
     }
   }
-  const textField = (
-    key: keyof Config,
-    label: string,
-    hint?: string,
-    required = true,
-    placeholder?: string
-  ) => (
-    <FormField label={label} htmlFor={`publish-${key}`} hint={hint}>
-      <Input
-        id={`publish-${key}`}
-        value={config[key]}
-        required={required}
-        onChange={(event) => patch({ [key]: event.target.value })}
-        placeholder={placeholder}
-      />
-    </FormField>
-  )
-
+  const management =
+    workspace?.role === "owner" ? (
+      <Link
+        className="text-sm font-medium text-primary hover:underline"
+        href={`/workspaces/${workspaceId}?tab=publishing`}
+      >
+        Manage publishing profiles →
+      </Link>
+    ) : null
   if (result)
     return (
-      <>
-        <PageHeading
-          title="Your application is being built"
-          description="The private repository and JustCD application are ready. GitLab is building and publishing the first image."
-        />
-        <Panel
-          title={config.name}
-          description="Follow the build, then review the deployment in JustCD."
-        >
-          <div className="space-y-5 rounded-2xl border border-border bg-card p-5 dark:border-transparent dark:bg-muted/45">
-            <SummaryList
-              items={[
-                {
-                  label: "Repository",
-                  value: (
-                    <a
-                      href={result.projectUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-primary hover:underline"
-                    >
-                      Open GitLab project
-                    </a>
-                  ),
-                },
-                {
-                  label: "Build",
-                  value: (
-                    <a
-                      href={result.pipelineUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-primary hover:underline"
-                    >
-                      Follow pipeline progress
-                    </a>
-                  ),
-                },
-                {
-                  label: "Deployment",
-                  value: "Manual · calculate a plan after the build succeeds",
-                },
-              ]}
-            />
-            <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
-              The build commits the immutable image digest into
-              deploy/application.yaml. JustCD will discover that revision.
-              Review and apply the plan to make the app available. Before the
-              first successful build, no deployment manifest exists.
-            </p>
+      <div className="max-w-3xl space-y-5">
+        <h1 className="text-2xl font-medium tracking-tight">
+          Your app is being built
+        </h1>
+        <p className="text-sm leading-6 text-muted-foreground">
+          JustCD has created the repository and started the build using{" "}
+          {profile?.name}.{" "}
+          {result.syncPolicy === "auto-safe"
+            ? "After a successful build, deployment follows your workspace approval rules automatically."
+            : "After a successful build, an authorized user must review and apply the deployment plan."}
+        </p>
+        <div className="space-y-4 rounded-2xl border bg-card p-5">
+          {result.applicationUrl && (
+            <div>
+              <p className="text-xs text-muted-foreground">
+                Application URL · available after deployment
+              </p>
+              <a
+                className="mt-1 block font-medium break-all text-primary hover:underline"
+                href={result.applicationUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {result.applicationUrl}
+              </a>
+            </div>
+          )}
+          <div className="flex flex-wrap gap-4">
             <Link
+              className="text-sm font-medium text-primary hover:underline"
               href={`/applications/${result.applicationId}`}
-              className="font-medium text-primary hover:underline"
             >
-              Open application →
+              Open application in JustCD →
             </Link>
+            <a
+              className="text-sm text-primary hover:underline"
+              href={result.pipelineUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Follow build progress →
+            </a>
           </div>
-        </Panel>
-      </>
+        </div>
+      </div>
     )
-
-  if (!selectedTemplate)
+  if (!template)
     return (
-      <TemplateCatalog
-        onSelect={(template) => {
-          setFile(null)
-          setConfig((current) => ({
-            ...current,
-            templateId: template.id,
-            runtime: template.runtime,
-            entryPoint: template.entryPoint,
-            baseImage: "",
-          }))
-          setSelectedTemplate(template)
-          wizard.setStep(1)
-          setError(null)
-        }}
-      />
+      <div className="space-y-5">
+        <TemplateCatalog
+          onSelect={(next) => {
+            setMethod(null)
+            setTemplate(next)
+            setEntryPoint(next.entryPoint)
+            setFile(null)
+            setProfileId("")
+            setError(null)
+          }}
+        />
+        {management}
+      </div>
     )
-
+  const manualURL = `/applications/publish/manual?workspaceId=${encodeURIComponent(workspaceId)}&templateId=${encodeURIComponent(template.id)}`
+  if (!method)
+    return (
+      <div className="space-y-5 pb-5">
+        <Button
+          type="button"
+          variant="ghost"
+          className="-ml-3 gap-2 text-muted-foreground"
+          onClick={() => setTemplate(null)}
+        >
+          <HugeiconsIcon icon={ArrowLeft01Icon} />
+          All templates
+        </Button>
+        <header className="flex items-start gap-4">
+          <TemplateGlyph template={template} className="size-11 bg-muted/50" />
+          <div>
+            <h1 className="text-xl font-medium tracking-tight">
+              How would you like to publish {template.name}?
+            </h1>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">
+              Choose a publishing profile or configure the setup yourself.
+            </p>
+          </div>
+        </header>
+        {error != null && <ErrorNotice error={error} />}
+        <div className="max-w-lg">
+          <PublishingField label="Workspace" htmlFor="setup-workspace">
+            <FormSelect
+              id="setup-workspace"
+              value={workspaceId}
+              onValueChange={(value) => {
+                setWorkspaceId(value)
+                setProfileId("")
+                setProfiles([])
+                setLoading(true)
+              }}
+              items={workspaces.map((item) => ({
+                value: item.id,
+                label: item.name,
+              }))}
+            />
+          </PublishingField>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <PublishingCard contentClassName="flex h-full flex-col items-start gap-3">
+            <h2 className="text-base font-medium">Use a publishing profile</h2>
+            <p className="flex-1 text-sm leading-6 text-muted-foreground">
+              Use an administrator-approved runtime and destination. Repository,
+              build settings, and credentials are already configured.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {loading
+                ? "Checking available profiles…"
+                : choices.length
+                  ? `${choices.length} ${choices.length === 1 ? "profile available" : "profiles available"} for ${template.name}`
+                  : `No profile configured for ${template.name} in this workspace.`}
+            </p>
+            <div className="flex flex-wrap items-center gap-4">
+              <Button
+                type="button"
+                disabled={loading || !choices.length}
+                onClick={() => setMethod("profile")}
+              >
+                Use publishing profile
+              </Button>
+              {management}
+            </div>
+          </PublishingCard>
+          <PublishingCard contentClassName="flex h-full flex-col items-start gap-3">
+            <h2 className="text-base font-medium">Manual setup</h2>
+            <p className="flex-1 text-sm leading-6 text-muted-foreground">
+              Set up GitLab, build images, registry access, secrets, and the
+              deployment destination with a guided wizard.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {workspace?.role === "owner"
+                ? "Available with or without publishing profiles."
+                : "Manual setup requires a workspace owner."}
+            </p>
+            {workspace?.role === "owner" ? (
+              <Button variant="outline" render={<Link href={manualURL} />}>
+                Set up manually
+              </Button>
+            ) : (
+              <Button variant="outline" disabled>
+                Set up manually
+              </Button>
+            )}
+          </PublishingCard>
+        </div>
+      </div>
+    )
   return (
-    <div className="space-y-4 pb-4">
+    <div className="space-y-5 pb-5">
       <Button
         type="button"
         variant="ghost"
-        className="-ml-3 gap-2 text-muted-foreground"
         disabled={busy}
-        onClick={() => setSelectedTemplate(null)}
+        onClick={() => setMethod(null)}
+        className="-ml-3 gap-2 text-muted-foreground"
       >
-        <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={1.8} />
-        All templates
+        <HugeiconsIcon icon={ArrowLeft01Icon} />
+        Publishing options
       </Button>
       <header className="flex items-start gap-4">
-        <TemplateGlyph
-          template={selectedTemplate}
-          className="size-11 bg-muted/50"
-        />
-        <div className="min-w-0 space-y-1">
+        <TemplateGlyph template={template} className="size-11 bg-muted/50" />
+        <div>
           <h1 className="text-xl font-medium tracking-tight">
-            {selectedTemplate.name}
+            Publish {template.name}
           </h1>
-          <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-            {selectedTemplate.description}
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            Bring your application. Your publishing profile handles the
+            repository, build, and deployment.
           </p>
         </div>
       </header>
-      <div ref={errorRef} tabIndex={-1}>
-        {(error ?? limitsError) != null && (
-          <ErrorNotice error={error ?? limitsError} />
-        )}
-      </div>
-      {!loading && !workspaces.length && (
-        <p className="mb-5 text-sm text-muted-foreground">
-          A workspace owner must set up publishing. Ask your workspace owner to
-          configure the repository, build runner, and deployment target.
+      {(error ?? limitsError) != null && (
+        <ErrorNotice error={error ?? limitsError} />
+      )}
+      {!workspaces.length && (
+        <p className="text-sm text-muted-foreground">
+          Publishing requires the owner or deployer role in a workspace. Ask
+          your administrator for access.
         </p>
       )}
-      <form onSubmit={publish} noValidate className="space-y-5">
-        <fieldset
-          disabled={busy || loading || !workspaces.length || !limits}
-          className="min-w-0 space-y-5"
-        >
-          <Wizard
-            step={wizard.step}
-            onStepChange={(step) => {
-              if (!busy) wizard.setStep(step)
-            }}
-            idPrefix="publish-app"
-            steps={[
-              {
-                title: "Application",
-                content: (
-                  <Panel
-                    title="Bring your application"
-                    description="Upload the contents of your project directory, with dependency files at the archive root."
-                  >
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                      <FormField label="Workspace" htmlFor="publish-workspace">
-                        <FormSelect
-                          id="publish-workspace"
-                          value={workspaceId}
-                          onValueChange={(value) => {
-                            setWorkspaceId(value)
-                            setClusterId("")
-                            setClusters([])
-                            setBindings([])
-                            patch({ namespace: "" })
-                          }}
-                          items={workspaces.map((item) => ({
-                            value: item.id,
-                            label: item.name,
-                          }))}
-                        />
-                      </FormField>
-                      {textField(
-                        "name",
-                        "Application name",
-                        "Lowercase letters, numbers and hyphens; used for the repository and workload names.",
-                        true,
-                        "regional-statistics"
-                      )}
-                      {textField(
-                        "entryPoint",
-                        config.runtime === "shiny"
-                          ? "Shiny app directory"
-                          : "Python entry point",
-                        config.runtime === "shiny"
-                          ? "Use . for an app at the archive root, or a path such as src/regionalsteckbrief. Include renv.lock or packages.txt at the root."
-                          : "For example app.py. Include requirements.txt at the archive root."
-                      )}
-                      <FormField
-                        label="Application ZIP"
-                        htmlFor="publish-archive"
-                        className="md:col-span-2 lg:col-span-3"
-                        hint={
-                          limits
-                            ? `Maximum ${publishingSize(limits.archiveBytes)} compressed, ${publishingSize(limits.expandedBytes)} expanded, 1500 archive entries. Remove credentials, .env files, local Git history and session files.`
-                            : "Loading upload limits…"
-                        }
-                      >
-                        <ArchiveUpload
-                          id="publish-archive"
-                          key={selectedTemplate.id}
-                          file={file}
-                          maxBytes={limits?.archiveBytes}
-                          disabled={
-                            busy || loading || !workspaces.length || !limits
-                          }
-                          onFileChange={(next) => {
-                            setFile(next)
-                            setError(null)
-                          }}
-                        />
-                      </FormField>
-                    </div>
-                  </Panel>
-                ),
-              },
-              {
-                title: "Repository",
-                content: (
-                  <Panel
-                    title="Where should the Git repository live?"
-                    description="JustCD creates a private project in your GitLab group. Existing unrelated repositories are never overwritten."
-                  >
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                      <FormField label="GitLab URL" htmlFor="publish-gitlab">
-                        <Input
-                          id="publish-gitlab"
-                          type="url"
-                          required
-                          value={gitlabUrl}
-                          onChange={(event) => setGitlabUrl(event.target.value)}
-                          placeholder="https://gitlab.example.com"
-                        />
-                      </FormField>
-                      <FormField
-                        label="Group or subgroup path"
-                        htmlFor="publish-group"
-                      >
-                        <Input
-                          id="publish-group"
-                          required
-                          value={group}
-                          onChange={(event) => setGroup(event.target.value)}
-                          placeholder="analytics/apps"
-                        />
-                      </FormField>
-                      <FormField
-                        label="GitLab provisioning token"
-                        htmlFor="publish-git-token"
-                        hint="Requires API access and permission to create private projects and configure CI/CD variables in this group. Used for this request; not stored by JustCD."
-                      >
-                        <Input
-                          id="publish-git-token"
-                          type="password"
-                          autoComplete="off"
-                          required
-                          minLength={8}
-                          value={gitlabToken}
-                          onChange={(event) =>
-                            setGitlabToken(event.target.value)
-                          }
-                        />
-                      </FormField>
-                      <FormField
-                        label="Git repository read token"
-                        htmlFor="publish-read-token"
-                        hint="Use a group access token with read_repository for the new project. JustCD stores this credential encrypted so it can read deployment revisions."
-                      >
-                        <Input
-                          id="publish-read-token"
-                          type="password"
-                          autoComplete="off"
-                          required
-                          minLength={8}
-                          value={gitReadToken}
-                          onChange={(event) =>
-                            setGitReadToken(event.target.value)
-                          }
-                        />
-                      </FormField>
-                      <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
-                        Requires GitLab support for CI job-token Git pushes.
-                        GitLab 18.4 or newer is recommended. The protected main
-                        branch is the publishing branch.
-                      </p>
-                    </div>
-                  </Panel>
-                ),
-              },
-              {
-                title: "Build",
-                content: (
-                  <Panel
-                    title="How should the app be built?"
-                    description="Your platform team supplies approved image references. JustCD generates the Dockerfile and GitLab pipeline."
-                  >
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                      {textField(
-                        "baseImage",
-                        "Runtime base image",
-                        "Must provide R/Shiny or Python and your required system libraries and certificate trust. Pin an approved version or digest.",
-                        true,
-                        "artifactory.example.com/platform/shiny-geospatial:4.4.2"
-                      )}
-                      {textField(
-                        "builderImage",
-                        "CI builder image",
-                        "Requires rootless BuildKit (buildctl-daemonless.sh), git, jq, a POSIX shell and internal CA trust.",
-                        true,
-                        "artifactory.example.com/platform/justcd-builder:1"
-                      )}
-                      {textField(
-                        "registryImage",
-                        "Artifactory destination image",
-                        "Registry hostname and repository/image path, without a tag. Each build gets its source commit tag.",
-                        true,
-                        "artifactory.example.com/analytics-local/regional-statistics"
-                      )}
-                      {textField(
-                        "runnerTag",
-                        "GitLab runner tag",
-                        "Optional. Select a platform runner that can reach GitLab, package repositories, Artifactory and Vault.",
-                        false
-                      )}
-                      <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
-                        The base image must configure access to your package
-                        mirrors. Application dependencies are installed from
-                        packages.txt / renv.lock or requirements.txt. Custom
-                        native dependencies must be supplied by the base image.
-                      </p>
-                    </div>
-                  </Panel>
-                ),
-              },
-              {
-                title: "Secrets",
-                content: (
-                  <Panel
-                    title="Where should build secrets come from?"
-                    description="Registry credentials are used by CI to push images. They are never committed to Git or included in the application image."
-                  >
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                      <FormField
-                        label="Secret storage"
-                        htmlFor="publish-secret-mode"
-                        className="md:col-span-2 lg:col-span-3"
-                      >
-                        <FormSelect
-                          id="publish-secret-mode"
-                          value={config.secretMode}
-                          onValueChange={(secretMode) => {
-                            patch({ secretMode })
-                            setRegistryPassword("")
-                            setRegistryUser("")
-                          }}
-                          items={[
-                            {
-                              value: "variables",
-                              label: "GitLab · protected CI/CD variables",
-                            },
-                            {
-                              value: "vault",
-                              label:
-                                "Vault · existing secrets with GitLab OIDC",
-                            },
-                          ]}
-                        />
-                      </FormField>
-                      {config.secretMode === "variables" ? (
-                        <>
-                          <FormField
-                            label="Registry username"
-                            htmlFor="publish-registry-user"
-                          >
-                            <Input
-                              id="publish-registry-user"
-                              required
-                              value={registryUser}
-                              onChange={(event) =>
-                                setRegistryUser(event.target.value)
-                              }
-                              autoComplete="off"
-                            />
-                          </FormField>
-                          <FormField
-                            label="Registry push token"
-                            htmlFor="publish-registry-token"
-                            hint="Scoped to the destination repository. Stored as a masked, protected GitLab project variable. At least eight characters without whitespace."
-                          >
-                            <Input
-                              id="publish-registry-token"
-                              type="password"
-                              autoComplete="off"
-                              required
-                              minLength={8}
-                              value={registryPassword}
-                              onChange={(event) =>
-                                setRegistryPassword(event.target.value)
-                              }
-                            />
-                          </FormField>
-                          <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
-                            JustCD sends REGISTRY_USER and REGISTRY_PASSWORD
-                            through the GitLab API. GitLab stores the values;
-                            JustCD does not retain them.
-                          </p>
-                        </>
-                      ) : (
-                        <>
-                          {textField(
-                            "vaultAddress",
-                            "Vault server URL",
-                            "Existing Vault integration with GitLab JWT authentication; no Vault administrator token is needed.",
-                            true,
-                            "https://vault.example.com"
-                          )}
-                          {textField(
-                            "vaultRole",
-                            "Vault JWT role",
-                            "Must restrict access to this GitLab project or group and its protected main branch."
-                          )}
-                          {textField(
-                            "vaultPath",
-                            "Vault KV v2 API path",
-                            "Existing secret containing username and token, for example secret/data/analytics/registry. GitLab native Vault secrets require a supported GitLab tier.",
-                            true,
-                            "secret/data/analytics/registry"
-                          )}
-                          <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
-                            This workflow references an existing Vault secret.
-                            It does not create Vault policies or upload secret
-                            values into Vault.
-                          </p>
-                        </>
-                      )}
-                    </div>
-                  </Panel>
-                ),
-              },
-              {
-                title: "Deployment",
-                content: (
-                  <Panel
-                    title="Where should the app run?"
-                    description="Use an existing workspace cluster and namespace. Cluster credentials remain managed by JustCD."
-                  >
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                      <FormField label="Cluster" htmlFor="publish-cluster">
-                        <FormSelect
-                          id="publish-cluster"
-                          value={clusterId}
-                          onValueChange={(value) => {
-                            setClusterId(value)
-                            setBindings([])
-                            patch({ namespace: "" })
-                          }}
-                          items={clusters.map((item) => ({
-                            value: item.id,
-                            label: item.name,
-                          }))}
-                          placeholder="Select cluster"
-                        />
-                      </FormField>
-                      <FormField label="Namespace" htmlFor="publish-namespace">
-                        <FormSelect
-                          id="publish-namespace"
-                          value={config.namespace}
-                          onValueChange={(namespace) => patch({ namespace })}
-                          items={bindings.map((item) => ({
-                            value: item.namespace,
-                            label: item.namespace,
-                          }))}
-                          placeholder="Select namespace"
-                        />
-                      </FormField>
-                      {!bindings.length && (
-                        <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
-                          Configure namespace access in workspace Connections
-                          before publishing.
-                        </p>
-                      )}
-                      {textField(
-                        "pullSecret",
-                        "Existing image pull secret",
-                        "Optional for registries requiring no authentication. Otherwise supply an existing read-only registry secret in the selected namespace.",
-                        false
-                      )}
-                      {textField(
-                        "host",
-                        "OpenShift application hostname",
-                        "Optional. Creates a TLS Route directly to the app. This initial template does not add SSO; leave blank for internal Service access only.",
-                        false,
-                        "statistics.apps.example.com"
-                      )}
-                      <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
-                        Deployment starts in manual mode. After the build
-                        succeeds, review and apply the plan under your workspace
-                        approval policy.
-                      </p>
-                    </div>
-                  </Panel>
-                ),
-              },
-              {
-                title: "Review",
-                content: (
-                  <Panel
-                    title="Ready to create your application?"
-                    description="Review the destinations and actions before JustCD writes to GitLab."
-                  >
-                    <div className="space-y-5 rounded-2xl border border-border bg-card p-5 dark:border-transparent dark:bg-muted/45">
-                      <SummaryList
-                        items={[
-                          {
-                            label: "Application",
-                            value: `${config.name || "—"} · ${config.runtime}`,
-                          },
-                          {
-                            label: "Source",
-                            value: file?.name ?? "No archive selected",
-                          },
-                          {
-                            label: "Repository",
-                            value: `${gitlabUrl}/${group}/${config.name}`,
-                          },
-                          {
-                            label: "Image",
-                            value: config.registryImage || "—",
-                          },
-                          {
-                            label: "Secrets",
-                            value:
-                              config.secretMode === "vault"
-                                ? "Existing Vault secret · GitLab OIDC"
-                                : "Protected GitLab CI/CD variables",
-                          },
-                          {
-                            label: "Target",
-                            value: `${clusters.find((item) => item.id === clusterId)?.name ?? "—"} / ${config.namespace || "—"}`,
-                          },
-                          {
-                            label: "Access",
-                            value: config.host
-                              ? `HTTPS Route ${config.host} · no SSO`
-                              : "Internal Service only",
-                          },
-                          {
-                            label: "Deployment",
-                            value: "Manual review and apply after build",
-                          },
-                        ]}
-                      />
-                      <CheckboxCard
-                        id="publish-confirm"
-                        checked={acknowledged}
-                        onCheckedChange={setAcknowledged}
-                        title="Create the repository and start the build"
-                        description="JustCD will upload this source to a private GitLab project, configure CI, register the application, and start its pipeline. I have removed credentials from the source and reviewed the access settings."
-                      />
-                      <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
-                        If setup fails, the private repository is retained.
-                        Retry the same archive and settings to resume. For
-                        updates, choose Upload new version on the application
-                        page. Each upload replaces the complete source snapshot.
-                      </p>
-                    </div>
-                  </Panel>
-                ),
-              },
-            ]}
-          />
-          <div className="rounded-2xl border border-border bg-card p-3 dark:border-transparent dark:bg-muted/30 [&_button]:h-10 [&_button]:rounded-lg [&_button]:px-4">
-            <WizardFooter
-              step={wizard.step}
-              isLast={wizard.isLast}
-              onBack={wizard.back}
-              onNext={() => {
-                setError(null)
-                wizard.next(checkStep)
-              }}
-              submit={
-                <Button
-                  type="submit"
-                  loading={busy}
-                  loadingText="Creating repository and pipeline…"
-                  disabled={!acknowledged}
-                >
-                  Create and build app
-                </Button>
+      <form onSubmit={publish} className="space-y-4">
+        <fieldset disabled={busy || !limits} className="min-w-0 space-y-4">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <PublishingField label="Workspace" htmlFor="publish-workspace">
+              <FormSelect
+                id="publish-workspace"
+                value={workspaceId}
+                onValueChange={(value) => {
+                  setWorkspaceId(value)
+                  setProfileId("")
+                  setProfiles([])
+                  setLoading(true)
+                }}
+                items={workspaces.map((item) => ({
+                  value: item.id,
+                  label: item.name,
+                }))}
+              />
+            </PublishingField>
+            <PublishingField
+              label="Application name"
+              htmlFor="publish-name"
+              hint="Lowercase letters, numbers, and hyphens."
+            >
+              <Input
+                id="publish-name"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                required
+                maxLength={63}
+                pattern="[a-z](([a-z0-9]|-)*[a-z0-9])?"
+                placeholder="regional-statistics"
+              />
+            </PublishingField>
+            <PublishingField
+              label="Where to publish"
+              htmlFor="publish-profile"
+              hint={
+                profile
+                  ? `${profile.clusterName} / ${profile.namespace}`
+                  : "An administrator must configure an approved destination."
               }
-            />
+            >
+              <FormSelect
+                id="publish-profile"
+                value={profile?.id ?? ""}
+                onValueChange={setProfileId}
+                items={choices.map((item) => ({
+                  value: item.id,
+                  label: item.name,
+                }))}
+                placeholder={
+                  loading
+                    ? "Loading destinations…"
+                    : "No destinations available"
+                }
+                disabled={loading || !choices.length}
+              />
+            </PublishingField>
           </div>
-          {busy && (
-            <p role="status" className="text-sm text-muted-foreground">
-              Creating the private project, configuring secrets, uploading
-              source, and starting CI. Keep this page open; setup can take up to
-              ten minutes.
-            </p>
+          {!loading && !choices.length && (
+            <PublishingCard contentClassName="space-y-2">
+              <p className="text-sm font-medium">
+                No publishing profile for {template.name} in this workspace
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {workspace?.role === "owner"
+                  ? "Configure an approved runtime, credentials, and destination once to enable publishing."
+                  : "Ask your workspace administrator to enable a publishing profile for this template."}
+              </p>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-1">
+                {management}
+                {workspace?.role === "owner" && (
+                  <Button variant="outline" render={<Link href={manualURL} />}>
+                    Set up manually
+                  </Button>
+                )}
+              </div>
+            </PublishingCard>
           )}
+          <PublishingField
+            label="Application ZIP"
+            htmlFor="publish-archive"
+            hint={
+              limits
+                ? `Up to ${publishingSize(limits.archiveBytes)} compressed and ${publishingSize(limits.expandedBytes)} expanded. Include ${template.runtime === "shiny" ? "renv.lock or packages.txt" : "requirements.txt"} at the archive root. Remove local credentials before uploading.`
+                : "Loading upload limits…"
+            }
+          >
+            <ArchiveUpload
+              id="publish-archive"
+              file={file}
+              onFileChange={(next) => {
+                setFile(next)
+                setError(null)
+              }}
+              maxBytes={limits?.archiveBytes}
+              disabled={busy || !limits || !profile}
+            />
+          </PublishingField>
+          <PublishingCard>
+            <Disclosure summary="Application entry point">
+              <div className="max-w-lg">
+                <label
+                  htmlFor="publish-entry"
+                  className="mb-2 block text-sm font-medium"
+                >
+                  {template.runtime === "shiny"
+                    ? "Shiny app directory"
+                    : "Python entry file"}
+                </label>
+                <Input
+                  id="publish-entry"
+                  required
+                  value={entryPoint}
+                  onChange={(event) => setEntryPoint(event.target.value)}
+                />
+                <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                  {template.runtime === "shiny"
+                    ? "Use . for an app at the archive root, or a folder such as src/regionalsteckbrief."
+                    : "Relative path to your Streamlit app, for example app.py."}
+                </p>
+              </div>
+            </Disclosure>
+          </PublishingCard>
+          {profile && (
+            <div className="space-y-1 px-1 text-sm leading-6 text-muted-foreground">
+              {profile.description && <p>{profile.description}</p>}
+              <p>
+                {profile.syncPolicy === "auto-safe"
+                  ? "Successful builds deploy automatically when workspace approval rules allow."
+                  : "Successful builds wait for a deployment review and apply."}{" "}
+                {profile.hostSuffix
+                  ? `Your app will use https://${name || "application-name"}.${profile.hostSuffix}.`
+                  : "This destination provides internal Service access."}
+              </p>
+            </div>
+          )}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-card p-3">
+            <p className="text-xs leading-5 text-muted-foreground">
+              {busy
+                ? "Creating the repository, configuring the build, and starting CI…"
+                : "Your administrator’s settings and credentials are applied securely."}
+            </p>
+            <Button
+              type="submit"
+              loading={busy}
+              loadingText="Preparing your app…"
+              disabled={!file || !profile || !workspaceId || loading}
+              className="h-10 px-5"
+            >
+              Publish app
+            </Button>
+          </div>
         </fieldset>
       </form>
     </div>

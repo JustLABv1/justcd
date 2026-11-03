@@ -228,6 +228,13 @@ func (s *Server) listCredentials(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, "could not load credentials")
 		return
 	}
+	visible := items[:0]
+	for _, item := range items {
+		if item.Kind != "publishing" {
+			visible = append(visible, item)
+		}
+	}
+	items = visible
 	for i := range items {
 		if items[i].Kind != "git-https" {
 			continue

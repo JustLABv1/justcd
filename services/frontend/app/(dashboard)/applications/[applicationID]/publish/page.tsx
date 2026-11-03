@@ -19,6 +19,9 @@ import { usePublishingLimits } from "@/hooks/use-publishing-limits"
 
 type Publication = {
   applicationId: string
+  profileId?: string
+  profileName?: string
+  profileEnabled?: boolean
   config: { name: string; runtime: string; [key: string]: string }
   gitlabUrl: string
   group: string
@@ -57,23 +60,37 @@ export default function PublishVersionPage() {
   }, [applicationID])
   async function submit(event: React.FormEvent) {
     event.preventDefault()
-    if (!setup || !file || !limits || !confirmed || busy) return
+    if (
+      !setup ||
+      !file ||
+      !limits ||
+      !confirmed ||
+      busy ||
+      setup.publication.profileEnabled === false
+    )
+      return
     setBusy(true)
     setError(null)
     try {
       const result = await publishProject<Publication>(
-        {
-          workspaceId: setup.workspaceId,
-          clusterId: setup.clusterId,
-          updateApplicationId: applicationID,
-          gitlabUrl: setup.publication.gitlabUrl,
-          group: setup.publication.group,
-          gitlabToken: token,
-          gitReadToken: "",
-          registryUser: "",
-          registryPassword: "",
-          config: setup.publication.config,
-        },
+        setup.publication.profileId
+          ? {
+              workspaceId: setup.workspaceId,
+              profileId: setup.publication.profileId,
+              updateApplicationId: applicationID,
+            }
+          : {
+              workspaceId: setup.workspaceId,
+              clusterId: setup.clusterId,
+              updateApplicationId: applicationID,
+              gitlabUrl: setup.publication.gitlabUrl,
+              group: setup.publication.group,
+              gitlabToken: token,
+              gitReadToken: "",
+              registryUser: "",
+              registryPassword: "",
+              config: setup.publication.config,
+            },
         file,
         limits
       )
@@ -155,21 +172,34 @@ export default function PublishVersionPage() {
                   }}
                 />
               </FormField>
-              <FormField
-                label="GitLab provisioning token"
-                htmlFor="version-token"
-                hint="Requires API access and permission to commit to the protected main branch and start pipelines. Used for this request and not stored."
-              >
-                <Input
-                  id="version-token"
-                  type="password"
-                  autoComplete="off"
-                  minLength={8}
-                  required
-                  value={token}
-                  onChange={(event) => setToken(event.target.value)}
-                />
-              </FormField>
+              {setup?.publication.profileId ? (
+                <div className="rounded-xl border bg-muted/30 p-4 text-sm">
+                  <p className="font-medium">{setup.publication.profileName}</p>
+                  <p className="mt-1 text-muted-foreground">
+                    {setup.publication.profileEnabled === false
+                      ? "This profile is disabled. Ask your workspace administrator before publishing another version."
+                      : "Build settings and credentials are managed by your administrator. Upload your source to publish a new version."}
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <FormField
+                    label="GitLab provisioning token"
+                    htmlFor="version-token"
+                    hint="Requires API access and permission to commit to the protected main branch and start pipelines. Used for this request and not stored."
+                  >
+                    <Input
+                      id="version-token"
+                      type="password"
+                      autoComplete="off"
+                      minLength={8}
+                      required
+                      value={token}
+                      onChange={(event) => setToken(event.target.value)}
+                    />
+                  </FormField>
+                </>
+              )}
               <CheckboxCard
                 id="version-confirm"
                 checked={confirmed}

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,9 @@ import (
 )
 
 type publishInput struct {
+	ProfileID           string            `json:"profileId"`
+	Name                string            `json:"name"`
+	EntryPoint          string            `json:"entryPoint"`
 	UpdateApplicationID string            `json:"updateApplicationId"`
 	WorkspaceID         string            `json:"workspaceId"`
 	ClusterID           string            `json:"clusterId"`
@@ -37,9 +41,19 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 		writePublishingUploadError(w, err)
 		return
 	}
-	if !s.requireWorkspaceRole(w, r, in.WorkspaceID, "owner") {
+	var profile *store.PublishingProfile
+	syncPolicy := "manual"
+	if in.ProfileID != "" {
+		var ok bool
+		profile, ok = s.resolvePublishingProfile(w, r, &in)
+		if !ok {
+			return
+		}
+		syncPolicy = profile.Settings.SyncPolicy
+	} else if !s.requireWorkspaceRole(w, r, in.WorkspaceID, "owner") {
 		return
 	}
+
 	if !s.requireWorkspaceCluster(w, r, in.WorkspaceID, in.ClusterID) {
 		return
 	}
@@ -52,7 +66,7 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "GitLab group must be a group/subgroup path")
 		return
 	}
-	git := publishing.GitLab{URL: in.GitLabURL, Token: in.GitLabToken}
+	git := publishing.GitLab{URL: in.GitLabURL, Token: in.GitLabToken, HTTP: s.PublishingHTTP}
 	if err = git.Validate(); err != nil {
 		writeError(w, 400, err.Error())
 		return
@@ -112,6 +126,12 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "could not fingerprint uploaded source")
 		return
 	}
+	if profile != nil {
+		// A credential rotation must make a repeated source snapshot eligible for
+		// a new build without putting secret values into release identity.
+		sum := sha256.Sum256([]byte(fingerprint + "\n" + profile.ID + "\n" + strconv.FormatInt(profile.Version, 10)))
+		fingerprint = hex.EncodeToString(sum[:])
+	}
 	git.TempDir = dir
 	markerSum := sha256.Sum256([]byte(in.WorkspaceID + "\n" + strings.TrimRight(in.GitLabURL, "/") + "\n" + in.Group + "/" + in.Config.Name))
 	marker := "JustCD managed publication " + hex.EncodeToString(markerSum[:])
@@ -142,12 +162,23 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		previous, e := s.Store.PublishedApplication(ctx, in.WorkspaceID, src.RepositoryURL)
+		if e == nil && previous.ProfileID != nil && profile == nil {
+			writeError(w, 400, "this application requires its publishing profile")
+			return
+		}
 		cfg, _ := json.Marshal(in.Config)
 		var oldConfig publishing.Config
 		_ = json.Unmarshal(previous.Config, &oldConfig)
 		oldCfg, _ := json.Marshal(oldConfig)
 		if e != nil || string(cfg) != string(oldCfg) || previous.GitLabURL != in.GitLabURL || previous.Group != in.Group || app.ClusterID != in.ClusterID {
 			writeError(w, 400, "source updates must reuse the original publication settings")
+			return
+		}
+	}
+	if profile != nil {
+		current, e := s.Store.PublishingProfile(ctx, profile.ID)
+		if e != nil || !current.Enabled || current.Version != profile.Version {
+			writeError(w, 409, "publishing profile changed during upload; reload before publishing")
 			return
 		}
 	}
@@ -165,6 +196,17 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		writeStoreError(w, "could not read publication")
 		return
+	}
+	if err == nil && ((registered.ProfileID != nil && (profile == nil || *registered.ProfileID != profile.ID)) || (registered.ProfileID == nil && profile != nil)) {
+		writeError(w, 409, "application must use its original publishing workflow and profile")
+		return
+	}
+	if err == nil && profile != nil && in.Config.SecretMode == "variables" {
+		variables := []publishing.Variable{{Key: "REGISTRY_USER", Value: in.RegistryUser, Protected: true, Raw: true}, {Key: "REGISTRY_PASSWORD", Value: in.RegistryPassword, Masked: true, Protected: true, Raw: true}}
+		if e := git.SetVariables(ctx, project, variables); e != nil {
+			writeError(w, 502, "could not refresh profile registry credentials in GitLab")
+			return
+		}
 	}
 	if err == nil {
 		if in.UpdateApplicationID != "" && registered.ApplicationID != in.UpdateApplicationID {
@@ -192,7 +234,7 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 				writeStoreError(w, "source committed but publication metadata could not be updated; retry to resume")
 				return
 			}
-			_ = s.Store.Audit(ctx, currentUser(r).ID, "application.source_uploaded", "application", registered.ApplicationID, map[string]string{"runtime": in.Config.Runtime, "templateVersion": publishing.Version})
+			_ = s.Store.Audit(ctx, currentUser(r).ID, "application.source_uploaded", "application", registered.ApplicationID, map[string]string{"runtime": in.Config.Runtime, "templateVersion": publishing.Version, "profileId": in.ProfileID})
 		}
 	} else {
 		if in.UpdateApplicationID != "" {
@@ -211,22 +253,34 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 502, "could not protect main before starting CI; retry setup after checking GitLab permissions")
 			return
 		}
-		cred := store.Credential{ID: store.NewID(), WorkspaceID: &in.WorkspaceID, Name: in.Config.Name + " Git read", Kind: "git-https"}
-		payload, _ := json.Marshal(map[string]string{"username": "oauth2", "token": in.GitReadToken})
-		cred.Cipher, err = security.Encrypt(s.EncryptionKey, payload, "credential:"+cred.ID)
-		if err != nil {
-			writeStoreError(w, "could not protect Git read credential")
-			return
+		cred := store.Credential{}
+		credentialID := ""
+		if profile != nil {
+			credentialID = profile.GitReadCredentialID
+		} else {
+			cred = store.Credential{ID: store.NewID(), WorkspaceID: &in.WorkspaceID, Name: in.Config.Name + " Git read", Kind: "git-https"}
+			payload, _ := json.Marshal(map[string]string{"username": "oauth2", "token": in.GitReadToken})
+			cred.Cipher, err = security.Encrypt(s.EncryptionKey, payload, "credential:"+cred.ID)
+			if err != nil {
+				writeStoreError(w, "could not protect Git read credential")
+				return
+			}
+			credentialID = cred.ID
 		}
-		src := store.GitSource{ID: store.NewID(), WorkspaceID: in.WorkspaceID, Name: in.Config.Name, RepositoryURL: project.RepositoryURL, CredentialID: &cred.ID}
-		app := store.Application{Labels: map[string]string{"justcd.io/published": "true"}, ID: store.NewID(), WorkspaceID: in.WorkspaceID, Name: in.Config.Name, SourceID: src.ID, Revision: "main", ManifestPath: "deploy", Renderer: "yaml", ClusterID: in.ClusterID, Namespaces: []store.NamespaceBinding{binding}, SyncPolicy: "manual", PollSeconds: 30, RetryPolicy: store.DefaultRetryPolicy(), Health: "unknown"}
+		src := store.GitSource{ID: store.NewID(), WorkspaceID: in.WorkspaceID, Name: in.Config.Name, RepositoryURL: project.RepositoryURL, CredentialID: &credentialID}
+		app := store.Application{Labels: map[string]string{"justcd.io/published": "true"}, ID: store.NewID(), WorkspaceID: in.WorkspaceID, Name: in.Config.Name, SourceID: src.ID, Revision: "main", ManifestPath: "deploy", Renderer: "yaml", ClusterID: in.ClusterID, Namespaces: []store.NamespaceBinding{binding}, SyncPolicy: syncPolicy, PollSeconds: 30, RetryPolicy: store.DefaultRetryPolicy(), Health: "unknown"}
 		safeConfig, _ := json.Marshal(in.Config)
 		registered = store.PublishedApplication{Config: safeConfig, GitLabURL: in.GitLabURL, Group: in.Group, ApplicationID: app.ID, Fingerprint: fingerprint, RepositoryURL: project.RepositoryURL, ProjectURL: project.WebURL, ProjectID: project.ID}
+		if profile != nil {
+			app.Labels["justcd.io/publishing-profile"] = profile.ID
+			registered.ProfileID = &profile.ID
+			registered.ProfileVersion = profile.Version
+		}
 		if err = s.Store.RegisterPublishedApplication(ctx, cred, src, app, registered); err != nil {
 			writeError(w, 409, "could not register publication; the repository is retained. Retry the same upload and settings to resume")
 			return
 		}
-		_ = s.Store.Audit(ctx, currentUser(r).ID, "application.published", "application", app.ID, map[string]string{"workspaceId": in.WorkspaceID, "runtime": in.Config.Runtime, "templateVersion": publishing.Version, "secretMode": in.Config.SecretMode})
+		_ = s.Store.Audit(ctx, currentUser(r).ID, "application.published", "application", app.ID, map[string]string{"workspaceId": in.WorkspaceID, "runtime": in.Config.Runtime, "templateVersion": publishing.Version, "secretMode": in.Config.SecretMode, "profileId": in.ProfileID})
 	}
 	if registered.PipelineURL == "" {
 		registered.PipelineURL, err = git.StartPipeline(ctx, project.ID)
@@ -248,7 +302,7 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, http.StatusCreated, registered)
+	writeJSON(w, http.StatusCreated, publicationResult(registered, syncPolicy))
 }
 
 func (s *Server) getPublication(w http.ResponseWriter, r *http.Request) {
@@ -257,7 +311,7 @@ func (s *Server) getPublication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "application not found")
 		return
 	}
-	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "deployer") {
 		return
 	}
 	source, err := s.Store.GitSourceByID(r.Context(), app.SourceID)
@@ -270,5 +324,18 @@ func (s *Server) getPublication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "this application was not created with guided publishing")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"publication": p, "workspaceId": app.WorkspaceID, "clusterId": app.ClusterID})
+	if p.ProfileID == nil && !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
+		return
+	}
+	result := publicationResult(p, app.SyncPolicy)
+	if p.ProfileID != nil {
+		profile, e := s.Store.PublishingProfile(r.Context(), *p.ProfileID)
+		if e != nil || profile.WorkspaceID != app.WorkspaceID {
+			writeError(w, 404, "publishing profile not found")
+			return
+		}
+		result["profileName"] = profile.Name
+		result["profileEnabled"] = profile.Enabled
+	}
+	writeJSON(w, 200, map[string]any{"publication": result, "workspaceId": app.WorkspaceID, "clusterId": app.ClusterID})
 }

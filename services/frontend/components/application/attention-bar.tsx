@@ -33,19 +33,29 @@ function AttentionRow({ tone, icon, title, children, actions, alert = false }: {
 
 type Issue = Application["statusIssues"][number]
 
-function StatusIssueRow({ application, issue, canApprove, onConfigureExclusion }: { application: Application; issue: Issue; canApprove: boolean; onConfigureExclusion: (issue: Issue) => void }) {
+function StatusIssueRow({ application, issue, canApprove, onConfigureExclusion, extraActions }: { application: Application; issue: Issue; canApprove: boolean; onConfigureExclusion: (issue: Issue) => void; extraActions?: ReactNode }) {
   const [open, setOpen] = useState(false)
   const diagnostics = { name: "ApplicationCheckFailed", message: issue.summary, applicationId: application.id, checkedAt: application.lastCheckedAt, issues: [issue] }
   const configurable = issue.code === "kubernetes.permission_denied" && canApprove
   return <AttentionRow alert tone="destructive" icon={Alert02Icon} title={issue.summary} actions={configurable
     ? <>
+      {extraActions}
       <Button size="sm" variant="outline" onClick={() => onConfigureExclusion(issue)}>Configure exclusion</Button>
       <ActionMenu label="More" size="sm" variant="ghost" items={[{ label: "View diagnostics", onSelect: () => setOpen(true) }]} />
       <ErrorDetailsDialog error={diagnostics} open={open} onOpenChange={setOpen} />
     </>
-    : <ErrorDetailsButton label="View diagnostics" error={diagnostics} />}>
-    {issue.remediation && <p className="mt-0.5 text-sm text-muted-foreground">{issue.remediation}</p>}
-  </AttentionRow>
+    : <>{extraActions}<ErrorDetailsButton label="View diagnostics" error={diagnostics} /></>} />
+}
+
+function IssueGroup({ application, issues, canApprove, onConfigureExclusion, aiAction }: { application: Application; issues: Issue[]; canApprove: boolean; onConfigureExclusion: (issue: Issue) => void; aiAction?: ReactNode }) {
+  const [open, setOpen] = useState(false)
+  return <>
+    <AttentionRow alert tone="destructive" icon={Alert02Icon} title={`${issues.length} problems need attention`} actions={<>
+      {aiAction}
+      <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => setOpen((value) => !value)}>{open ? "Hide problems" : "Show problems"}</Button>
+    </>} />
+    {open && issues.map((issue, index) => <StatusIssueRow key={`${issue.source}-${index}`} application={application} issue={issue} canApprove={canApprove} onConfigureExclusion={onConfigureExclusion} />)}
+  </>
 }
 
 /**
@@ -53,7 +63,7 @@ function StatusIssueRow({ application, issue, canApprove, onConfigureExclusion }
  * check failures, load errors, ownership conflicts, namespace mismatch, deletion in progress and paused auto-sync.
  * Each row is a short summary with at most one primary action.
  */
-export function AttentionBar({ application, canApprove, busy, hasPendingOperation, pendingAction, plansError, retryingPlans, onRetryPlans, conflictCount, onReviewConflicts, namespaceMismatch, kustomizeNamespace, onReviewNamespaceSetting, onCancelDecommission, onConfigureExclusion, resumeRevision, onResumeRevisionChange, onKeepPin, onResume }: {
+export function AttentionBar({ application, canApprove, busy, hasPendingOperation, pendingAction, plansError, retryingPlans, onRetryPlans, conflictCount, onReviewConflicts, namespaceMismatch, kustomizeNamespace, onReviewNamespaceSetting, onCancelDecommission, onConfigureExclusion, aiAction, resumeRevision, onResumeRevisionChange, onKeepPin, onResume }: {
   application: Application
   canApprove: boolean
   busy: boolean
@@ -69,6 +79,7 @@ export function AttentionBar({ application, canApprove, busy, hasPendingOperatio
   onReviewNamespaceSetting: () => void
   onCancelDecommission: () => void
   onConfigureExclusion: (issue: Issue) => void
+  aiAction?: ReactNode
   resumeRevision: string
   onResumeRevisionChange: (value: string) => void
   onKeepPin: () => void
@@ -81,7 +92,8 @@ export function AttentionBar({ application, canApprove, busy, hasPendingOperatio
   const resumeBlocked = busy || hasPendingOperation
   return <section aria-label="Needs attention" className="mb-5 overflow-hidden rounded-xl border bg-card">
     <ul className="divide-y">
-      {issues.map((issue, index) => <StatusIssueRow key={`${issue.source}-${index}`} application={application} issue={issue} canApprove={canApprove} onConfigureExclusion={onConfigureExclusion} />)}
+      {issues.length === 1 && <StatusIssueRow application={application} issue={issues[0]} canApprove={canApprove} onConfigureExclusion={onConfigureExclusion} extraActions={aiAction} />}
+      {issues.length > 1 && <IssueGroup application={application} issues={issues} canApprove={canApprove} onConfigureExclusion={onConfigureExclusion} aiAction={aiAction} />}
       {plansError != null && <AttentionRow alert tone="destructive" icon={Alert02Icon} title="Plans could not be loaded." actions={<>
         <Button size="sm" loading={retryingPlans} onClick={onRetryPlans}>Retry</Button>
         <ErrorDetailsButton error={plansError} />

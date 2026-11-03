@@ -16,9 +16,11 @@ export function RuntimeHealthStrip({ application, healthHistory, reconnecting = 
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(timer) }, [])
   const condition = application.healthCondition
+  const status = condition?.status ?? "Unknown"
+  const unreliable = (application.statusIssues?.length ?? 0) > 0 && ["Missing", "Unknown", "Partial"].includes(status)
   const freshness = runtimeFreshness(condition?.observedAt, now)
   return <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-    <Button type="button" variant="ghost" size="sm" className="-ml-2" aria-label="Health details" onClick={() => setOpen(true)}><HugeiconsIcon icon={HeartCheckIcon} strokeWidth={1.8} aria-hidden="true" />Runtime health <StatusBadge status={condition?.status ?? "Unknown"} /><HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={1.8} aria-hidden="true" /></Button>
+    <Button type="button" variant="ghost" size="sm" className="-ml-2" aria-label="Health details" onClick={() => setOpen(true)}><HugeiconsIcon icon={HeartCheckIcon} strokeWidth={1.8} aria-hidden="true" />Runtime health {unreliable ? <span>not observed</span> : <StatusBadge status={condition?.status ?? "Unknown"} />}<HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={1.8} aria-hidden="true" /></Button>
     <span className={freshness.stale || reconnecting ? "text-warning-foreground dark:text-warning" : ""} title={condition?.observedAt ? new Date(condition.observedAt).toLocaleString() : undefined}>{freshness.label}{reconnecting ? " · Reconnecting" : freshness.stale && condition?.observedAt ? " · Stale" : " · Auto-updating"}{condition?.status === "Partial" ? " · Partial observation" : ""}</span>
     <AppDialog open={open} onOpenChange={setOpen} variant="info" size="lg" title="Runtime health" description="Runtime readiness is separate from Git sync state. Partial means some runtime resources could not be assessed; configuration objects do not need workload health checks.">
       <div className="space-y-4">

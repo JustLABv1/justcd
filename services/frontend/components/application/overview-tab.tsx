@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Disclosure } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
 import { StatusBadge } from "@/components/ui-kit"
-import { OverviewMetrics } from "@/components/application/overview-metrics"
+import { applicationResourceNodes } from "@/lib/topology-view"
 import { SyncHistoryChart } from "@/components/application/sync-history-chart"
 import type {
   Application,
@@ -75,6 +75,9 @@ export function OverviewTab({
     { create: 0, update: 0, delete: 0 }
   )
   const current = latestPlan?.status === "current"
+  const blocked = (application.statusIssues?.length ?? 0) > 0
+  const resources = topology ? applicationResourceNodes(topology) : []
+  const observed = resources.filter((node) => node.source === "kubernetes").length
   const planLabel =
     latestPlan?.plan.decommission || application.configurationMissing
       ? "Deletion plan"
@@ -83,7 +86,7 @@ export function OverviewTab({
     plansError != null
       ? "Plan unavailable"
       : current
-        ? `${latestPlan.plan.changes.length} planned change${latestPlan.plan.changes.length === 1 ? "" : "s"}`
+        ? `${blocked ? "Last known plan · " : ""}${latestPlan.plan.changes.length} change${latestPlan.plan.changes.length === 1 ? "" : "s"}`
         : latestPlan
           ? `Plan ${latestPlan.status}`
           : "No plan yet"
@@ -110,13 +113,6 @@ export function OverviewTab({
           )}
         </div>
       )}
-      <OverviewMetrics
-        application={application}
-        topology={topology}
-        pending={pending}
-        topologyError={topologyError}
-        onSelectTab={onSelectTab}
-      />
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)]">
         <section
           aria-label={planLabel}
@@ -131,7 +127,7 @@ export function OverviewTab({
             ) : (
               <>
                 <div>
-                  <p className="text-2xl font-semibold tracking-tight">
+                  <p className={`text-2xl font-semibold tracking-tight${current && blocked ? " text-muted-foreground" : ""}`}>
                     {headline}
                   </p>
                   {plansError != null ? (
@@ -140,15 +136,13 @@ export function OverviewTab({
                     </p>
                   ) : current ? (
                     <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <Badge variant="success-light" radius="full">
-                        {counts?.create} create
-                      </Badge>
-                      <Badge variant="info-light" radius="full">
-                        {counts?.update} update
-                      </Badge>
-                      <Badge variant="destructive-light" radius="full">
-                        {counts?.delete} delete
-                      </Badge>
+                      {(["create", "update", "delete"] as const)
+                        .filter((kind) => counts?.[kind])
+                        .map((kind) => (
+                          <Badge key={kind} variant="outline" radius="full">
+                            {counts?.[kind]} {kind}
+                          </Badge>
+                        ))}
                       {latestPlan.plan.requiresApproval && (
                         <Badge variant="warning-light" radius="full">
                           Approval required
@@ -174,7 +168,7 @@ export function OverviewTab({
                     </Button>
                   ) : latestPlan ? (
                     <Button
-                      variant={current ? "default" : "outline"}
+                      variant={current && !blocked ? "default" : "outline"}
                       onClick={() => onSelectTab("changes")}
                     >
                       {current ? "Review changes" : "View plan"}
@@ -226,6 +220,22 @@ export function OverviewTab({
                 ? "Auto-safe"
                 : "Manual sync"}
               {application.autoSyncPaused ? " · Auto-sync paused" : ""}
+            </dd>
+            <dt className="text-muted-foreground">Resources</dt>
+            <dd>
+              {topologyError ? (
+                "Unavailable"
+              ) : pending.topology || !topology ? (
+                "—"
+              ) : (
+                <button
+                  type="button"
+                  className="underline-offset-4 hover:underline"
+                  onClick={() => onSelectTab("topology")}
+                >
+                  {blocked ? `${resources.length} declared` : `${observed} of ${resources.length} observed`}
+                </button>
+              )}
             </dd>
             {application.lastSyncedRevision && (
               <>

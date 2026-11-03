@@ -764,7 +764,7 @@ export default function ApplicationDetailPage() {
           {[
             { id: "overview", label: "Overview" },
             { id: "topology", label: "Resources", count: pendingData.topology ? undefined : topology ? applicationResourceNodes(topology).length : undefined },
-            { id: "changes", label: "Changes", count: pendingData.plans || plansError != null ? undefined : latestPlan?.status === "current" ? latestPlan.plan.changes.length + (latestPlan.plan.ignored?.length ?? 0) : 0 },
+            { id: "changes", label: "Changes", count: pendingData.plans || plansError != null ? undefined : latestPlan?.status === "current" ? latestPlan.plan.changes.length + (latestPlan.plan.ignored?.length ?? 0) : latestPlan ? undefined : 0 },
             { id: "activity", label: "Activity" },
             { id: "pull-requests", label: "Pull requests" },
             { id: "settings", label: "Settings" },

@@ -327,6 +327,68 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return payload as T
 }
 
+/**
+ * POST that accepts newline-delimited JSON progress events. The server sends
+ * {"stage": "..."} lines, then {"result": ...} or {"error": "...", "status": n}.
+ * Plain JSON responses (validation errors before streaming starts) are handled too.
+ */
+export async function apiStream<T>(
+  path: string,
+  body: unknown,
+  { onStage, signal }: { onStage?: (stage: string) => void; signal?: AbortSignal } = {}
+): Promise<T> {
+  const headers = new Headers({ "content-type": "application/json", accept: "application/x-ndjson" })
+  const csrf = csrfToken()
+  if (csrf) headers.set("x-csrf-token", csrf)
+  const request = { method: "POST", path }
+  let response: Response
+  try {
+    response = await fetch(path, { method: "POST", headers, body: JSON.stringify(body), cache: "no-store", credentials: "same-origin", signal })
+  } catch (cause) {
+    if (cause instanceof Error && cause.name === "AbortError") throw cause
+    throw new APIError(errorMessage(cause), 0, null, request, cause, fallbackErrorMetadata(0))
+  }
+  if (!response.ok || !(response.headers.get("content-type") ?? "").includes("ndjson")) {
+    let payload: unknown = null
+    try {
+      payload = (response.headers.get("content-type") ?? "").includes("json") ? await response.json() : await response.text()
+    } catch {
+      /* keep the null payload */
+    }
+    if (response.ok) return payload as T
+    const message = typeof payload === "object" && payload && "error" in payload ? String((payload as { error: unknown }).error) : response.statusText || "Request failed"
+    throw new APIError(message, response.status, payload, request, undefined, errorMetadata(response.status, payload))
+  }
+  const reader = response.body?.getReader()
+  if (!reader) throw new APIError("The server returned a stream that could not be read.", response.status, null, request, undefined, fallbackErrorMetadata(response.status))
+  const decoder = new TextDecoder()
+  let buffer = ""
+  const handle = (line: string): { done: true; value: T } | null => {
+    if (!line.trim()) return null
+    const event = JSON.parse(line) as { stage?: string; result?: T; error?: string; status?: number }
+    if (event.stage) onStage?.(event.stage)
+    if (event.error) {
+      const status = event.status ?? 500
+      throw new APIError(event.error, status, event, request, undefined, errorMetadata(status, event))
+    }
+    return event.result !== undefined ? { done: true, value: event.result } : null
+  }
+  for (;;) {
+    const { value, done } = await reader.read()
+    buffer += decoder.decode(value, { stream: !done })
+    let newline: number
+    while ((newline = buffer.indexOf("\n")) >= 0) {
+      const finished = handle(buffer.slice(0, newline))
+      buffer = buffer.slice(newline + 1)
+      if (finished) return finished.value
+    }
+    if (done) break
+  }
+  const finished = handle(buffer)
+  if (finished) return finished.value
+  throw new APIError("The analysis ended without a result. Try again.", response.status, null, request, undefined, fallbackErrorMetadata(response.status))
+}
+
 export function apiPost<T>(path: string, value?: unknown) {
   return api<T>(path, { method: "POST", body: JSON.stringify(value ?? {}) })
 }

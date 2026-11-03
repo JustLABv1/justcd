@@ -9,7 +9,9 @@ import { Button } from "@/components/ui/button"
 import { Disclosure } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
 import { StatusBadge } from "@/components/ui-kit"
-import { OverviewMetrics } from "@/components/application/overview-metrics"
+import { ago } from "@/lib/relative-time"
+import type { ApplicationStatus } from "@/lib/application-status"
+import { applicationResourceNodes } from "@/lib/topology-view"
 import { SyncHistoryChart } from "@/components/application/sync-history-chart"
 import type {
   Application,
@@ -41,6 +43,7 @@ function SectionLoading({ label }: { label: string }) {
 
 export function OverviewTab({
   application,
+  status,
   latestPlan,
   plansError,
   retryingPlans,
@@ -56,6 +59,7 @@ export function OverviewTab({
   onSelectTab,
 }: {
   application: Application
+  status: ApplicationStatus
   latestPlan?: PlanRecord
   plansError: unknown | null
   retryingPlans: boolean
@@ -74,7 +78,12 @@ export function OverviewTab({
     (acc, change) => ({ ...acc, [change.kind]: acc[change.kind] + 1 }),
     { create: 0, update: 0, delete: 0 }
   )
-  const current = latestPlan?.status === "current"
+  const current = status.plan.state === "current" && latestPlan !== undefined
+  const outdated = status.plan.state === "stale" || status.plan.state === "expired"
+  const blocked = status.blocked
+  const lastSync = operations.find((operation) => operation.status === "succeeded")
+  const resources = topology ? applicationResourceNodes(topology) : []
+  const observed = resources.filter((node) => node.source === "kubernetes").length
   const planLabel =
     latestPlan?.plan.decommission || application.configurationMissing
       ? "Deletion plan"
@@ -83,9 +92,9 @@ export function OverviewTab({
     plansError != null
       ? "Plan unavailable"
       : current
-        ? `${latestPlan.plan.changes.length} planned change${latestPlan.plan.changes.length === 1 ? "" : "s"}`
+        ? `${blocked ? "Last known plan · " : ""}${latestPlan.plan.changes.length} change${latestPlan.plan.changes.length === 1 ? "" : "s"}`
         : latestPlan
-          ? `Plan ${latestPlan.status}`
+          ? outdated ? status.plan.state === "expired" ? "Plan expired" : "Plan out of date" : `Plan ${latestPlan.status}`
           : "No plan yet"
 
   return (
@@ -110,13 +119,6 @@ export function OverviewTab({
           )}
         </div>
       )}
-      <OverviewMetrics
-        application={application}
-        topology={topology}
-        pending={pending}
-        topologyError={topologyError}
-        onSelectTab={onSelectTab}
-      />
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)]">
         <section
           aria-label={planLabel}
@@ -131,7 +133,7 @@ export function OverviewTab({
             ) : (
               <>
                 <div>
-                  <p className="text-2xl font-semibold tracking-tight">
+                  <p className={`text-2xl font-semibold tracking-tight${current && blocked ? " text-muted-foreground" : ""}`}>
                     {headline}
                   </p>
                   {plansError != null ? (
@@ -140,15 +142,13 @@ export function OverviewTab({
                     </p>
                   ) : current ? (
                     <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <Badge variant="success-light" radius="full">
-                        {counts?.create} create
-                      </Badge>
-                      <Badge variant="info-light" radius="full">
-                        {counts?.update} update
-                      </Badge>
-                      <Badge variant="destructive-light" radius="full">
-                        {counts?.delete} delete
-                      </Badge>
+                      {(["create", "update", "delete"] as const)
+                        .filter((kind) => counts?.[kind])
+                        .map((kind) => (
+                          <Badge key={kind} variant="outline" radius="full">
+                            {counts?.[kind]} {kind}
+                          </Badge>
+                        ))}
                       {latestPlan.plan.requiresApproval && (
                         <Badge variant="warning-light" radius="full">
                           Approval required
@@ -173,13 +173,24 @@ export function OverviewTab({
                       Retry loading
                     </Button>
                   ) : latestPlan ? (
-                    <Button
-                      variant={current ? "default" : "outline"}
-                      onClick={() => onSelectTab("changes")}
-                    >
-                      {current ? "Review changes" : "View plan"}
-                      {trailingArrow}
-                    </Button>
+                    <>
+                      {outdated && (
+                        <Button
+                          loading={creatingPlan}
+                          disabled={!canRefreshPlan}
+                          onClick={onCreatePlan}
+                        >
+                          Refresh plan
+                        </Button>
+                      )}
+                      <Button
+                        variant={current && !blocked ? "default" : "outline"}
+                        onClick={() => onSelectTab("changes")}
+                      >
+                        {current ? "Review changes" : "View plan"}
+                        {trailingArrow}
+                      </Button>
+                    </>
                   ) : (
                     <Button
                       loading={creatingPlan}
@@ -227,11 +238,30 @@ export function OverviewTab({
                 : "Manual sync"}
               {application.autoSyncPaused ? " · Auto-sync paused" : ""}
             </dd>
+            <dt className="text-muted-foreground">Resources</dt>
+            <dd>
+              {topologyError ? (
+                "Unavailable"
+              ) : pending.topology || !topology ? (
+                "—"
+              ) : (
+                <button
+                  type="button"
+                  className="underline-offset-4 hover:underline"
+                  onClick={() => onSelectTab("topology")}
+                >
+                  {blocked ? `${resources.length} declared` : `${observed} of ${resources.length} observed`}
+                </button>
+              )}
+            </dd>
             {application.lastSyncedRevision && (
               <>
                 <dt className="text-muted-foreground">Last synced</dt>
-                <dd className="font-mono text-xs break-all">
-                  {application.lastSyncedRevision.slice(0, 12)}
+                <dd className="break-all">
+                  {lastSync?.finishedAt && <span>{ago(lastSync.finishedAt)} · </span>}
+                  <span className="font-mono text-xs" title={application.lastSyncedRevision}>
+                    {application.lastSyncedRevision.slice(0, 12)}
+                  </span>
                 </dd>
               </>
             )}
@@ -261,7 +291,7 @@ export function OverviewTab({
           .join(",")}
         onViewActivity={() => onSelectTab("activity")}
       />
-      <section
+      {(pending.operations || operationsError != null || operations.length > 0) && <section
         aria-label="Recent activity"
         className="rounded-xl border bg-card"
       >
@@ -302,12 +332,8 @@ export function OverviewTab({
               </li>
             ))}
           </ol>
-        ) : (
-          <p className="px-5 pb-5 text-sm text-muted-foreground">
-            No operations recorded yet.
-          </p>
-        )}
-      </section>
+        ) : null}
+      </section>}
     </div>
   )
 }

@@ -116,7 +116,6 @@ export function PlanApprovalPanel({
   workspaceId,
   onResource,
   actions,
-  blockedReason,
   error,
   readOnly = false,
 }: {
@@ -129,7 +128,6 @@ export function PlanApprovalPanel({
   workspaceId?: string
   onResource: (identity: Identity) => void
   actions?: ReactNode
-  blockedReason?: string | null
   error?: unknown
   readOnly?: boolean
 }) {
@@ -253,11 +251,6 @@ export function PlanApprovalPanel({
           automatically.
         </p>
       )}
-      {blockedReason && (
-        <p role="status" className="px-4 pb-3 text-xs text-muted-foreground">
-          {blockedReason}
-        </p>
-      )}
       <Disclosure summary="Approval details" className="border-t px-4 py-2.5">
         <p className="mb-4 text-xs text-muted-foreground">
           {required} distinct eligible approval{required === 1 ? "" : "s"}{" "}
@@ -335,11 +328,6 @@ export function PlanApprovalPanel({
                       : summary.canApprove
                         ? "You can approve this plan after reviewing its changes."
                         : "You are not eligible to approve under this plan’s rule."}
-              </p>
-            )}
-            {current && blockedReason && (
-              <p role="status" className="mt-2 text-xs text-muted-foreground">
-                {blockedReason}
               </p>
             )}
           </div>

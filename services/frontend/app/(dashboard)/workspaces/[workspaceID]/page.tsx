@@ -1,5 +1,7 @@
 "use client"
 
+import { AIAssistant } from "@/components/ai-assistant"
+import { WorkspaceAIPolicy } from "@/components/settings/ai-panel"
 import Link from "next/link"
 import { useParams, useRouter, useSearchParams } from "next/navigation"
 import { Suspense, useEffect, useState } from "react"
@@ -43,8 +45,8 @@ function WorkspaceSettingsPage() {
   const requestedTab = searchParams.get("tab")
   const isOwner = workspace?.role === "owner"
   const activeTab = isOwner
-    ? (["general", "members", "policies", "notifications"].includes(requestedTab ?? "") ? requestedTab! : "general")
-    : "members"
+    ? (["general", "members", "policies", "notifications", "ai"].includes(requestedTab ?? "") ? requestedTab! : "general")
+    : requestedTab === "ai" ? "ai" : "members"
 
   // Preserve old bookmarks without keeping the duplicate connections directory.
   useEffect(() => {
@@ -126,10 +128,12 @@ function WorkspaceSettingsPage() {
     <Tabs value={activeTab} onValueChange={(value) => selectTab(String(value))}>
         <TabsList variant="line" aria-label="Workspace settings sections" layout="responsive" className="sticky top-0 z-10 bg-background">
           {isOwner && <TabsTrigger value="general">General</TabsTrigger>}
+          <TabsTrigger value="ai">AI</TabsTrigger>
           <TabsTrigger value="members">Members &amp; access <Badge size="xs" variant="secondary">{members.length}</Badge></TabsTrigger>
           {isOwner && <TabsTrigger value="policies">Deployment policies</TabsTrigger>}
           {isOwner && <TabsTrigger value="notifications">Notifications</TabsTrigger>}
         </TabsList>
+      <TabsContent value="ai" className="space-y-5">{isOwner && <WorkspaceAIPolicy key={workspaceID} workspaceId={workspaceID} />}<AIAssistant presentation="inline" key={`chat-${workspaceID}`} workspaceId={workspaceID} /></TabsContent>
       <TabsContent value="members" className="min-w-0">
         <AppDialog open={memberOpen} onOpenChange={setMemberOpen} busy={memberBusy} size="md" title="Add member" description="Give a teammate access to this workspace.">
           <form className="space-y-4" onSubmit={addMember}>

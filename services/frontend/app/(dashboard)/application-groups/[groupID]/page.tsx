@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react"
 import { useParams } from "next/navigation"
+import { AIAssistant } from "@/components/ai-assistant"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { HugeiconsIcon } from "@hugeicons/react"
@@ -115,7 +116,7 @@ export default function ApplicationGroupPage() {
   const owner = workspace?.role === "owner"
 
   return <>
-    <PageHeading title={group?.name ?? "Deployment group"} description="Shared renderer configuration and per-target application status." actions={<Button render={<Link href="/applications" />} nativeButton={false} variant="ghost" size="sm"><HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={1.8} aria-hidden="true" />Applications</Button>} />
+    <PageHeading title={group?.name ?? "Deployment group"} description="Shared renderer configuration and per-target application status." actions={<>{group && <AIAssistant key={group.id} workspaceId={group.workspaceId} groupId={group.id} features={["compare", "ask"]} />}<Button render={<Link href="/applications" />} nativeButton={false} variant="ghost" size="sm"><HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={1.8} aria-hidden="true" />Applications</Button></>} />
     {error != null && <ErrorNotice error={error} />}
     {loading || !group ? (error != null ? null : <div role="status" aria-label="Loading deployment group" className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]"><Skeleton className="h-64 rounded-xl" /><Skeleton className="h-96 rounded-xl" /></div>) : <>
       <div className="mb-5"><ApplicationGroupPlanReview applications={applications}/></div>

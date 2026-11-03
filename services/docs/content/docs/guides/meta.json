@@ -8,6 +8,7 @@
     "repository-applications",
     "application-health",
     "plan-review",
-    "notifications"
+    "notifications",
+    "ai"
   ]
 }

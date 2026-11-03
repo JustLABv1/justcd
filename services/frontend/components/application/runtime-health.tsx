@@ -8,19 +8,25 @@ import { Button } from "@/components/ui/button"
 import { Disclosure } from "@/components/ui/collapsible"
 import { AppDialog } from "@/components/ui/dialog"
 import { StatusBadge } from "@/components/ui-kit"
+import type { ApplicationStatus } from "@/lib/application-status"
 import type { Application, ApplicationHealthTransition } from "@/lib/types"
 
-/** Application header metadata with runtime health and the latest check. */
-export function RuntimeHealthStrip({ application, healthHistory, reconnecting = false }: { application: Application; healthHistory: ApplicationHealthTransition[]; reconnecting?: boolean }) {
+/** Single application status line: sync state, blockers, runtime health and freshness. */
+export function RuntimeHealthStrip({ application, healthHistory, status, reconnecting = false }: { application: Application; healthHistory: ApplicationHealthTransition[]; status: ApplicationStatus; reconnecting?: boolean }) {
   const [open, setOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(timer) }, [])
   const condition = application.healthCondition
   const freshness = runtimeFreshness(condition?.observedAt, now)
   return <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-    <Button type="button" variant="ghost" size="sm" className="-ml-2" aria-label="Health details" onClick={() => setOpen(true)}><HugeiconsIcon icon={HeartCheckIcon} strokeWidth={1.8} aria-hidden="true" />Runtime health <StatusBadge status={condition?.status ?? "Unknown"} /><HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={1.8} aria-hidden="true" /></Button>
-    <span className={freshness.stale || reconnecting ? "text-warning-foreground dark:text-warning" : ""} title={condition?.observedAt ? new Date(condition.observedAt).toLocaleString() : undefined}>{freshness.label}{reconnecting ? " · Reconnecting" : freshness.stale && condition?.observedAt ? " · Stale" : " · Auto-updating"}{condition?.status === "Partial" ? " · Partial observation" : ""}</span>
-    <AppDialog open={open} onOpenChange={setOpen} variant="info" size="lg" title="Runtime health" description="Runtime readiness is separate from Git sync state. Partial means some runtime resources could not be assessed; configuration objects do not need workload health checks.">
+    <Button type="button" variant="ghost" size="sm" className="-ml-2 h-auto min-h-8 flex-wrap justify-start gap-x-2 py-1 whitespace-normal" aria-label="Status and runtime health details" onClick={() => setOpen(true)}>
+      <HugeiconsIcon icon={HeartCheckIcon} strokeWidth={1.8} aria-hidden="true" />
+      <StatusBadge status={status.sync} />
+      {status.parts.length > 0 && <span className="text-muted-foreground">{status.parts.slice(0, 2).join(" · ")}{status.parts.length > 2 ? ` · +${status.parts.length - 2}` : ""}</span>}
+      <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={1.8} aria-hidden="true" />
+    </Button>
+    <span className={freshness.stale || reconnecting ? "text-warning-foreground dark:text-warning" : ""} title={condition?.observedAt ? `${new Date(condition.observedAt).toLocaleString()} · Updates automatically` : undefined}>{freshness.label.replace("Runtime observed", "Observed")}{reconnecting ? " · Reconnecting" : freshness.stale && condition?.observedAt ? " · Stale" : ""}{condition?.status === "Partial" ? " · Partial observation" : ""}</span>
+    <AppDialog open={open} onOpenChange={setOpen} variant="info" size="lg" title="Status and runtime health" description="Runtime readiness is separate from Git sync state. Partial means some runtime resources could not be assessed; configuration objects do not need workload health checks.">
       <div className="space-y-4">
         <StatusBadge status={condition?.status ?? "Unknown"} />
         <p className="text-sm"><strong>{condition?.reason ?? "HealthNotObserved"}:</strong> {condition?.message ?? "Live Kubernetes health has not been observed yet."}</p>

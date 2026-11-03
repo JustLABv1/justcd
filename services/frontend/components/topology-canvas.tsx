@@ -4,10 +4,11 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react"
 import { ReactFlow, ReactFlowProvider, Handle, Position, BaseEdge, EdgeText, getBezierPath, getViewportForBounds, useReactFlow, useNodesInitialized, useViewport, type Node, type NodeProps, type Edge, type EdgeProps, type NodeChange, type Viewport, type XYPosition } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { ArrowLeft01Icon, ArrowRight01Icon, CenterFocusIcon, Maximize01Icon, MinusSignIcon, PlusSignIcon, CubeIcon } from "@hugeicons/core-free-icons"
+import { ArrowLeft01Icon, ArrowRight01Icon, CenterFocusIcon, Maximize01Icon, MinusSignIcon, PlusSignIcon, CubeIcon, Settings02Icon } from "@hugeicons/core-free-icons"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Switch } from "@/components/ui/switch"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { EmptyState } from "@/components/ui-kit"
 import { aggregateRuntime, connectionSignal, mapNodeHeightFor, mapNodeWidth, resourceURLs, supportingTopologyResource, podSummary, topologyUpstream, topologyVisibleEdges, topologyHierarchy, topologyScope, type ConnectionSignal, type RuntimeSignal } from "@/lib/topology-map"
 import { packedTopologyScene, type TopologyGroup } from "@/lib/topology-map"
@@ -18,7 +19,7 @@ import styles from "./topology-canvas.module.css"
 
 type MapNodeData = {
   resource: TopologyNode; icon: typeof CubeIcon; runtime: RuntimeSignal; runtimeLabel: string
-  compact: boolean; podStatus: string | null; context: boolean; backLabel: string | null; sync: SyncState; syncLabel: string; childCount: number; childLabel: string; dimmed: boolean; canEnter: boolean
+  compact: boolean; podStatus: string | null; context: boolean; backLabel: string | null; sync: SyncState; syncLabel: string; childCount: number; childLabel: string; dimmed: boolean; canEnter: boolean; conflict: boolean
   onEnter: (id: string, animate: boolean) => void; onInspect: (id: string) => void
 }
 type ResourceMapNode = Node<MapNodeData, "resource">
@@ -67,7 +68,7 @@ function ResourceNode({ data, selected }: NodeProps<Node<MapNodeData, "resource"
     <Handle id="target-right" type="target" position={Position.Right} isConnectable={false} className={styles.sourceHandle} />
     <Handle id="source-left" type="source" position={Position.Left} isConnectable={false} className={styles.targetHandle} />
     <Tooltip>
-      <TooltipTrigger render={<Button variant="ghost" className={`${styles.nodeButton} nopan`} aria-label={`${data.backLabel ? "Back via" : data.canEnter ? "Explore" : "Inspect"} ${resource.identity.kind} ${resource.identity.name}: ${signalLabels[runtime]}${childCount ? `, ${childCount} contained resources` : ""}`} onClick={(event) => data.canEnter ? data.onEnter(resource.id, event.detail !== 0) : data.onInspect(resource.id)} />}>
+      <TooltipTrigger render={<Button variant="ghost" className={`${styles.nodeButton} nopan`} aria-label={`${data.backLabel ? "Back via" : "Inspect"} ${resource.identity.kind} ${resource.identity.name}: ${signalLabels[runtime]}${childCount ? `, ${childCount} contained resources` : ""}`} onClick={(event) => data.backLabel ? data.onEnter(resource.id, event.detail !== 0) : data.onInspect(resource.id)} />}>
         <span className={styles.orb}>
           <HugeiconsIcon icon={data.icon} strokeWidth={1.5} className="size-7" aria-hidden="true" />
           <span className={styles.healthDot} aria-hidden="true" />
@@ -79,13 +80,14 @@ function ResourceNode({ data, selected }: NodeProps<Node<MapNodeData, "resource"
         {data.context && <span className={styles.contextLabel}>Upstream</span>}
         {resource.identity.kind === "Ingress" && childCount > 0 && !data.backLabel && <span className={styles.contextLabel}>{data.childLabel} · Explore</span>}
         {data.podStatus && <span className={styles.podStatus}>{data.podStatus}</span>}
-        {resource.routingHealth && <span className={styles.routingStatus}>{resource.routingHealth.label}</span>}
-        <span className={styles.nodeStatus} data-sync={data.sync}><span aria-hidden="true" />{data.syncLabel}</span>
+        {resource.routingHealth && resource.routingHealth.status !== "unknown" && <span className={styles.routingStatus}>{resource.routingHealth.label}</span>}
+        {data.conflict && <span className={styles.nodeStatus} data-sync="update"><span aria-hidden="true" />Owned elsewhere</span>}
+        {data.sync !== "unknown" && <span className={styles.nodeStatus} data-sync={data.sync}><span aria-hidden="true" />{data.syncLabel}</span>}
       </TooltipTrigger>
       <TooltipContent className="max-w-80"><p className="break-all font-medium">{resource.identity.name}</p><p>{data.runtimeLabel}</p><p>{signalLabels[runtime]}{childCount ? ` · ${data.childLabel}` : ""}</p><p>{resource.identity.namespace || "Cluster scope"}</p></TooltipContent>
     </Tooltip>
     <div className={`${styles.actions} nodrag nopan`}>
-      {childCount > 0 && <Button variant="ghost" size="xs" aria-label={`Inspect ${resource.identity.kind} ${resource.identity.name}`} onClick={() => data.onInspect(resource.id)}>Details<HugeiconsIcon icon={ArrowRight01Icon} aria-hidden="true" /></Button>}
+      {data.canEnter && !data.backLabel && <Button variant="ghost" size="xs" aria-label={`Explore ${resource.identity.kind} ${resource.identity.name}`} onClick={(event) => data.onEnter(resource.id, event.detail !== 0)}>Explore<HugeiconsIcon icon={ArrowRight01Icon} aria-hidden="true" /></Button>}
       {urls.length === 1 && <Button variant="ghost" size="xs" nativeButton={false} render={<a href={urls[0]} target="_blank" rel="noopener noreferrer" />} aria-label={`Open ${urls[0]} (opens in a new tab)`}>Open page ↗</Button>}
       {urls.length > 1 && <Button variant="ghost" size="xs" aria-label={`View ${urls.length} URLs for ${resource.identity.name}`} onClick={() => data.onInspect(resource.id)}>{urls.length} URLs ↗</Button>}
     </div>
@@ -120,9 +122,10 @@ type Props = {
   query: string; mode: string; focus: boolean; related: Set<string>
   stateFor: (node: TopologyNode) => SyncState; syncLabels: Record<SyncState, string>
   describeNode: (node: TopologyNode) => string; iconFor: (kind: string) => typeof CubeIcon
+  isChanged: (node: TopologyNode) => boolean; isConflict: (node: TopologyNode) => boolean
 }
 
-function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, focus, related, stateFor, syncLabels, describeNode, iconFor }: Props) {
+function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, focus, related, stateFor, syncLabels, describeNode, iconFor, isChanged, isConflict }: Props) {
   const [path, setPath] = useState<string[]>([])
   const [positions, setPositions] = useState<Record<string, XYPosition>>({})
   const [moving, setMoving] = useState(false)
@@ -147,7 +150,7 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
   const contextIds = new Set(context.map((node) => node.id))
   const scoped = globalView ? [...graph.nodes] : [...topologyScope(graph, parentId, replicaSets), ...context]
   const matches = (node: TopologyNode) => `${node.identity.kind} ${node.identity.namespace} ${node.identity.name}`.toLowerCase().includes(query.trim().toLowerCase())
-  const inFilter = (node: TopologyNode) => (!focus || !selectedId || related.has(node.id)) && (mode === "all" || (mode === "observed" ? ["kubernetes", "sample"].includes(node.source) : ["create", "update", "delete", "failed", "syncing"].includes(stateFor(node))))
+  const inFilter = (node: TopologyNode) => (!focus || !selectedId || related.has(node.id)) && (mode === "all" || (mode === "observed" ? ["kubernetes", "sample"].includes(node.source) : mode === "conflicts" ? isConflict(node) : isChanged(node)))
   // Inventory is always visible in the overview. Drill-down adds only actual
   // dependencies of the current scope, without pulling in unrelated workloads.
   const scopedIds = new Set(scoped.map(node => node.id))
@@ -216,7 +219,7 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
       // Shared Button owns keyboard activation; the wrapper is only the draggable canvas object.
       focusable: false, draggable: true,
       data: { resource, compact: supportingTopologyResource(resource), podStatus: resource.identity.kind === "Pod" ? resource.healthSummary?.failureReason ?? resource.readiness ?? resource.phase ?? null : podSummary(pods), context: isContext, backLabel: resource.id === parentId && !globalView ? "Back to previous view" : null, icon: iconFor(resource.identity.kind), runtime: runtime.get(resource.id)!, runtimeLabel: describeNode(resource), sync: stateFor(resource), syncLabel: syncLabels[stateFor(resource)], childCount: pods.length || children.length,
-        childLabel: pods.length ? `${pods.length} pods · ${children.length} direct controllers or children` : [...new Set(children.map((node) => node.identity.kind))].map((kind) => `${children.filter((node) => node.identity.kind === kind).length} ${kind}`).join(" · "), canEnter: resource.id === parentId && !globalView || !isContext && children.length > 0 && resource.id !== parentId,
+        childLabel: pods.length ? `${pods.length} pods · ${children.length} direct controllers or children` : [...new Set(children.map((node) => node.identity.kind))].map((kind) => `${children.filter((node) => node.identity.kind === kind).length} ${kind}`).join(" · "), conflict: isConflict(resource), canEnter: resource.id === parentId && !globalView || !isContext && children.length > 0 && resource.id !== parentId,
         // React Flow stores the handler; it is invoked only on user activation.
         // eslint-disable-next-line react-hooks/refs
         dimmed: Boolean(query.trim() && !matches(resource)) || Boolean(selectedId && !related.has(resource.id)), onEnter: handleEnter, onInspect: onSelect },
@@ -311,10 +314,22 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
         <Button variant="ghost" size="sm" disabled={!parentId} onClick={(event) => back(0, event.detail !== 0)}>{applicationName}</Button>
         {validPath.map((id, index) => <span key={id} className="inline-flex min-w-0 items-center gap-1"><HugeiconsIcon icon={ArrowRight01Icon} className="size-3 text-muted-foreground" aria-hidden="true" /><Button variant="ghost" size="sm" className="max-w-40 truncate" aria-current={id === parentId ? "location" : undefined} disabled={id === parentId} onClick={(event) => back(index + 1, event.detail !== 0)}>{graph.nodes.find((node) => node.id === id)?.identity.name}</Button></span>)}
       </nav>
-      <div className="flex flex-wrap items-center gap-4">
-        <label className="inline-flex items-center gap-2 text-xs text-muted-foreground"><Switch checked={dependencies} onCheckedChange={setDependencies} aria-label="Show dependency connections" />Dependencies</label>
-        {parentId && !globalView && (hierarchy.children.get(parentId) ?? []).some((node) => node.identity.kind === "ReplicaSet") && <label className="inline-flex items-center gap-2 text-xs text-muted-foreground"><Switch checked={replicaSets} onCheckedChange={setReplicaSets} aria-label="Show ReplicaSets" />ReplicaSets</label>}
-      <Button variant="ghost" size="xs" aria-pressed={paused} onClick={() => setPaused(!paused)}>{paused ? "Resume animation" : "Pause animation"}</Button></div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span role="status" aria-live="polite" className="text-xs text-muted-foreground">{shown.length} resources</span>
+        <Popover>
+          <PopoverTrigger render={<Button variant="outline" size="sm" />}><HugeiconsIcon icon={Settings02Icon} strokeWidth={1.8} aria-hidden="true" />Display</PopoverTrigger>
+          <PopoverContent align="end" className="w-80 gap-3 p-3">
+            <label className="flex items-center justify-between gap-3 text-sm"><span>Dependency connections<span className="block text-xs text-muted-foreground">Dashed lines for configuration and volumes</span></span><Switch checked={dependencies} onCheckedChange={setDependencies} aria-label="Show dependency connections" /></label>
+            {parentId && !globalView && (hierarchy.children.get(parentId) ?? []).some((node) => node.identity.kind === "ReplicaSet") && <label className="flex items-center justify-between gap-3 text-sm">ReplicaSets<Switch checked={replicaSets} onCheckedChange={setReplicaSets} aria-label="Show ReplicaSets" /></label>}
+            <label className="flex items-center justify-between gap-3 text-sm">Animate connections<Switch checked={!paused} onCheckedChange={(value) => setPaused(!value)} aria-label="Animate connections" /></label>
+            <div aria-label="Connection status legend" className="space-y-1.5 border-t pt-3 text-xs text-muted-foreground">
+              <p className="font-medium text-foreground">Connections</p>
+              {([["healthy", "Backend ready"], ["syncing", "Applying"], ["progressing", "Not ready / progressing"], ["degraded", "Needs attention"], ["unknown", "Idle / unknown"]] as const).map(([signal, label]) => <p key={signal} className="flex items-center gap-2"><i className={styles.legendLine} data-signal={signal} aria-hidden="true" />{label}</p>)}
+              <p>Drag to pan or arrange · Pinch to zoom · Click a resource to inspect it</p>
+            </div>
+          </PopoverContent>
+        </Popover>
+      </div>
     </div>
     {globalView && parentId && <p className="border-b px-4 py-2 text-xs text-muted-foreground">Search and filters show resources across the application. Clear them to return to this group.</p>}
     <div className="relative h-[min(68svh,760px)] min-h-[420px]">
@@ -341,12 +356,6 @@ function Canvas({ graph, applicationName, selectedId, onSelect, query, mode, foc
         <Button variant="ghost" size="sm" className="tabular-nums" aria-label="Reset zoom to 100 percent" onClick={() => { void flow.zoomTo(1) }}>{Math.round(viewport.zoom * 100)}%</Button>
         <Button variant="ghost" size="icon-sm" aria-label="Zoom in" disabled={viewport.zoom >= 2} onClick={() => { void flow.zoomIn() }}><HugeiconsIcon icon={PlusSignIcon} aria-hidden="true" /></Button>
       </div>
-    </div>
-    <div className="flex flex-wrap justify-between gap-2 border-t px-4 py-2 text-xs text-muted-foreground"><p>Drag to pan or arrange · Pinch to zoom · Click a parent to explore</p><p role="status" aria-live="polite">{shown.length} resources · {parentId ? graph.nodes.find((node) => node.id === parentId)?.identity.name : "Application overview"}</p></div>
-    <div aria-label="Connection status legend" className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t px-4 py-3 text-xs text-muted-foreground">
-      <span className="font-medium text-foreground">Connections</span>
-      {([["healthy", "Backend ready"], ["syncing", "Applying"], ["progressing", "Not ready / progressing"], ["degraded", "Needs attention"], ["unknown", "Idle / unknown"]] as const).map(([signal, label]) => <span key={signal} className="inline-flex items-center gap-1.5"><i className={styles.legendLine} data-signal={signal} aria-hidden="true" />{label}</span>)}
-      <span>{dependencies ? "Dashed = configuration dependency" : "Select a resource to trace its dependencies · All resources stay visible"}</span>
     </div>
   </div>
 }

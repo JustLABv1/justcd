@@ -17,7 +17,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { FormSelect } from "@/components/ui/form-select"
 import { DiffText, useDiffSyntax } from "@/components/diff-text"
-import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { VirtualReviewList } from "@/components/virtual-review-list"
 import { Button } from "@/components/ui/button"
 import {
@@ -294,14 +294,21 @@ function ManifestDiffView({
         )}
         <Popover>
           <PopoverTrigger
-            render={<Button type="button" variant="outline" size="sm" />}
+            render={
+              <Button
+                type="button"
+                variant={query ? "secondary" : "outline"}
+                size="icon-sm"
+                aria-label={`Diff options${query ? " · Search active" : ""}`}
+                title="Diff options"
+              />
+            }
           >
             <HugeiconsIcon
               icon={Settings02Icon}
               strokeWidth={1.8}
               aria-hidden="true"
             />
-            Diff options{query ? " · Search active" : ""}
           </PopoverTrigger>
           <PopoverContent
             align="start"
@@ -364,7 +371,9 @@ function ManifestDiffView({
         <div className="ml-auto flex items-center gap-2">
           <span className="text-sm text-muted-foreground" aria-live="polite">
             {hunks.length
-              ? `${position < 0 ? "–" : position + 1} / ${hunks.length} changes`
+              ? position < 0
+                ? `${hunks.length} ${hunks.length === 1 ? "change" : "changes"}`
+                : `${position + 1} of ${hunks.length}`
               : hiddenPaths.length
                 ? `${hiddenPaths.length} hidden field ${hiddenPaths.length === 1 ? "change" : "changes"}`
                 : takeover
@@ -404,22 +413,20 @@ function ManifestDiffView({
       {hiddenPaths.length > 0 && (
         <div className="border-b p-3">
           <Alert role="status">
-            <AlertTitle>Sensitive fields changed</AlertTitle>
             <AlertDescription>
               <p>
-                Values are hidden for security, so both sides may look
-                identical.
+                <strong>Sensitive values hidden</strong> ·{" "}
                 {excluded
-                  ? " These differences are excluded and will not be applied."
-                  : " These field changes are included in the plan."}
-              </p>
-              <ul className="list-disc space-y-1 pl-5">
-                {hiddenPaths.map((path) => (
-                  <li key={path}>
+                  ? "excluded, not applied"
+                  : "changes are included in the plan"}
+                :{" "}
+                {hiddenPaths.map((path, i) => (
+                  <span key={path}>
+                    {i > 0 && ", "}
                     <code className="break-all">{path || "/"}</code>
-                  </li>
+                  </span>
                 ))}
-              </ul>
+              </p>
             </AlertDescription>
           </Alert>
         </div>
@@ -431,14 +438,18 @@ function ManifestDiffView({
         <div
           className={`grid border-b bg-muted px-3 py-2 font-sans text-sm font-medium ${split ? "md:grid-cols-2" : "grid-cols-2"}`}
         >
-          <span>
-            Live before
-            {file && file.before === undefined ? " · file absent" : ""}
-          </span>
-          <span>
-            {excluded ? "Git reference · excluded" : "Desired after"}
-            {file && file.after === undefined ? " · file absent" : ""}
-          </span>
+          {!(singleSide && beforeMissing) && (
+            <span>
+              Live before
+              {file && file.before === undefined ? " · file absent" : ""}
+            </span>
+          )}
+          {!(singleSide && !beforeMissing) && (
+            <span>
+              {excluded ? "Git reference · excluded" : "Desired after"}
+              {file && file.after === undefined ? " · file absent" : ""}
+            </span>
+          )}
         </div>
         {singleSide && excluded && (
           <p className="border-b px-4 py-3 font-sans text-sm text-muted-foreground">

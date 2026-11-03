@@ -116,6 +116,7 @@ func runCommand(logger *slog.Logger, args []string) error {
 	defer stopSignals()
 	lifecycle.Start(func(ctx, _ context.Context) { server.Syncer.RunPoller(ctx, logger) })
 	lifecycle.Start(func(ctx, _ context.Context) { server.Syncer.RunRuntimePoller(ctx, logger) })
+	lifecycle.Start(func(ctx, _ context.Context) { server.RunAITriage(ctx, logger) })
 	lifecycle.Start(func(ctx, _ context.Context) { server.Syncer.RunRepositoryPoller(ctx, logger) })
 	lifecycle.Start(func(ctx, executionCtx context.Context) {
 		server.Syncer.RunOperationWorkerWithDrain(ctx, executionCtx, logger)

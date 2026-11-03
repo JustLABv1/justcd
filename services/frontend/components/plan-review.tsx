@@ -109,6 +109,30 @@ export function PlanReview({
         ),
     [entries, deferred, filter, group]
   )
+  const filterItems = useMemo(() => {
+    const live = entries.filter((entry) => !entry.ignored)
+    const items = [{ value: "all", label: "All", count: entries.length }]
+    for (const kind of ["create", "update", "delete"] as const) {
+      const count = live.filter((entry) => entry.change.kind === kind).length
+      if (count)
+        items.push({
+          value: kind,
+          label: kind[0].toUpperCase() + kind.slice(1),
+          count,
+        })
+    }
+    const excluded = entries.length - live.length
+    if (excluded)
+      items.push({ value: "excluded", label: "Excluded", count: excluded })
+    for (const [value, label] of Object.entries(riskLabels)) {
+      const count = counts[value as keyof typeof riskLabels]
+      if (value !== "deletion" && value !== "ordinary" && count > 0)
+        items.push({ value, label, count })
+    }
+    return items
+  }, [entries, counts])
+  const groupCount = new Set(matching.map((entry) => groupLabel(entry, group)))
+    .size
   const active =
       matching.find((entry) => entry.key === selected) ?? matching[0],
     index = active ? matching.indexOf(active) : -1
@@ -226,38 +250,25 @@ export function PlanReview({
             onChange={(event) => setQuery(event.target.value)}
           />
           {entries.length > 1 && (
-            <FormSelect
-              ariaLabel="Filter changes"
-              value={filter}
-              onValueChange={setFilter}
-              className="my-2"
-              items={[
-                { value: "all", label: "All resources" },
-                ...(["create", "update", "delete"] as const)
-                  .filter((kind) =>
-                    entries.some(
-                      (entry) => !entry.ignored && entry.change.kind === kind
-                    )
-                  )
-                  .map((value) => ({
-                    value,
-                    label: value[0].toUpperCase() + value.slice(1),
-                  })),
-                ...(entries.some((entry) => entry.ignored)
-                  ? [{ value: "excluded", label: "Excluded resources" }]
-                  : []),
-                ...Object.entries(riskLabels)
-                  .filter(
-                    ([value]) =>
-                      value !== "deletion" &&
-                      counts[value as keyof typeof riskLabels] > 0
-                  )
-                  .map(([value, label]) => ({
-                    value,
-                    label: `${label} (${counts[value as keyof typeof riskLabels]})`,
-                  })),
-              ]}
-            />
+            <div
+              role="group"
+              aria-label="Filter changes"
+              className="my-2 flex flex-wrap gap-1"
+            >
+              {filterItems.map((item) => (
+                <Button
+                  key={item.value}
+                  type="button"
+                  size="xs"
+                  variant={filter === item.value ? "secondary" : "ghost"}
+                  aria-pressed={filter === item.value}
+                  onClick={() => setFilter(item.value)}
+                >
+                  {item.label}
+                  <span className="text-muted-foreground">{item.count}</span>
+                </Button>
+              ))}
+            </div>
           )}
 
           <p
@@ -268,10 +279,7 @@ export function PlanReview({
             {matching.length} of {entries.length} resources
             {query !== deferred ? " · searching…" : ""}
           </p>
-          <p
-            id={`${prefix}-keys`}
-            className="mb-2 text-xs text-muted-foreground"
-          >
+          <p id={`${prefix}-keys`} className="sr-only">
             Use ↑/↓ and Home/End to review resources.
           </p>
           <VirtualReviewList
@@ -305,7 +313,7 @@ export function PlanReview({
                 start = i === 0 || groupLabel(matching[i - 1], group) !== label
               return (
                 <>
-                  {start && matching.length > 1 && (
+                  {start && groupCount > 1 && (
                     <h4 className="mt-2 mb-1 px-2 text-xs font-semibold text-muted-foreground uppercase">
                       {label}
                     </h4>
@@ -319,43 +327,42 @@ export function PlanReview({
                     aria-setsize={matching.length}
                     tabIndex={-1}
                     variant={entry === active ? "secondary" : "ghost"}
-                    className="mb-1 h-auto w-full justify-start px-3 py-3 text-left whitespace-normal"
+                    className="mb-0.5 h-auto w-full justify-start px-3 py-2 text-left whitespace-normal"
                     onClick={() => select(entry.key)}
                   >
-                    <span className="min-w-0">
-                      <span className="block text-sm font-medium break-all">
-                        {entry.change.identity.name}
-                      </span>
-                      <span className="mt-1 block text-xs text-muted-foreground">
-                        {entry.change.identity.kind} ·{" "}
-                        {entry.change.identity.namespace || "cluster"}
-                        {entry.child ? ` · ${entry.child}` : ""}
-                      </span>
-                      <span className="mt-1 block text-xs text-muted-foreground">
-                        <span
-                          className={
-                            entry.ignored
-                              ? "text-muted-foreground"
-                              : entry.change.kind === "create"
-                                ? "text-success-foreground dark:text-success"
-                                : entry.change.kind === "delete"
-                                  ? "text-destructive"
-                                  : "text-info-foreground dark:text-info"
-                          }
-                        >
-                          {entry.ignored
-                            ? "Excluded · not applied"
-                            : entry.change.kind}
+                    <span className="flex w-full items-start gap-2">
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-medium break-all">
+                          {entry.change.identity.name}
                         </span>
-                        {entry.risks
-                          .filter(
-                            (risk) => risk !== "ordinary" && risk !== "deletion"
-                          )
-                          .map((risk) => ` · ${riskLabels[risk]}`)
-                          .join("")}
-                        {!entry.ignored &&
-                          isExcluded(entry.change) &&
-                          " · Exclusion draft"}
+                        <span className="block text-xs text-muted-foreground">
+                          {entry.change.identity.kind} ·{" "}
+                          {entry.change.identity.namespace || "cluster"}
+                          {entry.child ? ` · ${entry.child}` : ""}
+                          {entry.risks
+                            .filter(
+                              (risk) =>
+                                risk !== "ordinary" && risk !== "deletion"
+                            )
+                            .map((risk) => ` · ${riskLabels[risk]}`)
+                            .join("")}
+                          {!entry.ignored &&
+                            isExcluded(entry.change) &&
+                            " · Exclusion draft"}
+                        </span>
+                      </span>
+                      <span
+                        className={`shrink-0 text-xs ${
+                          entry.ignored
+                            ? "text-muted-foreground"
+                            : entry.change.kind === "create"
+                              ? "text-success-foreground dark:text-success"
+                              : entry.change.kind === "delete"
+                                ? "text-destructive"
+                                : "text-info-foreground dark:text-info"
+                        }`}
+                      >
+                        {entry.ignored ? "excluded" : entry.change.kind}
                       </span>
                     </span>
                   </Button>

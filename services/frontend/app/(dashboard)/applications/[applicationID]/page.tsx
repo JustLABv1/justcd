@@ -1,5 +1,6 @@
 "use client"
 
+import { AIAssistant } from "@/components/ai-assistant"
 import { DeploymentScheduleNotice } from "@/components/deployment-schedule-notice"
 import { DeploymentSchedulePanel, ScheduledOperationActions } from "@/components/deployment-schedule"
 import { useParams, useRouter } from "next/navigation"
@@ -16,6 +17,7 @@ import { OperationBar, type RollbackRequest } from "@/components/application/ope
 import { OverviewTab } from "@/components/application/overview-tab"
 import { OwnershipConflictDialog } from "@/components/application/ownership-conflict-dialog"
 import { applicationResourceNodes } from "@/lib/topology-view"
+import { deriveApplicationStatus } from "@/lib/application-status"
 import { RuntimeHealthStrip } from "@/components/application/runtime-health"
 import { SettingsTab } from "@/components/application/settings-tab"
 import { ApplicationDetailSkeleton } from "@/components/application-detail-skeleton"
@@ -25,7 +27,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { ResourceMap } from "@/components/resource-map"
-import { PageHeading, StatusBadge } from "@/components/ui-kit"
+import { PageHeading } from "@/components/ui-kit"
 import { ErrorDetailsButton } from "@/components/error-details"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
@@ -48,7 +50,7 @@ export default function ApplicationDetailPage() {
   const [plans, setPlans] = useState<PlanRecord[]>([])
   const [activePlan, setActivePlan] = useState<PlanRecord | null>(null)
   const [resources, setResources] = useState<ManagedResource[]>([])
-  const [topologyView, setTopologyView] = useState<"graph" | "list">("graph")
+  const [topologyView, setTopologyView] = useState<"overview" | "graph" | "list">("overview")
   const [topology, setTopology] = useState<ResourceTopology | null>(null)
   const [topologyError, setTopologyError] = useState<unknown | null>(null)
   const [topologyRefreshing, setTopologyRefreshing] = useState(false)
@@ -118,7 +120,8 @@ export default function ApplicationDetailPage() {
   useEffect(() => {
     const readTab = () => {
       const value = new URLSearchParams(window.location.search).get("tab")
-      setTopologyView(value === "components" || new URLSearchParams(window.location.search).get("view") === "list" ? "list" : "graph")
+      const viewParam = new URLSearchParams(window.location.search).get("view")
+      setTopologyView(value === "components" || viewParam === "list" ? "list" : viewParam === "graph" ? "graph" : "overview")
       setActiveTab(value === "components" ? "topology" : ["overview", "topology", "changes", "activity", "pull-requests", "settings"].includes(value ?? "") ? value! : "overview")
     }
     readTab()
@@ -146,7 +149,7 @@ export default function ApplicationDetailPage() {
     const results = await Promise.allSettled([
       api<ListResponse<Workspace>>("/api/v1/workspaces").then((value) => { if (current()) setWorkspace(value.items.find((item) => item.id === app.workspaceId) ?? null) }).finally(() => done("workspace")),
       api<ListResponse<WorkspaceMember>>(`/api/v1/workspaces/${encodeURIComponent(app.workspaceId)}/members`).catch(() => ({ items: [] as WorkspaceMember[] })).then((value) => { if (current()) setWorkspaceMembers(value.items) }),
-      api<ListResponse<PlanRecord>>(`${appPath}/plans`).then((value) => { if (current()) { setPlansError(null); setPlans(value.items); setActivePlan((selected) => selected ? value.items.find((item) => item.id === selected.id) ?? value.items[0] ?? null : value.items[0] ?? null) } }).catch((cause) => { if (current()) setPlansError(cause) }).finally(() => done("plans")),
+      api<ListResponse<PlanRecord>>(`${appPath}/plans`).then((value) => { if (current()) { setPlansError(null); setPlans(value.items); setActivePlan((selected) => selected ? value.items.find((item) => item.id === selected.id) ?? value.items[0] ?? null : value.items.find((item) => item.id === new URLSearchParams(window.location.search).get("planId")) ?? value.items[0] ?? null) } }).catch((cause) => { if (current()) setPlansError(cause) }).finally(() => done("plans")),
       api<ListResponse<ManagedResource>>(`${appPath}/resources`).then((value) => { if (current()) setResources(value.items) }).finally(() => done("resources")),
       api<ListResponse<Operation>>(`${appPath}/operations`).then((value) => { if (current()) { setOperations(value.items); setOperationsError(null) } }).catch((cause) => { if (current()) setOperationsError(cause) }).finally(() => done("operations")),
       api<ListResponse<ApplicationHealthTransition>>(`${appPath}/health-history`).then((value) => { if (current()) setHealthHistory(value.items) }).catch(() => { if (current()) setHealthHistory([]) }),
@@ -727,10 +730,13 @@ export default function ApplicationDetailPage() {
   const createPlanDisabled = Boolean(application && (busy || hasPendingOperation || (application.decommissioning || application.configurationMissing
     ? !canApprove
     : !canDeploy || (namespaceMismatch && !application.kustomizeNamespaceOverride))))
+  const aiInAttention: boolean = Boolean(application?.statusIssues?.length) && activeTab === "overview"
+  const appStatus = application ? deriveApplicationStatus(application, { plan: latestPlan ?? null, conflictCount: ownershipConflict ? ownershipConflicts.length : 0 }) : null
   const planBlockedByNamespace = Boolean(application && namespaceMismatch && !application.kustomizeNamespaceOverride)
 
   return <>
-    <PageHeading title={application?.name ?? "Application not found"} description={application ? `${application.clusterName || application.clusterId} / ${application.namespaces.map((binding) => binding.namespace).join(", ") || "No namespace"}${application.autoSyncPaused ? " · Auto-sync paused" : ""}` : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Sync <StatusBadge status={application.health} /></span><DeploymentScheduleNotice key={application.id} layout="chip" scope="applications" id={application.id} onViewSchedule={() => { selectTab("overview"); window.setTimeout(() => document.getElementById("deployment-schedule")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" }), 0) }} /></div>} metadata={application && <RuntimeHealthStrip application={application} healthHistory={healthHistory} reconnecting={Boolean(topologyError)} />} actions={application && <>
+    <PageHeading title={application?.name ?? "Application not found"} description={application ? <>Cluster <span className="text-foreground">{application.clusterName || application.clusterId}</span> · {application.namespaces.length === 1 ? "Namespace" : "Namespaces"} <span className="text-foreground">{application.namespaces.map((binding) => binding.namespace).join(", ") || "none"}</span></> : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><DeploymentScheduleNotice key={application.id} layout="chip" scope="applications" id={application.id} onViewSchedule={() => { selectTab("overview"); window.setTimeout(() => document.getElementById("deployment-schedule")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" }), 0) }} /></div>} metadata={application && <RuntimeHealthStrip application={application} status={appStatus!} healthHistory={healthHistory} reconnecting={Boolean(topologyError)} />} actions={application && <>
+      {!aiInAttention && <AIAssistant key={`ai-${application.id}-${activeTab}-${activePlan?.id}-${activePlan?.plan.digest}`} workspaceId={application.workspaceId} applicationId={application.id} planId={activePlan?.id} features={activeTab === "changes" ? ["plan", "drift", "ask"] : activeTab === "activity" ? ["summary", "ask"] : ["diagnose", "ask"]} operations={activeTab === "activity" ? operations : undefined} />}
       {pendingData.workspace && <span role="status" className="text-sm text-muted-foreground">Loading permissions…</span>}
       {planBlockedByNamespace && !application.configurationMissing && !application.decommissioning && canDeploy
         ? <Tooltip>
@@ -750,10 +756,10 @@ export default function ApplicationDetailPage() {
         conflictCount={ownershipConflict ? ownershipConflicts.length : 0} onReviewConflicts={() => setConflictOpen(true)}
         namespaceMismatch={namespaceMismatch} kustomizeNamespace={kustomization?.namespace} onReviewNamespaceSetting={() => selectTab("settings")}
         onCancelDecommission={() => void cancelDecommission()}
-        onConfigureExclusion={(issue) => configureIgnore({ mode: "kind", ...(issue.resource ? { version: issue.resource.apiVersion, kind: issue.resource.kind } : {}) })}
+        aiAction={aiInAttention ? <AIAssistant key={`ai-${application.id}-${activeTab}-${activePlan?.id}-${activePlan?.plan.digest}`} workspaceId={application.workspaceId} applicationId={application.id} planId={activePlan?.id} features={activeTab === "changes" ? ["plan", "drift", "ask"] : activeTab === "activity" ? ["summary", "ask"] : ["diagnose", "ask"]} operations={activeTab === "activity" ? operations : undefined} /> : undefined} onConfigureExclusion={(issue) => configureIgnore({ mode: "kind", ...(issue.resource ? { version: issue.resource.apiVersion, kind: issue.resource.kind } : {}) })}
         resumeRevision={resumeRevision} onResumeRevisionChange={setResumeRevision} onKeepPin={() => void updateRollbackTracking("keep")} onResume={() => void updateRollbackTracking("resume")} />}
     {!loading && application && <>
-      {visibleOperation && <OperationBar onCreatePlan={() => void createPlan()} canCreatePlan={!createPlanDisabled} key={visibleOperation.id} operation={visibleOperation} plan={plans.find((plan) => plan.id === visibleOperation.planId)} checkpointId={visibleOperationCheckpoint} canRestore={canApprove} disabled={busy || hasPendingOperation} onRestore={(target) => void createRollbackPlan(target)} canCancel={canDeploy && !busy} scheduleActions={visibleOperation.status === "queued" ? <ScheduledOperationActions operation={visibleOperation} canOverride={canApprove} canCancel={canDeploy} onUpdated={loadData} /> : undefined} onUpdated={loadData} onReviewResource={(identity) => { const operationPlan = plans.find((plan) => plan.id === visibleOperation.planId); if (operationPlan) setActivePlan(operationPlan); setReviewResource(diffId(identity)); selectTab("changes") }} />}
+      {visibleOperation && <OperationBar aiAction={visibleOperation.status === "failed" ? <AIAssistant key={`ai-op-${visibleOperation.id}`} workspaceId={application.workspaceId} applicationId={application.id} features={["summary", "diagnose"]} operations={[visibleOperation]} initialOperationId={visibleOperation.id} autoRun="summary" buttonLabel="Explain failure" /> : undefined} onCreatePlan={() => void createPlan()} canCreatePlan={!createPlanDisabled} key={visibleOperation.id} operation={visibleOperation} plan={plans.find((plan) => plan.id === visibleOperation.planId)} checkpointId={visibleOperationCheckpoint} canRestore={canApprove} disabled={busy || hasPendingOperation} onRestore={(target) => void createRollbackPlan(target)} canCancel={canDeploy && !busy} scheduleActions={visibleOperation.status === "queued" ? <ScheduledOperationActions operation={visibleOperation} canOverride={canApprove} canCancel={canDeploy} onUpdated={loadData} /> : undefined} onUpdated={loadData} onReviewResource={(identity) => { const operationPlan = plans.find((plan) => plan.id === visibleOperation.planId); if (operationPlan) setActivePlan(operationPlan); setReviewResource(diffId(identity)); selectTab("changes") }} />}
 
     </>}
       <Tabs value={activeTab} onValueChange={(value) => selectTab(String(value))} className="min-w-0">
@@ -761,7 +767,7 @@ export default function ApplicationDetailPage() {
           {[
             { id: "overview", label: "Overview" },
             { id: "topology", label: "Resources", count: pendingData.topology ? undefined : topology ? applicationResourceNodes(topology).length : undefined },
-            { id: "changes", label: "Changes", count: pendingData.plans || plansError != null ? undefined : latestPlan?.status === "current" ? latestPlan.plan.changes.length + (latestPlan.plan.ignored?.length ?? 0) : 0 },
+            { id: "changes", label: "Changes", count: pendingData.plans || plansError != null ? undefined : appStatus?.plan.state === "current" ? latestPlan!.plan.changes.length + (latestPlan?.plan.ignored?.length ?? 0) : latestPlan ? undefined : 0 },
             { id: "activity", label: "Activity" },
             { id: "pull-requests", label: "Pull requests" },
             { id: "settings", label: "Settings" },
@@ -782,14 +788,14 @@ export default function ApplicationDetailPage() {
     </>}
     {!loading && application && <>
         <TabsContent value="overview" className="outline-none">
-          <OverviewTab application={application} latestPlan={latestPlan} plansError={plansError} retryingPlans={retryingPlans} topology={topology} topologyError={topologyError} pending={{ topology: pendingData.topology, plans: pendingData.plans, operations: pendingData.operations }} operations={operations} operationsError={operationsError} canRefreshPlan={!createPlanDisabled} creatingPlan={pendingAction === "create-plan"} onCreatePlan={() => void createPlan()} onRetryPlans={() => void retryPlans()} onSelectTab={selectTab} />
+          <OverviewTab status={appStatus!} application={application} latestPlan={latestPlan} plansError={plansError} retryingPlans={retryingPlans} topology={topology} topologyError={topologyError} pending={{ topology: pendingData.topology, plans: pendingData.plans, operations: pendingData.operations }} operations={operations} operationsError={operationsError} canRefreshPlan={!createPlanDisabled} creatingPlan={pendingAction === "create-plan"} onCreatePlan={() => void createPlan()} onRetryPlans={() => void retryPlans()} onSelectTab={selectTab} />
           <div id="deployment-schedule" className="mt-5 scroll-mt-5"><DeploymentSchedulePanel key={application.id} scope="applications" id={application.id} canEdit={canApprove} /></div>
         </TabsContent>
 
         <TabsContent value="topology" className="outline-none">
       {pendingData.topology || pendingData.resources || pendingData.plans || pendingData.operations ? <SectionLoading label="Loading the resource map" /> : <>
       {topologyError && <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 p-3 text-sm"><span>Runtime updates interrupted. Retrying automatically; the map retains the last available observation.</span><ErrorDetailsButton error={topologyError} /></div>}
-      <ResourceMap view={topologyView} onViewChange={(view) => { setTopologyView(view); const url = new URL(window.location.href); url.searchParams.set("tab", "topology"); if (view === "list") url.searchParams.set("view", "list"); else url.searchParams.delete("view"); window.history.pushState(null, "", url) }} canManageResources={canApprove} resourceActionsDisabled={busy || hasPendingOperation} onResourceActionComplete={async () => { setApplication(await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`)); await refreshSummary() }} application={application} plan={plans[0]?.status === "current" ? plans[0] : null} inventory={resources} operations={operations} topology={topology} refreshing={topologyRefreshing} onRefresh={() => {
+      <ResourceMap stalePlan={plans[0] && plans[0].status !== "current" && plans[0].status !== "applied" ? plans[0] : null} conflicts={ownershipConflict ? ownershipConflicts.map((item) => item.identity) : []} onReviewConflicts={() => setConflictOpen(true)} view={topologyView} onViewChange={(view) => { setTopologyView(view); const url = new URL(window.location.href); url.searchParams.set("tab", "topology"); if (view !== "overview") url.searchParams.set("view", view); else url.searchParams.delete("view"); window.history.pushState(null, "", url) }} canManageResources={canApprove} resourceActionsDisabled={busy || hasPendingOperation} onResourceActionComplete={async () => { setApplication(await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`)); await refreshSummary() }} application={application} plan={plans[0]?.status === "current" ? plans[0] : null} inventory={resources} operations={operations} topology={topology} refreshing={topologyRefreshing} onRefresh={() => {
         setTopologyRefreshing(true)
         void api<ResourceTopology>(`/api/v1/applications/${encodeURIComponent(applicationID)}/topology?refresh=1`).then((result) => {
           setTopology(result); setTopologyError(null)

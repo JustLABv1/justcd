@@ -1,6 +1,8 @@
 "use client"
 
 import { DeploymentScheduleNotice } from "@/components/deployment-schedule-notice"
+import { AIAssistant } from "@/components/ai-assistant"
+import { WorkspaceDigest } from "@/components/ai-digest"
 import { TriageList, TriageStatus, useTriage } from "@/components/ai-triage"
 import Link from "next/link"
 import { useEffect, useMemo, useState } from "react"
@@ -130,6 +132,7 @@ export default function OverviewPage() {
         description={workspace ? "Live health of connections, deployments, and pending reviews in this workspace." : "Select a workspace to view its delivery status."}
         actions={
           <>
+            {workspaceId && <AIAssistant key={`ask-${workspaceId}`} workspaceId={workspaceId} features={["ask"]} buttonLabel="Ask AI" />}
             <Button type="button" variant="outline" onClick={refreshOverview}>Refresh</Button>
             <ActionLink href={workspaceId ? `/applications/new${qs}` : "/workspaces"}>
               <HugeiconsIcon icon={Add01Icon} strokeWidth={1.8} aria-hidden="true" /> New application
@@ -150,8 +153,8 @@ export default function OverviewPage() {
 
           <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,420px)] xl:grid-rows-[min-content_1fr]">
             <Panel
-              title="Needs attention"
-              description="Applications with drift, runtime problems, pauses, or stalled checks."
+              title="Priorities"
+              description="Applications that need attention, most important first."
               action={<div className="flex flex-wrap items-center justify-end gap-3"><TriageStatus triage={triage.triage} starting={triage.starting} onRun={() => void triage.run()} /><TrailingLink href={listHref("attention")}>View all</TrailingLink></div>}
             >
               {triage.triage && triage.triage.items.length > 0 && <TriageList triage={triage.triage} attentionHref={listHref("attention")} />}
@@ -272,6 +275,7 @@ export default function OverviewPage() {
               </div>
             )}
           </div>
+          {workspaceId && total > 0 && <WorkspaceDigest key={workspaceId} workspaceId={workspaceId} />}
         </div>
       )}
     </>

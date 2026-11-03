@@ -126,3 +126,52 @@ func (s *Store) AITriage(ctx context.Context, workspaceID string) (AITriageRecor
 	record.Result = raw
 	return record, err == nil, err
 }
+
+type AIPlanReviewRecord struct {
+	PlanDigest  string
+	Model       string
+	Result      json.RawMessage
+	GeneratedAt time.Time
+}
+
+func (s *Store) SaveAIPlanReview(ctx context.Context, planID string, record AIPlanReviewRecord) error {
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO ai_plan_reviews(plan_id,plan_digest,model,result,generated_at) VALUES($1,$2,$3,$4,$5)
+ON CONFLICT(plan_id) DO UPDATE SET plan_digest=EXCLUDED.plan_digest,model=EXCLUDED.model,result=EXCLUDED.result,generated_at=EXCLUDED.generated_at`,
+		planID, record.PlanDigest, record.Model, []byte(record.Result), record.GeneratedAt)
+	return err
+}
+
+func (s *Store) AIPlanReview(ctx context.Context, planID string) (AIPlanReviewRecord, bool, error) {
+	var record AIPlanReviewRecord
+	var raw []byte
+	err := s.DB.QueryRowContext(ctx, `SELECT plan_digest,model,result,generated_at FROM ai_plan_reviews WHERE plan_id=$1`, planID).Scan(&record.PlanDigest, &record.Model, &raw, &record.GeneratedAt)
+	if err == sql.ErrNoRows {
+		return record, false, nil
+	}
+	record.Result = raw
+	return record, err == nil, err
+}
+
+type AIDigestRecord struct {
+	Model       string
+	Result      json.RawMessage
+	GeneratedAt time.Time
+}
+
+func (s *Store) SaveAIDigest(ctx context.Context, workspaceID, period string, record AIDigestRecord) error {
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO ai_digests(workspace_id,period,model,result,generated_at) VALUES($1,$2,$3,$4,$5)
+ON CONFLICT(workspace_id,period) DO UPDATE SET model=EXCLUDED.model,result=EXCLUDED.result,generated_at=EXCLUDED.generated_at`,
+		workspaceID, period, record.Model, []byte(record.Result), record.GeneratedAt)
+	return err
+}
+
+func (s *Store) AIDigest(ctx context.Context, workspaceID, period string) (AIDigestRecord, bool, error) {
+	var record AIDigestRecord
+	var raw []byte
+	err := s.DB.QueryRowContext(ctx, `SELECT model,result,generated_at FROM ai_digests WHERE workspace_id=$1 AND period=$2`, workspaceID, period).Scan(&record.Model, &raw, &record.GeneratedAt)
+	if err == sql.ErrNoRows {
+		return record, false, nil
+	}
+	record.Result = raw
+	return record, err == nil, err
+}

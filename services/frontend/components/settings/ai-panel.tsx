@@ -253,7 +253,7 @@ export function WorkspaceAIPolicy({ workspaceId }: { workspaceId: string }) {
       window.dispatchEvent(new Event("justcd:ai-policy-updated"))
       toast.success(
         update.autoTriage !== undefined
-          ? update.autoTriage ? "Automatic prioritization enabled" : "Automatic prioritization disabled"
+          ? update.autoTriage ? "Automatic AI features enabled" : "Automatic AI features disabled"
           : update.enabled ? "Workspace AI enabled" : "Workspace AI disabled"
       )
     } catch (cause) {
@@ -303,13 +303,13 @@ export function WorkspaceAIPolicy({ workspaceId }: { workspaceId: string }) {
             <div className="flex items-start justify-between gap-5">
               <div className="space-y-1">
                 <label htmlFor="workspace-ai-auto-triage" className="text-sm font-medium">
-                  Prioritize applications automatically
+                  Run AI features automatically
                 </label>
                 <p className="text-sm leading-6 text-muted-foreground">
-                  Ranks the applications that need attention on the dashboard and keeps
-                  the ranking up to date after changes settle (at most every 10 minutes).
-                  Sends a compact status summary per application, not manifests or logs.
-                  Uses AI tokens in the background.
+                  Ranks the applications that need attention, writes approval briefings
+                  for new plans that need approval, and refreshes the daily and weekly
+                  digest. Runs after changes settle (rankings at most every 10 minutes).
+                  Sends compact summaries, not logs. Uses AI tokens in the background.
                 </p>
               </div>
               <Switch

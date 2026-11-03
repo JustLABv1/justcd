@@ -4,6 +4,7 @@ import { useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Alert02Icon, CheckListIcon } from "@hugeicons/core-free-icons"
 import { ActionMenu } from "@/components/action-menu"
+import { ConflictGuidancePanel } from "@/components/ai-conflict-guidance"
 import { diffId } from "@/components/application/helpers"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
 import { Badge } from "@/components/reui/badge"
@@ -55,6 +56,7 @@ export function OwnershipConflictDialog({ open, onOpenChange, conflicts, applica
         <div><dt className="text-muted-foreground">Resource version</dt><dd className="font-mono text-xs">{first.resourceVersion}</dd></div>
         <div><dt className="text-muted-foreground">JustCD owner label</dt><dd className="break-all font-mono text-xs">{first.owner || "None"}</dd></div>
       </dl>}
+      {many && <ConflictGuidancePanel applicationId={applicationId} claimableKeys={claimableKeys} selectedKeys={selectedKeys} onSelectedKeysChange={onSelectedKeysChange} canApprove={canApprove} />}
       {many && <div className="rounded-lg border">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
           <div><h3 className="text-sm font-semibold">Select resources to claim</h3><p className="text-sm text-muted-foreground">{selectedClaimable} of {claimableKeys.length} eligible selected · {conflicts.length - claimableKeys.length} blocked</p></div>

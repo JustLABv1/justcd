@@ -638,3 +638,71 @@ export type Triage = {
   attentionCount: number
   error?: string
 }
+
+export type PlanRisk = { level: "high" | "medium" | "low"; title: string; detail: string; resource?: string }
+export type PlanReview = {
+  planId: string
+  level: "high" | "medium" | "low"
+  risks: PlanRisk[]
+  counts: { create: number; update: number; delete: number }
+  images: string[]
+  source: "ai" | "rules"
+  stale: boolean
+  available: boolean
+  summary?: string
+  concerns: { level: "high" | "medium" | "low"; title: string; detail: string }[]
+  checks: string[]
+  limitations: string[]
+  model?: string
+  generatedAt?: string
+}
+
+export type ConflictGroup = {
+  key: string
+  category: "orphaned" | "other_application" | "controller_child" | "unmanaged"
+  title: string
+  owner?: string
+  recommendation: "adopt" | "leave" | "exclude" | "investigate"
+  safe: boolean
+  reason: string
+  impact: string
+  count: number
+  matching: number
+  kinds: Record<string, number>
+  identities: Identity[]
+  source: "rules" | "ai"
+}
+export type ConflictGuidance = {
+  applicationId: string
+  source: "rules" | "ai"
+  available: boolean
+  summary?: string
+  groups: ConflictGroup[]
+  model?: string
+  generatedAt?: string
+}
+
+export type DigestStats = {
+  period: "day" | "week"
+  since: string
+  until: string
+  operations: number
+  succeeded: number
+  failed: number
+  rollbacks: number
+  applications: { applicationId: string; name: string; succeeded: number; failed: number; rollbacks: number; lastMessage?: string }[]
+  attention: TriageItem[]
+  waiting: { applicationId: string; name: string; planId: string; changes: number; expiresAt: string }[]
+}
+export type Digest = {
+  period: "day" | "week"
+  stats: DigestStats
+  source: "ai" | "rules"
+  stale: boolean
+  available: boolean
+  summary?: string
+  items: { section: "deployed" | "failed" | "attention" | "waiting"; title: string; detail: string; applicationId?: string; applicationName?: string; evidenceIds?: string[] }[]
+  limitations: string[]
+  model?: string
+  generatedAt?: string
+}

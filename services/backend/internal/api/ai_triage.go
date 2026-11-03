@@ -70,7 +70,7 @@ type triageResponse struct {
 	Error          string       `json:"error,omitempty"`
 }
 
-const triageTask = `Triage which applications need attention first. The evidence has, per application, an "app:<id>" summary, a "signal:<id>" record derived by deterministic rules (category, servingTraffic, rolloutStalled, workloads, facts, issues) and optionally the latest "operation:<id>". Treat the signal as ground truth; you may add context from the other evidence but never invent facts. Rank by real user impact: an application that is down outranks one that still serves traffic while a new rollout fails (for example new pods cannot start while the previous version keeps running); delivery that is merely blocked or paused comes last unless the evidence shows impact. Return one finding per application, most important first. Each finding must also contain: "applicationId" (exact id from the evidence), "severity" (one of critical, high, medium, low; never lower than the signal's severity), "title" (headline, at most 90 characters), "detail" (why this ranks here, at most 300 characters), "impact" (one sentence describing the user-facing effect, e.g. "Still serving the previous version; the new pods cannot start"), "action" (one concrete next step a human should take) and "actionTab" (one of overview, changes, topology, activity, settings). Cite "app:<id>" and "signal:<id>" in evidenceIds. "summary" is one or two sentences naming the single most important application and why.`
+const triageTask = `Triage which applications need attention first. The evidence has, per application, an "app:<id>" summary, a "signal:<id>" record derived by deterministic rules (category, servingTraffic, rolloutStalled, workloads, facts, issues) and optionally the latest "operation:<id>". Treat the signal as ground truth; you may add context from the other evidence but never invent facts. Rank by real user impact: an application that is down outranks one that still serves traffic while a new rollout fails (for example new pods cannot start while the previous version keeps running); delivery that is merely blocked or paused comes last unless the evidence shows impact. Return one finding per application, most important first. Each finding must also contain: "applicationId" (exact id from the evidence), "severity" (one of critical, high, medium, low; never lower than the signal's severity), "title" (headline, at most 90 characters, without repeating the application name), "detail" (why this ranks here, at most 300 characters), "impact" (one sentence describing the user-facing effect, e.g. "Still serving the previous version; the new pods cannot start"), "action" (one concrete next step a human should take) and "actionTab" (one of overview, changes, topology, activity, settings). Cite "app:<id>" and "signal:<id>" in evidenceIds. "summary" is one or two sentences naming the single most important application and why; with only one application keep it very short.`
 
 func clip(value string, limit int) string {
 	value = strings.TrimSpace(redactAPIErrorMessage(value))
@@ -452,6 +452,8 @@ func (s *Server) RunAITriage(ctx context.Context, logger *slog.Logger) {
 				return
 			}
 			s.autoTriage(ctx, logger, workspaceID, time.Now())
+			s.autoReviewPlans(ctx, workspaceID)
+			s.autoDigests(ctx, workspaceID)
 		}
 	}
 }

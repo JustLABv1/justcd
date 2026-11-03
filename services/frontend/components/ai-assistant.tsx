@@ -34,6 +34,28 @@ const labels: Record<Feature, string> = {
   ask: "Ask justcd",
 }
 
+const workspacePrompts = [
+  "What changed in the last week?",
+  "Which applications failed to deploy recently, and why?",
+  "Which applications use a floating or outdated image tag?",
+  "What is waiting for approval?",
+]
+const appPrompts = ["What changed recently?", "Why is this not healthy?", "Which images does it run?"]
+
+const escapePattern = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+/** Turns application names from the cited evidence into links, so answers are navigable. */
+function LinkedText({ text, sources }: { text: string; sources: Analysis["sources"] }) {
+  const targets = [...new Map(sources.filter((source) => /^\/applications\/[^/?]+$/.test(source.url) && source.label.length > 2).map((source) => [source.label, source])).values()]
+    .sort((a, b) => b.label.length - a.label.length)
+  if (!targets.length) return <>{text}</>
+  const pattern = new RegExp(`(${targets.map((target) => escapePattern(target.label)).join("|")})`, "g")
+  return <>{text.split(pattern).map((part, index) => {
+    const target = targets.find((item) => item.label === part)
+    return target ? <Link key={index} href={target.url} className="font-medium text-primary underline underline-offset-4">{part}</Link> : <span key={index}>{part}</span>
+  })}</>
+}
+
 export function AIAssistant({
   workspaceId,
   applicationId,
@@ -101,7 +123,8 @@ export function AIAssistant({
     }
   }, [scope])
 
-  async function analyze(feature: Feature) {
+  async function analyze(feature: Feature, questionOverride?: string) {
+    const asked = questionOverride ?? question
     request.current?.abort()
     const controller = new AbortController()
     request.current = controller
@@ -120,7 +143,7 @@ export function AIAssistant({
           groupId,
           planId: feature === "plan" || feature === "drift" ? planId : undefined,
           operationId: feature === "summary" ? operationId : undefined,
-          question: feature === "ask" ? question : undefined,
+          question: feature === "ask" ? asked : undefined,
           history: feature === "ask" ? history : undefined,
         },
         { signal: controller.signal, onStage: setStage }
@@ -131,7 +154,7 @@ export function AIAssistant({
         setHistory((items) =>
           [
             ...items,
-            { role: "user", content: question.slice(0, 2000) },
+            { role: "user", content: asked.slice(0, 2000) },
             { role: "assistant", content: response.summary.slice(0, 2000) },
           ].slice(-8)
         )
@@ -256,6 +279,13 @@ export function AIAssistant({
                   required
                 />
               </FormField>
+              {!history.length && !result && (
+                <div className="flex flex-wrap gap-2" aria-label="Suggested questions">
+                  {(applicationId || groupId ? appPrompts : workspacePrompts).map((prompt) => (
+                    <Button key={prompt} type="button" size="xs" variant="outline" disabled={!!busy} onClick={() => { setQuestion(prompt); void analyze("ask", prompt) }}>{prompt}</Button>
+                  ))}
+                </div>
+              )}
               <div className="flex flex-wrap gap-2">
                 <Button
                   type="submit"
@@ -312,13 +342,13 @@ export function AIAssistant({
           className="space-y-4 border-t pt-4"
         >
           <p className="text-sm leading-6 whitespace-pre-wrap">
-            {result.summary}
+            <LinkedText text={result.summary} sources={result.sources} />
           </p>
           {result.findings?.map((finding, index) => (
             <div key={index} className="space-y-1">
               <h3 className="text-sm font-medium">{finding.title}</h3>
               <p className="text-sm leading-6 whitespace-pre-wrap text-muted-foreground">
-                {finding.detail}
+                <LinkedText text={finding.detail} sources={result.sources} />
               </p>
               <div className="flex flex-wrap gap-x-3 gap-y-1">
                 {finding.evidenceIds.map((sourceId) => {
@@ -343,7 +373,7 @@ export function AIAssistant({
               <h3 className="text-sm font-medium">Suggested next steps</h3>
               <ol className="list-decimal space-y-1 pl-5 text-sm leading-6">
                 {result.nextSteps.map((step, index) => (
-                  <li key={index}>{step}</li>
+                  <li key={index}><LinkedText text={step} sources={result.sources} /></li>
                 ))}
               </ol>
             </div>

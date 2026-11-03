@@ -108,7 +108,7 @@ export function TriageList({ triage, limit = 5, attentionHref }: { triage: Triag
   const items = triage.items.slice(0, limit)
   return (
     <>
-      {triage.source === "ai" && triage.summary && (
+      {triage.source === "ai" && triage.summary && triage.items.length > 1 && (
         <p className="flex items-start gap-2 border-b bg-muted/30 px-5 py-3 text-sm">
           <HugeiconsIcon icon={AiMagicIcon} strokeWidth={1.8} aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-primary" />
           <span>{triage.summary}</span>
@@ -140,7 +140,7 @@ function TriageRow({ item, rank }: { item: TriageItem; rank: number }) {
             <span className="truncate text-sm font-medium">{item.applicationName}</span>
             <Badge size="sm" radius="full" variant={severityVariant[item.severity]}>{severityLabel[item.severity]}</Badge>
           </span>
-          <span className="block text-sm">{item.headline}</span>
+          <span className="block text-sm">{item.headline.replace(new RegExp(`^${item.applicationName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:\\-–—]\\s*`, "i"), "")}</span>
           <span className="block text-sm text-muted-foreground">{item.impact}</span>
           <span className="block text-sm"><span className="text-muted-foreground">Next: </span>{item.action}</span>
           {item.facts && item.facts.length > 0 && <span className="block text-xs text-muted-foreground">{item.facts.slice(0, 2).join(" · ")}</span>}

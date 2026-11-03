@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -22,6 +23,12 @@ func (s *Server) aiRoutes() {
 	s.Mux.Handle("PUT /api/v1/workspaces/{workspaceID}/ai", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.workspaceAI))))
 	s.Mux.Handle("GET /api/v1/workspaces/{workspaceID}/ai/triage", s.requireAuth(http.HandlerFunc(s.getTriage)))
 	s.Mux.Handle("POST /api/v1/workspaces/{workspaceID}/ai/triage", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.postTriage))))
+	s.Mux.Handle("GET /api/v1/workspaces/{workspaceID}/ai/plan-review/{planID}", s.requireAuth(http.HandlerFunc(s.getPlanReview)))
+	s.Mux.Handle("POST /api/v1/workspaces/{workspaceID}/ai/plan-review/{planID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.postPlanReview))))
+	s.Mux.Handle("GET /api/v1/workspaces/{workspaceID}/ai/digest", s.requireAuth(http.HandlerFunc(s.getDigest)))
+	s.Mux.Handle("POST /api/v1/workspaces/{workspaceID}/ai/digest", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.postDigest))))
+	s.Mux.Handle("GET /api/v1/applications/{applicationID}/ownership-conflict/guidance", s.requireAuth(http.HandlerFunc(s.getConflictGuidance)))
+	s.Mux.Handle("POST /api/v1/applications/{applicationID}/ownership-conflict/guidance", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.postConflictGuidance))))
 	s.Mux.Handle("POST /api/v1/workspaces/{workspaceID}/ai/analyze", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.analyzeAI))))
 }
 func (s *Server) getAISettings(w http.ResponseWriter, r *http.Request) {
@@ -217,7 +224,7 @@ var aiTasks = map[string]string{
 	"drift":    "Explain live-versus-desired drift, ignored changes and field ownership. Treat possible controllers/defaults as hypotheses unless confirmed. Explain tradeoffs of any proposed ignore rule.",
 	"summary":  "Summarize the selected operation (or recent deployment history), revision, outcome, timing, retries, resource failures, and observed recovery. Do not infer recovery without evidence.",
 	"compare":  "Compare deployment-group targets: revisions, effective rendered configuration, resource health, and operations. Explain observed differences and possible causes of different behavior. Raw Helm values are excluded; use rendered projections.",
-	"ask":      "Answer the user's workspace question using only the supplied authorized context: ",
+	"ask":      "Answer the user's workspace question using only the supplied authorized context. Use exact application names so the interface can link them. For questions about change over time use operation timestamps; for image or version questions use the images evidence; labels, clusters and namespaces identify environments. Say so when the evidence cannot answer. The question: ",
 }
 
 func (s *Server) analyzeAI(w http.ResponseWriter, r *http.Request) {
@@ -336,11 +343,17 @@ func (s *Server) analyzeAI(w http.ResponseWriter, r *http.Request) {
 		fail(500, "could not load AI scope")
 		return
 	}
-	if len(apps) > 30 {
+	truncated := 0
+	if len(apps) > 30 && input.Feature == "ask" && input.ApplicationID == "" && input.GroupID == "" {
+		// A broad question still works on large workspaces: applications needing attention come first.
+		sort.SliceStable(apps, func(i, j int) bool { return attentionNeeded(apps[i]) && !attentionNeeded(apps[j]) })
+		truncated = len(apps) - 30
+		apps = apps[:30]
+	} else if len(apps) > 30 {
 		fail(400, "scope exceeds 30 applications; choose an application or a smaller deployment group")
 		return
 	}
-	evidence := []ai.Evidence{{ID: "scope", Label: "Analysis scope", URL: "/workspaces/" + workspace, Data: map[string]any{"workspaceId": workspace, "applicationCount": len(apps), "collectedAt": time.Now().UTC(), "limitations": []string{"Stored observations and recent history are bounded. Diagnosis may include live events and explicitly opted-in log tails. Metrics, raw Helm values, Secret/ConfigMap contents, environment values, commands, and arbitrary custom-resource specs are excluded. Log redaction is best-effort.", "Manifest projections omit fields that may affect behavior. Missing evidence does not prove a setting is absent from Kubernetes."}}}}
+	evidence := []ai.Evidence{{ID: "scope", Label: "Analysis scope", URL: "/workspaces/" + workspace, Data: map[string]any{"workspaceId": workspace, "applicationCount": len(apps), "applicationsOmittedFromScope": truncated, "collectedAt": time.Now().UTC(), "limitations": []string{"Stored observations and recent history are bounded. Diagnosis may include live events and explicitly opted-in log tails. Metrics, raw Helm values, Secret/ConfigMap contents, environment values, commands, and arbitrary custom-resource specs are excluded. Log redaction is best-effort.", "Manifest projections omit fields that may affect behavior. Missing evidence does not prove a setting is absent from Kubernetes."}}}}
 	analysisCtx, cancel := context.WithTimeout(r.Context(), 75*time.Second)
 	defer cancel()
 	for _, app := range apps {
@@ -388,7 +401,7 @@ func (s *Server) appendAIApplication(ctx context.Context, evidence *[]ai.Evidenc
 	for _, binding := range app.Namespaces {
 		namespaces = append(namespaces, binding.Namespace)
 	}
-	add("app:"+app.ID, app.Name, base, map[string]any{"id": app.ID, "name": app.Name, "cluster": app.ClusterName, "clusterId": app.ClusterID, "revision": app.Revision, "lastSyncedRevision": app.LastSyncedRevision, "namespaces": namespaces, "renderer": app.Renderer, "manifestPath": app.ManifestPath, "targetManifestPath": app.TargetManifestPath, "namespaceManifestPaths": app.NamespaceManifestPaths, "syncPolicy": app.SyncPolicy, "autoSyncPaused": app.AutoSyncPaused, "syncHealth": app.Health, "runtimeHealth": app.HealthCondition, "statusIssues": app.StatusIssues, "checkedAt": app.LastCheckedAt})
+	add("app:"+app.ID, app.Name, base, map[string]any{"id": app.ID, "name": app.Name, "cluster": app.ClusterName, "clusterId": app.ClusterID, "revision": app.Revision, "lastSyncedRevision": app.LastSyncedRevision, "namespaces": namespaces, "renderer": app.Renderer, "manifestPath": app.ManifestPath, "targetManifestPath": app.TargetManifestPath, "namespaceManifestPaths": app.NamespaceManifestPaths, "syncPolicy": app.SyncPolicy, "autoSyncPaused": app.AutoSyncPaused, "syncHealth": app.Health, "runtimeHealth": app.HealthCondition, "statusIssues": app.StatusIssues, "checkedAt": app.LastCheckedAt, "labels": app.Labels})
 	if input.Feature == "diagnose" && s.Syncer != nil {
 		diagnostics, e := s.Syncer.AIDiagnostics(ctx, app, input.IncludeLogs)
 		if e != nil {
@@ -442,6 +455,19 @@ func (s *Server) appendAIApplication(ctx context.Context, evidence *[]ai.Evidenc
 			approvalSummary = append(approvalSummary, map[string]any{"createdAt": a.CreatedAt, "expiresAt": a.Approval.ExpiresAt})
 		}
 		add("plan:"+p.ID, "Plan "+p.ID, base+"?tab=changes&planId="+p.ID, map[string]any{"id": p.ID, "digest": p.Plan.Digest, "revision": p.Plan.Revision, "status": p.Status, "createdAt": p.CreatedAt, "expiresAt": p.ExpiresAt, "requiresApproval": p.Plan.RequiresApproval, "requiredApprovals": p.Plan.RequiredApprovals, "approvalRecords": approvalSummary, "renderedResources": desired, "totalRenderedResources": len(p.Desired), "renderedResourcesTruncated": len(p.Desired) > 80, "approvalReasons": p.Plan.ApprovalReasons, "approverRoles": p.Plan.ApproverRoles, "changes": changes, "ignored": ignored, "totalChanges": len(p.Plan.Changes), "totalIgnored": len(p.Plan.Ignored), "truncated": len(p.Plan.Changes) > 100 || len(p.Plan.Ignored) > 30})
+	}
+	if (input.Feature == "ask" || input.Feature == "compare") && len(plans) > 0 {
+		images := map[string]string{}
+		for _, resource := range plans[0].Desired {
+			var manifest map[string]any
+			if json.Unmarshal(resource.Manifest, &manifest) != nil {
+				continue
+			}
+			for container, image := range imagesOf(manifest) {
+				images[resource.Identity.Kind+"/"+resource.Identity.Name+"/"+container] = image
+			}
+		}
+		add("images:"+app.ID, app.Name+" container images", base, map[string]any{"images": images, "fromPlan": plans[0].ID, "revision": plans[0].Plan.Revision})
 	}
 	operations, err := s.Store.ListOperations(ctx, app.ID, 10)
 	if err != nil {

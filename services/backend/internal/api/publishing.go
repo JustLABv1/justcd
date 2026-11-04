@@ -143,6 +143,10 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 		writePublishingUploadError(w, err)
 		return
 	}
+	if err = s.attachTemplate(r.Context(), in.WorkspaceID, &in.Config); err != nil {
+		writeError(w, 409, err.Error())
+		return
+	}
 	files, err := publishing.Generate(in.Config, source)
 	if err != nil {
 		writeError(w, 400, err.Error())

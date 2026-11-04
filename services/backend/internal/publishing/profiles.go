@@ -6,23 +6,30 @@ import (
 )
 
 type ProfileSettings struct {
-	GitImage             string `json:"gitImage,omitempty"`
-	BuildEngine          string `json:"buildEngine,omitempty"`
-	CAVariable           string `json:"caVariable,omitempty"`
-	NamespaceMode        string `json:"namespaceMode,omitempty"`
-	NamespacePrefix      string `json:"namespacePrefix,omitempty"`
-	WebServerImage       string `json:"webServerImage,omitempty"`
-	TemplateID           string `json:"templateId"`
-	GitLabURL            string `json:"gitlabUrl"`
-	Group                string `json:"group"`
-	ClusterID            string `json:"clusterId"`
-	Namespace            string `json:"namespace"`
-	BaseImage            string `json:"baseImage"`
-	BuilderImage         string `json:"builderImage"`
-	RegistryPrefix       string `json:"registryPrefix"`
-	HostSuffix           string `json:"hostSuffix"`
-	PullSecret           string `json:"pullSecret"`
-	RunnerTag            string `json:"runnerTag"`
+	GitImage            string `json:"gitImage,omitempty"`
+	BuildEngine         string `json:"buildEngine,omitempty"`
+	CAVariable          string `json:"caVariable,omitempty"`
+	NamespaceMode       string `json:"namespaceMode,omitempty"`
+	NamespacePrefix     string `json:"namespacePrefix,omitempty"`
+	WebServerImage      string `json:"webServerImage,omitempty"`
+	TemplateID          string `json:"templateId"`
+	GitLabURL           string `json:"gitlabUrl"`
+	Group               string `json:"group"`
+	ClusterID           string `json:"clusterId"`
+	Namespace           string `json:"namespace"`
+	BaseImage           string `json:"baseImage"`
+	BuilderImage        string `json:"builderImage"`
+	RegistryPrefix      string `json:"registryPrefix"`
+	HostSuffix          string `json:"hostSuffix"`
+	PullSecret          string `json:"pullSecret"`
+	RunnerTag           string `json:"runnerTag"`
+	Exposure            string `json:"exposure,omitempty"`
+	ExposureLabels      string `json:"exposureLabels,omitempty"`
+	ExposureAnnotations string `json:"exposureAnnotations,omitempty"`
+	IngressClass        string `json:"ingressClass,omitempty"`
+	IngressTLS          string `json:"ingressTls,omitempty"`
+	// TemplateVersion pins a workspace template version (0 = built-in).
+	TemplateVersion      int    `json:"templateVersion,omitempty"`
 	RunnerServiceAccount string `json:"runnerServiceAccount,omitempty"`
 	RunnerSCC            string `json:"runnerScc,omitempty"`
 	BuilderSetup         string `json:"builderSetup,omitempty"`
@@ -52,7 +59,7 @@ func (s ProfileSettings) Resolve(name, entry string) (Config, error) {
 	if s.HostSuffix != "" {
 		host = name + "." + s.HostSuffix
 	}
-	c := Config{GitImage: s.GitImage, BuildEngine: s.BuildEngine, CAVariable: s.CAVariable, TemplateID: s.TemplateID, Name: name, Runtime: template.Runtime, EntryPoint: entry, BaseImage: s.BaseImage, BuilderImage: s.BuilderImage, RegistryImage: s.RegistryPrefix + "/" + name, Namespace: s.Namespace, Host: host, PullSecret: s.PullSecret, RunnerTag: s.RunnerTag, RunnerServiceAccount: s.RunnerServiceAccount, RunnerSCC: s.RunnerSCC, BuilderSetup: s.BuilderSetup, SecretMode: s.SecretMode, VaultAddress: s.VaultAddress, VaultRole: s.VaultRole, VaultPath: s.VaultPath}
+	c := Config{GitImage: s.GitImage, BuildEngine: s.BuildEngine, CAVariable: s.CAVariable, TemplateID: s.TemplateID, Name: name, Runtime: template.Runtime, EntryPoint: entry, BaseImage: s.BaseImage, BuilderImage: s.BuilderImage, RegistryImage: s.RegistryPrefix + "/" + name, Namespace: s.Namespace, Host: host, PullSecret: s.PullSecret, RunnerTag: s.RunnerTag, Exposure: s.Exposure, ExposureLabels: s.ExposureLabels, ExposureAnnotations: s.ExposureAnnotations, IngressClass: s.IngressClass, IngressTLS: s.IngressTLS, TemplateVersion: s.TemplateVersion, RunnerServiceAccount: s.RunnerServiceAccount, RunnerSCC: s.RunnerSCC, BuilderSetup: s.BuilderSetup, SecretMode: s.SecretMode, VaultAddress: s.VaultAddress, VaultRole: s.VaultRole, VaultPath: s.VaultPath}
 	if s.NamespaceMode == "per-application" {
 		c.Namespace = s.NamespacePrefix + name
 		c.CreateNamespace = true

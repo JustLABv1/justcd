@@ -1,0 +1,58 @@
+# JustCD template v1. Builder image must support the selected engine and CI tools.
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes: [source/**/*, Dockerfile, .gitlab-ci.yml, .justcd/**/*]
+    - when: never
+stages: [build]
+publish:
+  stage: build
+  image:
+    name: "registry.example.com/base/builder:1"
+    entrypoint: [""]
+  tags: ["linux"]
+  variables:
+    GIT_DEPTH: '0'
+    BUILDKITD_FLAGS: '--oci-worker-no-process-sandbox'
+    JUSTCD_IMAGE: "registry.example.com/apps/statistics"
+    VAULT_SERVER_URL: ""
+    VAULT_AUTH_ROLE: ""
+  script:
+    - |
+      set -eu
+      for tool in buildctl-daemonless.sh buildctl buildkitd jq; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+          printf 'JustCD: CI builder image is missing %s. The selected BuildKit engine requires: buildctl-daemonless.sh buildctl buildkitd jq. Update the publishing profile builder image or build engine and rebuild.\n' "$tool" >&2
+          exit 1
+        fi
+      done
+      test -n "$REGISTRY_USER"
+      test -n "$REGISTRY_PASSWORD"
+      export DOCKER_CONFIG="$(mktemp -d)"
+      trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+      # Optional platform CA, supplied as PEM text by an inherited CI variable.
+      if [ -z "${ROOT_CA:-}" ]; then
+        printf 'JustCD: configured CA variable ROOT_CA is empty or unavailable. Check GitLab variable inheritance and protected-branch scope.\n' >&2
+        exit 1
+      fi
+      ca_bundle="$DOCKER_CONFIG/ca-bundle.pem"
+      system_ca=""
+      for candidate in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt; do
+        if [ -r "$candidate" ]; then system_ca="$candidate"; break; fi
+      done
+      if [ -z "$system_ca" ]; then printf 'JustCD: builder image has no supported system CA bundle.\n' >&2; exit 1; fi
+      cat "$system_ca" > "$ca_bundle"
+      printf '\n%s\n' "$ROOT_CA" >> "$ca_bundle"
+      export SSL_CERT_FILE="$ca_bundle"
+      export GIT_SSL_CAINFO="$ca_bundle"
+      export CURL_CA_BUNDLE="$ca_bundle"
+      export REQUESTS_CA_BUNDLE="$ca_bundle"
+      registry="${JUSTCD_IMAGE%%/*}"
+      jq -n --arg host "$registry" --arg user "$REGISTRY_USER" --arg password "$REGISTRY_PASSWORD" '{auths:{($host):{auth:(($user+":"+$password)|@base64)}}}' > "$DOCKER_CONFIG/config.json"
+      buildctl-daemonless.sh build --frontend dockerfile.v0 --local context=. --local dockerfile=. --output "type=image,name=$JUSTCD_IMAGE:$CI_COMMIT_SHA,push=true" --metadata-file /tmp/justcd-image.json
+      digest="$(jq -er '."containerimage.digest" | select(test("^sha256:[a-f0-9]{64}$"))' /tmp/justcd-image.json)"
+      mkdir -p .justcd-build
+      printf '%s\n' "$digest" > .justcd-build/image-digest
+  artifacts:
+    paths: [.justcd-build/image-digest]
+    expire_in: 1 day

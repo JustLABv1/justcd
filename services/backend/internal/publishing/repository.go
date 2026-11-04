@@ -178,14 +178,11 @@ func PlanRepository(c Config, s RepositorySnapshot, appDir, image string) (Repos
 		p.Files = append(p.Files, File{Path: name, Content: content, Encoding: "text"})
 		return nil
 	}
-	port := 3838
-	if c.Runtime == "streamlit" {
-		port = 8501
+	rendered, err := RenderConfig(c, SourceFacts{})
+	if err != nil {
+		return p, err
 	}
-	if c.Runtime == "python-static" || c.Runtime == "static" {
-		port = 8080
-	}
-	manifest := manifest(c, port)
+	manifest := rendered[FileDeployment]
 	if p.HasPipeline {
 		p.Notes = append(p.Notes, "Existing CI is preserved. Supply its published image digest; update the deployment manifest through your existing pipeline for future releases.")
 		if image == "" {
@@ -217,7 +214,7 @@ func PlanRepository(c Config, s RepositorySnapshot, appDir, image string) (Repos
 				}
 			}
 		}
-		ci := pipeline(c)
+		ci := rendered[FilePipeline]
 		ci = strings.ReplaceAll(ci, "$CI_DEFAULT_BRANCH", "$JUSTCD_PUBLISH_BRANCH")
 		ci = strings.Replace(ci, "changes: [source/**/*, Dockerfile, .gitlab-ci.yml, .justcd/**/*]", "changes: ['**/*']", 1)
 		ci = strings.Replace(ci, "  variables:\n", "  variables:\n    JUSTCD_PUBLISH_BRANCH: "+yamlString(s.Revision)+"\n", 1)

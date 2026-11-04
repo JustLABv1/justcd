@@ -34,6 +34,82 @@ paths:
         '400': {description: Invalid template, settings, credentials or namespace binding}
         '403': {description: Workspace owner and CSRF required}
         '409': {description: Profile name already exists}
+  /workspaces/{workspaceID}/publishing-templates:
+    get:
+      summary: List application templates and their custom versions
+      description: Workspace owner only. Each item contains the built-in template and the workspace's custom versions (without file contents), newest first.
+      parameters:
+        - {name: workspaceID, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Templates with custom version metadata}
+        '403': {description: Workspace owner required}
+  /workspaces/{workspaceID}/publishing-templates/{templateID}:
+    get:
+      summary: Read a template, its built-in files and placeholders
+      description: Workspace owner only. Returns the read-only built-in files, the ordered file list, the placeholders and helper functions templates can use, and the custom versions.
+      parameters:
+        - {name: workspaceID, in: path, required: true, schema: {type: string}}
+        - {name: templateID, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Template detail}
+        '403': {description: Workspace owner required}
+        '404': {description: Unknown template}
+  /workspaces/{workspaceID}/publishing-templates/{templateID}/versions/{version}:
+    get:
+      summary: Read the files of a template version
+      description: Version 0 is the built-in template. Workspace owner only.
+      parameters:
+        - {name: workspaceID, in: path, required: true, schema: {type: string}}
+        - {name: templateID, in: path, required: true, schema: {type: string}}
+        - {name: version, in: path, required: true, schema: {type: integer, minimum: 0}}
+      responses:
+        '200': {description: Template version with files}
+        '403': {description: Workspace owner required}
+        '404': {description: Template version not found}
+  /workspaces/{workspaceID}/publishing-templates/{templateID}/versions:
+    post:
+      summary: Save a new, immutable template version
+      description: Requires the workspace owner role and CSRF. The five template files are parsed, rendered for a matrix of configurations and validated (safe manifest, digest-publishing pipeline) before the version is stored. Versions are never updated or deleted.
+      parameters:
+        - {name: workspaceID, in: path, required: true, schema: {type: string}}
+        - {name: templateID, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                label: {type: string, maxLength: 100}
+                files: {type: object, additionalProperties: {type: string}, description: "Exactly Dockerfile, .gitlab-ci.yml, .justcd/deployment.yaml, .dockerignore and .justcd/README.md."}
+      responses:
+        '201': {description: Version created (metadata without files)}
+        '400': {description: A file is missing, has a syntax error, or renders to something unsafe; the message names the problem}
+        '403': {description: Workspace owner and CSRF required}
+        '409': {description: The version could not be stored}
+  /workspaces/{workspaceID}/publishing-templates/{templateID}/preview:
+    post:
+      summary: Render template files without saving
+      description: Renders the supplied files with sample values or the settings of a profile and validates the result. Requires the workspace owner role and CSRF.
+      parameters:
+        - {name: workspaceID, in: path, required: true, schema: {type: string}}
+        - {name: templateID, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                files: {type: object, additionalProperties: {type: string}}
+                settings: {type: object, description: Optional profile settings used for the sample values}
+                hasRenvLock: {type: boolean}
+      responses:
+        '200': {description: "Rendered files (field files)"}
+        '400': {description: Rendering or validation failed; the message names the problem}
+        '403': {description: Workspace owner and CSRF required}
   /workspaces/{workspaceID}/publishing-profiles/{profileID}:
     parameters:
       - {name: workspaceID, in: path, required: true, schema: {type: string}}
@@ -205,6 +281,12 @@ paths:
                         vaultRole: {type: string}
                         vaultPath: {type: string}
                         runnerTag: {type: string}
+                        exposure: {type: string, enum: [route, ingress], description: "Resource that publishes the application: OpenShift Route (default) or Kubernetes Ingress."}
+                        exposureLabels: {type: string, description: "Newline-separated key=value labels for the Route or Ingress only."}
+                        exposureAnnotations: {type: string, description: "Newline-separated key=value annotations for the Route or Ingress only."}
+                        ingressClass: {type: string, description: "Optional ingressClassName; requires exposure ingress."}
+                        ingressTls: {type: string, enum: [hosts, none], description: "Ingress TLS block: hosts (default) lists the host, none renders tls: []."}
+                        templateVersion: {type: integer, minimum: 0, description: "Workspace template version used by this profile; 0 or omitted means the built-in template."}
                         runnerServiceAccount: {type: string, description: "Optional Kubernetes-executor service account override for the build job."}
                         runnerScc: {type: string, description: "Optional OpenShift SCC the build pod must run under (openshift.io/required-scc)."}
                         builderSetup: {type: string, description: "Optional executable in the builder image run before the build, for example a rootless Podman entrypoint script."}
@@ -1138,6 +1220,12 @@ components:
             hostSuffix: {type: string}
             pullSecret: {type: string}
             runnerTag: {type: string}
+            exposure: {type: string, enum: [route, ingress], description: "Resource that publishes the application: OpenShift Route (default) or Kubernetes Ingress."}
+            exposureLabels: {type: string, description: "Newline-separated key=value labels for the Route or Ingress only."}
+            exposureAnnotations: {type: string, description: "Newline-separated key=value annotations for the Route or Ingress only."}
+            ingressClass: {type: string, description: "Optional ingressClassName; requires exposure ingress."}
+            ingressTls: {type: string, enum: [hosts, none], description: "Ingress TLS block: hosts (default) lists the host, none renders tls: []."}
+            templateVersion: {type: integer, minimum: 0, description: "Workspace template version used by this profile; 0 or omitted means the built-in template."}
             runnerServiceAccount: {type: string, description: "Optional Kubernetes-executor service account override for the build job."}
             runnerScc: {type: string, description: "Optional OpenShift SCC the build pod must run under (openshift.io/required-scc)."}
             builderSetup: {type: string, description: "Optional executable in the builder image run before the build, for example a rootless Podman entrypoint script."}

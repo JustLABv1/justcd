@@ -11,6 +11,12 @@ import { Badge } from "@/components/reui/badge"
 import { FormField, Panel, SwitchField } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { api, apiPost } from "@/lib/api"
+import {
+  TemplateBadge,
+  TemplateEditor,
+  versionLabel,
+  type TemplateVersionMeta,
+} from "./template-editor"
 import type {
   PublishingProfile,
   PublishingProfileSettings,
@@ -36,6 +42,12 @@ const emptySettings: PublishingProfileSettings = {
   buildEngine: "buildkit",
   caVariable: "",
   runnerTag: "",
+  exposure: "route",
+  exposureLabels: "",
+  exposureAnnotations: "",
+  ingressClass: "",
+  ingressTls: "hosts",
+  templateVersion: 0,
   runnerServiceAccount: "",
   runnerScc: "",
   builderSetup: "",
@@ -46,7 +58,15 @@ const emptySettings: PublishingProfileSettings = {
   syncPolicy: "auto-safe",
 }
 
+type TemplateSummary = {
+  template: { id: string; name: string; description: string; category: string }
+  versions: TemplateVersionMeta[]
+}
+
 export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
+  const [templates, setTemplates] = useState<TemplateSummary[]>([])
+  const [templatesReload, setTemplatesReload] = useState(0)
+  const [editingTemplate, setEditingTemplate] = useState<string | null>(null)
   const [profiles, setProfiles] = useState<PublishingProfile[]>([])
   const [editing, setEditing] = useState<PublishingProfile | null>(null)
   const [creating, setCreating] = useState(false)
@@ -75,6 +95,21 @@ export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
       active = false
     }
   }, [workspaceId])
+  useEffect(() => {
+    let active = true
+    api<ListResponse<TemplateSummary>>(
+      `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/publishing-templates`
+    )
+      .then((result) => {
+        if (active) setTemplates(result.items)
+      })
+      .catch(() => {
+        if (active) setTemplates([])
+      })
+    return () => {
+      active = false
+    }
+  }, [workspaceId, templatesReload])
   async function remove() {
     if (!deleteTarget || deleting) return
     setDeleting(true)
@@ -94,6 +129,24 @@ export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
       setDeleting(false)
     }
   }
+  if (editingTemplate)
+    return (
+      <TemplateEditor
+        key={editingTemplate}
+        workspaceId={workspaceId}
+        templateId={editingTemplate}
+        profiles={profiles}
+        onClose={(saved) => {
+          setEditingTemplate(null)
+          if (saved) {
+            setTemplatesReload((n) => n + 1)
+            setNotice(
+              "Template version saved. Select it in a profile to use it."
+            )
+          }
+        }}
+      />
+    )
   if (creating || editing)
     return (
       <ProfileEditor
@@ -195,6 +248,48 @@ export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
           </div>
         )}
       </Panel>
+      <Panel
+        title="Application templates"
+        description="The files JustCD generates for each application type: Dockerfile, build pipeline and Kubernetes manifest. Customize them for your platform; every save is a new, immutable version that profiles can select."
+      >
+        <div className="divide-y">
+          {templates.map(({ template, versions }) => (
+            <div
+              key={template.id}
+              className="flex flex-wrap items-center justify-between gap-4 px-5 py-4"
+            >
+              <div className="min-w-0 space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-sm font-medium">{template.name}</h3>
+                  <Badge variant="outline" size="sm">
+                    {template.category}
+                  </Badge>
+                  <TemplateBadge version={versions[0]?.version} />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {versions.length
+                    ? `${versions.length} custom version${versions.length === 1 ? "" : "s"} · latest ${versionLabel(versions[0].version, versions[0].label)}`
+                    : "Using the built-in template."}
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setEditingTemplate(template.id)
+                  setNotice("")
+                }}
+              >
+                Customize
+              </Button>
+            </div>
+          ))}
+          {!templates.length && (
+            <p className="p-5 text-sm text-muted-foreground">
+              Templates are loading or unavailable.
+            </p>
+          )}
+        </div>
+      </Panel>
       {notice && (
         <p role="status" className="text-sm text-muted-foreground">
           {notice}
@@ -255,6 +350,9 @@ function ProfileEditor({
     registryPassword: "",
   })
   const [templates, setTemplates] = useState<ApplicationTemplate[]>([])
+  const [templateVersions, setTemplateVersions] = useState<
+    TemplateVersionMeta[]
+  >([])
   const [clusters, setClusters] = useState<Cluster[]>([])
   const [bindings, setBindings] = useState<NamespaceBinding[]>([])
   const [busy, setBusy] = useState(false)
@@ -328,6 +426,17 @@ function ProfileEditor({
       active = false
     }
   }, [settings.clusterId, workspaceId])
+  useEffect(() => {
+    let live = true
+    api<{ versions: TemplateVersionMeta[] }>(
+      `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/publishing-templates/${encodeURIComponent(settings.templateId)}`
+    )
+      .then((result) => live && setTemplateVersions(result.versions))
+      .catch(() => live && setTemplateVersions([]))
+    return () => {
+      live = false
+    }
+  }, [workspaceId, settings.templateId])
   async function save(event: React.FormEvent) {
     event.preventDefault()
     if (busy) return
@@ -381,6 +490,11 @@ function ProfileEditor({
             "builderImage",
             "webServerImage",
             "runnerTag",
+            "exposure",
+            "exposureLabels",
+            "exposureAnnotations",
+            "ingressClass",
+            "ingressTls",
             "runnerServiceAccount",
             "runnerScc",
             "builderSetup",
@@ -414,6 +528,12 @@ function ProfileEditor({
       />
     </FormField>
   )
+  const filled = (...keys: (keyof PublishingProfileSettings)[]) =>
+    keys.some((key) => {
+      const value = settings[key]
+      return !!value && value !== "route" && value !== "hosts"
+    })
+  const domainSet = !!settings.hostSuffix
   return (
     <form onSubmit={save} className="space-y-5">
       <Panel
@@ -421,29 +541,31 @@ function ProfileEditor({
         description="Choose the approved build and destination. Secret values are encrypted and never returned to the browser."
       >
         <fieldset disabled={busy} className="space-y-4 p-5">
-          <FormField
-            label="Profile name"
-            htmlFor="profile-name"
-            hint="Shown to analysts when choosing a destination."
-          >
-            <Input
-              id="profile-name"
-              required
-              maxLength={100}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="Analytics development"
-            />
-          </FormField>
-          <FormField label="Description" htmlFor="profile-description">
-            <Textarea
-              id="profile-description"
-              maxLength={1000}
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              placeholder="Internal Shiny apps for the analytics team"
-            />
-          </FormField>
+          <div className="grid gap-4 md:grid-cols-2">
+            <FormField
+              label="Profile name"
+              htmlFor="profile-name"
+              hint="Shown to analysts when choosing a destination."
+            >
+              <Input
+                id="profile-name"
+                required
+                maxLength={100}
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Analytics development"
+              />
+            </FormField>
+            <FormField label="Description" htmlFor="profile-description">
+              <Textarea
+                id="profile-description"
+                maxLength={1000}
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                placeholder="Internal Shiny apps for the analytics team"
+              />
+            </FormField>
+          </div>
           <SwitchField
             id="profile-enabled"
             label="Allow publishing with this profile"
@@ -451,38 +573,51 @@ function ProfileEditor({
             checked={enabled}
             onCheckedChange={setEnabled}
           />
+          <p className="text-xs leading-5 text-muted-foreground">
+            {locked
+              ? `Used by ${profile.applications} applications. Repository and destination are locked; build settings stay editable and publish a new version. Existing applications adopt it through their profile-update action.`
+              : "Saving build settings publishes an immutable profile version. Name changes and credential rotation do not create one."}
+          </p>
         </fieldset>
       </Panel>
-      {!locked && (
-        <p className="text-sm text-muted-foreground">
-          Saving build settings publishes an immutable profile version. Name
-          changes and credential rotation do not create a new release.
-        </p>
-      )}
-      {locked && (
-        <p className="text-sm text-muted-foreground">
-          This profile is used by {profile.applications} applications. Build
-          engines, images, CA variable names, runner tags, and image-pull
-          secrets remain editable; repository and deployment destinations are
-          locked. Build-setting changes publish a new immutable version.
-          Existing applications stay on their pinned version; use their
-          profile-update action to review and rebuild without uploading source
-          again.
-        </p>
-      )}
       <fieldset disabled={busy} className="min-w-0 space-y-5">
-        <Panel title="Template and destination">
+        <Panel
+          title="Destination"
+          description="Where applications of this profile are deployed."
+        >
           <div className="grid gap-4 p-5 md:grid-cols-2">
             <FormField label="Application template" htmlFor="profile-template">
               <FormSelect
                 id="profile-template"
                 value={settings.templateId}
-                onValueChange={(templateId) => patch({ templateId })}
+                onValueChange={(templateId) =>
+                  patch({ templateId, templateVersion: 0 })
+                }
                 items={templates.map((template) => ({
                   value: template.id,
                   label: template.name,
                 }))}
                 disabled={locked}
+              />
+            </FormField>
+            <FormField
+              label="Template version"
+              htmlFor="profile-template-version"
+              hint="Built-in, or a version you customized under Application templates."
+            >
+              <FormSelect
+                id="profile-template-version"
+                value={String(settings.templateVersion ?? 0)}
+                onValueChange={(value) =>
+                  patch({ templateVersion: Number(value) })
+                }
+                items={[
+                  { value: "0", label: "Built-in" },
+                  ...templateVersions.map((v) => ({
+                    value: String(v.version),
+                    label: `Custom ${versionLabel(v.version, v.label)}`,
+                  })),
+                ]}
               />
             </FormField>
             <FormField label="Cluster" htmlFor="profile-cluster">
@@ -504,7 +639,6 @@ function ProfileEditor({
             <FormField
               label="Namespace policy"
               htmlFor="profile-namespace-mode"
-              hint="Namespace creation uses the cluster’s existing provisioning permissions and deployment approval flow."
             >
               <FormSelect
                 id="profile-namespace-mode"
@@ -536,26 +670,24 @@ function ProfileEditor({
               field(
                 "namespacePrefix",
                 "Namespace prefix",
-                "Ends with a hyphen. For example apps- creates apps-my-app. The final name must be at most 63 characters.",
+                "Ends with a hyphen, e.g. apps- creates apps-my-app.",
                 true,
                 "apps-"
               )
             ) : (
-              <>
-                <FormField label="Namespace" htmlFor="profile-namespace">
-                  <FormSelect
-                    id="profile-namespace"
-                    value={settings.namespace}
-                    onValueChange={(namespace) => patch({ namespace })}
-                    items={bindings.map((binding) => ({
-                      value: binding.namespace,
-                      label: binding.namespace,
-                    }))}
-                    disabled={locked}
-                    placeholder="Select an approved namespace"
-                  />
-                </FormField>
-              </>
+              <FormField label="Namespace" htmlFor="profile-namespace">
+                <FormSelect
+                  id="profile-namespace"
+                  value={settings.namespace}
+                  onValueChange={(namespace) => patch({ namespace })}
+                  items={bindings.map((binding) => ({
+                    value: binding.namespace,
+                    label: binding.namespace,
+                  }))}
+                  disabled={locked}
+                  placeholder="Select an approved namespace"
+                />
+              </FormField>
             )}
             <FormField label="Deployment behavior" htmlFor="profile-sync">
               <FormSelect
@@ -578,21 +710,22 @@ function ProfileEditor({
             {field(
               "hostSuffix",
               "Application domain",
-              "Optional OpenShift route suffix. App my-app becomes my-app.apps.example.com. The template does not add SSO.",
+              "Optional. my-app becomes my-app.apps.example.com.",
               false,
               "apps.example.com"
             )}
             {field(
               "pullSecret",
               "Image pull secret",
-              settings.namespaceMode === "per-application"
-                ? "Your provisioning setup must create this read-only registry Secret in each new namespace before deployment."
-                : "Existing read-only registry Secret in the selected namespace.",
+              "Existing read-only registry Secret (created per namespace by your provisioning).",
               false
             )}
           </div>
         </Panel>
-        <Panel title="GitLab and build environment">
+        <Panel
+          title="Source and build"
+          description="GitLab location, images and registry used to build applications."
+        >
           <div className="grid gap-4 p-5 md:grid-cols-2">
             {field(
               "gitlabUrl",
@@ -604,7 +737,7 @@ function ProfileEditor({
             {field(
               "group",
               "GitLab group",
-              "Private projects are created inside this group or subgroup.",
+              "Private projects are created in this group.",
               true,
               "analytics/apps"
             )}
@@ -614,19 +747,19 @@ function ProfileEditor({
                 settings.templateId === "python-static"
                   ? "Python build image"
                   : "Application runtime image",
-                "Approved R/Shiny or Python image, including native dependencies and internal certificate trust."
+                "Approved image with native dependencies and internal certificate trust."
               )}
             {(settings.templateId === "python-static" ||
               settings.templateId === "static") &&
               field(
                 "webServerImage",
                 "Static web server image",
-                "Approved unprivileged NGINX-compatible image: port 8080, document root /usr/share/nginx/html, supporting UID 1001 and OpenShift arbitrary UIDs."
+                "Unprivileged NGINX-compatible image: port 8080, UID 1001, OpenShift arbitrary UIDs."
               )}
             <FormField
               label="Build engine"
               htmlFor="profile-build-engine"
-              hint="Choose the engine provided by your CI builder image. Existing profiles default to BuildKit."
+              hint="The engine provided by your CI builder image."
             >
               <FormSelect
                 id="profile-build-engine"
@@ -641,179 +774,297 @@ function ProfileEditor({
             {field(
               "builderImage",
               "CI builder image",
-              "Podman: podman, grep and shell tools. BuildKit: rootless BuildKit, jq and shell. Managed publishing commits deployment changes in JustCD. Runner must support the selected engine."
-            )}
-            {field(
-              "gitImage",
-              "Existing Git pipeline update image",
-              "Only for existing Git pipeline bootstrap. Managed publishing updates deployment manifests in JustCD and does not use this image. Leave blank to reuse the builder image for existing Git workflows.",
-              false
+              "Podman: podman, grep, shell. BuildKit: rootless BuildKit, jq, shell."
             )}
             {field(
               "registryPrefix",
-              "Artifactory registry prefix",
-              "JustCD appends /application-name and publishes immutable image digests.",
+              "Registry prefix",
+              "JustCD appends /application-name and publishes image digests.",
               true,
               "artifactory.example.com/analytics-local"
             )}
-            {field(
-              "caVariable",
-              "Custom CA variable (optional)",
-              "Inherited GitLab CI variable containing PEM certificates, e.g. PLAIN2_ROOT_CA. Leave blank to use the builder image's default trust. Applies to CI Git and the selected build engine, not application build stages.",
-              false,
-              "PLAIN2_ROOT_CA"
-            )}
-            {field(
-              "runnerTag",
-              "Runner tag",
-              "Optional tag for an approved GitLab runner.",
-              false
-            )}
-            {field(
-              "runnerServiceAccount",
-              "Runner service account (optional)",
-              "Kubernetes service account the build job runs as, for runners that only allow rootless builds under a dedicated account.",
-              false,
-              "gitlab-runner-app-sa"
-            )}
-            {field(
-              "runnerScc",
-              "Required OpenShift SCC (optional)",
-              "Security context constraint the build pod must use (openshift.io/required-scc). Rootless Podman usually needs one that allows user namespaces.",
-              false,
-              "gitlab-runner-scc"
-            )}
-            {field(
-              "builderSetup",
-              "Builder setup script (optional)",
-              "Absolute path of an executable in the builder image that runs before the build, e.g. its rootless Podman entrypoint script. No arguments.",
-              false,
-              "/home/user/entrypoint.sh"
-            )}
           </div>
         </Panel>
-        <Panel title="Registry secret source">
+        <Panel
+          title="Access and credentials"
+          description={
+            profile
+              ? "Leave fields blank to keep stored values. Analysts never receive these values."
+              : "Use service credentials scoped to the approved group and registry. Analysts never receive these values."
+          }
+        >
           <div className="space-y-4 p-5">
-            <FormField label="Secret storage" htmlFor="profile-secret-mode">
-              <FormSelect
-                id="profile-secret-mode"
-                value={settings.secretMode}
-                onValueChange={(secretMode) => patch({ secretMode })}
-                items={[
-                  {
-                    value: "variables",
-                    label: "Protected GitLab CI/CD variables",
-                  },
-                  {
-                    value: "vault",
-                    label: "Existing Vault secret · GitLab OIDC",
-                  },
-                ]}
-                disabled={locked}
-              />
-            </FormField>
-            {settings.secretMode === "vault" && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <FormField
+                label="Registry secret storage"
+                htmlFor="profile-secret-mode"
+              >
+                <FormSelect
+                  id="profile-secret-mode"
+                  value={settings.secretMode}
+                  onValueChange={(secretMode) => patch({ secretMode })}
+                  items={[
+                    {
+                      value: "variables",
+                      label: "Protected GitLab CI/CD variables",
+                    },
+                    {
+                      value: "vault",
+                      label: "Existing Vault secret · GitLab OIDC",
+                    },
+                  ]}
+                  disabled={locked}
+                />
+              </FormField>
+              {settings.secretMode === "vault" && (
+                <>
+                  {field(
+                    "vaultAddress",
+                    "Vault URL",
+                    "GitLab must already trust this Vault server."
+                  )}
+                  {field(
+                    "vaultRole",
+                    "Vault JWT role",
+                    "Restrict to the project/group and protected main branch."
+                  )}
+                  {field(
+                    "vaultPath",
+                    "KV v2 secret path",
+                    "Secret with username and token fields.",
+                    true,
+                    "secret/data/analytics/registry"
+                  )}
+                </>
+              )}
+              {secret(
+                "gitlabToken",
+                "GitLab provisioning token",
+                "Creates projects, CI variables and branches, commits source, starts pipelines."
+              )}
+              {secret(
+                "gitReadToken",
+                "Git repository read token",
+                "Group token with read_repository. Rotating it updates all apps of this profile."
+              )}
+              {settings.secretMode === "variables" && (
+                <>
+                  {secret(
+                    "registryUser",
+                    "Registry username",
+                    "Service account for pushing images."
+                  )}
+                  {secret(
+                    "registryPassword",
+                    "Registry push token",
+                    "At least eight characters, no whitespace. Stored as a masked CI variable."
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </Panel>
+        <Panel
+          title="Advanced settings"
+          description="Most profiles do not need these. Groups with values open automatically."
+        >
+          <div className="space-y-3 p-5">
+            <AdvancedGroup
+              title="Routing and exposure"
+              hint="Route or Ingress, with labels and annotations. Applies when an application domain is set."
+              configured={filled(
+                "exposure",
+                "exposureLabels",
+                "exposureAnnotations",
+                "ingressClass",
+                "ingressTls"
+              )}
+            >
+              <div className="grid gap-4 md:grid-cols-2">
+                <FormField label="Publish with" htmlFor="profile-exposure">
+                  <FormSelect
+                    id="profile-exposure"
+                    value={settings.exposure || "route"}
+                    onValueChange={(exposure) =>
+                      patch({
+                        exposure,
+                        ...(exposure === "ingress"
+                          ? {}
+                          : { ingressClass: "", ingressTls: "hosts" }),
+                      })
+                    }
+                    items={[
+                      { value: "route", label: "OpenShift Route" },
+                      { value: "ingress", label: "Kubernetes Ingress" },
+                    ]}
+                  />
+                </FormField>
+                {settings.exposure === "ingress" ? (
+                  <>
+                    {field(
+                      "ingressClass",
+                      "Ingress class (optional)",
+                      "Sets ingressClassName.",
+                      false,
+                      "openshift-default"
+                    )}
+                    <FormField
+                      label="Ingress TLS"
+                      htmlFor="profile-ingress-tls"
+                      hint="List the host, or render tls: [] when TLS is handled elsewhere."
+                    >
+                      <FormSelect
+                        id="profile-ingress-tls"
+                        value={settings.ingressTls || "hosts"}
+                        onValueChange={(ingressTls) => patch({ ingressTls })}
+                        items={[
+                          { value: "hosts", label: "List the host (default)" },
+                          { value: "none", label: "None (tls: [])" },
+                        ]}
+                      />
+                    </FormField>
+                  </>
+                ) : null}
+                <FormField
+                  label="Labels (optional)"
+                  htmlFor="profile-exposure-labels"
+                  hint="One key=value per line, on the Route or Ingress only."
+                >
+                  <Textarea
+                    id="profile-exposure-labels"
+                    value={settings.exposureLabels ?? ""}
+                    onChange={(event) =>
+                      patch({ exposureLabels: event.target.value })
+                    }
+                    placeholder="router=external"
+                  />
+                </FormField>
+                <FormField
+                  label="Annotations (optional)"
+                  htmlFor="profile-exposure-annotations"
+                  hint="One key=value per line, on the Route or Ingress only."
+                >
+                  <Textarea
+                    id="profile-exposure-annotations"
+                    value={settings.exposureAnnotations ?? ""}
+                    onChange={(event) =>
+                      patch({ exposureAnnotations: event.target.value })
+                    }
+                    placeholder="haproxy.router.openshift.io/timeout=5m"
+                  />
+                </FormField>
+              </div>
+              {!domainSet && (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Set an application domain under Destination to use these.
+                </p>
+              )}
+            </AdvancedGroup>
+            <AdvancedGroup
+              title="CI runner and trust"
+              hint="Runner selection, rootless build permissions and custom certificate trust."
+              configured={filled(
+                "runnerTag",
+                "runnerServiceAccount",
+                "runnerScc",
+                "builderSetup",
+                "caVariable",
+                "gitImage"
+              )}
+            >
               <div className="grid gap-4 md:grid-cols-2">
                 {field(
-                  "vaultAddress",
-                  "Vault URL",
-                  "GitLab must already trust this Vault server and support native Vault secrets."
+                  "runnerTag",
+                  "Runner tag",
+                  "Tag of an approved GitLab runner.",
+                  false
                 )}
                 {field(
-                  "vaultRole",
-                  "Vault JWT role",
-                  "Restrict this role to the selected project/group and protected main branch."
+                  "caVariable",
+                  "Custom CA variable",
+                  "Inherited CI variable with PEM certificates, e.g. PLAIN2_ROOT_CA.",
+                  false,
+                  "PLAIN2_ROOT_CA"
                 )}
                 {field(
-                  "vaultPath",
-                  "KV v2 secret path",
-                  "Existing secret with username and token fields.",
-                  true,
-                  "secret/data/analytics/registry"
+                  "runnerServiceAccount",
+                  "Runner service account",
+                  "For runners that allow rootless builds only under a dedicated account.",
+                  false,
+                  "gitlab-runner-app-sa"
+                )}
+                {field(
+                  "runnerScc",
+                  "Required OpenShift SCC",
+                  "Sets openshift.io/required-scc on the build pod.",
+                  false,
+                  "gitlab-runner-scc"
+                )}
+                {field(
+                  "builderSetup",
+                  "Builder setup script",
+                  "Absolute path of an executable in the builder image, run before the build.",
+                  false,
+                  "/home/user/entrypoint.sh"
+                )}
+                {field(
+                  "gitImage",
+                  "Existing Git pipeline update image",
+                  "Only for bootstrapping existing Git pipelines; blank reuses the builder image.",
+                  false
                 )}
               </div>
+            </AdvancedGroup>
+            {profile && (
+              <AdvancedGroup
+                title="Versions"
+                hint="Publish a revision explicitly and review published profile versions."
+                configured={publishRevision}
+              >
+                <div className="space-y-4">
+                  <SwitchField
+                    id="profile-publish-revision"
+                    checked={publishRevision}
+                    onCheckedChange={setPublishRevision}
+                    disabled={busy}
+                    label="Publish a new revision even if nothing changed"
+                    description="Adopts updated JustCD build recipes. Existing applications stay pinned until upgraded."
+                  />
+                  {versions.map((version) => (
+                    <Disclosure
+                      key={version.revision}
+                      summary={`v${version.revision}${version.revision === profile.currentRevision ? " · latest" : ""} · ${new Date(version.createdAt).toLocaleDateString()}`}
+                    >
+                      <dl className="space-y-2 text-xs">
+                        <div>
+                          <dt className="font-medium">Recipe version</dt>
+                          <dd>{version.templateVersion}</dd>
+                        </div>
+                        {(
+                          [
+                            "baseImage",
+                            "webServerImage",
+                            "builderImage",
+                          ] as const
+                        )
+                          .filter((key) => version.settings[key])
+                          .map((key) => (
+                            <div key={key}>
+                              <dt className="font-medium">{key}</dt>
+                              <dd className="break-all text-muted-foreground">
+                                {version.settings[key]}
+                              </dd>
+                            </div>
+                          ))}
+                      </dl>
+                    </Disclosure>
+                  ))}
+                </div>
+              </AdvancedGroup>
             )}
           </div>
         </Panel>
       </fieldset>
-      {profile && (
-        <Panel title="Publish a recipe revision">
-          <div className="p-5">
-            <SwitchField
-              id="profile-publish-revision"
-              checked={publishRevision}
-              onCheckedChange={setPublishRevision}
-              disabled={busy}
-              label="Publish a new revision even if images are unchanged"
-              description="Use this to adopt updated JustCD build recipes. Changing image references already creates a new revision. Existing applications remain pinned until upgraded."
-            />
-          </div>
-        </Panel>
-      )}
-      {versions.length > 0 && (
-        <Panel title="Published profile versions">
-          <div className="space-y-3 p-5">
-            {versions.map((version) => (
-              <Disclosure
-                key={version.revision}
-                summary={`v${version.revision}${version.revision === profile?.currentRevision ? " · latest" : ""} · ${new Date(version.createdAt).toLocaleDateString()}`}
-              >
-                <dl className="mt-3 space-y-2 text-xs">
-                  <div>
-                    <dt className="font-medium">Recipe version</dt>
-                    <dd>{version.templateVersion}</dd>
-                  </div>
-                  {(["baseImage", "webServerImage", "builderImage"] as const)
-                    .filter((key) => version.settings[key])
-                    .map((key) => (
-                      <div key={key}>
-                        <dt className="font-medium">{key}</dt>
-                        <dd className="break-all text-muted-foreground">
-                          {version.settings[key]}
-                        </dd>
-                      </div>
-                    ))}
-                </dl>
-              </Disclosure>
-            ))}
-          </div>
-        </Panel>
-      )}
-      <Panel
-        title="Protected credentials"
-        description={
-          profile
-            ? "Leave fields blank to retain existing values. Rotating the read token also updates access for applications using this profile."
-            : "Use service credentials scoped to the approved group and registry. Analysts never receive these values."
-        }
-      >
-        <fieldset disabled={busy} className="grid gap-4 p-5 md:grid-cols-2">
-          {secret(
-            "gitlabToken",
-            "GitLab provisioning token",
-            "API permission to create projects, configure protected CI variables and branches, commit source, and start pipelines."
-          )}
-          {secret(
-            "gitReadToken",
-            "Git repository read token",
-            "Group token with read_repository access to projects created in the selected group."
-          )}
-          {settings.secretMode === "variables" && (
-            <>
-              {secret(
-                "registryUser",
-                "Registry username",
-                "Service account for pushing images into the approved repository."
-              )}
-              {secret(
-                "registryPassword",
-                "Registry push token",
-                "At least eight characters without whitespace. Stored as a masked, protected CI variable."
-              )}
-            </>
-          )}
-        </fieldset>
-      </Panel>
       {error != null && <ErrorNotice error={error} />}
       <div className="flex justify-between gap-3">
         <Button
@@ -829,5 +1080,38 @@ function ProfileEditor({
         </Button>
       </div>
     </form>
+  )
+}
+
+function AdvancedGroup({
+  title,
+  hint,
+  configured,
+  children,
+}: {
+  title: string
+  hint: string
+  configured: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <div className="rounded-xl border p-4">
+      <Disclosure
+        defaultOpen={configured}
+        summary={
+          <span className="flex flex-wrap items-center gap-2">
+            {title}
+            {configured && (
+              <Badge size="sm" radius="full" variant="info-light">
+                Configured
+              </Badge>
+            )}
+          </span>
+        }
+      >
+        <p className="mb-4 text-xs leading-5 text-muted-foreground">{hint}</p>
+        {children}
+      </Disclosure>
+    </div>
   )
 }

@@ -71,9 +71,23 @@ type Config struct {
 	RunnerTag         string `json:"runnerTag"`
 	// Optional Kubernetes-executor settings for runners that only allow rootless
 	// builds under a dedicated service account and OpenShift SCC.
-	RunnerServiceAccount string `json:"runnerServiceAccount,omitempty"`
-	RunnerSCC            string `json:"runnerScc,omitempty"`
-	BuilderSetup         string `json:"builderSetup,omitempty"`
+	// Exposure selects the resource that publishes the app: an OpenShift Route
+	// (default) or a networking.k8s.io Ingress. Labels and annotations are
+	// "key=value" lines applied to that resource only.
+	Exposure            string `json:"exposure,omitempty"`
+	ExposureLabels      string `json:"exposureLabels,omitempty"`
+	ExposureAnnotations string `json:"exposureAnnotations,omitempty"`
+	IngressClass        string `json:"ingressClass,omitempty"`
+	// IngressTLS is "hosts" (default: list the host, use the controller default
+	// certificate) or "none" (tls: []).
+	IngressTLS string `json:"ingressTls,omitempty"`
+	// TemplateVersion pins a custom template version (0 = built-in).
+	TemplateVersion int `json:"templateVersion,omitempty"`
+	// TemplateFiles are the resolved files of that version; never persisted.
+	TemplateFiles        *TemplateFileSet `json:"-"`
+	RunnerServiceAccount string           `json:"runnerServiceAccount,omitempty"`
+	RunnerSCC            string           `json:"runnerScc,omitempty"`
+	BuilderSetup         string           `json:"builderSetup,omitempty"`
 }
 
 type File struct {
@@ -166,6 +180,12 @@ func (c Config) Validate() error {
 	}
 	if c.RunnerTag != "" && !regexp.MustCompile(`^[a-zA-Z0-9_.-]{1,100}$`).MatchString(c.RunnerTag) {
 		return errors.New("runner tag is invalid")
+	}
+	if err := c.validateExposure(); err != nil {
+		return err
+	}
+	if c.TemplateVersion < 0 {
+		return errors.New("template version is invalid")
 	}
 	for _, v := range []struct{ value, label string }{{c.RunnerServiceAccount, "runner service account"}, {c.RunnerSCC, "runner security context constraint"}} {
 		if v.value != "" && !regexp.MustCompile(`^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$`).MatchString(v.value) {
@@ -340,241 +360,15 @@ func Generate(c Config, source []File) ([]File, error) {
 		return nil, errors.New("static website directory must contain index.html")
 	}
 	files := append([]File{}, source...)
-	add := func(p, s string) { files = append(files, File{Path: p, Content: s, Encoding: "text"}) }
-	port := 3838
-	docker := "FROM " + c.BaseImage + "\nUSER 0\nWORKDIR /app\nCOPY source/ /app/\n"
-	if c.Runtime == "shiny" {
-		if has("renv.lock") {
-			docker += "RUN R -e 'install.packages(\"renv\", repos=Sys.getenv(\"R_REPOSITORY\", \"https://cloud.r-project.org\")); renv::restore(prompt=FALSE)'\n"
-		} else {
-			docker += "RUN R -e 'p <- trimws(readLines(\"packages.txt\")); p <- p[nzchar(p) & !startsWith(p, \"#\")]; install.packages(p, repos=Sys.getenv(\"R_REPOSITORY\", \"https://cloud.r-project.org\")); stopifnot(all(p %in% rownames(installed.packages())))'\n"
-		}
-		cmd, _ := json.Marshal([]string{"R", "-e", fmt.Sprintf("shiny::runApp('%s', host='0.0.0.0', port=3838)", c.EntryPoint)})
-		docker += "RUN chgrp -R 0 /app && chmod -R g=u /app\nENV HOME=/tmp\nUSER 1001\nEXPOSE 3838\nCMD " + string(cmd) + "\n"
-	} else if c.Runtime == "streamlit" {
-		port = 8501
-		docker += "RUN python -m pip install --no-cache-dir -r requirements.txt\nRUN chgrp -R 0 /app && chmod -R g=u /app\nENV HOME=/tmp\nUSER 1001\nEXPOSE 8501\n"
-		cmd, _ := json.Marshal([]string{"python", "-m", "streamlit", "run", c.EntryPoint, "--server.address=0.0.0.0", "--server.port=8501"})
-		docker += "CMD " + string(cmd) + "\n"
+	rendered, err := RenderConfig(c, SourceFacts{HasRenvLock: has("renv.lock")})
+	if err != nil {
+		return nil, err
 	}
-	if c.Runtime == "python-static" {
-		port = 8080
-		command, _ := json.Marshal([]string{"sh", "-c", c.BuildCommand})
-		prepare, _ := json.Marshal([]string{"python", "-c", staticOutputScript, c.OutputDir, "/justcd-site"})
-		docker = "FROM " + c.BaseImage + " AS site-build\nUSER 0\nWORKDIR /app\nCOPY source/ /app/\nRUN if [ -f requirements.txt ]; then python -m pip install --no-cache-dir -r requirements.txt; fi\nRUN " + string(command) + "\nRUN " + string(prepare) + "\n\nFROM " + c.WebServerImage + " AS site-runtime\nCOPY --from=site-build /justcd-site/ /usr/share/nginx/html/\nUSER 1001\nEXPOSE 8080\n"
+	for _, p := range TemplateFilePaths {
+		files = append(files, File{Path: p, Content: rendered[p], Encoding: "text"})
 	}
-	if c.Runtime == "static" {
-		port = 8080
-		docker = "FROM " + c.WebServerImage + "\nCOPY --chmod=0755 " + path.Join("source", c.EntryPoint) + "/ /usr/share/nginx/html/\nUSER 1001\nEXPOSE 8080\n"
-	}
-	add("Dockerfile", docker)
-	add(".dockerignore", ".git\ndeploy\n.justcd\n")
-	add(".justcd/deployment.yaml", manifest(c, port))
-	add("deploy/.gitkeep", "")
-	add(".gitlab-ci.yml", pipeline(c))
-	add(".justcd/README.md", "# Managed application\nGenerated by JustCD publishing template v"+Version+". User application files live in source/.\nThe protected main branch builds and publishes an immutable image, then commits deploy/application.yaml.\nNo workload is deployed until JustCD plans and applies it under workspace policy.\n")
+	files = append(files, File{Path: "deploy/.gitkeep", Content: "", Encoding: "text"})
 	return files, nil
-}
-
-func manifest(c Config, port int) string {
-	pull := ""
-	if c.PullSecret != "" {
-		pull = "      imagePullSecrets:\n        - name: " + c.PullSecret + "\n"
-	}
-	s := fmt.Sprintf(`apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  replicas: 1
-  selector:
-    matchLabels: {app: %s}
-  template:
-    metadata:
-      labels: {app: %s}
-    spec:
-      automountServiceAccountToken: false
-%s      containers:
-        - name: app
-          image: JUSTCD_IMAGE_DIGEST
-          ports:
-            - {name: http, containerPort: %d}
-          resources:
-            requests: {cpu: 100m, memory: 256Mi}
-            limits: {cpu: '1', memory: 1Gi}
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities: {drop: [ALL]}
-          readinessProbe:
-            tcpSocket: {port: http}
-            initialDelaySeconds: 10
-          livenessProbe:
-            tcpSocket: {port: http}
-            initialDelaySeconds: 60
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  selector: {app: %s}
-  ports:
-    - {name: http, port: 80, targetPort: http}
-`, c.Name, c.Namespace, c.Name, c.Name, pull, port, c.Name, c.Namespace, c.Name)
-	if c.Host != "" {
-		s += fmt.Sprintf(`---
-apiVersion: route.openshift.io/v1
-kind: Route
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  host: %s
-  to: {kind: Service, name: %s}
-  port: {targetPort: http}
-  tls:
-    termination: edge
-    insecureEdgeTerminationPolicy: Redirect
-`, c.Name, c.Namespace, c.Host, c.Name)
-	}
-	return s
-}
-func yamlString(s string) string { b, _ := json.Marshal(s); return string(b) }
-func pipeline(c Config) string {
-	ci := legacyPipeline(c)
-	if c.ManagedCompletion {
-		ci = strings.Split(ci, "update-deployment:\n")[0]
-		ci = strings.Replace(ci, "stages: [build, publish]", "stages: [build]", 1)
-	}
-	return ci
-}
-
-func legacyPipeline(c Config) string {
-	gitImage := c.GitImage
-	if gitImage == "" {
-		gitImage = c.BuilderImage
-	}
-	tools := "buildctl-daemonless.sh buildctl buildkitd jq"
-	engine := "BuildKit"
-	buildSteps := `      jq -n --arg host "$registry" --arg user "$REGISTRY_USER" --arg password "$REGISTRY_PASSWORD" '{auths:{($host):{auth:(($user+":"+$password)|@base64)}}}' > "$DOCKER_CONFIG/config.json"
-      buildctl-daemonless.sh build --frontend dockerfile.v0 --local context=. --local dockerfile=. --output "type=image,name=$JUSTCD_IMAGE:$CI_COMMIT_SHA,push=true" --metadata-file /tmp/justcd-image.json
-      digest="$(jq -er '."containerimage.digest" | select(test("^sha256:[a-f0-9]{64}$"))' /tmp/justcd-image.json)"
-`
-	if c.BuildEngine == "podman" {
-		tools = "podman grep cat cp mkdir"
-		engine = "Podman"
-		buildSteps = `      export REGISTRY_AUTH_FILE="$DOCKER_CONFIG/auth.json"
-      mkdir -p "$DOCKER_CONFIG/certs"
-      if [ -n "${SSL_CERT_FILE:-}" ]; then cp "$SSL_CERT_FILE" "$DOCKER_CONFIG/certs/ca.crt"; fi
-      printf '%s' "$REGISTRY_PASSWORD" | podman login --authfile "$REGISTRY_AUTH_FILE" --cert-dir "$DOCKER_CONFIG/certs" --tls-verify=true --username "$REGISTRY_USER" --password-stdin "$registry"
-      podman build --authfile "$REGISTRY_AUTH_FILE" --cert-dir "$DOCKER_CONFIG/certs" --tls-verify=true --format docker -f Dockerfile -t "$JUSTCD_IMAGE:$CI_COMMIT_SHA" .
-      podman push --authfile "$REGISTRY_AUTH_FILE" --cert-dir "$DOCKER_CONFIG/certs" --tls-verify=true --digestfile "$DOCKER_CONFIG/digest" "$JUSTCD_IMAGE:$CI_COMMIT_SHA" "docker://$JUSTCD_IMAGE:$CI_COMMIT_SHA"
-      digest="$(cat "$DOCKER_CONFIG/digest")"
-      if ! printf '%s\n' "$digest" | grep -Eq '^sha256:[a-f0-9]{64}$'; then
-        printf 'JustCD: Podman push returned an invalid image digest.\n' >&2
-        exit 1
-      fi
-`
-	}
-	caSetup := ""
-	if c.CAVariable != "" {
-		caSetup = `      # Optional platform CA, supplied as PEM text by an inherited CI variable.
-      if [ -z "${` + c.CAVariable + `:-}" ]; then
-        printf 'JustCD: configured CA variable ` + c.CAVariable + ` is empty or unavailable. Check GitLab variable inheritance and protected-branch scope.\n' >&2
-        exit 1
-      fi
-      ca_bundle="$DOCKER_CONFIG/ca-bundle.pem"
-      system_ca=""
-      for candidate in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt; do
-        if [ -r "$candidate" ]; then system_ca="$candidate"; break; fi
-      done
-      if [ -z "$system_ca" ]; then printf 'JustCD: builder image has no supported system CA bundle.\n' >&2; exit 1; fi
-      cat "$system_ca" > "$ca_bundle"
-      printf '\n%s\n' "$` + c.CAVariable + `" >> "$ca_bundle"
-      export SSL_CERT_FILE="$ca_bundle"
-      export GIT_SSL_CAINFO="$ca_bundle"
-      export CURL_CA_BUNDLE="$ca_bundle"
-      export REQUESTS_CA_BUNDLE="$ca_bundle"
-`
-	}
-
-	tags := ""
-	if c.RunnerTag != "" {
-		tags = "  tags: [" + yamlString(c.RunnerTag) + "]\n"
-	}
-	runnerVars, setup := "", ""
-	if c.RunnerServiceAccount != "" {
-		runnerVars += "    KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: " + yamlString(c.RunnerServiceAccount) + "\n"
-	}
-	if c.RunnerSCC != "" {
-		runnerVars += "    KUBERNETES_POD_ANNOTATIONS_1: " + yamlString("openshift.io/required-scc="+c.RunnerSCC) + "\n"
-	}
-	if c.BuilderSetup != "" {
-		setup = "  before_script:\n    - " + yamlString(c.BuilderSetup) + "\n"
-	}
-	vault := ""
-	if c.SecretMode == "vault" {
-		vault = "  id_tokens:\n    VAULT_ID_TOKEN:\n      aud: " + yamlString(c.VaultAddress) + "\n  secrets:\n    REGISTRY_USER:\n      vault:\n        engine: {name: kv-v2, path: " + yamlString(strings.Split(c.VaultPath, "/")[0]) + "}\n        path: " + yamlString(strings.TrimPrefix(strings.Join(strings.Split(c.VaultPath, "/")[1:], "/"), "data/")) + "\n        field: username\n      token: $VAULT_ID_TOKEN\n      file: false\n    REGISTRY_PASSWORD:\n      vault:\n        engine: {name: kv-v2, path: " + yamlString(strings.Split(c.VaultPath, "/")[0]) + "}\n        path: " + yamlString(strings.TrimPrefix(strings.Join(strings.Split(c.VaultPath, "/")[1:], "/"), "data/")) + "\n        field: token\n      token: $VAULT_ID_TOKEN\n      file: false\n"
-	}
-	return "# JustCD template v" + Version + ". Builder image must support the selected engine and CI tools.\nworkflow:\n  rules:\n    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'\n      changes: [source/**/*, Dockerfile, .gitlab-ci.yml, .justcd/**/*]\n    - when: never\nstages: [build, publish]\npublish:\n  stage: build\n  image:\n    name: " + yamlString(c.BuilderImage) + "\n    entrypoint: [\"\"]\n" + tags + vault + "  variables:\n    GIT_DEPTH: '0'\n" + runnerVars + "    BUILDKITD_FLAGS: '--oci-worker-no-process-sandbox'\n    JUSTCD_IMAGE: " + yamlString(c.RegistryImage) + "\n    VAULT_SERVER_URL: " + yamlString(c.VaultAddress) + "\n    VAULT_AUTH_ROLE: " + yamlString(c.VaultRole) + "\n" + setup + `  script:
-    - |
-      set -eu
-      for tool in ` + tools + `; do
-        if ! command -v "$tool" >/dev/null 2>&1; then
-          printf 'JustCD: CI builder image is missing %s. The selected ` + engine + ` engine requires: ` + tools + `. Update the publishing profile builder image or build engine and rebuild.\n' "$tool" >&2
-          exit 1
-        fi
-      done
-      test -n "$REGISTRY_USER"
-      test -n "$REGISTRY_PASSWORD"
-      export DOCKER_CONFIG="$(mktemp -d)"
-      trap 'rm -rf "$DOCKER_CONFIG"' EXIT
-` + caSetup + `      registry="${JUSTCD_IMAGE%%/*}"
-` + buildSteps + `      mkdir -p .justcd-build
-      printf '%s\n' "$digest" > .justcd-build/image-digest
-  artifacts:
-    paths: [.justcd-build/image-digest]
-    expire_in: 1 day
-update-deployment:
-  stage: publish
-  resource_group: justcd-publish
-  needs:
-    - job: publish
-      artifacts: true
-  image:
-    name: ` + yamlString(gitImage) + `
-    entrypoint: [""]
-` + tags + `  variables:
-    GIT_DEPTH: '0'
-    JUSTCD_IMAGE: ` + yamlString(c.RegistryImage) + `
-  script:
-    - |
-      set -eu
-      for tool in git sed grep; do
-        if ! command -v "$tool" >/dev/null 2>&1; then
-          printf 'JustCD: deployment update image is missing %s. Configure a Git-capable deployment update image in the publishing profile.\n' "$tool" >&2
-          exit 1
-        fi
-      done
-      export DOCKER_CONFIG="$(mktemp -d)"
-      trap 'rm -rf "$DOCKER_CONFIG"' EXIT
-` + caSetup + `      digest="$(cat .justcd-build/image-digest)"
-      if ! printf '%s\n' "$digest" | grep -Eq '^sha256:[a-f0-9]{64}$'; then
-        printf 'JustCD: build artifact has an invalid image digest.\n' >&2
-        exit 1
-      fi
-      # A newer source commit must never be replaced by an older build.
-      git fetch origin "$CI_DEFAULT_BRANCH"
-      test "$(git rev-parse FETCH_HEAD)" = "$CI_COMMIT_SHA"
-      sed "s|JUSTCD_IMAGE_DIGEST|$JUSTCD_IMAGE@$digest|g" .justcd/deployment.yaml > deploy/application.yaml
-      git config user.name 'JustCD Publisher'
-      git config user.email 'justcd@localhost'
-      git add deploy/application.yaml
-      git commit -m "Publish $CI_COMMIT_SHA [skip ci]"
-      git push "$CI_REPOSITORY_URL" "HEAD:$CI_DEFAULT_BRANCH"
-`
 }
 
 // Runs inside the isolated Python build stage, never in the JustCD API. Only
@@ -603,4 +397,63 @@ func ValidateNewNamespace(name string) error {
 		return errors.New("choose a non-system namespace using lowercase DNS letters, numbers and hyphens (at most 63 characters)")
 	}
 	return nil
+}
+
+var (
+	metadataKeyPattern  = regexp.MustCompile(`^([a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$`)
+	labelValuePattern   = regexp.MustCompile(`^([A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?)?$`)
+	ingressClassPattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$`)
+)
+
+// parseMetadata reads "key=value" lines. Labels get Kubernetes label-value
+// rules; annotations only need a single line of bounded length.
+func parseMetadata(text string, label bool) ([][2]string, error) {
+	var out [][2]string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		if !ok || !metadataKeyPattern.MatchString(key) {
+			return nil, errors.New("labels and annotations must be lines of the form key=value with Kubernetes-valid keys")
+		}
+		if label && !labelValuePattern.MatchString(value) {
+			return nil, errors.New("label value for " + key + " is not a valid Kubernetes label value")
+		}
+		if !label && (len(value) > 1024 || strings.ContainsAny(value, "\r\x00")) {
+			return nil, errors.New("annotation value for " + key + " is too long or contains control characters")
+		}
+		if seen[key] {
+			return nil, errors.New("duplicate key " + key)
+		}
+		seen[key] = true
+		if out = append(out, [2]string{key, value}); len(out) > 20 {
+			return nil, errors.New("at most 20 labels or annotations are allowed")
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i][0] < out[j][0] })
+	return out, nil
+}
+
+func (c Config) validateExposure() error {
+	if c.Exposure != "" && c.Exposure != "route" && c.Exposure != "ingress" {
+		return errors.New("exposure must be route or ingress")
+	}
+	if c.IngressTLS != "" && c.IngressTLS != "hosts" && c.IngressTLS != "none" {
+		return errors.New("ingress TLS must be hosts or none")
+	}
+	if c.IngressTLS == "none" && c.Exposure != "ingress" {
+		return errors.New("ingress TLS requires the ingress exposure")
+	}
+	if c.IngressClass != "" && (c.Exposure != "ingress" || !ingressClassPattern.MatchString(c.IngressClass)) {
+		return errors.New("ingress class requires the ingress exposure and a valid class name")
+	}
+	if _, err := parseMetadata(c.ExposureLabels, true); err != nil {
+		return err
+	}
+	_, err := parseMetadata(c.ExposureAnnotations, false)
+	return err
 }

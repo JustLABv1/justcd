@@ -37,6 +37,12 @@ export type PublishingProfileSettings = {
   buildEngine?: string
   caVariable: string
   runnerTag: string
+  exposure?: string
+  exposureLabels?: string
+  exposureAnnotations?: string
+  ingressClass?: string
+  ingressTls?: string
+  templateVersion?: number
   runnerServiceAccount?: string
   runnerScc?: string
   builderSetup?: string

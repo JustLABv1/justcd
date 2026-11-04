@@ -491,6 +491,89 @@ JustCD does not grant privileges, override the image's storage configuration, or
 add insecure TLS flags. Selecting Podman does not certify any particular image or
 its vulnerability policy; validate your maintained image on your runner.
 
+### Route or Ingress, with custom labels
+
+When a profile has an application domain, JustCD publishes the app with an
+OpenShift Route by default. Choose **Kubernetes Ingress** to generate a
+`networking.k8s.io/v1` Ingress instead (optionally with an ingress class).
+**Route / Ingress labels** and **annotations** (one `key=value` per line,
+up to 20 each) are applied to that resource only, for example a router-sharding
+label your platform requires. Changing them creates a profile revision; existing
+apps pick them up through the reviewed profile upgrade, which regenerates
+`.justcd/deployment.yaml`. These settings do not touch the Deployment or Service.
+
+### Customizing application templates
+
+Every application template (Shiny, Streamlit, static website, Python static
+website, Shiny geospatial) consists of five files that JustCD generates into the
+application repository: `Dockerfile`, `.gitlab-ci.yml`, `.justcd/deployment.yaml`
+(the Kubernetes manifest), `.dockerignore` and `.justcd/README.md`. Workspace owners
+can see and edit them under **Settings → Publishing profiles → Application
+templates**.
+
+1. Choose **Customize** for a template. The editor starts from the latest custom
+   version, or the built-in original.
+2. Edit the files. They use Go template syntax with placeholders such as
+   `{{ .Name }}`, `{{ .Namespace }}`, `{{ .Host }}`, `{{ .BaseImage }}` and
+   `{{ .RegistryImage }}`, and conditions such as `{{ if .Host }}…{{ end }}`.
+   The **Placeholders** list in the editor shows every value with its meaning and
+   can insert it at the cursor.
+3. Review **Changes** (a diff against the version you started from) and use
+   **Preview rendered files** to see the exact output, optionally with the real
+   settings of one of your profiles.
+4. **Save as new version.** Versions are immutable and numbered per template
+   (`v1`, `v2`, …); the built-in template stays untouched.
+5. In a profile, choose the **Template version**. Saving that selection publishes a
+   new profile revision. Existing applications keep their version until their
+   owner reviews the profile upgrade, which shows the diff of the regenerated
+   files (including `.justcd/deployment.yaml` and `.gitlab-ci.yml`) before anything
+   is committed.
+
+```yaml
+# .justcd/deployment.yaml – add a label, more replicas and a NetworkPolicy
+spec:
+  replicas: 2
+  template:
+    metadata:
+      labels: {app: {{ .Name }}, cost-center: "4711"}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Name }}-allow-router
+  namespace: {{ .Namespace }}
+spec:
+  podSelector: {matchLabels: {app: {{ .Name }}}}
+  policyTypes: [Ingress]
+```
+
+**Safety rules.** Templates are rendered in a sandbox: only the listed placeholders
+and the helpers `quote`, `json`, `list` and `default` exist; there is no `define`,
+`template` or `block`, no file or network access, and the output is limited to
+1 MiB. On every save JustCD renders the template for a matrix of settings (both
+build engines, Vault and variables, with and without a domain, Route and Ingress,
+with and without `renv.lock`) and rejects the version if any rendering fails
+validation:
+
+- The manifest must contain exactly one Deployment and one Service named after the
+  application, all resources in the application namespace, and only these kinds:
+  Deployment, Service, Route, Ingress, ConfigMap, NetworkPolicy,
+  PodDisruptionBudget, HorizontalPodAutoscaler. Route and Ingress must use the
+  application host and target its Service.
+- The `app` container keeps `JUSTCD_IMAGE_DIGEST` as its image. Additional
+  containers must come from the profile's registry host and carry a tag or digest.
+- Rejected: privileged containers or privilege escalation, running as root, added
+  Linux capabilities, host network/PID/IPC, `hostPath` and other unsafe volume types,
+  `hostPort`, service account changes, enabling the service account token,
+  `NodePort`/`LoadBalancer` services, and certificate private keys.
+- The pipeline must keep the build job that publishes the image digest as the
+  artifact `.justcd-build/image-digest`; JustCD reads and verifies it to commit the
+  deployment manifest. The Dockerfile must contain a `FROM` instruction.
+
+Existing-project onboarding (merge request proposals) always uses the built-in
+files. The pipeline is trusted administrator content that runs in your CI with the
+profile's registry credentials, so review changes to it like any other code.
+
 ### Runners that require a service account and SCC
 
 Some OpenShift runners only allow rootless builds under a dedicated service

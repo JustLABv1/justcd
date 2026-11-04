@@ -182,3 +182,54 @@ func TestRootlessRunnerSettings(t *testing.T) {
 		t.Fatal("invalid SCC accepted")
 	}
 }
+
+func TestExposureResource(t *testing.T) {
+	c := config()
+	c.Host = "app.apps.example.com"
+	plain := manifest(c, 8080)
+	if !strings.Contains(plain, "kind: Route") || strings.Contains(plain, "labels:\n    \"") {
+		t.Fatal("default exposure must stay an unlabeled Route")
+	}
+	c.ExposureLabels = "router=external\nexample.com/team = data"
+	c.ExposureAnnotations = "haproxy.router.openshift.io/timeout=5m"
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	route := manifest(c, 8080)
+	for _, want := range []string{"kind: Route", `"router": "external"`, `"example.com/team": "data"`, `"haproxy.router.openshift.io/timeout": "5m"`} {
+		if !strings.Contains(route, want) {
+			t.Fatalf("route missing %q:\n%s", want, route)
+		}
+	}
+	c.Exposure, c.IngressClass = "ingress", "openshift-default"
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	ing := manifest(c, 8080)
+	for _, want := range []string{"kind: Ingress", "networking.k8s.io/v1", `ingressClassName: "openshift-default"`, `"router": "external"`, "host: app.apps.example.com"} {
+		if !strings.Contains(ing, want) {
+			t.Fatalf("ingress missing %q:\n%s", want, ing)
+		}
+	}
+	c.IngressTLS = "none"
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if none := manifest(c, 8080); !strings.Contains(none, "  tls: []\n") || strings.Contains(none, "hosts:") {
+		t.Fatalf("expected tls: [] without hosts:\n%s", none)
+	}
+	c.IngressTLS = ""
+	if strings.Contains(ing, "kind: Route") {
+		t.Fatal("ingress exposure must not create a Route")
+	}
+	for _, bad := range []string{"no-equals", "bad key=x", "a=b\na=c", "k=has space"} {
+		c.ExposureLabels = bad
+		if c.Validate() == nil {
+			t.Fatalf("label %q accepted", bad)
+		}
+	}
+	c.ExposureLabels, c.Exposure = "", "route"
+	if c.Validate() == nil {
+		t.Fatal("ingress class accepted without ingress exposure")
+	}
+}

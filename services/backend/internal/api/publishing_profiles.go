@@ -166,6 +166,18 @@ func (s *Server) savePublishingProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	checkConfig, _ := input.Settings.Resolve("profile-check", "")
+	if input.Settings.TemplateVersion > 0 {
+		if err := s.attachTemplate(r.Context(), workspace, &checkConfig); err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
+		for _, renv := range []bool{false, true} {
+			if _, err := publishing.RenderConfig(checkConfig, publishing.SourceFacts{HasRenvLock: renv}); err != nil {
+				writeError(w, 400, "the selected template version does not render with these settings: "+err.Error())
+				return
+			}
+		}
+	}
 	if _, err := s.Store.PublishingNamespaceBinding(r.Context(), workspace, input.Settings.ClusterID, checkConfig.Namespace, checkConfig.CreateNamespace); err != nil {
 		writeError(w, 400, "profile namespace destination is unavailable: "+err.Error())
 		return

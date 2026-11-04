@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: statistics
+  namespace: analytics
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: statistics}
+  template:
+    metadata:
+      labels: {app: statistics}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: app
+          image: JUSTCD_IMAGE_DIGEST
+          ports:
+            - {name: http, containerPort: 3838}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: '1', memory: 1Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          readinessProbe:
+            tcpSocket: {port: http}
+            initialDelaySeconds: 10
+          livenessProbe:
+            tcpSocket: {port: http}
+            initialDelaySeconds: 60
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: statistics
+  namespace: analytics
+spec:
+  selector: {app: statistics}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: statistics
+  namespace: analytics
+  labels:
+    "router": "external"
+spec:
+  ingressClassName: "openshift-default"
+  rules:
+    - host: app.apps.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: statistics
+                port: {name: http}
+  tls: []

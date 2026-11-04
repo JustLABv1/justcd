@@ -160,6 +160,7 @@ func (s *Server) publishingProfileUpgrade(w http.ResponseWriter, r *http.Request
 	next.IngressClass = version.Settings.IngressClass
 	next.IngressTLS = version.Settings.IngressTLS
 	next.TemplateVersion = version.Settings.TemplateVersion
+	next.TemplateParameters = version.Settings.TemplateParameters
 	next.RunnerServiceAccount = version.Settings.RunnerServiceAccount
 	next.RunnerSCC = version.Settings.RunnerSCC
 	next.BuilderSetup = version.Settings.BuilderSetup
@@ -263,7 +264,7 @@ func (s *Server) publishingProfileUpgrade(w http.ResponseWriter, r *http.Request
 			plan.Changes = append(plan.Changes, publishing.RecipeChange{Path: file.Path, Before: before, After: file.Content, Exists: exists, LastCommitID: last})
 		}
 	}
-	for _, change := range []profileImageChange{{"Deployment update image", old.GitImage, next.GitImage}, {"Build engine", old.BuildEngine, next.BuildEngine}, {"CI CA variable", old.CAVariable, next.CAVariable}, {"Runtime base image", old.BaseImage, next.BaseImage}, {"CI builder image", old.BuilderImage, next.BuilderImage}, {"Static web server image", old.WebServerImage, next.WebServerImage}, {"Runner tag", old.RunnerTag, next.RunnerTag}, {"Exposure type", old.Exposure, next.Exposure}, {"Exposure labels", old.ExposureLabels, next.ExposureLabels}, {"Exposure annotations", old.ExposureAnnotations, next.ExposureAnnotations}, {"Ingress class", old.IngressClass, next.IngressClass}, {"Ingress TLS", old.IngressTLS, next.IngressTLS}, {"Template version", templateLabel(old.TemplateVersion), templateLabel(next.TemplateVersion)}, {"Runner service account", old.RunnerServiceAccount, next.RunnerServiceAccount}, {"Runner SCC", old.RunnerSCC, next.RunnerSCC}, {"Builder setup command", old.BuilderSetup, next.BuilderSetup}, {"Image pull secret", old.PullSecret, next.PullSecret}} {
+	for _, change := range []profileImageChange{{"Deployment update image", old.GitImage, next.GitImage}, {"Build engine", old.BuildEngine, next.BuildEngine}, {"CI CA variable", old.CAVariable, next.CAVariable}, {"Runtime base image", old.BaseImage, next.BaseImage}, {"CI builder image", old.BuilderImage, next.BuilderImage}, {"Static web server image", old.WebServerImage, next.WebServerImage}, {"Runner tag", old.RunnerTag, next.RunnerTag}, {"Exposure type", old.Exposure, next.Exposure}, {"Exposure labels", old.ExposureLabels, next.ExposureLabels}, {"Exposure annotations", old.ExposureAnnotations, next.ExposureAnnotations}, {"Ingress class", old.IngressClass, next.IngressClass}, {"Ingress TLS", old.IngressTLS, next.IngressTLS}, {"Template parameters", old.TemplateParameters, next.TemplateParameters}, {"Template version", templateLabel(old.TemplateVersion), templateLabel(next.TemplateVersion)}, {"Runner service account", old.RunnerServiceAccount, next.RunnerServiceAccount}, {"Runner SCC", old.RunnerSCC, next.RunnerSCC}, {"Builder setup command", old.BuilderSetup, next.BuilderSetup}, {"Image pull secret", old.PullSecret, next.PullSecret}} {
 		if change.Before != change.After {
 			plan.Images = append(plan.Images, change)
 		}

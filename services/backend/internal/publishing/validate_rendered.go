@@ -1,8 +1,14 @@
 package publishing
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	networkingv1 "k8s.io/api/networking/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/validation"
+	"net"
 	"path"
 	"regexp"
 	"sort"
@@ -149,6 +155,8 @@ func validateResource(c Config, r resource) error {
 		if dig(r.body, "spec", "defaultBackend") != nil {
 			return errors.New("spec.defaultBackend is not allowed")
 		}
+	case "NetworkPolicy":
+		return validateNetworkPolicy(c, r)
 	case "HorizontalPodAutoscaler":
 		if dig(r.body, "spec", "scaleTargetRef", "kind") != "Deployment" || dig(r.body, "spec", "scaleTargetRef", "name") != c.Name {
 			return errors.New("scaleTargetRef must be Deployment " + c.Name)
@@ -314,4 +322,96 @@ func registryHost(image string) string {
 func hasTagOrDigest(image string) bool {
 	last := path.Base(image)
 	return strings.Contains(last, ":") || strings.Contains(image, "@sha256:")
+}
+
+// Policies may affect only this application's pods, never every pod in a shared namespace.
+func validateNetworkPolicy(c Config, r resource) error {
+	b, err := json.Marshal(r.body)
+	if err != nil {
+		return err
+	}
+	var policy networkingv1.NetworkPolicy
+	if err := yaml.UnmarshalStrict(b, &policy); err != nil {
+		return fmt.Errorf("invalid NetworkPolicy: %w", err)
+	}
+	selector := policy.Spec.PodSelector
+	if len(selector.MatchLabels) != 1 || selector.MatchLabels["app"] != c.Name || len(selector.MatchExpressions) != 0 {
+		return errors.New("NetworkPolicy podSelector must be exactly matchLabels: {app: <application name>}")
+	}
+	seen := map[networkingv1.PolicyType]bool{}
+	for _, typ := range policy.Spec.PolicyTypes {
+		if (typ != networkingv1.PolicyTypeIngress && typ != networkingv1.PolicyTypeEgress) || seen[typ] {
+			return errors.New("NetworkPolicy policyTypes must contain unique Ingress/Egress values")
+		}
+		seen[typ] = true
+	}
+	checkPeers := func(peers []networkingv1.NetworkPolicyPeer) error {
+		for _, peer := range peers {
+			for _, sel := range []*metav1.LabelSelector{peer.NamespaceSelector, peer.PodSelector} {
+				if sel != nil {
+					if _, err := metav1.LabelSelectorAsSelector(sel); err != nil {
+						return fmt.Errorf("invalid peer selector: %w", err)
+					}
+				}
+			}
+			if peer.IPBlock != nil {
+				if peer.NamespaceSelector != nil || peer.PodSelector != nil {
+					return errors.New("ipBlock cannot be combined with selectors in one peer")
+				}
+				_, block, err := net.ParseCIDR(peer.IPBlock.CIDR)
+				if err != nil {
+					return errors.New("invalid NetworkPolicy ipBlock CIDR")
+				}
+				for _, except := range peer.IPBlock.Except {
+					ip, subnet, err := net.ParseCIDR(except)
+					if err != nil {
+						return errors.New("invalid NetworkPolicy ipBlock exception")
+					}
+					bits, _ := block.Mask.Size()
+					subBits, _ := subnet.Mask.Size()
+					if !block.Contains(ip) || subBits <= bits {
+						return errors.New("ipBlock exceptions must be strict subnets of the CIDR")
+					}
+				}
+			}
+		}
+		return nil
+	}
+	checkPorts := func(ports []networkingv1.NetworkPolicyPort) error {
+		for _, p := range ports {
+			if p.Protocol != nil && *p.Protocol != "TCP" && *p.Protocol != "UDP" && *p.Protocol != "SCTP" {
+				return errors.New("invalid NetworkPolicy port protocol")
+			}
+			if p.Port != nil {
+				if p.Port.Type == intstr.Int {
+					if p.Port.IntVal < 1 || p.Port.IntVal > 65535 {
+						return errors.New("NetworkPolicy port must be between 1 and 65535")
+					}
+				} else if len(validation.IsValidPortName(p.Port.StrVal)) != 0 {
+					return errors.New("invalid NetworkPolicy named port")
+				}
+			}
+			if p.EndPort != nil && (p.Port == nil || p.Port.Type != intstr.Int || *p.EndPort < p.Port.IntVal || *p.EndPort > 65535) {
+				return errors.New("invalid NetworkPolicy endPort")
+			}
+		}
+		return nil
+	}
+	for _, rule := range policy.Spec.Ingress {
+		if err := checkPeers(rule.From); err != nil {
+			return err
+		}
+		if err := checkPorts(rule.Ports); err != nil {
+			return err
+		}
+	}
+	for _, rule := range policy.Spec.Egress {
+		if err := checkPeers(rule.To); err != nil {
+			return err
+		}
+		if err := checkPorts(rule.Ports); err != nil {
+			return err
+		}
+	}
+	return nil
 }

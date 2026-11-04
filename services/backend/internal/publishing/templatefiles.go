@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"text/template"
@@ -56,6 +57,7 @@ type KV struct{ Key, Value string }
 
 // TemplateData is everything a template can reference, as {{ .Field }}.
 type TemplateData struct {
+	Parameters    map[string]string
 	RecipeVersion string
 	// Application
 	Name, Namespace, Host, Runtime, EntryPoint string
@@ -85,6 +87,7 @@ type Placeholder struct {
 }
 
 var placeholderDocs = map[string]string{
+	"Parameters":           `Non-secret profile parameters, for example {{ quote (default "ingress-system" (index .Parameters "ingressNamespace")) }}.`,
 	"RecipeVersion":        "JustCD recipe version of the built-in templates.",
 	"Name":                 "Application name (DNS label).",
 	"Namespace":            "Target namespace.",
@@ -206,7 +209,8 @@ func runtimePort(c Config) int {
 type SourceFacts struct{ HasRenvLock bool }
 
 func templateData(c Config, facts SourceFacts) TemplateData {
-	d := TemplateData{
+	parameters, _ := ParseTemplateParameters(c.TemplateParameters)
+	d := TemplateData{Parameters: parameters,
 		RecipeVersion: Version, Name: c.Name, Namespace: c.Namespace, Host: c.Host, Runtime: c.Runtime, EntryPoint: c.EntryPoint,
 		Port: runtimePort(c), StaticDir: path.Join("source", c.EntryPoint), BuildCommand: c.BuildCommand, OutputDir: c.OutputDir,
 		StaticOutputScript: staticOutputScript, HasRenvLock: facts.HasRenvLock,
@@ -328,10 +332,10 @@ func checkBranch(b *parse.BranchNode, isRange bool) error {
 	return nil
 }
 
-// RenderFiles renders the five template files for a configuration.
+// RenderFiles renders required files and optional manifests for a configuration.
 func RenderFiles(files map[string]string, d TemplateData) (map[string]string, error) {
 	out := map[string]string{}
-	for _, p := range TemplateFilePaths {
+	for _, p := range OrderedTemplatePaths(files) {
 		text, ok := files[p]
 		if !ok {
 			return nil, errors.New("template file " + p + " is missing")
@@ -352,8 +356,19 @@ func RenderFiles(files map[string]string, d TemplateData) (map[string]string, er
 
 // CheckTemplateFiles verifies the file set and syntax without rendering.
 func CheckTemplateFiles(files map[string]string) error {
-	if len(files) != len(TemplateFilePaths) {
-		return errors.New("a template contains exactly: " + strings.Join(TemplateFilePaths, ", "))
+	if len(files) > len(TemplateFilePaths)+10 {
+		return errors.New("a template may contain at most 10 additional manifest files")
+	}
+	for p, text := range files {
+		if isRequiredTemplatePath(p) {
+			continue
+		}
+		if !extraManifestPath.MatchString(p) {
+			return fmt.Errorf("unsupported template path %q; additional manifests must use .justcd/manifests/<name>.yaml", p)
+		}
+		if _, err := parseTemplate(p, text); err != nil {
+			return err
+		}
 	}
 	for _, p := range TemplateFilePaths {
 		text, ok := files[p]
@@ -368,6 +383,57 @@ func CheckTemplateFiles(files map[string]string) error {
 		}
 	}
 	return nil
+}
+
+var extraManifestPath = regexp.MustCompile(`^\.justcd/manifests/[a-z0-9][a-z0-9-]{0,62}\.yaml$`)
+
+func isRequiredTemplatePath(p string) bool {
+	for _, required := range TemplateFilePaths {
+		if p == required {
+			return true
+		}
+	}
+	return false
+}
+
+// OrderedTemplatePaths keeps required files first and optional manifests sorted.
+func OrderedTemplatePaths(files map[string]string) []string {
+	out := append([]string{}, TemplateFilePaths...)
+	var extra []string
+	for p := range files {
+		if !isRequiredTemplatePath(p) {
+			extra = append(extra, p)
+		}
+	}
+	sort.Strings(extra)
+	return append(out, extra...)
+}
+
+// ParseTemplateParameters parses bounded, non-secret key=value profile values.
+func ParseTemplateParameters(text string) (map[string]string, error) {
+	if len(text) > 8192 {
+		return nil, errors.New("template parameters exceed 8 KiB")
+	}
+	out := map[string]string{}
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		if !ok || !regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`).MatchString(key) || strings.ContainsRune(value, 0) {
+			return nil, errors.New("template parameters must be key=value lines with alphanumeric keys starting with a letter")
+		}
+		if _, exists := out[key]; exists {
+			return nil, fmt.Errorf("duplicate template parameter %s", key)
+		}
+		out[key] = value
+	}
+	if len(out) > 50 {
+		return nil, errors.New("at most 50 template parameters are allowed")
+	}
+	return out, nil
 }
 
 // TemplateFileSet holds resolved custom template files. It is a pointer in
@@ -389,9 +455,35 @@ func RenderConfig(c Config, facts SourceFacts) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := CheckTemplateFiles(files); err != nil {
+		return nil, err
+	}
+	if _, err := ParseTemplateParameters(c.TemplateParameters); err != nil {
+		return nil, err
+	}
 	out, err := RenderFiles(files, templateData(c, facts))
 	if err != nil {
 		return nil, err
+	}
+	// Include optional resources in the single manifest consumed by both build engines
+	// and JustCD completion. This also makes additions/removals visible in upgrades.
+	for _, p := range OrderedTemplatePaths(files) {
+		if isRequiredTemplatePath(p) || strings.TrimSpace(out[p]) == "" {
+			continue
+		}
+		docs, err := parseDocuments(out[p])
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", p, err)
+		}
+		for _, r := range docs {
+			if _, ok := extraKinds[r.kind]; !ok {
+				return nil, fmt.Errorf("%s: additional manifests may only contain ConfigMap, NetworkPolicy, PodDisruptionBudget or HorizontalPodAutoscaler", p)
+			}
+		}
+		out[FileDeployment] = strings.TrimSpace(out[FileDeployment]) + "\n---\n" + strings.TrimSpace(out[p]) + "\n"
+	}
+	if len(out[FileDeployment]) > maxRenderedBytes {
+		return nil, errOutputLimit
 	}
 	if err := ValidateRendered(c, out); err != nil {
 		return nil, err

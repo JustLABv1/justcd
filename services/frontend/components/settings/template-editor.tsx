@@ -34,6 +34,27 @@ export function versionLabel(version: number, label?: string) {
   return label ? `v${version} · ${label}` : `v${version}`
 }
 
+const networkPolicyPath = ".justcd/manifests/network-policy.yaml"
+const ingressPolicy = `apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Name }}-allow-ingress
+  namespace: {{ .Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Name }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ quote (default "replace-with-ingress-namespace" (index .Parameters "ingressNamespace")) }}
+      ports:
+        - protocol: TCP
+          port: {{ .Port }}
+`
+
 const editorClass =
   "h-[32rem] min-h-[20rem] resize-y [field-sizing:fixed] rounded-none border-0 font-mono text-xs leading-5 whitespace-pre focus-visible:ring-inset"
 
@@ -60,6 +81,7 @@ export function TemplateEditor({
   const [files, setFiles] = useState<Record<string, string>>({})
   const [active, setActive] = useState("Dockerfile")
   const [label, setLabel] = useState("")
+  const [manifestName, setManifestName] = useState("")
   const [view, setView] = useState("edit")
   const [previewProfile, setPreviewProfile] = useState("")
   const [rendered, setRendered] = useState<Record<string, string> | null>(null)
@@ -73,6 +95,7 @@ export function TemplateEditor({
     setBaseVersion(version)
     setBaseFiles(loaded.files)
     setFiles(loaded.files)
+    setActive("Dockerfile")
     setRendered(null)
   }
   useEffect(() => {
@@ -96,9 +119,22 @@ export function TemplateEditor({
   }, [base])
 
   const changed = useMemo(
-    () => Object.keys(files).filter((path) => files[path] !== baseFiles[path]),
+    () =>
+      Array.from(
+        new Set([...Object.keys(files), ...Object.keys(baseFiles)])
+      ).filter((path) => files[path] !== baseFiles[path]),
     [files, baseFiles]
   )
+  const fileOrder = detail
+    ? [
+        ...detail.fileOrder,
+        ...Array.from(
+          new Set([...Object.keys(files), ...Object.keys(baseFiles)])
+        )
+          .filter((path) => !detail.fileOrder.includes(path))
+          .sort(),
+      ]
+    : []
   const rows = useMemo(
     () => reviewTextRows(baseFiles[active] ?? "", files[active] ?? ""),
     [baseFiles, files, active]
@@ -221,6 +257,69 @@ export function TemplateEditor({
               />
             </FormField>
           </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/20 p-3">
+            <p className="max-w-2xl text-xs leading-5 text-muted-foreground">
+              Optional manifests are included in the deployment plan. An ingress
+              policy isolates incoming traffic for this app; configure
+              ingressNamespace in the profile and allow any other required
+              callers.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!!files[networkPolicyPath]}
+              onClick={() => {
+                setFiles({ ...files, [networkPolicyPath]: ingressPolicy })
+                setActive(networkPolicyPath)
+                setView("edit")
+              }}
+            >
+              Add ingress network policy
+            </Button>
+          </div>
+          <Disclosure summary="Add another optional manifest">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-0 flex-1">
+                <FormField
+                  label="Manifest filename"
+                  htmlFor="template-manifest-name"
+                  hint="Lowercase letters, numbers and hyphens, ending in .yaml. Up to 10 optional files; all resources must target this app's namespace."
+                >
+                  <Input
+                    id="template-manifest-name"
+                    value={manifestName}
+                    onChange={(event) => setManifestName(event.target.value)}
+                    placeholder="monitoring-policy.yaml"
+                  />
+                </FormField>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={
+                  !/^[a-z0-9][a-z0-9-]{0,62}\.yaml$/.test(manifestName) ||
+                  files[`.justcd/manifests/${manifestName}`] !== undefined ||
+                  Object.keys(files).filter((path) =>
+                    path.startsWith(".justcd/manifests/")
+                  ).length >= 10
+                }
+                onClick={() => {
+                  const path = `.justcd/manifests/${manifestName}`
+                  setFiles({
+                    ...files,
+                    [path]:
+                      "# Add ConfigMap, NetworkPolicy, PodDisruptionBudget or HorizontalPodAutoscaler resources here.\n# Use {{ .Namespace }} for metadata.namespace.\n",
+                  })
+                  setActive(path)
+                  setManifestName("")
+                  setView("edit")
+                }}
+              >
+                Add manifest
+              </Button>
+            </div>
+          </Disclosure>
           <Tabs
             value={active}
             onValueChange={(value) => setActive(String(value))}
@@ -230,7 +329,7 @@ export function TemplateEditor({
               aria-label="Template files"
               className="flex-wrap"
             >
-              {detail.fileOrder.map((path) => (
+              {fileOrder.map((path) => (
                 <TabsTrigger
                   key={path}
                   value={path}
@@ -269,7 +368,11 @@ export function TemplateEditor({
                     }
                     size="sm"
                   >
-                    {changed.includes(active) ? "Modified" : "Unchanged"}
+                    {files[active] === undefined
+                      ? "Removed"
+                      : changed.includes(active)
+                        ? "Modified"
+                        : "Unchanged"}
                   </Badge>
                 </div>
                 <Textarea
@@ -305,7 +408,10 @@ export function TemplateEditor({
                   className={editorClass}
                   aria-busy={rendering}
                   value={
-                    rendered?.[active] ??
+                    (rendered
+                      ? (rendered[active] ??
+                        "# This optional manifest was removed.")
+                      : undefined) ??
                     (rendering
                       ? "Rendering preview…"
                       : "Preview unavailable. Review the validation error below.")
@@ -336,11 +442,27 @@ export function TemplateEditor({
               variant="outline"
               disabled={files[active] === baseFiles[active]}
               onClick={() =>
-                setFiles({ ...files, [active]: baseFiles[active] })
+                setFiles({ ...files, [active]: baseFiles[active] ?? "" })
               }
             >
               Reset this file
             </Button>
+            {active.startsWith(".justcd/manifests/") && (
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                disabled={files[active] === undefined}
+                onClick={() => {
+                  const next = { ...files }
+                  delete next[active]
+                  setFiles(next)
+                  setActive("Dockerfile")
+                }}
+              >
+                Remove manifest
+              </Button>
+            )}
           </div>
           <Disclosure summary="Placeholders and helper functions">
             <ul className="grid gap-2 md:grid-cols-2">

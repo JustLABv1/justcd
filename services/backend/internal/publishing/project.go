@@ -82,7 +82,8 @@ type Config struct {
 	// certificate) or "none" (tls: []).
 	IngressTLS string `json:"ingressTls,omitempty"`
 	// TemplateVersion pins a custom template version (0 = built-in).
-	TemplateVersion int `json:"templateVersion,omitempty"`
+	TemplateVersion    int    `json:"templateVersion,omitempty"`
+	TemplateParameters string `json:"templateParameters,omitempty"`
 	// TemplateFiles are the resolved files of that version; never persisted.
 	TemplateFiles        *TemplateFileSet `json:"-"`
 	RunnerServiceAccount string           `json:"runnerServiceAccount,omitempty"`
@@ -182,6 +183,9 @@ func (c Config) Validate() error {
 		return errors.New("runner tag is invalid")
 	}
 	if err := c.validateExposure(); err != nil {
+		return err
+	}
+	if _, err := ParseTemplateParameters(c.TemplateParameters); err != nil {
 		return err
 	}
 	if c.TemplateVersion < 0 {

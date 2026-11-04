@@ -48,6 +48,7 @@ const emptySettings: PublishingProfileSettings = {
   ingressClass: "",
   ingressTls: "hosts",
   templateVersion: 0,
+  templateParameters: "",
   runnerServiceAccount: "",
   runnerScc: "",
   builderSetup: "",
@@ -208,7 +209,11 @@ export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="text-sm font-medium">{profile.name}</h3>
                     <Badge variant="outline">v{profile.currentRevision}</Badge>
-                    <Badge variant={profile.enabled ? "success-light" : "destructive-light"}>
+                    <Badge
+                      variant={
+                        profile.enabled ? "success-light" : "destructive-light"
+                      }
+                    >
                       {profile.enabled ? "Enabled" : "Disabled"}
                     </Badge>
                   </div>
@@ -620,6 +625,25 @@ function ProfileEditor({
                 ]}
               />
             </FormField>
+            <div className="md:col-span-2">
+              <FormField
+                label="Template parameters"
+                htmlFor="profile-template-parameters"
+                hint={
+                  "Optional non-secret key=value lines used by custom templates via .Parameters. For the ingress policy starter: ingressNamespace=your-ingress-namespace. Verify the namespace with your platform administrator. Changes create a profile version for applications to review."
+                }
+              >
+                <Textarea
+                  id="profile-template-parameters"
+                  value={settings.templateParameters ?? ""}
+                  onChange={(event) =>
+                    patch({ templateParameters: event.target.value })
+                  }
+                  placeholder="ingressNamespace=your-ingress-namespace"
+                  className="font-mono text-xs"
+                />
+              </FormField>
+            </div>
             <FormField label="Cluster" htmlFor="profile-cluster">
               <FormSelect
                 id="profile-cluster"

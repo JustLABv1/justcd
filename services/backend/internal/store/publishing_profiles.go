@@ -98,6 +98,7 @@ func (s *Store) SavePublishingProfile(ctx context.Context, p PublishingProfile, 
 		previous.IngressClass = p.Settings.IngressClass
 		previous.IngressTLS = p.Settings.IngressTLS
 		previous.TemplateVersion = p.Settings.TemplateVersion
+		previous.TemplateParameters = p.Settings.TemplateParameters
 		previous.RunnerServiceAccount = p.Settings.RunnerServiceAccount
 		previous.RunnerSCC = p.Settings.RunnerSCC
 		previous.BuilderSetup = p.Settings.BuilderSetup
@@ -106,7 +107,7 @@ func (s *Store) SavePublishingProfile(ctx context.Context, p PublishingProfile, 
 		previous.GitImage = p.Settings.GitImage
 		previous.PullSecret = p.Settings.PullSecret
 		if count > 0 && previous != p.Settings {
-			return errors.New("profile is in use; only build engines, build/deployment job images, runner tags, runner service account/SCC/setup script, route/ingress type and labels/annotations, template version, custom CA variable names, and image-pull secrets may change; create a new profile to change other infrastructure settings")
+			return errors.New("profile is in use; only build engines, build/deployment job images, runner tags, runner service account/SCC/setup script, route/ingress type and labels/annotations, template version/parameters, custom CA variable names, and image-pull secrets may change; create a new profile to change other infrastructure settings")
 		}
 	}
 	for _, c := range credentials {

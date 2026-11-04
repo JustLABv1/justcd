@@ -518,9 +518,9 @@ templates**.
    `{{ .RegistryImage }}`, and conditions such as `{{ if .Host }}…{{ end }}`.
    The **Placeholders** list in the editor shows every value with its meaning and
    can insert it at the cursor.
-3. Review **Changes** (a diff against the version you started from) and use
-   **Preview rendered files** to see the exact output, optionally with the real
-   settings of one of your profiles.
+3. Review **Compare changes** for a diff against the starting version. In **Edit**,
+   rendered output appears beside the template and updates automatically. Select
+   **Preview with** to render with the real settings of one of your profiles.
 4. **Save as new version.** Versions are immutable and numbered per template
    (`v1`, `v2`, …); the built-in template stays untouched.
 5. In a profile, choose the **Template version**. Saving that selection publishes a
@@ -573,6 +573,60 @@ validation:
 Existing-project onboarding (merge request proposals) always uses the built-in
 files. The pipeline is trusted administrator content that runs in your CI with the
 profile's registry credentials, so review changes to it like any other code.
+
+### Optional network policies
+
+Built-in templates add no network policies. Workspace owners can opt in for
+platforms that require them:
+
+1. Open **Workspace settings → Publishing profiles → Application templates → Customize**.
+2. Click **Add ingress network policy**. The editor adds
+   `.justcd/manifests/network-policy.yaml`, using the application's name,
+   namespace and runtime port. Edit the policy to match your platform's callers.
+3. Save a new template version. Select that version in the publishing profile.
+4. Set **Template parameters** to `ingressNamespace=<actual ingress controller namespace>`.
+   This is a non-secret `key=value` field, not a credential store. Verify the
+   namespace and any required pod selectors with your platform administrator.
+5. In the template editor, choose that profile in **Preview with** to inspect the
+   rendered policy. Existing apps upgrade through the profile update review;
+   new apps use the profile's selected template version.
+
+The starter restricts ingress to TCP on the application's runtime port from the
+configured namespace. Its fallback `replace-with-ingress-namespace` is a
+placeholder, not a discovered cluster setting. It intentionally does not assume
+OpenShift or any particular ingress namespace. Add a `podSelector` alongside
+`namespaceSelector` in the **same peer** if only specific ingress-controller pods
+should be allowed. Separate peers are alternatives (OR); selectors in the same
+peer must both match (AND). Host-network ingress controllers may require a
+platform-specific policy instead of this starter.
+
+Selecting app pods with an ingress NetworkPolicy isolates their incoming traffic.
+Include other required callers, such as monitoring and other services, before
+applying. Network policies are additive and require a network plugin that enforces
+them; JustCD does not change cluster-wide network configuration.
+
+Use **Add another optional manifest** for additional policies or other supported
+resources. Custom versions accept up to ten optional files matching
+`.justcd/manifests/<lowercase-name>.yaml` (128 KiB each). These may contain
+NetworkPolicy, ConfigMap, PodDisruptionBudget or HorizontalPodAutoscaler resources.
+They are rendered in filename order and combined with `.justcd/deployment.yaml`
+into the single manifest consumed by CI and JustCD. The rendered deployment
+preview shows the combined result. Every resource must target the app namespace;
+a NetworkPolicy must select exactly `matchLabels: {app: <application name>}`.
+Duplicate identities, unsupported resource kinds and malformed policies are rejected.
+The combined deployment is limited to 20 resources and 1 MiB.
+
+Templates access optional profile parameters using Go templates, for example:
+
+```yaml
+kubernetes.io/metadata.name: {{ quote (default "replace-with-ingress-namespace" (index .Parameters "ingressNamespace")) }}
+```
+
+Provide defaults for template validation with sample settings. The profile is also
+validated with its actual parameters when saved. Parameter edits create a profile
+revision and appear in the application upgrade review. Removing the optional
+manifest creates a new immutable template version; review the resulting resource
+removal through the normal deployment plan and approval process.
 
 ### Runners that require a service account and SCC
 

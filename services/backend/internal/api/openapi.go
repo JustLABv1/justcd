@@ -69,7 +69,7 @@ paths:
   /workspaces/{workspaceID}/publishing-templates/{templateID}/versions:
     post:
       summary: Save a new, immutable template version
-      description: Requires the workspace owner role and CSRF. The five template files are parsed, rendered for a matrix of configurations and validated (safe manifest, digest-publishing pipeline) before the version is stored. Versions are never updated or deleted.
+      description: Requires the workspace owner role and CSRF. The five required template files and up to ten optional .justcd/manifests/<name>.yaml files are parsed, rendered for a matrix of configurations and validated (safe manifest, digest-publishing pipeline) before the version is stored. Versions are never updated or deleted.
       parameters:
         - {name: workspaceID, in: path, required: true, schema: {type: string}}
         - {name: templateID, in: path, required: true, schema: {type: string}}
@@ -82,7 +82,7 @@ paths:
               required: [files]
               properties:
                 label: {type: string, maxLength: 100}
-                files: {type: object, additionalProperties: {type: string}, description: "Exactly Dockerfile, .gitlab-ci.yml, .justcd/deployment.yaml, .dockerignore and .justcd/README.md."}
+                files: {type: object, additionalProperties: {type: string}, description: "Requires Dockerfile, .gitlab-ci.yml, .justcd/deployment.yaml, .dockerignore and .justcd/README.md. Up to ten optional .justcd/manifests/name.yaml files may contain ConfigMap, NetworkPolicy, PodDisruptionBudget or HorizontalPodAutoscaler resources; they are combined into the deployment manifest."}
       responses:
         '201': {description: Version created (metadata without files)}
         '400': {description: A file is missing, has a syntax error, or renders to something unsafe; the message names the problem}
@@ -286,6 +286,7 @@ paths:
                         exposureAnnotations: {type: string, description: "Newline-separated key=value annotations for the Route or Ingress only."}
                         ingressClass: {type: string, description: "Optional ingressClassName; requires exposure ingress."}
                         ingressTls: {type: string, enum: [hosts, none], description: "Ingress TLS block: hosts (default) lists the host, none renders tls: []."}
+                        templateParameters: {type: string, description: "Optional non-secret key=value lines available as .Parameters in custom templates."}
                         templateVersion: {type: integer, minimum: 0, description: "Workspace template version used by this profile; 0 or omitted means the built-in template."}
                         runnerServiceAccount: {type: string, description: "Optional Kubernetes-executor service account override for the build job."}
                         runnerScc: {type: string, description: "Optional OpenShift SCC the build pod must run under (openshift.io/required-scc)."}
@@ -1225,6 +1226,7 @@ components:
             exposureAnnotations: {type: string, description: "Newline-separated key=value annotations for the Route or Ingress only."}
             ingressClass: {type: string, description: "Optional ingressClassName; requires exposure ingress."}
             ingressTls: {type: string, enum: [hosts, none], description: "Ingress TLS block: hosts (default) lists the host, none renders tls: []."}
+            templateParameters: {type: string, description: "Optional non-secret key=value lines available as .Parameters in custom templates."}
             templateVersion: {type: integer, minimum: 0, description: "Workspace template version used by this profile; 0 or omitted means the built-in template."}
             runnerServiceAccount: {type: string, description: "Optional Kubernetes-executor service account override for the build job."}
             runnerScc: {type: string, description: "Optional OpenShift SCC the build pod must run under (openshift.io/required-scc)."}

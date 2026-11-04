@@ -42,6 +42,7 @@ export type PublishingProfileSettings = {
   exposureAnnotations?: string
   ingressClass?: string
   ingressTls?: string
+  templateParameters?: string
   templateVersion?: number
   runnerServiceAccount?: string
   runnerScc?: string

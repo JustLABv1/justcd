@@ -30,6 +30,7 @@ type ProfileSettings struct {
 	IngressTLS          string `json:"ingressTls,omitempty"`
 	// TemplateVersion pins a workspace template version (0 = built-in).
 	TemplateVersion      int    `json:"templateVersion,omitempty"`
+	TemplateParameters   string `json:"templateParameters,omitempty"`
 	RunnerServiceAccount string `json:"runnerServiceAccount,omitempty"`
 	RunnerSCC            string `json:"runnerScc,omitempty"`
 	BuilderSetup         string `json:"builderSetup,omitempty"`
@@ -59,7 +60,7 @@ func (s ProfileSettings) Resolve(name, entry string) (Config, error) {
 	if s.HostSuffix != "" {
 		host = name + "." + s.HostSuffix
 	}
-	c := Config{GitImage: s.GitImage, BuildEngine: s.BuildEngine, CAVariable: s.CAVariable, TemplateID: s.TemplateID, Name: name, Runtime: template.Runtime, EntryPoint: entry, BaseImage: s.BaseImage, BuilderImage: s.BuilderImage, RegistryImage: s.RegistryPrefix + "/" + name, Namespace: s.Namespace, Host: host, PullSecret: s.PullSecret, RunnerTag: s.RunnerTag, Exposure: s.Exposure, ExposureLabels: s.ExposureLabels, ExposureAnnotations: s.ExposureAnnotations, IngressClass: s.IngressClass, IngressTLS: s.IngressTLS, TemplateVersion: s.TemplateVersion, RunnerServiceAccount: s.RunnerServiceAccount, RunnerSCC: s.RunnerSCC, BuilderSetup: s.BuilderSetup, SecretMode: s.SecretMode, VaultAddress: s.VaultAddress, VaultRole: s.VaultRole, VaultPath: s.VaultPath}
+	c := Config{TemplateParameters: s.TemplateParameters, GitImage: s.GitImage, BuildEngine: s.BuildEngine, CAVariable: s.CAVariable, TemplateID: s.TemplateID, Name: name, Runtime: template.Runtime, EntryPoint: entry, BaseImage: s.BaseImage, BuilderImage: s.BuilderImage, RegistryImage: s.RegistryPrefix + "/" + name, Namespace: s.Namespace, Host: host, PullSecret: s.PullSecret, RunnerTag: s.RunnerTag, Exposure: s.Exposure, ExposureLabels: s.ExposureLabels, ExposureAnnotations: s.ExposureAnnotations, IngressClass: s.IngressClass, IngressTLS: s.IngressTLS, TemplateVersion: s.TemplateVersion, RunnerServiceAccount: s.RunnerServiceAccount, RunnerSCC: s.RunnerSCC, BuilderSetup: s.BuilderSetup, SecretMode: s.SecretMode, VaultAddress: s.VaultAddress, VaultRole: s.VaultRole, VaultPath: s.VaultPath}
 	if s.NamespaceMode == "per-application" {
 		c.Namespace = s.NamespacePrefix + name
 		c.CreateNamespace = true

@@ -73,7 +73,11 @@ func (s *Store) RegisterPublishedApplication(ctx context.Context, c Credential, 
 	return tx.Commit()
 }
 func (s *Store) SetPublishingPipeline(ctx context.Context, appID, url string) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE published_applications SET pipeline_url=$2 WHERE application_id=$1`, appID, url)
+	_, err := s.DB.ExecContext(ctx, `UPDATE published_applications SET pipeline_url=$2,
+ completion_status=CASE WHEN config->>'managedCompletion'='true' AND pipeline_url IS DISTINCT FROM $2 THEN 'build_pending' ELSE completion_status END,
+ completion_error=CASE WHEN config->>'managedCompletion'='true' AND pipeline_url IS DISTINCT FROM $2 THEN '' ELSE completion_error END,
+ completion_next_at=CASE WHEN config->>'managedCompletion'='true' AND pipeline_url IS DISTINCT FROM $2 THEN now() ELSE completion_next_at END
+ WHERE application_id=$1`, appID, url)
 	return err
 }
 

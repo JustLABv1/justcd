@@ -6,7 +6,8 @@ export const publishingSize = (bytes: number) => `${bytes / (1024 * 1024)} MiB`
 export async function publishProject<T>(
   metadata: unknown,
   archive: File,
-  limits: PublishingLimits
+  limits: PublishingLimits,
+  onUploadProgress?: (percent: number) => void
 ): Promise<T> {
   if (archive.size > limits.archiveBytes)
     throw new Error(
@@ -16,7 +17,11 @@ export async function publishProject<T>(
   // Authorization metadata precedes the binary upload on the backend stream.
   body.append("metadata", JSON.stringify(metadata))
   body.append("archive", archive)
-  return api<T>("/api/v1/publishing", { method: "POST", body })
+  return api<T>(
+    "/api/v1/publishing",
+    { method: "POST", body },
+    onUploadProgress
+  )
 }
 
 export type PublishingProfileSettings = {

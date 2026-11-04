@@ -3,6 +3,7 @@ package publishing
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -176,6 +177,7 @@ func (g GitLab) Prepare(ctx context.Context, p Project, files []File, variables 
 	for _, f := range files {
 		actions = append(actions, commitAction{Action: "create", File: f})
 	}
+	// start_sha creates a new branch on GitLab; source uploads target existing main.
 	return g.commit(ctx, prefix, map[string]string{"branch": "main", "commit_message": "JustCD source " + fingerprint + " [skip ci]"}, actions)
 }
 func (g GitLab) StartPipeline(ctx context.Context, project int) (string, error) {
@@ -211,14 +213,6 @@ func (g GitLab) ReplaceSource(ctx context.Context, p Project, files []File, fing
 			return errors.New("managed repository contains too many files")
 		}
 	}
-	var branch struct {
-		Commit struct {
-			ID string `json:"id"`
-		} `json:"commit"`
-	}
-	if err := g.request(ctx, "GET", prefix+"/repository/branches/main", nil, &branch); err != nil {
-		return err
-	}
 	actions := []commitAction{}
 	next := map[string]bool{}
 	for _, f := range files {
@@ -238,7 +232,82 @@ func (g GitLab) ReplaceSource(ctx context.Context, p Project, files []File, fing
 			actions = append(actions, commitAction{Action: "delete", File: File{Path: p}})
 		}
 	}
-	return g.commit(ctx, prefix, map[string]string{"branch": "main", "start_sha": branch.Commit.ID, "commit_message": "JustCD source " + fingerprint + " [skip ci]"}, actions)
+	return g.commit(ctx, prefix, map[string]string{"branch": "main", "commit_message": "JustCD source " + fingerprint + " [skip ci]"}, actions)
+}
+
+// SourceMatches verifies retry identity against Git, not only cached database metadata.
+// Git tree IDs are hashes of raw blob contents, including for disk-backed uploads.
+func (g GitLab) SourceMatches(ctx context.Context, p Project, files []File) (bool, error) {
+	existing := map[string]string{}
+	for page := 1; page <= 20; page++ {
+		var tree []struct {
+			Path string `json:"path"`
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		}
+		if err := g.request(ctx, "GET", "/projects/"+strconv.Itoa(p.ID)+"/repository/tree?ref=main&recursive=true&per_page=100&page="+strconv.Itoa(page), nil, &tree); err != nil {
+			return false, err
+		}
+		for _, f := range tree {
+			if f.Type == "blob" && strings.HasPrefix(f.Path, "source/") {
+				existing[f.Path] = f.ID
+			}
+		}
+		if len(tree) < 100 {
+			break
+		}
+		if page == 20 {
+			return false, errors.New("managed repository contains too many files")
+		}
+	}
+	count := 0
+	for _, f := range files {
+		if !strings.HasPrefix(f.Path, "source/") {
+			continue
+		}
+		count++
+		var reader io.Reader
+		var size int64
+		var input *os.File
+		if f.DiskPath != "" {
+			var err error
+			input, err = os.Open(f.DiskPath)
+			if err != nil {
+				return false, err
+			}
+			stat, err := input.Stat()
+			if err != nil {
+				input.Close()
+				return false, err
+			}
+			size = stat.Size()
+			reader = input
+		} else {
+			b := []byte(f.Content)
+			if f.Encoding == "base64" {
+				var err error
+				b, err = base64.StdEncoding.DecodeString(f.Content)
+				if err != nil {
+					return false, err
+				}
+			}
+			size = int64(len(b))
+			reader = bytes.NewReader(b)
+		}
+		h := sha1.New()
+		fmt.Fprintf(h, "blob %d\x00", size)
+		_, err := io.Copy(h, contextReader{ctx, reader})
+		if input != nil {
+			input.Close()
+		}
+		if err != nil {
+			return false, err
+		}
+		if existing[f.Path] != fmt.Sprintf("%x", h.Sum(nil)) {
+			return false, nil
+		}
+	}
+	return count == len(existing), nil
 }
 
 func (g GitLab) ProtectPublishingBranch(ctx context.Context, p Project) error {

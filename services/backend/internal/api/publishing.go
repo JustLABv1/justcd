@@ -246,7 +246,16 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 409, "publication does not match this application")
 			return
 		}
-		if registered.Fingerprint != fingerprint {
+		sourceChanged := registered.Fingerprint != fingerprint
+		if !sourceChanged && in.UpdateApplicationID != "" {
+			matches, checkErr := git.SourceMatches(ctx, project, files)
+			if checkErr != nil {
+				writeError(w, 502, "could not verify the previously uploaded source; retry when GitLab is available")
+				return
+			}
+			sourceChanged = !matches
+		}
+		if sourceChanged {
 			if in.UpdateApplicationID == "" {
 				writeError(w, 409, "application already exists; use Upload new version")
 				return

@@ -4,12 +4,8 @@ import { Badge } from "@/components/reui/badge"
 import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 
-type Publication = {
-  completionStatus?: string
-  completionError?: string
-  pipelineUrl?: string
-  managedCompletion?: boolean
-}
+import type { Publication } from "@/lib/publishing-status"
+
 type StepState = "done" | "active" | "failed" | "waiting"
 type Step = { label: string; detail: string; state: StepState }
 
@@ -99,16 +95,15 @@ function steps(p: Publication): Step[] {
   ]
 }
 
-export function PublishingProgress({
-  applicationId,
-  onReview,
-}: {
-  applicationId: string
-  onReview: () => void
-}) {
-  const [publication, setPublication] = useState<Publication | null>(null)
+// One poller shared by the tab indicator and its panel, even while another tab is open.
+export function usePublication(applicationId: string | undefined) {
+  const [publication, setPublication] = useState<{
+    applicationId: string
+    value: Publication
+  } | null>(null)
   const [failed, setFailed] = useState(false)
   useEffect(() => {
+    if (!applicationId) return
     let active = true
     let timer: number | undefined
     const load = async () => {
@@ -117,7 +112,7 @@ export function PublishingProgress({
           `/api/v1/applications/${encodeURIComponent(applicationId)}/publication`
         )
         if (!active) return
-        setPublication(result.publication)
+        setPublication({ applicationId, value: result.publication })
         setFailed(false)
       } catch {
         if (active) setFailed(true)
@@ -130,6 +125,24 @@ export function PublishingProgress({
       window.clearTimeout(timer)
     }
   }, [applicationId])
+  return {
+    publication:
+      publication && publication.applicationId === applicationId
+        ? publication.value
+        : null,
+    failed,
+  }
+}
+
+export function PublishingProgress({
+  publication,
+  failed,
+  onReview,
+}: {
+  publication: Publication | null
+  failed: boolean
+  onReview: () => void
+}) {
   if (!publication)
     return (
       <p role="status" className="py-5 text-sm text-muted-foreground">

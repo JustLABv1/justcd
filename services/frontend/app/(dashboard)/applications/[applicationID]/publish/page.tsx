@@ -1,9 +1,11 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useParams } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
+import { Spinner } from "@/components/ui/spinner"
 import { Input } from "@/components/ui/input"
 import { ArchiveUpload } from "@/components/applications/archive-upload"
 import {
@@ -39,6 +41,8 @@ type Setup = {
 }
 
 export default function PublishVersionPage() {
+  const router = useRouter()
+  const [uploadPercent, setUploadPercent] = useState(0)
   const { limits, error: limitsError } = usePublishingLimits()
   const { applicationID } = useParams<{ applicationID: string }>()
   const [setup, setSetup] = useState<Setup | null>(null)
@@ -75,6 +79,7 @@ export default function PublishVersionPage() {
     )
       return
     setBusy(true)
+    setUploadPercent(0)
     setError(null)
     try {
       const result = await publishProject<Publication>(
@@ -97,11 +102,13 @@ export default function PublishVersionPage() {
               config: setup.publication.config,
             },
         file,
-        limits
+        limits,
+        setUploadPercent
       )
       setPipeline(result.pipelineUrl)
       setToken("")
       setFile(null)
+      router.push(`/applications/${applicationID}?tab=publishing`)
     } catch (cause) {
       setError(cause)
     } finally {
@@ -131,6 +138,24 @@ export default function PublishVersionPage() {
       )}
       {(error ?? limitsError) != null && (
         <ErrorNotice error={error ?? limitsError} />
+      )}
+      {busy && (
+        <Alert
+          role="status"
+          className="mb-5 border-primary/25 bg-primary/5 p-4"
+        >
+          <Spinner className="text-primary" />
+          <AlertTitle>
+            {uploadPercent < 100
+              ? `Uploading new version · ${uploadPercent}%`
+              : "Upload complete · Preparing build"}
+          </AlertTitle>
+          <AlertDescription>
+            {uploadPercent < 100
+              ? "Your source archive is being transferred. Keep this page open."
+              : "JustCD is validating the source, committing it to GitLab, and requesting a build. This may take a little while. Keep this page open; publishing progress will open automatically once the pipeline starts."}
+          </AlertDescription>
+        </Alert>
       )}
       {pipeline ? (
         <Panel
@@ -240,7 +265,11 @@ export default function PublishVersionPage() {
               <Button
                 type="submit"
                 loading={busy}
-                loadingText="Uploading source…"
+                loadingText={
+                  uploadPercent < 100
+                    ? `Uploading source · ${uploadPercent}%`
+                    : "Preparing build…"
+                }
                 disabled={!file || !confirmed}
               >
                 Upload and build version

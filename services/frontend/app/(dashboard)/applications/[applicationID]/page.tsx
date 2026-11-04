@@ -1,6 +1,8 @@
 "use client"
 
-import { PublishingProgress } from "@/components/applications/publishing-progress"
+import { PublishingProgress, usePublication } from "@/components/applications/publishing-progress"
+import { isPublishingInProgress } from "@/lib/publishing-status"
+import { Badge } from "@/components/reui/badge"
 import { AIAssistant } from "@/components/ai-assistant"
 import { DeploymentScheduleNotice } from "@/components/deployment-schedule-notice"
 import { DeploymentSchedulePanel, ScheduledOperationActions } from "@/components/deployment-schedule"
@@ -47,6 +49,8 @@ export default function ApplicationDetailPage() {
   const [kustomization, setKustomization] = useState<{ namespace: string; commit: string } | null>(null)
   const [kustomizationError, setKustomizationError] = useState<unknown | null>(null)
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
+  const { publication, failed: publicationFailed } = usePublication(application?.labels?.["justcd.io/published"] === "true" && (workspace?.role === "owner" || workspace?.role === "deployer") ? application.id : undefined)
+  const publishingInProgress = isPublishingInProgress(publication)
   const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMember[]>([])
   const [plans, setPlans] = useState<PlanRecord[]>([])
   const [activePlan, setActivePlan] = useState<PlanRecord | null>(null)
@@ -775,8 +779,8 @@ export default function ApplicationDetailPage() {
             ...(application.labels?.["justcd.io/published"] === "true" && canDeploy ? [{ id: "publishing", label: "Publishing" }] : []),
             { id: "pull-requests", label: "Pull requests" },
             { id: "settings", label: "Settings" },
-          ].map((tab) => <TabsTrigger key={tab.id} value={tab.id}>
-            {tab.label}{tab.count !== undefined && <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs tabular-nums text-muted-foreground">{tab.count}</span>}
+          ].map((tab) => <TabsTrigger key={tab.id} value={tab.id} className={tab.id === "publishing" && publishingInProgress ? "text-primary" : undefined}>
+            {tab.label}{tab.id === "publishing" && publishingInProgress && <Badge variant="info-light" size="sm"><span aria-hidden="true" className="size-1.5 rounded-full bg-primary motion-safe:animate-pulse" />In progress</Badge>}{tab.count !== undefined && <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs tabular-nums text-muted-foreground">{tab.count}</span>}
           </TabsTrigger>)}
         </TabsList>}
 
@@ -797,7 +801,7 @@ export default function ApplicationDetailPage() {
         </TabsContent>
 
         {application.labels?.["justcd.io/published"] === "true" && canDeploy && <TabsContent value="publishing" className="outline-none">
-          <PublishingProgress key={application.id} applicationId={application.id} onReview={() => selectTab("changes")} />
+          <PublishingProgress publication={publication} failed={publicationFailed} onReview={() => selectTab("changes")} />
         </TabsContent>}
 
         <TabsContent value="topology" className="outline-none">

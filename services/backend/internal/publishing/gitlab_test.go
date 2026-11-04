@@ -45,17 +45,23 @@ func TestReplaceSourceDeletesRemovedFilesButPreservesDeployment(t *testing.T) {
 		switch calls {
 		case 1:
 			return response(200, `[{"path":"source/old.R","type":"blob"},{"path":"source/app.R","type":"blob"},{"path":"deploy/application.yaml","type":"blob"}]`), nil
-		case 2:
-			return response(200, `{"commit":{"id":"abc"}}`), nil
 		default:
+			if r.Method != "POST" || !strings.HasSuffix(r.URL.Path, "/repository/commits") {
+				t.Fatal("expected commit to existing branch")
+			}
 			var body struct {
-				Actions []struct {
+				StartSHA string `json:"start_sha"`
+				Branch   string `json:"branch"`
+				Actions  []struct {
 					Action string `json:"action"`
 					Path   string `json:"file_path"`
 				}
 			}
 			if e := json.NewDecoder(r.Body).Decode(&body); e != nil {
 				t.Fatal(e)
+			}
+			if body.StartSHA != "" || body.Branch != "main" {
+				t.Fatal("source updates must commit to existing main without branch-creation options")
 			}
 			deleted := false
 			updated := false

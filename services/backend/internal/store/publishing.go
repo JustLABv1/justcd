@@ -7,22 +7,23 @@ import (
 )
 
 type PublishedApplication struct {
-	ProfileVersion int64           `json:"-"`
-	ProfileID      *string         `json:"profileId,omitempty"`
-	ApplicationID  string          `json:"applicationId"`
-	Config         json.RawMessage `json:"config"`
-	GitLabURL      string          `json:"gitlabUrl"`
-	Group          string          `json:"group"`
-	Fingerprint    string          `json:"-"`
-	RepositoryURL  string          `json:"repositoryUrl"`
-	ProjectURL     string          `json:"projectUrl"`
-	ProjectID      int             `json:"-"`
-	PipelineURL    string          `json:"pipelineUrl"`
+	ProfileRevision int64           `json:"profileRevision,omitempty"`
+	ProfileVersion  int64           `json:"-"`
+	ProfileID       *string         `json:"profileId,omitempty"`
+	ApplicationID   string          `json:"applicationId"`
+	Config          json.RawMessage `json:"config"`
+	GitLabURL       string          `json:"gitlabUrl"`
+	Group           string          `json:"group"`
+	Fingerprint     string          `json:"-"`
+	RepositoryURL   string          `json:"repositoryUrl"`
+	ProjectURL      string          `json:"projectUrl"`
+	ProjectID       int             `json:"-"`
+	PipelineURL     string          `json:"pipelineUrl"`
 }
 
 func (s *Store) PublishedApplication(ctx context.Context, workspace, url string) (PublishedApplication, error) {
 	var p PublishedApplication
-	err := s.DB.QueryRowContext(ctx, `SELECT application_id,config,gitlab_url,group_path,fingerprint,repository_url,project_url,gitlab_project_id,pipeline_url,profile_id FROM published_applications WHERE workspace_id=$1 AND repository_url=$2`, workspace, url).Scan(&p.ApplicationID, &p.Config, &p.GitLabURL, &p.Group, &p.Fingerprint, &p.RepositoryURL, &p.ProjectURL, &p.ProjectID, &p.PipelineURL, &p.ProfileID)
+	err := s.DB.QueryRowContext(ctx, `SELECT application_id,config,gitlab_url,group_path,fingerprint,repository_url,project_url,gitlab_project_id,pipeline_url,profile_id,COALESCE(profile_revision,0) FROM published_applications WHERE workspace_id=$1 AND repository_url=$2`, workspace, url).Scan(&p.ApplicationID, &p.Config, &p.GitLabURL, &p.Group, &p.Fingerprint, &p.RepositoryURL, &p.ProjectURL, &p.ProjectID, &p.PipelineURL, &p.ProfileID, &p.ProfileRevision)
 	return p, err
 }
 
@@ -54,10 +55,18 @@ func (s *Store) RegisterPublishedApplication(ctx context.Context, c Credential, 
 	if err != nil {
 		return err
 	}
+	if len(a.Namespaces) != 1 {
+		return errors.New("publishing requires one namespace")
+	}
+	binding, err := publishingNamespaceBinding(ctx, tx, a.WorkspaceID, a.ClusterID, a.Namespaces[0].Namespace, a.CreateNamespaces)
+	if err != nil {
+		return err
+	}
+	a.Namespaces = []NamespaceBinding{binding}
 	if err = createApplication(ctx, tx, a); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO published_applications(application_id,workspace_id,fingerprint,repository_url,project_url,gitlab_project_id,config,gitlab_url,group_path,profile_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, a.ID, a.WorkspaceID, p.Fingerprint, p.RepositoryURL, p.ProjectURL, p.ProjectID, p.Config, p.GitLabURL, p.Group, p.ProfileID)
+	_, err = tx.ExecContext(ctx, `INSERT INTO published_applications(application_id,workspace_id,fingerprint,repository_url,project_url,gitlab_project_id,config,gitlab_url,group_path,profile_id,profile_revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, a.ID, a.WorkspaceID, p.Fingerprint, p.RepositoryURL, p.ProjectURL, p.ProjectID, p.Config, p.GitLabURL, p.Group, p.ProfileID, nullableProfileRevision(p.ProfileID, p.ProfileRevision))
 	if err != nil {
 		return err
 	}

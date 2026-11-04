@@ -10,6 +10,8 @@ import (
 )
 
 type PublishingProfile struct {
+	PublishRevision     bool                       `json:"-"`
+	CurrentRevision     int64                      `json:"currentRevision"`
 	ID                  string                     `json:"id"`
 	WorkspaceID         string                     `json:"workspaceId"`
 	Name                string                     `json:"name"`
@@ -22,12 +24,12 @@ type PublishingProfile struct {
 	Applications        int                        `json:"applications"`
 }
 
-const profileColumns = `p.id,p.workspace_id,p.name,p.description,p.enabled,p.settings,p.credential_id,p.git_read_credential_id,p.version,(SELECT count(*) FROM published_applications a WHERE a.profile_id=p.id)`
+const profileColumns = `p.id,p.workspace_id,p.name,p.description,p.enabled,p.settings,p.credential_id,p.git_read_credential_id,p.version,p.current_revision,(SELECT count(*) FROM published_applications a WHERE a.profile_id=p.id)`
 
 func scanPublishingProfile(row interface{ Scan(...any) error }) (PublishingProfile, error) {
 	var p PublishingProfile
 	var settings []byte
-	err := row.Scan(&p.ID, &p.WorkspaceID, &p.Name, &p.Description, &p.Enabled, &settings, &p.CredentialID, &p.GitReadCredentialID, &p.Version, &p.Applications)
+	err := row.Scan(&p.ID, &p.WorkspaceID, &p.Name, &p.Description, &p.Enabled, &settings, &p.CredentialID, &p.GitReadCredentialID, &p.Version, &p.CurrentRevision, &p.Applications)
 	if err == nil {
 		err = json.Unmarshal(settings, &p.Settings)
 	}
@@ -55,7 +57,8 @@ func (s *Store) PublishingProfiles(ctx context.Context, workspace string) ([]Pub
 
 var ErrProfileChanged = errors.New("publishing profile changed; reload before saving")
 
-// Profile settings become immutable after the first publication. The row lock
+// Repository/destination settings become immutable after the first publication;
+// approved build image references remain editable. The row lock
 // also serializes registration against edits so a destination cannot change mid-registration.
 func (s *Store) SavePublishingProfile(ctx context.Context, p PublishingProfile, credentials []Credential, create bool) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
@@ -64,6 +67,7 @@ func (s *Store) SavePublishingProfile(ctx context.Context, p PublishingProfile, 
 	}
 	defer tx.Rollback()
 	settings, _ := json.Marshal(p.Settings)
+	publishRevision := create || p.PublishRevision
 	if !create {
 		var old []byte
 		var version int64
@@ -81,8 +85,22 @@ func (s *Store) SavePublishingProfile(ctx context.Context, p PublishingProfile, 
 		if err = json.Unmarshal(old, &previous); err != nil {
 			return err
 		}
+		publishRevision = p.PublishRevision || previous != p.Settings
+		// Release build/runtime settings while retaining repository, destination,
+		// namespace policy and secret-provider identity.
+		previous.BaseImage = p.Settings.BaseImage
+		previous.BuilderImage = p.Settings.BuilderImage
+		previous.WebServerImage = p.Settings.WebServerImage
+		previous.RunnerTag = p.Settings.RunnerTag
+		previous.RunnerServiceAccount = p.Settings.RunnerServiceAccount
+		previous.RunnerSCC = p.Settings.RunnerSCC
+		previous.BuilderSetup = p.Settings.BuilderSetup
+		previous.CAVariable = p.Settings.CAVariable
+		previous.BuildEngine = p.Settings.BuildEngine
+		previous.GitImage = p.Settings.GitImage
+		previous.PullSecret = p.Settings.PullSecret
 		if count > 0 && previous != p.Settings {
-			return errors.New("profile is in use; create a new profile to change infrastructure settings")
+			return errors.New("profile is in use; only build engines, build/deployment job images, runner tags, runner service account/SCC/setup script, custom CA variable names, and image-pull secrets may change; create a new profile to change other infrastructure settings")
 		}
 	}
 	for _, c := range credentials {
@@ -109,6 +127,16 @@ func (s *Store) SavePublishingProfile(ctx context.Context, p PublishingProfile, 
 	}
 	if err != nil {
 		return err
+	}
+	if publishRevision {
+		if !create {
+			if _, err = tx.ExecContext(ctx, `UPDATE publishing_profiles SET current_revision=current_revision+1 WHERE id=$1`, p.ID); err != nil {
+				return err
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO publishing_profile_versions(profile_id,revision,settings,template_version) SELECT id,current_revision,settings,$2 FROM publishing_profiles WHERE id=$1`, p.ID, publishing.Version); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

@@ -20,6 +20,8 @@ import { Input } from "@/components/ui/input"
 import { FormSelect } from "@/components/ui/form-select"
 import { Disclosure } from "@/components/ui/collapsible"
 import { ErrorNotice } from "@/components/workspace-ui"
+import { usePublishingDraft } from "@/hooks/use-publishing-draft"
+import { PublishingDraftNotice } from "@/components/applications/publishing-draft-notice"
 import { usePublishingLimits } from "@/hooks/use-publishing-limits"
 import { api } from "@/lib/api"
 import {
@@ -47,11 +49,50 @@ export default function PublishApplicationPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<unknown>(null)
   const [result, setResult] = useState<PublicationResult | null>(null)
+  const draft = usePublishingDraft(
+    workspaceId ? `catalog:${workspaceId}` : null,
+    {
+      templateId: template?.id ?? "",
+      method: method ?? "",
+      profileId:
+        profileId ||
+        profiles.find((p) => p.templateId === template?.id)?.id ||
+        "",
+      name,
+      entryPoint,
+      buildCommand,
+      outputDir,
+    },
+    async (data, signal) => {
+      if (data.templateId) {
+        const { items } = await api<ListResponse<ApplicationTemplate>>(
+          "/api/v1/publishing/templates",
+          { signal }
+        )
+        if (signal.aborted) return
+        const selected = items.find((t) => t.id === data.templateId)
+        if (!selected) throw new Error("Saved template is no longer available")
+        setTemplate(selected)
+      }
+      setMethod(
+        data.method === "profile" || data.method === "existing"
+          ? data.method
+          : null
+      )
+      setProfileId(data.profileId)
+      setName(data.name)
+      setEntryPoint(data.entryPoint)
+      setBuildCommand(data.buildCommand)
+      setOutputDir(data.outputDir)
+    }
+  )
   const workspace = workspaces.find((item) => item.id === workspaceId)
   const choices = profiles.filter(
     (profile) => profile.templateId === template?.id
   )
-  const profile = choices.find((item) => item.id === profileId) ?? choices[0]
+  const profile = profileId
+    ? choices.find((item) => item.id === profileId)
+    : choices[0]
   useEffect(() => {
     let active = true
     api<ListResponse<Workspace>>("/api/v1/workspaces")
@@ -110,6 +151,7 @@ export default function PublishApplicationPage() {
           {
             workspaceId,
             profileId: profile.id,
+            expectedProfileRevision: profile.currentRevision,
             name,
             entryPoint,
             ...(template?.runtime === "python-static"
@@ -120,6 +162,7 @@ export default function PublishApplicationPage() {
           limits
         )
       )
+      draft.clear()
     } catch (cause) {
       setError(cause)
     } finally {
@@ -183,9 +226,14 @@ export default function PublishApplicationPage() {
         </div>
       </div>
     )
+  if (workspaceId && !draft.ready)
+    return <PublishingDraftNotice draft={draft} />
   if (!template)
     return (
       <div className="space-y-5">
+        {(draft.restored || draft.error) && (
+          <PublishingDraftNotice draft={draft} />
+        )}
         <TemplateCatalog
           onSelect={(next) => {
             setMethod(null)
@@ -210,6 +258,7 @@ export default function PublishApplicationPage() {
         owner={workspace?.role === "owner"}
         template={template}
         profiles={choices}
+        onPublished={() => draft.clear()}
         onBack={() => setMethod(null)}
       />
     )
@@ -364,8 +413,12 @@ export default function PublishApplicationPage() {
           your administrator for access.
         </p>
       )}
+      <PublishingDraftNotice draft={draft} />
       <form onSubmit={publish} className="space-y-4">
-        <fieldset disabled={busy || !limits} className="min-w-0 space-y-4">
+        <fieldset
+          disabled={busy || !limits || !draft.ready}
+          className="min-w-0 space-y-4"
+        >
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             <PublishingField label="Workspace" htmlFor="publish-workspace">
               <FormSelect
@@ -403,7 +456,7 @@ export default function PublishApplicationPage() {
               htmlFor="publish-profile"
               hint={
                 profile
-                  ? `${profile.clusterName} / ${profile.namespace}`
+                  ? `${profile.clusterName} / ${profile.namespaceMode === "per-application" ? `${profile.namespacePrefix}${name || "<app-name>"} · create if missing` : profile.namespace}`
                   : "An administrator must configure an approved destination."
               }
             >
@@ -413,7 +466,7 @@ export default function PublishApplicationPage() {
                 onValueChange={setProfileId}
                 items={choices.map((item) => ({
                   value: item.id,
-                  label: item.name,
+                  label: `${item.name} · v${item.currentRevision}`,
                 }))}
                 placeholder={
                   loading
@@ -453,7 +506,7 @@ export default function PublishApplicationPage() {
             htmlFor="publish-archive"
             hint={
               limits
-                ? `Up to ${publishingSize(limits.archiveBytes)} compressed and ${publishingSize(limits.expandedBytes)} expanded. ${template.runtime === "python-static" ? "Optionally include requirements.txt" : "Include " + (template.runtime === "shiny" ? "renv.lock or packages.txt" : "requirements.txt")} at the archive root. Remove local credentials before uploading.`
+                ? `Up to ${publishingSize(limits.archiveBytes)} compressed and ${publishingSize(limits.expandedBytes)} expanded. ${template.runtime === "static" ? "Include index.html and assets in the website directory" : template.runtime === "python-static" ? "Optionally include requirements.txt" : "Include " + (template.runtime === "shiny" ? "renv.lock or packages.txt" : "requirements.txt")}${template.runtime === "static" ? "." : " at the archive root."} Remove local credentials before uploading.`
                 : "Loading upload limits…"
             }
           >
@@ -495,6 +548,19 @@ export default function PublishApplicationPage() {
                 />
               </PublishingField>
             </div>
+          ) : template.runtime === "static" ? (
+            <PublishingField
+              label="Website directory"
+              htmlFor="publish-entry"
+              hint="Use . for index.html at the archive root, or a folder such as public containing index.html and assets."
+            >
+              <Input
+                id="publish-entry"
+                required
+                value={entryPoint}
+                onChange={(event) => setEntryPoint(event.target.value)}
+              />
+            </PublishingField>
           ) : (
             <PublishingCard>
               <Disclosure summary="Application entry point">

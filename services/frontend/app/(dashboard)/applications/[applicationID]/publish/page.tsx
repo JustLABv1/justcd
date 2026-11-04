@@ -19,9 +19,14 @@ import { usePublishingLimits } from "@/hooks/use-publishing-limits"
 
 type Publication = {
   applicationId: string
+  completionStatus?: string
+  completionError?: string
   profileId?: string
   profileName?: string
   profileEnabled?: boolean
+  profileRevision?: number
+  latestProfileRevision?: number
+  profileUpdateAvailable?: boolean
   config: { name: string; runtime: string; [key: string]: string }
   gitlabUrl: string
   group: string
@@ -113,6 +118,17 @@ export default function PublishVersionPage() {
             : "Loading application publishing settings…"
         }
       />
+      {setup?.publication.completionError && (
+        <Panel
+          title="Deployment update needs attention"
+          description={setup.publication.completionError}
+        >
+          <p className="px-5 pb-4 text-sm text-muted-foreground">
+            JustCD retries automatically. Check the publishing token permissions
+            and backend GitLab connectivity.
+          </p>
+        </Panel>
+      )}
       {(error ?? limitsError) != null && (
         <ErrorNotice error={error ?? limitsError} />
       )}
@@ -175,10 +191,24 @@ export default function PublishVersionPage() {
               {setup?.publication.profileId ? (
                 <div className="rounded-xl border bg-muted/30 p-4 text-sm">
                   <p className="font-medium">{setup.publication.profileName}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Using v{setup.publication.profileRevision}
+                    {setup.publication.profileUpdateAvailable
+                      ? ` · v${setup.publication.latestProfileRevision} available`
+                      : ""}
+                  </p>
+                  {setup.publication.profileUpdateAvailable && (
+                    <Link
+                      className="mt-2 inline-block text-sm text-primary underline"
+                      href={`/applications/${applicationID}/profile-update`}
+                    >
+                      Review profile update
+                    </Link>
+                  )}
                   <p className="mt-1 text-muted-foreground">
                     {setup.publication.profileEnabled === false
                       ? "This profile is disabled. Ask your workspace administrator before publishing another version."
-                      : "Build settings and credentials are managed by your administrator. Upload your source to publish a new version."}
+                      : "This source upload keeps the application’s pinned profile version and uses current credentials. Use the profile update action to review newer images and rebuild without uploading a ZIP."}
                   </p>
                 </div>
               ) : (

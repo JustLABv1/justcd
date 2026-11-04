@@ -232,6 +232,9 @@ func TestCatalogTemplatesMatchRuntime(t *testing.T) {
 		cfg.TemplateID = template.ID
 		cfg.Runtime = template.Runtime
 		cfg.EntryPoint = template.EntryPoint
+		if cfg.Runtime == "static" {
+			cfg.WebServerImage = "registry.example.com/nginx:1"
+		}
 		if cfg.Runtime == "python-static" {
 			cfg.BuildCommand = "python build_html.py"
 			cfg.OutputDir = "dist"
@@ -319,5 +322,261 @@ func TestStaticOutputPreparation(t *testing.T) {
 				t.Fatal("output not readable by arbitrary UID", err)
 			}
 		})
+	}
+}
+
+func TestReadyMadeStaticWebsite(t *testing.T) {
+	c := config()
+	c.TemplateID = "static"
+	c.Runtime = "static"
+	c.BaseImage = ""
+	c.WebServerImage = "registry.example.com/nginx:1"
+	for _, dir := range []string{".", "public"} {
+		t.Run(dir, func(t *testing.T) {
+			c.EntryPoint = dir
+			source := []File{{Path: "source/" + strings.TrimPrefix(dir+"/", "./") + "index.html", Content: "<h1>Hello</h1>"}}
+			files, err := Generate(c, source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var docker, manifest string
+			for _, f := range files {
+				if f.Path == "Dockerfile" {
+					docker = f.Content
+				}
+				if f.Path == ".justcd/deployment.yaml" {
+					manifest = f.Content
+				}
+			}
+			expected := "source/"
+			if dir != "." {
+				expected += dir + "/"
+			}
+			if !strings.Contains(docker, "COPY --chmod=0755 "+expected+" /usr/share/nginx/html/") || !strings.Contains(docker, "FROM "+c.WebServerImage) || !strings.Contains(manifest, "containerPort: 8080") {
+				t.Fatal("incorrect static recipe", docker)
+			}
+			for _, unused := range []string{"RUN ", "python", "pip install", "site-build"} {
+				if strings.Contains(docker, unused) {
+					t.Fatal("static files require a build", docker)
+				}
+			}
+			if _, err := Generate(c, []File{{Path: "source/other/index.html"}}); err == nil {
+				t.Fatal("missing selected index accepted")
+			}
+		})
+	}
+	c.EntryPoint = "."
+	c.BuildCommand = "python build.py"
+	if c.Validate() == nil {
+		t.Fatal("build command accepted for ready-made HTML")
+	}
+	c.BuildCommand = ""
+	c.WebServerImage = ""
+	if c.Validate() == nil {
+		t.Fatal("missing webserver accepted")
+	}
+}
+
+func TestArchiveReportsEmptyAndFoldersOnly(t *testing.T) {
+	for _, names := range [][]string{nil, {"site/", "site/assets/"}} {
+		var buffer bytes.Buffer
+		writer := zip.NewWriter(&buffer)
+		for _, name := range names {
+			if _, err := writer.Create(name); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+		_, err := readArchive(t, buffer.Bytes())
+		expected := "ZIP archive is empty"
+		if len(names) > 0 {
+			expected = "contains only folders (2 entries)"
+		}
+		if err == nil || !strings.Contains(err.Error(), expected) {
+			t.Fatal("unhelpful archive error", err)
+		}
+	}
+	// A containing folder is valid when the archive also includes real files.
+	files, err := readArchive(t, archive(t, "site/index.html", "site/assets/main.css"))
+	if err != nil || len(files) != 2 {
+		t.Fatal("nested website files rejected", err)
+	}
+}
+
+func TestOptionalCAVariable(t *testing.T) {
+	c := config()
+	if strings.Contains(pipeline(c), "SSL_CERT_FILE") || strings.Contains(pipeline(c), "PLAIN2_ROOT_CA") {
+		t.Fatal("default pipeline must not require platform CA variables")
+	}
+	c.CAVariable = "PLAIN2_ROOT_CA"
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	ci := pipeline(c)
+	for _, expected := range []string{"${PLAIN2_ROOT_CA:-}", `"$PLAIN2_ROOT_CA"`, "export SSL_CERT_FILE=", "export GIT_SSL_CAINFO=", `cat "$system_ca"`, "is empty or unavailable"} {
+		if !strings.Contains(ci, expected) {
+			t.Fatalf("missing CA configuration %q", expected)
+		}
+	}
+	var v map[string]any
+	if err := yaml.Unmarshal([]byte(ci), &v); err != nil {
+		t.Fatal(err)
+	}
+	script := v["publish"].(map[string]any)["script"].([]any)[0].(string)
+	cmd := exec.Command("sh", "-n")
+	cmd.Stdin = strings.NewReader(script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("invalid CA shell: %s: %v", out, err)
+	}
+	for _, invalid := range []string{"CA;echo bad", "$(whoami)", "CA\nOTHER", "1CA", "CA-VAR"} {
+		c.CAVariable = invalid
+		if c.Validate() == nil {
+			t.Fatalf("accepted invalid CA variable %q", invalid)
+		}
+	}
+}
+
+func TestPodmanPipeline(t *testing.T) {
+	c := config()
+	c.BuildEngine = "podman"
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	ci := pipeline(c)
+	for _, forbidden := range []string{"buildctl-daemonless.sh", "jq -", "--tls-verify=false"} {
+		if strings.Contains(ci, forbidden) {
+			t.Fatalf("Podman job contains %s", forbidden)
+		}
+	}
+	var v map[string]any
+	if err := yaml.Unmarshal([]byte(ci), &v); err != nil {
+		t.Fatal(err)
+	}
+	script := v["publish"].(map[string]any)["script"].([]any)[0].(string)
+	prefix := strings.Split(script, "# A newer source commit")[0]
+	dir := t.TempDir()
+	fake := `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$TEST_LOG"
+case "$1" in
+login) test "$(cat)" = "$REGISTRY_PASSWORD" ;;
+push)
+ while [ "$#" -gt 0 ]; do
+  if [ "$1" = --digestfile ]; then shift; printf '%s' "$TEST_DIGEST" > "$1"; break; fi
+  shift
+ done ;;
+esac
+`
+	if err := os.WriteFile(dir+"/podman", []byte(fake), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		digest string
+		valid  bool
+	}{{"sha256:" + strings.Repeat("a", 64), true}, {"malformed", false}} {
+		cmd := exec.Command("sh", "-c", prefix+"\nprintf '%s' \"$digest\"")
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TEST_LOG="+dir+"/commands", "TEST_DIGEST="+tc.digest, "REGISTRY_USER=test", "REGISTRY_PASSWORD=test-password", "JUSTCD_IMAGE=registry.example.com/apps/test", "CI_COMMIT_SHA=abc123", "SSL_CERT_FILE=")
+		out, err := cmd.CombinedOutput()
+		if tc.valid && (err != nil || string(out) != tc.digest) {
+			t.Fatalf("Podman script failed: %s %v", out, err)
+		}
+		if !tc.valid && err == nil {
+			t.Fatal("invalid digest accepted")
+		}
+	}
+	log, err := os.ReadFile(dir + "/commands")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(log), "test-password") {
+		t.Fatal("password exposed in arguments")
+	}
+	for _, expected := range []string{"login --authfile", "--password-stdin", "build --authfile", "--format docker", "push --authfile", "--digestfile", "--tls-verify=true"} {
+		if !strings.Contains(string(log), expected) {
+			t.Fatalf("missing Podman argument %q", expected)
+		}
+	}
+	c.BuildEngine = "unknown"
+	if c.Validate() == nil {
+		t.Fatal("unknown build engine accepted")
+	}
+	settings := profileSettings()
+	settings.BuildEngine = "podman"
+	resolved, err := settings.Resolve("test", ".")
+	if err != nil || resolved.BuildEngine != "podman" {
+		t.Fatalf("engine not resolved: %v", err)
+	}
+}
+
+func TestSplitPipelineDeployment(t *testing.T) {
+	c := config()
+	c.BuildEngine = "podman"
+	c.GitImage = "registry.example.com/tools/git:1"
+	var ci map[string]any
+	if err := yaml.Unmarshal([]byte(pipeline(c)), &ci); err != nil {
+		t.Fatal(err)
+	}
+	build := ci["publish"].(map[string]any)
+	update := ci["update-deployment"].(map[string]any)
+	buildScript := build["script"].([]any)[0].(string)
+	updateScript := update["script"].([]any)[0].(string)
+	if strings.Contains(buildScript, "git ") || strings.Contains(buildScript, "git;") {
+		t.Fatal("builder requires git")
+	}
+	if update["image"].(map[string]any)["name"] != c.GitImage {
+		t.Fatal("wrong deployment image")
+	}
+	if build["artifacts"] == nil || update["needs"] == nil || update["resource_group"] != "justcd-publish" {
+		t.Fatal("missing artifact dependency or serialization")
+	}
+	if update["secrets"] != nil || update["id_tokens"] != nil {
+		t.Fatal("deployment job requests registry credentials")
+	}
+	dir := t.TempDir()
+	for _, name := range []string{".justcd-build", ".justcd", "deploy"} {
+		if err := os.Mkdir(dir+"/"+name, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	digest := "sha256:" + strings.Repeat("b", 64)
+	os.WriteFile(dir+"/.justcd/deployment.yaml", []byte("image: JUSTCD_IMAGE_DIGEST\n"), 0600)
+	fakeGit := `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$TEST_LOG"
+if [ "$1" = rev-parse ]; then printf '%s' "$REMOTE_SHA"; fi
+`
+	if err := os.WriteFile(dir+"/git", []byte(fakeGit), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		digest, sha string
+		valid       bool
+	}{{digest, "abc123", true}, {"bad", "abc123", false}, {digest, "newer", false}} {
+		os.WriteFile(dir+"/.justcd-build/image-digest", []byte(tc.digest), 0600)
+		os.WriteFile(dir+"/commands", nil, 0600)
+		cmd := exec.Command("sh", "-c", updateScript)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TEST_LOG="+dir+"/commands", "REMOTE_SHA="+tc.sha, "CI_COMMIT_SHA=abc123", "CI_DEFAULT_BRANCH=main", "CI_REPOSITORY_URL=https://git.example.com/apps/test.git", "JUSTCD_IMAGE="+c.RegistryImage)
+		out, err := cmd.CombinedOutput()
+		if tc.valid && err != nil {
+			t.Fatalf("deployment failed: %s %v", out, err)
+		}
+		log, _ := os.ReadFile(dir + "/commands")
+		if !tc.valid && (err == nil || strings.Contains(string(log), "push")) {
+			t.Fatal("invalid or stale build published")
+		}
+		if tc.valid {
+			manifest, _ := os.ReadFile(dir + "/deploy/application.yaml")
+			if !strings.Contains(string(manifest), c.RegistryImage+"@"+digest) || !strings.Contains(string(log), "push https://git.example.com/apps/test.git HEAD:main") {
+				t.Fatal("digest not committed/pushed")
+			}
+		}
+	}
+	c.GitImage = "invalid\nimage"
+	if c.Validate() == nil {
+		t.Fatal("invalid Git image accepted")
 	}
 }

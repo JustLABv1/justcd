@@ -29,6 +29,7 @@ type repositoryPublishingInput struct {
 	PlanHash     string            `json:"planHash"`
 }
 type repositoryPublishingContext struct {
+	profile  *store.PublishingProfile
 	input    repositoryPublishingInput
 	git      publishing.GitLab
 	snapshot publishing.RepositorySnapshot
@@ -74,6 +75,7 @@ func (s *Server) repositoryPublishingContext(w http.ResponseWriter, r *http.Requ
 			writeError(w, 400, "published image must use the publishing profile's registry prefix")
 			return c, false
 		}
+		c.profile = profile
 		c.config = p.Config
 		in.ClusterID = p.ClusterID
 		in.GitLabToken = p.GitLabToken
@@ -137,9 +139,9 @@ func (s *Server) preparePublishingRepository(w http.ResponseWriter, r *http.Requ
 	if !s.requireWorkspaceCluster(w, r, in.WorkspaceID, in.ClusterID) {
 		return
 	}
-	binding, err := s.Store.NamespaceBinding(r.Context(), in.WorkspaceID, in.ClusterID, c.config.Namespace)
+	binding, err := s.Store.PublishingNamespaceBinding(r.Context(), in.WorkspaceID, in.ClusterID, c.config.Namespace, c.config.CreateNamespace)
 	if err != nil {
-		writeError(w, 400, "select an existing workspace namespace binding")
+		writeError(w, 400, "namespace destination is unavailable: "+err.Error())
 		return
 	}
 	plan, err := publishing.PlanRepository(c.config, c.snapshot, in.AppDir, in.Image)
@@ -184,8 +186,8 @@ func (s *Server) preparePublishingRepository(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if app.ID == "" {
-		app = store.Application{ID: store.NewID(), WorkspaceID: in.WorkspaceID, Name: c.config.Name, SourceID: in.SourceID, Revision: in.Revision, ManifestPath: plan.ManifestPath, Renderer: "yaml", ClusterID: in.ClusterID, Namespaces: []store.NamespaceBinding{binding}, SyncPolicy: "manual", PollSeconds: 300, RetryPolicy: store.DefaultRetryPolicy(), Health: "unknown", Labels: map[string]string{"justcd.io/onboarding": plan.Hash[:40]}}
-		if err = s.Store.CreateApplication(r.Context(), app); err != nil {
+		app = store.Application{ID: store.NewID(), WorkspaceID: in.WorkspaceID, Name: c.config.Name, SourceID: in.SourceID, Revision: in.Revision, ManifestPath: plan.ManifestPath, Renderer: "yaml", ClusterID: in.ClusterID, Namespaces: []store.NamespaceBinding{binding}, CreateNamespaces: c.config.CreateNamespace, SyncPolicy: "manual", PollSeconds: 300, RetryPolicy: store.DefaultRetryPolicy(), Health: "unknown", Labels: map[string]string{"justcd.io/onboarding": plan.Hash[:40]}}
+		if err = s.Store.CreateRepositoryPublishedApplication(r.Context(), app, c.profile); err != nil {
 			writeJSON(w, 409, map[string]any{"error": "merge request created but application registration failed; retry with the same reviewed plan", "mergeRequestUrl": mr.WebURL})
 			return
 		}

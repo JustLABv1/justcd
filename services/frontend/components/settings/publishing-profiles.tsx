@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import { Disclosure } from "@/components/ui/collapsible"
 import { FormSelect } from "@/components/ui/form-select"
 import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
 import { Badge } from "@/components/reui/badge"
@@ -23,13 +24,21 @@ const emptySettings: PublishingProfileSettings = {
   group: "",
   clusterId: "",
   namespace: "",
+  namespaceMode: "fixed",
+  namespacePrefix: "",
   webServerImage: "",
   baseImage: "",
   builderImage: "",
   registryPrefix: "",
   hostSuffix: "",
   pullSecret: "",
+  gitImage: "",
+  buildEngine: "buildkit",
+  caVariable: "",
   runnerTag: "",
+  runnerServiceAccount: "",
+  runnerScc: "",
+  builderSetup: "",
   secretMode: "variables",
   vaultAddress: "",
   vaultRole: "",
@@ -145,12 +154,16 @@ export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
                 <div className="min-w-0 space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="text-sm font-medium">{profile.name}</h3>
+                    <Badge variant="outline">v{profile.currentRevision}</Badge>
                     <Badge variant={profile.enabled ? "secondary" : "outline"}>
                       {profile.enabled ? "Enabled" : "Disabled"}
                     </Badge>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {profile.settings.templateId} · {profile.settings.namespace}{" "}
+                    {profile.settings.templateId} ·{" "}
+                    {profile.settings.namespaceMode === "per-application"
+                      ? `${profile.settings.namespacePrefix}<app-name>`
+                      : profile.settings.namespace}{" "}
                     · {profile.applications} applications
                   </p>
                   {profile.description && (
@@ -230,6 +243,7 @@ function ProfileEditor({
   onCancel: () => void
   onSaved: (profile: PublishingProfile) => void
 }) {
+  const [publishRevision, setPublishRevision] = useState(false)
   const [name, setName] = useState(profile?.name ?? "")
   const [description, setDescription] = useState(profile?.description ?? "")
   const [enabled, setEnabled] = useState(profile?.enabled ?? true)
@@ -245,6 +259,35 @@ function ProfileEditor({
   const [bindings, setBindings] = useState<NamespaceBinding[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
+  const [versions, setVersions] = useState<
+    {
+      revision: number
+      createdAt: string
+      templateVersion: string
+      settings: PublishingProfileSettings
+    }[]
+  >([])
+  useEffect(() => {
+    if (!profile?.id) return
+    let active = true
+    api<
+      ListResponse<{
+        revision: number
+        createdAt: string
+        templateVersion: string
+        settings: PublishingProfileSettings
+      }>
+    >(`/api/v1/publishing/profiles/${encodeURIComponent(profile.id)}/versions`)
+      .then(({ items }) => {
+        if (active) setVersions(items)
+      })
+      .catch((e) => {
+        if (active) setError(e)
+      })
+    return () => {
+      active = false
+    }
+  }, [profile?.id])
   const locked = !!profile?.applications
   const patch = (values: Partial<PublishingProfileSettings>) =>
     setSettings((current) => ({ ...current, ...values }))
@@ -299,6 +342,7 @@ function ProfileEditor({
         settings,
         secrets,
         version: profile?.version ?? 0,
+        publishRevision,
       }
       const saved = profile
         ? await api<PublishingProfile>(
@@ -330,6 +374,22 @@ function ProfileEditor({
       <Input
         id={`profile-${key}`}
         required={required}
+        disabled={
+          locked &&
+          ![
+            "baseImage",
+            "builderImage",
+            "webServerImage",
+            "runnerTag",
+            "runnerServiceAccount",
+            "runnerScc",
+            "builderSetup",
+            "caVariable",
+            "buildEngine",
+            "gitImage",
+            "pullSecret",
+          ].includes(key)
+        }
         value={settings[key] ?? ""}
         onChange={(event) => patch({ [key]: event.target.value })}
         placeholder={placeholder}
@@ -393,14 +453,24 @@ function ProfileEditor({
           />
         </fieldset>
       </Panel>
-      {locked && (
+      {!locked && (
         <p className="text-sm text-muted-foreground">
-          This profile is used by {profile.applications} applications. Create a
-          new profile to change infrastructure settings. You can still rename,
-          disable, or rotate its credentials.
+          Saving build settings publishes an immutable profile version. Name
+          changes and credential rotation do not create a new release.
         </p>
       )}
-      <fieldset disabled={busy || locked} className="min-w-0 space-y-5">
+      {locked && (
+        <p className="text-sm text-muted-foreground">
+          This profile is used by {profile.applications} applications. Build
+          engines, images, CA variable names, runner tags, and image-pull
+          secrets remain editable; repository and deployment destinations are
+          locked. Build-setting changes publish a new immutable version.
+          Existing applications stay on their pinned version; use their
+          profile-update action to review and rebuild without uploading source
+          again.
+        </p>
+      )}
+      <fieldset disabled={busy} className="min-w-0 space-y-5">
         <Panel title="Template and destination">
           <div className="grid gap-4 p-5 md:grid-cols-2">
             <FormField label="Application template" htmlFor="profile-template">
@@ -431,19 +501,62 @@ function ProfileEditor({
                 placeholder="Select a cluster"
               />
             </FormField>
-            <FormField label="Namespace" htmlFor="profile-namespace">
+            <FormField
+              label="Namespace policy"
+              htmlFor="profile-namespace-mode"
+              hint="Namespace creation uses the cluster’s existing provisioning permissions and deployment approval flow."
+            >
               <FormSelect
-                id="profile-namespace"
-                value={settings.namespace}
-                onValueChange={(namespace) => patch({ namespace })}
-                items={bindings.map((binding) => ({
-                  value: binding.namespace,
-                  label: binding.namespace,
-                }))}
+                id="profile-namespace-mode"
+                value={settings.namespaceMode || "fixed"}
+                onValueChange={(namespaceMode) =>
+                  patch({
+                    namespaceMode,
+                    namespace:
+                      namespaceMode === "per-application"
+                        ? ""
+                        : (bindings[0]?.namespace ?? ""),
+                    namespacePrefix:
+                      namespaceMode === "per-application"
+                        ? settings.namespacePrefix || "apps-"
+                        : "",
+                  })
+                }
+                items={[
+                  { value: "fixed", label: "Use a fixed existing namespace" },
+                  {
+                    value: "per-application",
+                    label: "Create a namespace per application",
+                  },
+                ]}
                 disabled={locked}
-                placeholder="Select an approved namespace"
               />
             </FormField>
+            {settings.namespaceMode === "per-application" ? (
+              field(
+                "namespacePrefix",
+                "Namespace prefix",
+                "Ends with a hyphen. For example apps- creates apps-my-app. The final name must be at most 63 characters.",
+                true,
+                "apps-"
+              )
+            ) : (
+              <>
+                <FormField label="Namespace" htmlFor="profile-namespace">
+                  <FormSelect
+                    id="profile-namespace"
+                    value={settings.namespace}
+                    onValueChange={(namespace) => patch({ namespace })}
+                    items={bindings.map((binding) => ({
+                      value: binding.namespace,
+                      label: binding.namespace,
+                    }))}
+                    disabled={locked}
+                    placeholder="Select an approved namespace"
+                  />
+                </FormField>
+              </>
+            )}
             <FormField label="Deployment behavior" htmlFor="profile-sync">
               <FormSelect
                 id="profile-sync"
@@ -472,7 +585,9 @@ function ProfileEditor({
             {field(
               "pullSecret",
               "Image pull secret",
-              "Existing read-only registry Secret in the selected namespace.",
+              settings.namespaceMode === "per-application"
+                ? "Your provisioning setup must create this read-only registry Secret in each new namespace before deployment."
+                : "Existing read-only registry Secret in the selected namespace.",
               false
             )}
           </div>
@@ -493,23 +608,46 @@ function ProfileEditor({
               true,
               "analytics/apps"
             )}
-            {field(
-              "baseImage",
-              settings.templateId === "python-static"
-                ? "Python build image"
-                : "Application runtime image",
-              "Approved R/Shiny or Python image, including native dependencies and internal certificate trust."
-            )}
-            {settings.templateId === "python-static" &&
+            {settings.templateId !== "static" &&
+              field(
+                "baseImage",
+                settings.templateId === "python-static"
+                  ? "Python build image"
+                  : "Application runtime image",
+                "Approved R/Shiny or Python image, including native dependencies and internal certificate trust."
+              )}
+            {(settings.templateId === "python-static" ||
+              settings.templateId === "static") &&
               field(
                 "webServerImage",
                 "Static web server image",
                 "Approved unprivileged NGINX-compatible image: port 8080, document root /usr/share/nginx/html, supporting UID 1001 and OpenShift arbitrary UIDs."
               )}
+            <FormField
+              label="Build engine"
+              htmlFor="profile-build-engine"
+              hint="Choose the engine provided by your CI builder image. Existing profiles default to BuildKit."
+            >
+              <FormSelect
+                id="profile-build-engine"
+                value={settings.buildEngine || "buildkit"}
+                onValueChange={(buildEngine) => patch({ buildEngine })}
+                items={[
+                  { value: "buildkit", label: "BuildKit" },
+                  { value: "podman", label: "Podman" },
+                ]}
+              />
+            </FormField>
             {field(
               "builderImage",
               "CI builder image",
-              "Rootless BuildKit, git, jq, shell, and internal certificate trust."
+              "Podman: podman, grep and shell tools. BuildKit: rootless BuildKit, jq and shell. Managed publishing commits deployment changes in JustCD. Runner must support the selected engine."
+            )}
+            {field(
+              "gitImage",
+              "Existing Git pipeline update image",
+              "Only for existing Git pipeline bootstrap. Managed publishing updates deployment manifests in JustCD and does not use this image. Leave blank to reuse the builder image for existing Git workflows.",
+              false
             )}
             {field(
               "registryPrefix",
@@ -519,10 +657,38 @@ function ProfileEditor({
               "artifactory.example.com/analytics-local"
             )}
             {field(
+              "caVariable",
+              "Custom CA variable (optional)",
+              "Inherited GitLab CI variable containing PEM certificates, e.g. PLAIN2_ROOT_CA. Leave blank to use the builder image's default trust. Applies to CI Git and the selected build engine, not application build stages.",
+              false,
+              "PLAIN2_ROOT_CA"
+            )}
+            {field(
               "runnerTag",
               "Runner tag",
               "Optional tag for an approved GitLab runner.",
               false
+            )}
+            {field(
+              "runnerServiceAccount",
+              "Runner service account (optional)",
+              "Kubernetes service account the build job runs as, for runners that only allow rootless builds under a dedicated account.",
+              false,
+              "gitlab-runner-app-sa"
+            )}
+            {field(
+              "runnerScc",
+              "Required OpenShift SCC (optional)",
+              "Security context constraint the build pod must use (openshift.io/required-scc). Rootless Podman usually needs one that allows user namespaces.",
+              false,
+              "gitlab-runner-scc"
+            )}
+            {field(
+              "builderSetup",
+              "Builder setup script (optional)",
+              "Absolute path of an executable in the builder image that runs before the build, e.g. its rootless Podman entrypoint script. No arguments.",
+              false,
+              "/home/user/entrypoint.sh"
             )}
           </div>
         </Panel>
@@ -570,6 +736,49 @@ function ProfileEditor({
           </div>
         </Panel>
       </fieldset>
+      {profile && (
+        <Panel title="Publish a recipe revision">
+          <div className="p-5">
+            <SwitchField
+              id="profile-publish-revision"
+              checked={publishRevision}
+              onCheckedChange={setPublishRevision}
+              disabled={busy}
+              label="Publish a new revision even if images are unchanged"
+              description="Use this to adopt updated JustCD build recipes. Changing image references already creates a new revision. Existing applications remain pinned until upgraded."
+            />
+          </div>
+        </Panel>
+      )}
+      {versions.length > 0 && (
+        <Panel title="Published profile versions">
+          <div className="space-y-3 p-5">
+            {versions.map((version) => (
+              <Disclosure
+                key={version.revision}
+                summary={`v${version.revision}${version.revision === profile?.currentRevision ? " · latest" : ""} · ${new Date(version.createdAt).toLocaleDateString()}`}
+              >
+                <dl className="mt-3 space-y-2 text-xs">
+                  <div>
+                    <dt className="font-medium">Recipe version</dt>
+                    <dd>{version.templateVersion}</dd>
+                  </div>
+                  {(["baseImage", "webServerImage", "builderImage"] as const)
+                    .filter((key) => version.settings[key])
+                    .map((key) => (
+                      <div key={key}>
+                        <dt className="font-medium">{key}</dt>
+                        <dd className="break-all text-muted-foreground">
+                          {version.settings[key]}
+                        </dd>
+                      </div>
+                    ))}
+                </dl>
+              </Disclosure>
+            ))}
+          </div>
+        </Panel>
+      )}
       <Panel
         title="Protected credentials"
         description={
@@ -616,7 +825,7 @@ function ProfileEditor({
           Cancel
         </Button>
         <Button type="submit" loading={busy} loadingText="Saving profile…">
-          Save profile
+          Save and publish settings
         </Button>
       </div>
     </form>

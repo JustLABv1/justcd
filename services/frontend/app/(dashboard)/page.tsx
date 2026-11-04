@@ -270,12 +270,12 @@ export default function OverviewPage() {
             </div>
 
             {workspaceId && (
-              <div className="min-w-0 xl:col-start-1 xl:row-start-2">
+              <div className="min-w-0 space-y-6 xl:col-start-1 xl:row-start-2">
                 <SyncHistoryChartView state={syncHistory} />
+                {total > 0 && <WorkspaceDigest key={workspaceId} workspaceId={workspaceId} />}
               </div>
             )}
           </div>
-          {workspaceId && total > 0 && <WorkspaceDigest key={workspaceId} workspaceId={workspaceId} />}
         </div>
       )}
     </>

@@ -1365,6 +1365,7 @@ func (policy RetryPolicy) Validate() error {
 }
 
 type Application struct {
+	PublishingProfile              *PublishingProfileStatus           `json:"publishingProfile,omitempty"`
 	Labels                         map[string]string                  `json:"labels"`
 	RepositoryNotifications        *ApplicationNotificationPolicy     `json:"-"`
 	RepositoryDeploymentSchedule   schedule.Policy                    `json:"-"`

@@ -127,7 +127,7 @@ func (g GitLab) EnsureProject(ctx context.Context, group, name, marker string) (
 	if err = g.request(ctx, "GET", "/groups/"+url.PathEscape(group), nil, &ns); err != nil {
 		return result, err
 	}
-	err = g.request(ctx, "POST", "/projects", map[string]any{"name": name, "path": name, "namespace_id": ns.ID, "visibility": "private", "description": marker, "initialize_with_readme": false, "default_branch": "main", "ci_push_repository_for_job_token_allowed": true}, &result)
+	err = g.request(ctx, "POST", "/projects", map[string]any{"name": name, "path": name, "namespace_id": ns.ID, "visibility": "private", "description": marker, "initialize_with_readme": false, "default_branch": "main", "ci_push_repository_for_job_token_allowed": false}, &result)
 	if err != nil {
 		return result, err
 	}
@@ -138,13 +138,20 @@ func (g GitLab) EnsureProject(ctx context.Context, group, name, marker string) (
 }
 func (g GitLab) Prepare(ctx context.Context, p Project, files []File, variables []Variable, fingerprint string) error {
 	prefix := "/projects/" + strconv.Itoa(p.ID)
-	// This setting is required for the build job to commit the image digest without a long-lived Git write token.
-	var settings Project
-	if err := g.request(ctx, "PUT", prefix, map[string]any{"ci_push_repository_for_job_token_allowed": true}, &settings); err != nil {
-		return err
+	managed := false
+	for _, f := range files {
+		if f.Path == ".gitlab-ci.yml" {
+			managed = !strings.Contains(f.Content, "update-deployment:")
+		}
 	}
-	if !settings.JobPush {
-		return errors.New("GitLab must support and enable CI job-token repository pushes (GitLab 18.4+ recommended)")
+	if !managed {
+		var settings Project
+		if err := g.request(ctx, "PUT", prefix, map[string]any{"ci_push_repository_for_job_token_allowed": true}, &settings); err != nil {
+			return err
+		}
+		if !settings.JobPush {
+			return errors.New("GitLab must support CI job-token repository pushes for legacy publishing")
+		}
 	}
 	if err := g.SetVariables(ctx, p, variables); err != nil {
 		return err
@@ -235,27 +242,40 @@ func (g GitLab) ReplaceSource(ctx context.Context, p Project, files []File, fing
 }
 
 func (g GitLab) ProtectPublishingBranch(ctx context.Context, p Project) error {
-	prefix := "/projects/" + strconv.Itoa(p.ID) + "/protected_branches"
-	var branch any
-	err := g.request(ctx, "GET", prefix+"/main", nil, &branch)
+	prefix := "/projects/" + strconv.Itoa(p.ID)
+	var rule any
+	err := g.request(ctx, "GET", prefix+"/protected_branches/main", nil, &rule)
 	if err == nil {
 		return nil
 	}
-	var pe *ProviderError
-	if !errors.As(err, &pe) || pe.Status != 404 {
-		return err
+	var provider *ProviderError
+	if errors.As(err, &provider) && provider.Status == 404 {
+		err = g.request(ctx, "POST", prefix+"/protected_branches", map[string]any{"name": "main", "push_access_level": 40, "merge_access_level": 40, "allow_force_push": false}, nil)
+		if err == nil {
+			return nil
+		}
 	}
-	return g.request(ctx, "POST", prefix, map[string]any{"name": "main", "push_access_level": 40, "merge_access_level": 40, "allow_force_push": false}, nil)
+	// An exact-name rule may be inaccessible or absent when a wildcard/group rule
+	// already protects main. Also tolerate another actor protecting it concurrently.
+	// Only GitLab's effective branch status can satisfy this fallback.
+	var branch struct {
+		Protected bool `json:"protected"`
+	}
+	if check := g.request(ctx, "GET", prefix+"/repository/branches/main", nil, &branch); check == nil && branch.Protected {
+		return nil
+	}
+	return err
 }
 
 // GitLab's commit API requires JSON/base64. Stage that representation on disk
 // incrementally, then stream it with Content-Length for registry/proxy compatibility.
 type commitAction struct {
-	Action string
-	File   File
+	LastCommitID string
+	Action       string
+	File         File
 }
 
-func (g GitLab) commit(ctx context.Context, prefix string, metadata map[string]string, actions []commitAction) error {
+func (g GitLab) commit(ctx context.Context, prefix string, metadata map[string]string, actions []commitAction, result ...any) error {
 	payload, err := os.CreateTemp(g.TempDir, "justcd-commit-*.json")
 	if err != nil {
 		return errors.New("cannot allocate temporary GitLab request storage")
@@ -268,7 +288,11 @@ func (g GitLab) commit(ctx context.Context, prefix string, metadata map[string]s
 	if _, err = payload.Seek(0, io.SeekStart); err != nil {
 		return errors.New("cannot read temporary GitLab request")
 	}
-	return g.request(ctx, "POST", prefix+"/repository/commits", payload, nil)
+	var out any
+	if len(result) > 0 {
+		out = result[0]
+	}
+	return g.request(ctx, "POST", prefix+"/repository/commits", payload, out)
 }
 func writeCommit(ctx context.Context, w io.Writer, metadata map[string]string, actions []commitAction) error {
 	head, err := json.Marshal(metadata)
@@ -291,6 +315,9 @@ func writeCommit(ctx context.Context, w io.Writer, metadata map[string]string, a
 			}
 		}
 		fields := map[string]string{"action": a.Action, "file_path": a.File.Path}
+		if a.LastCommitID != "" {
+			fields["last_commit_id"] = a.LastCommitID
+		}
 		if a.Action != "delete" {
 			fields["encoding"] = a.File.Encoding
 		}
@@ -355,5 +382,80 @@ func (g GitLab) SetVariables(ctx context.Context, p Project, variables []Variabl
 		}
 	}
 
+	return nil
+}
+
+// RepositoryFile reads a managed build file at the reviewed source commit.
+func (g GitLab) RepositoryFile(ctx context.Context, project int, name, sha string) (string, string, bool, error) {
+	var file struct {
+		Content      string `json:"content"`
+		Encoding     string `json:"encoding"`
+		LastCommitID string `json:"last_commit_id"`
+	}
+	err := g.request(ctx, "GET", "/projects/"+strconv.Itoa(project)+"/repository/files/"+url.PathEscape(name)+"?ref="+url.QueryEscape(sha), nil, &file)
+	var provider *ProviderError
+	if errors.As(err, &provider) && provider.Status == 404 {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, err
+	}
+	if file.Encoding != "base64" || file.LastCommitID == "" {
+		return "", "", false, errors.New("GitLab returned invalid managed file metadata")
+	}
+	data, err := base64.StdEncoding.DecodeString(file.Content)
+	if err != nil {
+		return "", "", false, errors.New("GitLab returned invalid managed file content")
+	}
+	return string(data), file.LastCommitID, true, nil
+}
+
+type RecipeChange struct {
+	Path         string `json:"path"`
+	Before       string `json:"before"`
+	After        string `json:"after"`
+	Exists       bool   `json:"exists"`
+	LastCommitID string `json:"-"`
+}
+
+func (g GitLab) CommitRecipeUpgrade(ctx context.Context, snapshot RepositorySnapshot, changes []RecipeChange, hash string) error {
+	prefix := "/projects/" + strconv.Itoa(snapshot.Project.ID)
+	var branch struct {
+		Commit struct {
+			ID string `json:"id"`
+		} `json:"commit"`
+	}
+	if err := g.request(ctx, "GET", prefix+"/repository/branches/"+url.PathEscape(snapshot.Revision), nil, &branch); err != nil {
+		return err
+	}
+	if branch.Commit.ID != snapshot.SHA {
+		return errors.New("repository changed; review the profile upgrade again")
+	}
+	actions := []commitAction{}
+	for _, c := range changes {
+		if strings.HasPrefix(c.Path, "source/") || strings.HasPrefix(c.Path, "deploy/") {
+			return errors.New("profile upgrades can only change generated build files")
+		}
+		action := "create"
+		if c.Exists {
+			action = "update"
+		}
+		actions = append(actions, commitAction{Action: action, File: File{Path: c.Path, Content: c.After, Encoding: "text"}, LastCommitID: c.LastCommitID})
+	}
+	if len(actions) == 0 {
+		return nil
+	}
+	var result struct {
+		ParentIDs []string `json:"parent_ids"`
+	}
+	if err := g.commit(ctx, prefix, map[string]string{"branch": snapshot.Revision, "commit_message": "JustCD profile upgrade " + hash + " [skip ci]"}, actions, &result); err != nil {
+		return err
+	}
+	// Per-file last_commit_id guards recipe edits. If source moved in the narrow
+	// check/commit window, no source is overwritten and no build starts until a
+	// fresh review acknowledges the new source commit.
+	if len(result.ParentIDs) != 1 || result.ParentIDs[0] != snapshot.SHA {
+		return errors.New("repository advanced during the recipe commit; source was preserved; review again before starting the build")
+	}
 	return nil
 }

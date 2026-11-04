@@ -18,8 +18,8 @@ export type ApplicationTemplate = {
   id: string
   name: string
   description: string
-  runtime: "shiny" | "streamlit" | "python-static"
-  category: "R" | "Python" | "Geospatial"
+  runtime: "shiny" | "streamlit" | "python-static" | "static"
+  category: "R" | "Python" | "Geospatial" | "Websites"
   entryPoint: string
   detail: string
 }
@@ -37,7 +37,8 @@ export function TemplateGlyph({
       className={`inline-flex size-10 shrink-0 items-center justify-center rounded-xl bg-background ${className}`}
     >
       {template.category === "Geospatial" ||
-      template.runtime === "python-static" ? (
+      template.runtime === "python-static" ||
+      template.runtime === "static" ? (
         <HugeiconsIcon
           icon={Globe02Icon}
           className="size-5 text-emerald-600 dark:text-emerald-400"
@@ -132,7 +133,7 @@ export function TemplateCatalog({
           }}
           className="max-w-full gap-2 overflow-x-auto rounded-none border-0 bg-transparent p-0"
         >
-          {["All", "R", "Python", "Geospatial"].map((value) => (
+          {["All", "R", "Python", "Geospatial", "Websites"].map((value) => (
             <ToggleGroupItem
               key={value}
               value={value}

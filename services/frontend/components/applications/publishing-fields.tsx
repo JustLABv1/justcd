@@ -1,4 +1,5 @@
 import type { ReactNode } from "react"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Card, CardContent } from "@/components/ui/card"
 import { FormField } from "@/components/ui-kit"
 
@@ -78,5 +79,54 @@ export function PublishingSection({
       )}
       {children}
     </section>
+  )
+}
+
+/** Boolean publishing options use the same surface as the surrounding fields. */
+export function PublishingCheckbox({
+  id,
+  checked,
+  onCheckedChange,
+  title,
+  description,
+  disabled,
+}: {
+  id: string
+  checked: boolean
+  onCheckedChange: (checked: boolean) => void
+  title: ReactNode
+  description?: ReactNode
+  disabled?: boolean
+}) {
+  return (
+    <PublishingCard>
+      <label
+        htmlFor={id}
+        className={`flex items-start gap-3 text-sm ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
+      >
+        <Checkbox
+          id={id}
+          checked={checked}
+          disabled={disabled}
+          onCheckedChange={(next) => onCheckedChange(Boolean(next))}
+          aria-labelledby={`${id}-label`}
+          aria-describedby={description ? `${id}-description` : undefined}
+          className="mt-0.5 shrink-0"
+        />
+        <span className="min-w-0">
+          <span id={`${id}-label`} className="block font-medium">
+            {title}
+          </span>
+          {description && (
+            <span
+              id={`${id}-description`}
+              className="mt-2 block text-xs leading-5 text-muted-foreground"
+            >
+              {description}
+            </span>
+          )}
+        </span>
+      </label>
+    </PublishingCard>
   )
 }

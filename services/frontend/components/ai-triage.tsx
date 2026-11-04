@@ -12,7 +12,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import type { Triage, TriageItem, TriageSeverity } from "@/lib/types"
 
 const severityLabel: Record<TriageSeverity, string> = { critical: "Critical", high: "High", medium: "Medium", low: "Low" }
-const severityVariant = { critical: "destructive-light", high: "warning-light", medium: "secondary", low: "outline" } as const
+const severityVariant = { critical: "destructive-light", high: "warning-light", medium: "info-light", low: "success-light" } as const
 const stageLabel: Record<string, string> = { collecting: "Collecting evidence", analyzing: "Ranking with AI", saving: "Saving result" }
 
 /** Loads the workspace triage and keeps it fresh: fast polling while a run is active, slow polling otherwise. */

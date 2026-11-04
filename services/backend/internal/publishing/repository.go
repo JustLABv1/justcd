@@ -113,7 +113,7 @@ func PlanRepository(c Config, s RepositorySnapshot, appDir, image string) (Repos
 		if c.BaseImage == "" {
 			c.BaseImage = "unused.invalid/base:1"
 		}
-		if c.Runtime == "python-static" && c.WebServerImage == "" {
+		if (c.Runtime == "python-static" || c.Runtime == "static") && c.WebServerImage == "" {
 			c.WebServerImage = "unused.invalid/server:1"
 		}
 	}
@@ -182,7 +182,7 @@ func PlanRepository(c Config, s RepositorySnapshot, appDir, image string) (Repos
 	if c.Runtime == "streamlit" {
 		port = 8501
 	}
-	if c.Runtime == "python-static" {
+	if c.Runtime == "python-static" || c.Runtime == "static" {
 		port = 8080
 	}
 	manifest := manifest(c, port)
@@ -206,7 +206,7 @@ func PlanRepository(c Config, s RepositorySnapshot, appDir, image string) (Repos
 			}
 			for _, f := range generated {
 				if f.Path == "Dockerfile" {
-					if err := add(path.Join(appDir, "Dockerfile"), strings.ReplaceAll(f.Content, "COPY source/ /app/", "COPY . /app/")); err != nil {
+					if err := add(path.Join(appDir, "Dockerfile"), strings.ReplaceAll(strings.ReplaceAll(f.Content, "COPY source/ /app/", "COPY . /app/"), "COPY --chmod=0755 source/", "COPY --chmod=0755 ./")); err != nil {
 						return p, err
 					}
 				}

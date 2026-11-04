@@ -46,24 +46,34 @@ func SizeLabel(n int64) string      { return fmt.Sprintf("%g MiB", float64(n)/(1
 const Version = "1"
 
 type Config struct {
-	BuildCommand   string `json:"buildCommand,omitempty"`
-	OutputDir      string `json:"outputDir,omitempty"`
-	WebServerImage string `json:"webServerImage,omitempty"`
-	TemplateID     string `json:"templateId,omitempty"`
-	Name           string `json:"name"`
-	Runtime        string `json:"runtime"`
-	EntryPoint     string `json:"entryPoint"`
-	BaseImage      string `json:"baseImage"`
-	BuilderImage   string `json:"builderImage"`
-	RegistryImage  string `json:"registryImage"`
-	Namespace      string `json:"namespace"`
-	Host           string `json:"host"`
-	PullSecret     string `json:"pullSecret"`
-	SecretMode     string `json:"secretMode"`
-	VaultAddress   string `json:"vaultAddress"`
-	VaultRole      string `json:"vaultRole"`
-	VaultPath      string `json:"vaultPath"`
-	RunnerTag      string `json:"runnerTag"`
+	ManagedCompletion bool   `json:"managedCompletion,omitempty"`
+	GitImage          string `json:"gitImage,omitempty"`
+	BuildEngine       string `json:"buildEngine,omitempty"`
+	CAVariable        string `json:"caVariable,omitempty"`
+	CreateNamespace   bool   `json:"createNamespace,omitempty"`
+	BuildCommand      string `json:"buildCommand,omitempty"`
+	OutputDir         string `json:"outputDir,omitempty"`
+	WebServerImage    string `json:"webServerImage,omitempty"`
+	TemplateID        string `json:"templateId,omitempty"`
+	Name              string `json:"name"`
+	Runtime           string `json:"runtime"`
+	EntryPoint        string `json:"entryPoint"`
+	BaseImage         string `json:"baseImage"`
+	BuilderImage      string `json:"builderImage"`
+	RegistryImage     string `json:"registryImage"`
+	Namespace         string `json:"namespace"`
+	Host              string `json:"host"`
+	PullSecret        string `json:"pullSecret"`
+	SecretMode        string `json:"secretMode"`
+	VaultAddress      string `json:"vaultAddress"`
+	VaultRole         string `json:"vaultRole"`
+	VaultPath         string `json:"vaultPath"`
+	RunnerTag         string `json:"runnerTag"`
+	// Optional Kubernetes-executor settings for runners that only allow rootless
+	// builds under a dedicated service account and OpenShift SCC.
+	RunnerServiceAccount string `json:"runnerServiceAccount,omitempty"`
+	RunnerSCC            string `json:"runnerScc,omitempty"`
+	BuilderSetup         string `json:"builderSetup,omitempty"`
 }
 
 type File struct {
@@ -79,11 +89,22 @@ var hostPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
 var filePattern = regexp.MustCompile(`^[a-zA-Z0-9_./-]+$`)
 
 func (c Config) Validate() error {
+	if c.BuildEngine != "" && c.BuildEngine != "buildkit" && c.BuildEngine != "podman" {
+		return errors.New("build engine must be buildkit or podman")
+	}
+	if c.CAVariable != "" && !regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`).MatchString(c.CAVariable) {
+		return errors.New("CA variable must be a CI variable name containing letters, numbers and underscores")
+	}
 	if !namePattern.MatchString(c.Name) || !namePattern.MatchString(c.Namespace) {
 		return errors.New("application and namespace must be lowercase DNS names (at most 63 characters)")
 	}
-	if c.Runtime != "shiny" && c.Runtime != "streamlit" && c.Runtime != "python-static" {
-		return errors.New("select Shiny, Streamlit, or a Python static website")
+	if c.CreateNamespace {
+		if err := ValidateNewNamespace(c.Namespace); err != nil {
+			return err
+		}
+	}
+	if c.Runtime != "shiny" && c.Runtime != "streamlit" && c.Runtime != "python-static" && c.Runtime != "static" {
+		return errors.New("select Shiny, Streamlit, or a static website")
 	}
 	if c.TemplateID != "" {
 		found := false
@@ -100,7 +121,14 @@ func (c Config) Validate() error {
 	if !safePath(c.EntryPoint) || !filePattern.MatchString(c.EntryPoint) {
 		return errors.New("entry point must be a relative application path without spaces")
 	}
-	for _, image := range []string{c.BaseImage, c.BuilderImage, c.RegistryImage} {
+	images := []string{c.BuilderImage, c.RegistryImage}
+	if c.GitImage != "" {
+		images = append(images, c.GitImage)
+	}
+	if c.Runtime != "static" {
+		images = append(images, c.BaseImage)
+	}
+	for _, image := range images {
 		if !imagePattern.MatchString(image) {
 			return errors.New("runtime, builder, and destination image references are required and must not contain whitespace")
 		}
@@ -111,6 +139,13 @@ func (c Config) Validate() error {
 		}
 		if c.OutputDir == "." || !safePath(c.OutputDir) || !filePattern.MatchString(c.OutputDir) {
 			return errors.New("output directory must be a relative subdirectory such as dist, without traversal or spaces")
+		}
+		if !imagePattern.MatchString(c.WebServerImage) {
+			return errors.New("an approved unprivileged webserver image is required for static websites")
+		}
+	} else if c.Runtime == "static" {
+		if c.BuildCommand != "" || c.OutputDir != "" {
+			return errors.New("ready-made static websites do not use a build command or output directory; select the website directory instead")
 		}
 		if !imagePattern.MatchString(c.WebServerImage) {
 			return errors.New("an approved unprivileged webserver image is required for static websites")
@@ -131,6 +166,14 @@ func (c Config) Validate() error {
 	}
 	if c.RunnerTag != "" && !regexp.MustCompile(`^[a-zA-Z0-9_.-]{1,100}$`).MatchString(c.RunnerTag) {
 		return errors.New("runner tag is invalid")
+	}
+	for _, v := range []struct{ value, label string }{{c.RunnerServiceAccount, "runner service account"}, {c.RunnerSCC, "runner security context constraint"}} {
+		if v.value != "" && !regexp.MustCompile(`^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$`).MatchString(v.value) {
+			return errors.New(v.label + " must be a Kubernetes resource name")
+		}
+	}
+	if c.BuilderSetup != "" && !regexp.MustCompile(`^/[A-Za-z0-9_./-]{1,199}$`).MatchString(c.BuilderSetup) {
+		return errors.New("builder setup must be the absolute path of an executable in the builder image (for example /home/user/entrypoint.sh), without arguments")
 	}
 	if c.SecretMode != "variables" && c.SecretMode != "vault" {
 		return errors.New("select GitLab CI/CD variables or Vault")
@@ -216,7 +259,10 @@ func ExtractArchive(ctx context.Context, input io.ReaderAt, size int64, dir stri
 		files = append(files, File{Path: "source/" + n, DiskPath: out.Name(), Encoding: "base64"})
 	}
 	if len(files) == 0 {
-		return nil, errors.New("archive contains no application files")
+		if len(z.File) == 0 {
+			return nil, errors.New("the ZIP archive is empty; recreate it with your application files, such as index.html, app.py, or app.R")
+		}
+		return nil, fmt.Errorf("the ZIP archive contains only folders (%d entries), with no application files; recreate it including the files inside your project directory", len(z.File))
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	return files, nil
@@ -290,6 +336,9 @@ func Generate(c Config, source []File) ([]File, error) {
 	if c.Runtime == "shiny" && !has("renv.lock") && !has("packages.txt") {
 		return nil, errors.New("Shiny requires renv.lock or packages.txt at the archive root")
 	}
+	if c.Runtime == "static" && !has(path.Join(c.EntryPoint, "index.html")) {
+		return nil, errors.New("static website directory must contain index.html")
+	}
 	files := append([]File{}, source...)
 	add := func(p, s string) { files = append(files, File{Path: p, Content: s, Encoding: "text"}) }
 	port := 3838
@@ -313,6 +362,10 @@ func Generate(c Config, source []File) ([]File, error) {
 		command, _ := json.Marshal([]string{"sh", "-c", c.BuildCommand})
 		prepare, _ := json.Marshal([]string{"python", "-c", staticOutputScript, c.OutputDir, "/justcd-site"})
 		docker = "FROM " + c.BaseImage + " AS site-build\nUSER 0\nWORKDIR /app\nCOPY source/ /app/\nRUN if [ -f requirements.txt ]; then python -m pip install --no-cache-dir -r requirements.txt; fi\nRUN " + string(command) + "\nRUN " + string(prepare) + "\n\nFROM " + c.WebServerImage + " AS site-runtime\nCOPY --from=site-build /justcd-site/ /usr/share/nginx/html/\nUSER 1001\nEXPOSE 8080\n"
+	}
+	if c.Runtime == "static" {
+		port = 8080
+		docker = "FROM " + c.WebServerImage + "\nCOPY --chmod=0755 " + path.Join("source", c.EntryPoint) + "/ /usr/share/nginx/html/\nUSER 1001\nEXPOSE 8080\n"
 	}
 	add("Dockerfile", docker)
 	add(".dockerignore", ".git\ndeploy\n.justcd\n")
@@ -390,26 +443,128 @@ spec:
 }
 func yamlString(s string) string { b, _ := json.Marshal(s); return string(b) }
 func pipeline(c Config) string {
+	ci := legacyPipeline(c)
+	if c.ManagedCompletion {
+		ci = strings.Split(ci, "update-deployment:\n")[0]
+		ci = strings.Replace(ci, "stages: [build, publish]", "stages: [build]", 1)
+	}
+	return ci
+}
+
+func legacyPipeline(c Config) string {
+	gitImage := c.GitImage
+	if gitImage == "" {
+		gitImage = c.BuilderImage
+	}
+	tools := "buildctl-daemonless.sh buildctl buildkitd jq"
+	engine := "BuildKit"
+	buildSteps := `      jq -n --arg host "$registry" --arg user "$REGISTRY_USER" --arg password "$REGISTRY_PASSWORD" '{auths:{($host):{auth:(($user+":"+$password)|@base64)}}}' > "$DOCKER_CONFIG/config.json"
+      buildctl-daemonless.sh build --frontend dockerfile.v0 --local context=. --local dockerfile=. --output "type=image,name=$JUSTCD_IMAGE:$CI_COMMIT_SHA,push=true" --metadata-file /tmp/justcd-image.json
+      digest="$(jq -er '."containerimage.digest" | select(test("^sha256:[a-f0-9]{64}$"))' /tmp/justcd-image.json)"
+`
+	if c.BuildEngine == "podman" {
+		tools = "podman grep cat cp mkdir"
+		engine = "Podman"
+		buildSteps = `      export REGISTRY_AUTH_FILE="$DOCKER_CONFIG/auth.json"
+      mkdir -p "$DOCKER_CONFIG/certs"
+      if [ -n "${SSL_CERT_FILE:-}" ]; then cp "$SSL_CERT_FILE" "$DOCKER_CONFIG/certs/ca.crt"; fi
+      printf '%s' "$REGISTRY_PASSWORD" | podman login --authfile "$REGISTRY_AUTH_FILE" --cert-dir "$DOCKER_CONFIG/certs" --tls-verify=true --username "$REGISTRY_USER" --password-stdin "$registry"
+      podman build --authfile "$REGISTRY_AUTH_FILE" --cert-dir "$DOCKER_CONFIG/certs" --tls-verify=true --format docker -f Dockerfile -t "$JUSTCD_IMAGE:$CI_COMMIT_SHA" .
+      podman push --authfile "$REGISTRY_AUTH_FILE" --cert-dir "$DOCKER_CONFIG/certs" --tls-verify=true --digestfile "$DOCKER_CONFIG/digest" "$JUSTCD_IMAGE:$CI_COMMIT_SHA" "docker://$JUSTCD_IMAGE:$CI_COMMIT_SHA"
+      digest="$(cat "$DOCKER_CONFIG/digest")"
+      if ! printf '%s\n' "$digest" | grep -Eq '^sha256:[a-f0-9]{64}$'; then
+        printf 'JustCD: Podman push returned an invalid image digest.\n' >&2
+        exit 1
+      fi
+`
+	}
+	caSetup := ""
+	if c.CAVariable != "" {
+		caSetup = `      # Optional platform CA, supplied as PEM text by an inherited CI variable.
+      if [ -z "${` + c.CAVariable + `:-}" ]; then
+        printf 'JustCD: configured CA variable ` + c.CAVariable + ` is empty or unavailable. Check GitLab variable inheritance and protected-branch scope.\n' >&2
+        exit 1
+      fi
+      ca_bundle="$DOCKER_CONFIG/ca-bundle.pem"
+      system_ca=""
+      for candidate in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt; do
+        if [ -r "$candidate" ]; then system_ca="$candidate"; break; fi
+      done
+      if [ -z "$system_ca" ]; then printf 'JustCD: builder image has no supported system CA bundle.\n' >&2; exit 1; fi
+      cat "$system_ca" > "$ca_bundle"
+      printf '\n%s\n' "$` + c.CAVariable + `" >> "$ca_bundle"
+      export SSL_CERT_FILE="$ca_bundle"
+      export GIT_SSL_CAINFO="$ca_bundle"
+      export CURL_CA_BUNDLE="$ca_bundle"
+      export REQUESTS_CA_BUNDLE="$ca_bundle"
+`
+	}
+
 	tags := ""
 	if c.RunnerTag != "" {
 		tags = "  tags: [" + yamlString(c.RunnerTag) + "]\n"
+	}
+	runnerVars, setup := "", ""
+	if c.RunnerServiceAccount != "" {
+		runnerVars += "    KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: " + yamlString(c.RunnerServiceAccount) + "\n"
+	}
+	if c.RunnerSCC != "" {
+		runnerVars += "    KUBERNETES_POD_ANNOTATIONS_1: " + yamlString("openshift.io/required-scc="+c.RunnerSCC) + "\n"
+	}
+	if c.BuilderSetup != "" {
+		setup = "  before_script:\n    - " + yamlString(c.BuilderSetup) + "\n"
 	}
 	vault := ""
 	if c.SecretMode == "vault" {
 		vault = "  id_tokens:\n    VAULT_ID_TOKEN:\n      aud: " + yamlString(c.VaultAddress) + "\n  secrets:\n    REGISTRY_USER:\n      vault:\n        engine: {name: kv-v2, path: " + yamlString(strings.Split(c.VaultPath, "/")[0]) + "}\n        path: " + yamlString(strings.TrimPrefix(strings.Join(strings.Split(c.VaultPath, "/")[1:], "/"), "data/")) + "\n        field: username\n      token: $VAULT_ID_TOKEN\n      file: false\n    REGISTRY_PASSWORD:\n      vault:\n        engine: {name: kv-v2, path: " + yamlString(strings.Split(c.VaultPath, "/")[0]) + "}\n        path: " + yamlString(strings.TrimPrefix(strings.Join(strings.Split(c.VaultPath, "/")[1:], "/"), "data/")) + "\n        field: token\n      token: $VAULT_ID_TOKEN\n      file: false\n"
 	}
-	return "# JustCD template v" + Version + ". Builder image must contain rootless BuildKit, git, jq and a POSIX shell.\nworkflow:\n  rules:\n    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'\n      changes: [source/**/*, Dockerfile, .gitlab-ci.yml, .justcd/**/*]\n    - when: never\nstages: [publish]\npublish:\n  stage: publish\n  resource_group: justcd-publish\n  image:\n    name: " + yamlString(c.BuilderImage) + "\n    entrypoint: [\"\"]\n" + tags + vault + "  variables:\n    GIT_DEPTH: '0'\n    BUILDKITD_FLAGS: '--oci-worker-no-process-sandbox'\n    JUSTCD_IMAGE: " + yamlString(c.RegistryImage) + "\n    VAULT_SERVER_URL: " + yamlString(c.VaultAddress) + "\n    VAULT_AUTH_ROLE: " + yamlString(c.VaultRole) + ` 
-  script:
+	return "# JustCD template v" + Version + ". Builder image must support the selected engine and CI tools.\nworkflow:\n  rules:\n    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'\n      changes: [source/**/*, Dockerfile, .gitlab-ci.yml, .justcd/**/*]\n    - when: never\nstages: [build, publish]\npublish:\n  stage: build\n  image:\n    name: " + yamlString(c.BuilderImage) + "\n    entrypoint: [\"\"]\n" + tags + vault + "  variables:\n    GIT_DEPTH: '0'\n" + runnerVars + "    BUILDKITD_FLAGS: '--oci-worker-no-process-sandbox'\n    JUSTCD_IMAGE: " + yamlString(c.RegistryImage) + "\n    VAULT_SERVER_URL: " + yamlString(c.VaultAddress) + "\n    VAULT_AUTH_ROLE: " + yamlString(c.VaultRole) + "\n" + setup + `  script:
     - |
       set -eu
+      for tool in ` + tools + `; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+          printf 'JustCD: CI builder image is missing %s. The selected ` + engine + ` engine requires: ` + tools + `. Update the publishing profile builder image or build engine and rebuild.\n' "$tool" >&2
+          exit 1
+        fi
+      done
       test -n "$REGISTRY_USER"
       test -n "$REGISTRY_PASSWORD"
       export DOCKER_CONFIG="$(mktemp -d)"
       trap 'rm -rf "$DOCKER_CONFIG"' EXIT
-      registry="${JUSTCD_IMAGE%%/*}"
-      jq -n --arg host "$registry" --arg user "$REGISTRY_USER" --arg password "$REGISTRY_PASSWORD" '{auths:{($host):{auth:(($user+":"+$password)|@base64)}}}' > "$DOCKER_CONFIG/config.json"
-      buildctl-daemonless.sh build --frontend dockerfile.v0 --local context=. --local dockerfile=. --output "type=image,name=$JUSTCD_IMAGE:$CI_COMMIT_SHA,push=true" --metadata-file /tmp/justcd-image.json
-      digest="$(jq -er '."containerimage.digest" | select(test("^sha256:[a-f0-9]{64}$"))' /tmp/justcd-image.json)"
+` + caSetup + `      registry="${JUSTCD_IMAGE%%/*}"
+` + buildSteps + `      mkdir -p .justcd-build
+      printf '%s\n' "$digest" > .justcd-build/image-digest
+  artifacts:
+    paths: [.justcd-build/image-digest]
+    expire_in: 1 day
+update-deployment:
+  stage: publish
+  resource_group: justcd-publish
+  needs:
+    - job: publish
+      artifacts: true
+  image:
+    name: ` + yamlString(gitImage) + `
+    entrypoint: [""]
+` + tags + `  variables:
+    GIT_DEPTH: '0'
+    JUSTCD_IMAGE: ` + yamlString(c.RegistryImage) + `
+  script:
+    - |
+      set -eu
+      for tool in git sed grep; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+          printf 'JustCD: deployment update image is missing %s. Configure a Git-capable deployment update image in the publishing profile.\n' "$tool" >&2
+          exit 1
+        fi
+      done
+      export DOCKER_CONFIG="$(mktemp -d)"
+      trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+` + caSetup + `      digest="$(cat .justcd-build/image-digest)"
+      if ! printf '%s\n' "$digest" | grep -Eq '^sha256:[a-f0-9]{64}$'; then
+        printf 'JustCD: build artifact has an invalid image digest.\n' >&2
+        exit 1
+      fi
       # A newer source commit must never be replaced by an older build.
       git fetch origin "$CI_DEFAULT_BRANCH"
       test "$(git rev-parse FETCH_HEAD)" = "$CI_COMMIT_SHA"
@@ -441,3 +596,11 @@ shutil.copytree(source, target)
 for item in itertools.chain((target,), target.rglob("*")):
     item.chmod(0o755 if item.is_dir() else 0o644)
 `
+
+// Reserved platform namespaces cannot be provisioned through app publishing.
+func ValidateNewNamespace(name string) error {
+	if !namePattern.MatchString(name) || name == "default" || name == "kube" || name == "openshift" || strings.HasPrefix(name, "kube-") || strings.HasPrefix(name, "openshift-") {
+		return errors.New("choose a non-system namespace using lowercase DNS letters, numbers and hyphens (at most 63 characters)")
+	}
+	return nil
+}

@@ -4,6 +4,8 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { ArrowLeft01Icon } from "@hugeicons/core-free-icons"
+import { usePublishingDraft } from "@/hooks/use-publishing-draft"
+import { PublishingDraftNotice } from "./publishing-draft-notice"
 import { api } from "@/lib/api"
 import type {
   Cluster,
@@ -13,7 +15,11 @@ import type {
 } from "@/lib/types"
 import type { ApprovedPublishingProfile } from "@/lib/publishing"
 import type { ApplicationTemplate } from "./template-catalog"
-import { PublishingCard, PublishingField } from "./publishing-fields"
+import {
+  PublishingCard,
+  PublishingField,
+  PublishingCheckbox,
+} from "./publishing-fields"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FormSelect } from "@/components/ui/form-select"
@@ -45,12 +51,14 @@ export function ExistingProject({
   template,
   profiles,
   onBack,
+  onPublished,
 }: {
   workspaceId: string
   owner: boolean
   template: ApplicationTemplate
   profiles: ApprovedPublishingProfile[]
   onBack: () => void
+  onPublished: () => void
 }) {
   const [sources, setSources] = useState<GitSource[]>([])
   const [sourceId, setSourceId] = useState("")
@@ -68,7 +76,11 @@ export function ExistingProject({
   const [clusterId, setClusterId] = useState("")
   const [bindings, setBindings] = useState<NamespaceBinding[]>([])
   const [namespace, setNamespace] = useState("")
+  const [createNamespace, setCreateNamespace] = useState(false)
+  const [newNamespace, setNewNamespace] = useState("")
   const [baseImage, setBaseImage] = useState("")
+  const [gitImage, setGitImage] = useState("")
+  const [buildEngine, setBuildEngine] = useState("buildkit")
   const [builderImage, setBuilderImage] = useState("")
   const [registryImage, setRegistryImage] = useState("")
   const [webServerImage, setWebServerImage] = useState("")
@@ -83,6 +95,59 @@ export function ExistingProject({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const manual = profileId === "manual"
+  const draft = usePublishingDraft(
+    `repository:${workspaceId}:${template.id}`,
+    {
+      sourceId,
+      profileId,
+      revision,
+      appDir,
+      name,
+      entryPoint,
+      buildCommand,
+      outputDir,
+      clusterId,
+      namespace,
+      createNamespace,
+      newNamespace,
+      baseImage,
+      gitImage,
+      buildEngine,
+      builderImage,
+      registryImage,
+      webServerImage,
+      host,
+      pullSecret,
+      runnerTag,
+      image,
+      manifestPath,
+    },
+    (data) => {
+      setSourceId(data.sourceId)
+      setProfileId(data.profileId)
+      setRevision(data.revision)
+      setAppDir(data.appDir)
+      setName(data.name)
+      setEntryPoint(data.entryPoint)
+      setBuildCommand(data.buildCommand)
+      setOutputDir(data.outputDir)
+      setClusterId(data.clusterId)
+      setNamespace(data.namespace)
+      setCreateNamespace(data.createNamespace)
+      setNewNamespace(data.newNamespace)
+      setBaseImage(data.baseImage)
+      setGitImage(data.gitImage || "")
+      setBuildEngine(data.buildEngine || "buildkit")
+      setBuilderImage(data.builderImage)
+      setRegistryImage(data.registryImage)
+      setWebServerImage(data.webServerImage)
+      setHost(data.host)
+      setPullSecret(data.pullSecret)
+      setRunnerTag(data.runnerTag)
+      setImage(data.image)
+      setManifestPath(data.manifestPath)
+    }
+  )
 
   useEffect(() => {
     let active = true
@@ -95,7 +160,7 @@ export function ExistingProject({
             (s) => s.workspaceId === workspaceId && !s.shared
           )
           setSources(owned)
-          setSourceId(owned[0]?.id ?? "")
+          setSourceId((current) => current || owned[0]?.id || "")
         }
       })
       .catch((e) => active && setError(e))
@@ -106,7 +171,7 @@ export function ExistingProject({
         .then(({ items }) => {
           if (active) {
             setClusters(items)
-            setClusterId(items[0]?.id ?? "")
+            setClusterId((current) => current || items[0]?.id || "")
           }
         })
         .catch((e) => active && setError(e))
@@ -123,7 +188,7 @@ export function ExistingProject({
       .then(({ items }) => {
         if (active) {
           setBindings(items)
-          setNamespace(items[0]?.namespace ?? "")
+          setNamespace((current) => current || items[0]?.namespace || "")
         }
       })
       .catch((e) => active && setError(e))
@@ -149,16 +214,21 @@ export function ExistingProject({
               name,
               entryPoint,
               baseImage,
+              gitImage,
+              buildEngine,
               builderImage,
               registryImage,
-              namespace,
+              namespace: createNamespace ? newNamespace : namespace,
+              createNamespace,
               host,
               pullSecret,
               runnerTag,
               secretMode: "variables",
               ...(template.runtime === "python-static"
                 ? { buildCommand, outputDir, webServerImage }
-                : {}),
+                : template.runtime === "static"
+                  ? { webServerImage }
+                  : {}),
             },
           }
         : {
@@ -197,6 +267,8 @@ export function ExistingProject({
             body: JSON.stringify({ ...metadata(), planHash: plan?.hash }),
           })
         )
+        draft.clear()
+        onPublished()
         setGitlabToken("")
       }
     } catch (e) {
@@ -296,9 +368,10 @@ export function ExistingProject({
           missing files before creating a merge request.
         </p>
       </header>
+      <PublishingDraftNotice draft={draft} needsArchive={false} />
       {error != null && <ErrorNotice error={error} />}
       <fieldset
-        disabled={busy}
+        disabled={busy || !draft.ready}
         className="space-y-4 disabled:opacity-70"
         onChange={() => setPlan(null)}
       >
@@ -376,6 +449,15 @@ export function ExistingProject({
               ]}
               placeholder="Select profile"
             />
+            {!manual &&
+              profiles.find((p) => p.id === profileId)?.namespaceMode ===
+                "per-application" && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Namespace:{" "}
+                  {profiles.find((p) => p.id === profileId)?.namespacePrefix}
+                  {name || "<app-name>"} · create if missing
+                </p>
+              )}
           </PublishingField>
           {manual &&
             text(
@@ -505,12 +587,16 @@ export function ExistingProject({
                   </>
                 ) : (
                   text(
-                    template.runtime === "shiny"
-                      ? "Shiny app directory"
-                      : "Python entry file",
+                    template.runtime === "static"
+                      ? "Website directory"
+                      : template.runtime === "shiny"
+                        ? "Shiny app directory"
+                        : "Python entry file",
                     entryPoint,
                     setEntryPoint,
-                    "Relative to the application directory."
+                    template.runtime === "static"
+                      ? "Relative to the application directory; must contain index.html."
+                      : "Relative to the application directory."
                   )
                 ))}
               {inspection.hasPipeline &&
@@ -522,6 +608,19 @@ export function ExistingProject({
                 )}
               {manual && (
                 <>
+                  <div className="md:col-span-2 lg:col-span-3">
+                    <PublishingCheckbox
+                      id="existing-create-namespace"
+                      checked={createNamespace}
+                      onCheckedChange={(checked) => {
+                        setCreateNamespace(checked)
+                        setNewNamespace(name)
+                        setPlan(null)
+                      }}
+                      title="Create namespace if missing"
+                      description="Registers a workspace binding with the application. Namespace or OpenShift project creation uses JustCD’s deployment flow and cluster permissions."
+                    />
+                  </div>
                   <PublishingField label="Cluster" htmlFor="existing-cluster">
                     <FormSelect
                       id="existing-cluster"
@@ -538,24 +637,39 @@ export function ExistingProject({
                       }))}
                     />
                   </PublishingField>
+
                   <PublishingField
                     label="Namespace"
                     htmlFor="existing-namespace"
                   >
-                    <FormSelect
-                      id="existing-namespace"
-                      value={namespace}
-                      onValueChange={(v) => {
-                        setNamespace(v)
-                        setPlan(null)
-                      }}
-                      items={bindings.map((b) => ({
-                        value: b.namespace,
-                        label: b.namespace,
-                      }))}
-                    />
+                    {createNamespace ? (
+                      <Input
+                        id="existing-namespace"
+                        required
+                        value={newNamespace}
+                        maxLength={63}
+                        onChange={(event) => {
+                          setNewNamespace(event.target.value)
+                          setPlan(null)
+                        }}
+                      />
+                    ) : (
+                      <FormSelect
+                        id="existing-namespace"
+                        value={namespace}
+                        onValueChange={(v) => {
+                          setNamespace(v)
+                          setPlan(null)
+                        }}
+                        items={bindings.map((b) => ({
+                          value: b.namespace,
+                          label: b.namespace,
+                        }))}
+                      />
+                    )}
                   </PublishingField>
-                  {!inspection.hasDockerfile &&
+                  {template.runtime !== "static" &&
+                    !inspection.hasDockerfile &&
                     !inspection.hasPipeline &&
                     text(
                       "Base image",
@@ -563,12 +677,35 @@ export function ExistingProject({
                       setBaseImage,
                       "Approved R/Shiny or Python image."
                     )}
+                  {!inspection.hasPipeline && (
+                    <PublishingField
+                      label="Build engine"
+                      htmlFor="existing-build-engine"
+                    >
+                      <FormSelect
+                        id="existing-build-engine"
+                        value={buildEngine}
+                        onValueChange={setBuildEngine}
+                        items={[
+                          { value: "buildkit", label: "BuildKit" },
+                          { value: "podman", label: "Podman" },
+                        ]}
+                      />
+                    </PublishingField>
+                  )}
                   {!inspection.hasPipeline &&
                     text(
                       "CI builder image",
                       builderImage,
                       setBuilderImage,
-                      "Rootless BuildKit, git, jq and a POSIX shell."
+                      "Podman and shell tools, or rootless BuildKit with jq. Git runs in the deployment update job."
+                    )}
+                  {!inspection.hasPipeline &&
+                    text(
+                      "Deployment update image",
+                      gitImage,
+                      setGitImage,
+                      "Git, sed, grep, shell and CA certificates. Blank reuses the builder image."
                     )}
                   {!inspection.hasPipeline &&
                     text(
@@ -577,7 +714,8 @@ export function ExistingProject({
                       setRegistryImage,
                       "Registry/repository/image without tag."
                     )}
-                  {template.runtime === "python-static" &&
+                  {(template.runtime === "python-static" ||
+                    template.runtime === "static") &&
                     !inspection.hasDockerfile &&
                     !inspection.hasPipeline &&
                     text(

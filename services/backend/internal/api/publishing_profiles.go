@@ -22,15 +22,18 @@ type publishingSecrets struct {
 // Read-only profile summaries deliberately exclude infrastructure settings and
 // credential references. Analysts choose an approved destination, not its tokens.
 type publishingProfileSummary struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	TemplateID  string `json:"templateId"`
-	ClusterID   string `json:"clusterId"`
-	ClusterName string `json:"clusterName"`
-	Namespace   string `json:"namespace"`
-	HostSuffix  string `json:"hostSuffix"`
-	SyncPolicy  string `json:"syncPolicy"`
+	CurrentRevision int64  `json:"currentRevision"`
+	NamespaceMode   string `json:"namespaceMode"`
+	NamespacePrefix string `json:"namespacePrefix"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	TemplateID      string `json:"templateId"`
+	ClusterID       string `json:"clusterId"`
+	ClusterName     string `json:"clusterName"`
+	Namespace       string `json:"namespace"`
+	HostSuffix      string `json:"hostSuffix"`
+	SyncPolicy      string `json:"syncPolicy"`
 }
 
 func (s *Server) listApprovedPublishingProfiles(w http.ResponseWriter, r *http.Request) {
@@ -56,14 +59,16 @@ func (s *Server) listApprovedPublishingProfiles(w http.ResponseWriter, r *http.R
 		if !allowed {
 			continue
 		}
-		if _, e = s.Store.NamespaceBinding(r.Context(), workspace, p.Settings.ClusterID, p.Settings.Namespace); e != nil {
-			continue
+		if p.Settings.NamespaceMode != "per-application" {
+			if _, e = s.Store.NamespaceBinding(r.Context(), workspace, p.Settings.ClusterID, p.Settings.Namespace); e != nil {
+				continue
+			}
 		}
 		cluster, e := s.Store.ClusterByID(r.Context(), p.Settings.ClusterID)
 		if e != nil {
 			continue
 		}
-		items = append(items, publishingProfileSummary{p.ID, p.Name, p.Description, p.Settings.TemplateID, p.Settings.ClusterID, cluster.Name, p.Settings.Namespace, p.Settings.HostSuffix, p.Settings.SyncPolicy})
+		items = append(items, publishingProfileSummary{CurrentRevision: p.CurrentRevision, ID: p.ID, Name: p.Name, Description: p.Description, TemplateID: p.Settings.TemplateID, ClusterID: p.Settings.ClusterID, ClusterName: cluster.Name, Namespace: p.Settings.Namespace, HostSuffix: p.Settings.HostSuffix, SyncPolicy: p.Settings.SyncPolicy, NamespaceMode: p.Settings.NamespaceMode, NamespacePrefix: p.Settings.NamespacePrefix})
 	}
 	writeJSON(w, 200, map[string]any{"items": items})
 }
@@ -133,12 +138,13 @@ func (s *Server) savePublishingProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Name        string                     `json:"name"`
-		Description string                     `json:"description"`
-		Enabled     bool                       `json:"enabled"`
-		Settings    publishing.ProfileSettings `json:"settings"`
-		Secrets     publishingSecrets          `json:"secrets"`
-		Version     int64                      `json:"version"`
+		PublishRevision bool                       `json:"publishRevision"`
+		Name            string                     `json:"name"`
+		Description     string                     `json:"description"`
+		Enabled         bool                       `json:"enabled"`
+		Settings        publishing.ProfileSettings `json:"settings"`
+		Secrets         publishingSecrets          `json:"secrets"`
+		Version         int64                      `json:"version"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, 400, "invalid publishing profile")
@@ -159,8 +165,9 @@ func (s *Server) savePublishingProfile(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspaceCluster(w, r, workspace, input.Settings.ClusterID) {
 		return
 	}
-	if _, err := s.Store.NamespaceBinding(r.Context(), workspace, input.Settings.ClusterID, input.Settings.Namespace); err != nil {
-		writeError(w, 400, "profile destination must have an existing workspace namespace binding")
+	checkConfig, _ := input.Settings.Resolve("profile-check", "")
+	if _, err := s.Store.PublishingNamespaceBinding(r.Context(), workspace, input.Settings.ClusterID, checkConfig.Namespace, checkConfig.CreateNamespace); err != nil {
+		writeError(w, 400, "profile namespace destination is unavailable: "+err.Error())
 		return
 	}
 	create := r.Method == "POST"
@@ -192,6 +199,7 @@ func (s *Server) savePublishingProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		p.Version = input.Version
 	}
+	p.PublishRevision = input.PublishRevision
 	p.Name, p.Description, p.Enabled, p.Settings = input.Name, input.Description, input.Enabled, input.Settings
 	if p.Settings.SecretMode == "vault" {
 		secrets.RegistryUser = ""
@@ -221,6 +229,10 @@ func (s *Server) savePublishingProfile(w http.ResponseWriter, r *http.Request) {
 		credentials = append(credentials, store.Credential{ID: v.id, WorkspaceID: &workspace, Name: p.Name + " publishing", Kind: v.kind, Cipher: cipher})
 	}
 	if err := s.Store.SavePublishingProfile(r.Context(), p, credentials, create); err != nil {
+		if strings.HasPrefix(err.Error(), "profile is in use;") {
+			writeError(w, 409, err.Error())
+			return
+		}
 		writeError(w, 409, "could not save profile; reload to check its version, unique name, and whether infrastructure settings are already in use")
 		return
 	}
@@ -263,7 +275,7 @@ func (s *Server) resolvePublishingProfile(w http.ResponseWriter, r *http.Request
 	// A profile request contains only analyst-owned fields. In particular, raw
 	// credentials, image references and destinations are never accepted as overrides.
 	if in.Config != (publishing.Config{}) || in.ClusterID != "" || in.GitLabURL != "" || in.Group != "" || in.GitLabToken != "" || in.GitReadToken != "" || in.RegistryUser != "" || in.RegistryPassword != "" {
-		writeError(w, 400, "profile publishing accepts only profileId, workspaceId, name, entryPoint, buildCommand, outputDir, and updateApplicationId")
+		writeError(w, 400, "profile publishing accepts only profileId, workspaceId, name, entryPoint, buildCommand, outputDir, expectedProfileRevision, and updateApplicationId")
 		return nil, false
 	}
 	p, err := s.Store.PublishingProfile(r.Context(), in.ProfileID)
@@ -275,6 +287,11 @@ func (s *Server) resolvePublishingProfile(w http.ResponseWriter, r *http.Request
 		writeError(w, 403, "this publishing profile is disabled; ask a workspace administrator")
 		return nil, false
 	}
+	if in.UpdateApplicationID == "" && in.ExpectedProfileRevision != 0 && in.ExpectedProfileRevision != p.CurrentRevision {
+		writeError(w, 409, "profile has a newer published version; reload the profile selection before publishing")
+		return nil, false
+	}
+	in.ProfileRevision = p.CurrentRevision
 	if in.UpdateApplicationID != "" {
 		app, e := s.Store.ApplicationByID(r.Context(), in.UpdateApplicationID)
 		if e != nil || app.WorkspaceID != in.WorkspaceID || app.Decommissioning {
@@ -291,6 +308,7 @@ func (s *Server) resolvePublishingProfile(w http.ResponseWriter, r *http.Request
 			writeError(w, 400, "source updates must use the application's original publishing profile")
 			return nil, false
 		}
+		in.ProfileRevision = previous.ProfileRevision
 		var config publishing.Config
 		if e = json.Unmarshal(previous.Config, &config); e != nil {
 			writeStoreError(w, "could not read publication configuration")
@@ -303,7 +321,16 @@ func (s *Server) resolvePublishingProfile(w http.ResponseWriter, r *http.Request
 		in.Name, in.EntryPoint = app.Name, config.EntryPoint
 		in.BuildCommand, in.OutputDir = config.BuildCommand, config.OutputDir
 	}
-	cfg, err := p.Settings.Resolve(in.Name, in.EntryPoint)
+	version, e := s.Store.PublishingProfileVersion(r.Context(), p.ID, in.ProfileRevision)
+	if e != nil {
+		writeError(w, 409, "pinned profile revision is unavailable")
+		return nil, false
+	}
+	if version.TemplateVersion != publishing.Version {
+		writeError(w, 409, "pinned recipe version is unsupported by this server; upgrade the application profile before publishing source")
+		return nil, false
+	}
+	cfg, err := version.Settings.Resolve(in.Name, in.EntryPoint)
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return nil, false
@@ -343,10 +370,11 @@ func publicationResult(p store.PublishedApplication, syncPolicy string) map[stri
 	if cfg.Host != "" {
 		url = "https://" + cfg.Host
 	}
-	result := map[string]any{"applicationId": p.ApplicationID, "projectUrl": p.ProjectURL, "repositoryUrl": p.RepositoryURL, "pipelineUrl": p.PipelineURL, "syncPolicy": syncPolicy, "applicationUrl": url}
+	result := map[string]any{"applicationId": p.ApplicationID, "projectUrl": p.ProjectURL, "repositoryUrl": p.RepositoryURL, "pipelineUrl": p.PipelineURL, "syncPolicy": syncPolicy, "applicationUrl": url, "managedCompletion": cfg.ManagedCompletion}
 	if p.ProfileID != nil {
 		result["profileId"] = *p.ProfileID
-		result["config"] = map[string]string{"name": cfg.Name, "runtime": cfg.Runtime, "entryPoint": cfg.EntryPoint, "templateId": cfg.TemplateID, "buildCommand": cfg.BuildCommand, "outputDir": cfg.OutputDir}
+		result["profileRevision"] = p.ProfileRevision
+		result["config"] = map[string]any{"createNamespace": cfg.CreateNamespace, "namespace": cfg.Namespace, "name": cfg.Name, "runtime": cfg.Runtime, "entryPoint": cfg.EntryPoint, "templateId": cfg.TemplateID, "buildCommand": cfg.BuildCommand, "outputDir": cfg.OutputDir}
 	} else {
 		result["config"] = cfg
 		result["gitlabUrl"] = p.GitLabURL

@@ -213,3 +213,28 @@ func TestRepositoryPreservesCustomCIConfiguration(t *testing.T) {
 		}
 	}
 }
+
+func TestReadyMadeStaticWebsiteRepository(t *testing.T) {
+	c := config()
+	c.TemplateID = "static"
+	c.Runtime = "static"
+	c.EntryPoint = "public"
+	c.BaseImage = ""
+	c.WebServerImage = "registry.example.com/nginx:1"
+	p, err := PlanRepository(c, repoSnapshot("apps/site/public/index.html", "apps/site/public/main.css"), "apps/site", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, f := range p.Files {
+		if f.Path == "apps/site/Dockerfile" {
+			found = true
+			if !strings.Contains(f.Content, "COPY --chmod=0755 ./public/ /usr/share/nginx/html/") || strings.Contains(f.Content, "RUN ") {
+				t.Fatal("wrong static context", f.Content)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("missing Dockerfile")
+	}
+}

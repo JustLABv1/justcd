@@ -40,7 +40,7 @@ paths:
       - {name: profileID, in: path, required: true, schema: {type: string}}
     put:
       summary: Edit a profile, disable publishing, or rotate credentials (owner)
-      description: Supply the current version. Blank secret fields retain stored values. In-use infrastructure settings are immutable; create a new profile for changes.
+      description: Supply the current version. Blank secret fields retain stored values. Build engines, build images, runner tags, runner service account/SCC/setup script, custom CA variable names, and image-pull secrets remain editable on in-use profiles; other infrastructure settings are immutable. Saving does not rebuild existing apps. Build-setting changes publish immutable revisions. Source uploads retain the application pin; explicit reviewed upgrades adopt newer revisions without a ZIP.
       requestBody:
         required: true
         content: {application/json: {schema: {$ref: '#/components/schemas/PublishingProfileInput'}}}
@@ -92,6 +92,43 @@ paths:
         '201': {description: applicationId, mergeRequestUrl, manifestPath, and CI prerequisites}
         '409': {description: Stale review hash, existing conflicting application, or application registration failure; a registration failure may include the created merge request URL for recovery}
         '502': {description: GitLab proposal could not be created}
+  /publishing/profiles/{profileID}/versions:
+    get:
+      summary: List immutable profile revision snapshots (workspace owner)
+      parameters:
+        - {name: profileID, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Up to 100 published revisions with settings, recipe version, and publication time; credentials excluded}
+        '403': {description: Workspace owner required}
+  /applications/{applicationID}/profile-upgrade:
+    parameters:
+      - {name: applicationID, in: path, required: true, schema: {type: string}}
+    get:
+      summary: Review a managed application's latest profile revision using source already in Git
+      description: Returns fromRevision, toRevision, sourceSha, hash, image changes, generated-file changes, and resume/upToDate flags. Read-only; requires workspace deployer access and an enabled original profile.
+      responses:
+        '200': {description: Immutable upgrade review or already-up-to-date status}
+        '403': {description: Workspace deployer, cluster access, and enabled profile required}
+        '409': {description: Application destination changed or recipe version is unsupported}
+    post:
+      summary: Apply a reviewed profile revision and start a build without a ZIP
+      description: Retains source and deployment files. Writes only generated recipes, pins the application revision, and starts CI under existing deployment policies. Stale reviews are rejected. A pending build can be reviewed again and retried after a partial failure.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, hash]
+              properties:
+                revision: {type: integer}
+                hash: {type: string}
+      responses:
+        '200': {description: applicationId, profileRevision, and pipelineUrl; retries of completed upgrades do not start another build}
+        '403': {description: Workspace deployer and enabled profile required}
+        '409': {description: Stale review, application change, or concurrent publication; refresh the upgrade review}
+        '502': {description: GitLab build could not start; application may have a pending upgraded revision}
   /publishing/templates:
     get:
       summary: List supported application templates (authenticated)
@@ -131,6 +168,7 @@ paths:
                     - required: [clusterId, gitlabUrl, group, gitlabToken, config]
                   properties:
                     profileId: {type: string, description: Approved workspace profile; infrastructure overrides are rejected}
+                    expectedProfileRevision: {type: integer, description: Optional current revision guard for initial publishing}
                     name: {type: string, description: Application name for initial profile publishing}
                     entryPoint: {type: string, description: Optional relative app entry point}
                     buildCommand: {type: string, description: Python static website build command}
@@ -146,18 +184,19 @@ paths:
                     registryPassword: {type: string, writeOnly: true}
                     config:
                       type: object
-                      required: [name, runtime, entryPoint, baseImage, builderImage, registryImage, namespace, secretMode]
+                      required: [name, runtime, entryPoint, builderImage, registryImage, namespace, secretMode]
                       properties:
-                        templateId: {type: string, enum: [shiny, streamlit, shiny-geospatial, python-static]}
+                        templateId: {type: string, enum: [shiny, streamlit, shiny-geospatial, python-static, static]}
                         name: {type: string}
-                        runtime: {type: string, enum: [shiny, streamlit, python-static]}
+                        runtime: {type: string, enum: [shiny, streamlit, python-static, static]}
                         entryPoint: {type: string}
                         buildCommand: {type: string}
                         outputDir: {type: string}
-                        webServerImage: {type: string, description: Required for python-static; unprivileged NGINX-compatible image on port 8080}
-                        baseImage: {type: string}
+                        webServerImage: {type: string, description: Required for static and python-static; unprivileged NGINX-compatible image on port 8080}
+                        baseImage: {type: string, description: Required for Shiny and Python build runtimes; unused for ready-made static websites}
                         builderImage: {type: string}
                         registryImage: {type: string}
+                        createNamespace: {type: boolean, default: false, description: Register a new namespace binding and provision it through the deployment flow}
                         namespace: {type: string}
                         host: {type: string}
                         pullSecret: {type: string}
@@ -166,6 +205,12 @@ paths:
                         vaultRole: {type: string}
                         vaultPath: {type: string}
                         runnerTag: {type: string}
+                        runnerServiceAccount: {type: string, description: "Optional Kubernetes-executor service account override for the build job."}
+                        runnerScc: {type: string, description: "Optional OpenShift SCC the build pod must run under (openshift.io/required-scc)."}
+                        builderSetup: {type: string, description: "Optional executable in the builder image run before the build, for example a rootless Podman entrypoint script."}
+                        gitImage: {type: string, description: "Deployment update job image containing Git and shell tools. Omitted reuses the builder image."}
+                        buildEngine: {type: string, enum: [buildkit, podman], description: "Optional build engine; omitted means BuildKit."}
+                        caVariable: {type: string, description: "Optional inherited GitLab variable containing PEM CA certificates for CI Git and the build engine."}
       responses:
         '201': {description: Application registered and pipeline started; returns applicationId, projectUrl, repositoryUrl, pipelineUrl, and non-secret publication configuration}
         '400': {description: Invalid source archive, configuration or target}
@@ -1065,7 +1110,8 @@ components:
         name: {type: string, maxLength: 100}
         description: {type: string, maxLength: 1000}
         enabled: {type: boolean}
-        version: {type: integer, description: Current version required for updates}
+        version: {type: integer, description: Optimistic save counter required for updates; distinct from currentRevision}
+        publishRevision: {type: boolean, default: false, description: Explicitly publish a recipe revision even if settings are unchanged}
         secrets:
           type: object
           writeOnly: true
@@ -1076,20 +1122,28 @@ components:
             registryPassword: {type: string, writeOnly: true}
         settings:
           type: object
-          required: [templateId, gitlabUrl, group, clusterId, namespace, baseImage, builderImage, registryPrefix, secretMode, syncPolicy]
+          required: [templateId, gitlabUrl, group, clusterId, builderImage, registryPrefix, secretMode, syncPolicy]
           properties:
-            templateId: {type: string, enum: [shiny, streamlit, shiny-geospatial, python-static]}
+            templateId: {type: string, enum: [shiny, streamlit, shiny-geospatial, python-static, static]}
             gitlabUrl: {type: string, format: uri}
             group: {type: string}
             clusterId: {type: string}
-            namespace: {type: string}
-            webServerImage: {type: string, description: Required for python-static; unprivileged NGINX-compatible image on port 8080}
-            baseImage: {type: string}
+            namespaceMode: {type: string, enum: [fixed, per-application], default: fixed}
+            namespacePrefix: {type: string, description: Required in per-application mode; non-system DNS prefix ending in a hyphen}
+            namespace: {type: string, description: Required only for fixed mode; must be empty in per-application mode}
+            webServerImage: {type: string, description: Required for static and python-static; unprivileged NGINX-compatible image on port 8080}
+            baseImage: {type: string, description: Required for Shiny and Python build runtimes; unused for ready-made static websites}
             builderImage: {type: string}
             registryPrefix: {type: string}
             hostSuffix: {type: string}
             pullSecret: {type: string}
             runnerTag: {type: string}
+            runnerServiceAccount: {type: string, description: "Optional Kubernetes-executor service account override for the build job."}
+            runnerScc: {type: string, description: "Optional OpenShift SCC the build pod must run under (openshift.io/required-scc)."}
+            builderSetup: {type: string, description: "Optional executable in the builder image run before the build, for example a rootless Podman entrypoint script."}
+            gitImage: {type: string, description: "Separate Git-capable deployment update job image; omitted reuses the builder image."}
+            buildEngine: {type: string, enum: [buildkit, podman], description: "Optional build engine; omitted means BuildKit."}
+            caVariable: {type: string, description: "Optional inherited GitLab variable containing PEM CA certificates."}
             secretMode: {type: string, enum: [variables, vault]}
             vaultAddress: {type: string}
             vaultRole: {type: string}

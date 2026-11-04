@@ -20,6 +20,8 @@ export async function publishProject<T>(
 }
 
 export type PublishingProfileSettings = {
+  namespaceMode?: string
+  namespacePrefix?: string
   templateId: string
   gitlabUrl: string
   group: string
@@ -31,7 +33,13 @@ export type PublishingProfileSettings = {
   registryPrefix: string
   hostSuffix: string
   pullSecret: string
+  gitImage?: string
+  buildEngine?: string
+  caVariable: string
   runnerTag: string
+  runnerServiceAccount?: string
+  runnerScc?: string
+  builderSetup?: string
   secretMode: string
   vaultAddress: string
   vaultRole: string
@@ -39,6 +47,7 @@ export type PublishingProfileSettings = {
   syncPolicy: string
 }
 export type PublishingProfile = {
+  currentRevision: number
   id: string
   workspaceId: string
   name: string
@@ -49,6 +58,9 @@ export type PublishingProfile = {
   applications: number
 }
 export type ApprovedPublishingProfile = {
+  currentRevision: number
+  namespaceMode?: string
+  namespacePrefix?: string
   id: string
   name: string
   description: string

@@ -121,3 +121,86 @@ func TestDiskCommitStreamsBinaryContentAndCleansTemporaryPayload(t *testing.T) {
 		t.Fatal("temporary commit payload retained after failure")
 	}
 }
+
+func TestProtectPublishingBranchRecognizesEffectiveProtection(t *testing.T) {
+	for _, status := range []int{400, 403, 409} {
+		for _, protected := range []bool{true, false} {
+			g := GitLab{URL: "https://gitlab.example.com", Token: "secret-token", HTTP: &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
+				if strings.HasSuffix(r.URL.Path, "/protected_branches/main") {
+					return response(404, `{}`), nil
+				}
+				if r.Method == "POST" {
+					return response(status, `{"error":"secret-token must never be returned"}`), nil
+				}
+				if strings.HasSuffix(r.URL.Path, "/repository/branches/main") {
+					if protected {
+						return response(200, `{"protected":true}`), nil
+					}
+					return response(200, `{"protected":false}`), nil
+				}
+				t.Fatal("unexpected request", r.Method, r.URL)
+				return nil, nil
+			})}}
+			err := g.ProtectPublishingBranch(context.Background(), Project{ID: 1})
+			if protected && err != nil {
+				t.Fatal("effective protection not recognized", err)
+			}
+			if !protected && err == nil {
+				t.Fatal("unprotected main accepted")
+			}
+			if err != nil && strings.Contains(err.Error(), "secret-token") {
+				t.Fatal("provider secrets leaked")
+			}
+		}
+	}
+}
+func TestProtectPublishingBranchNeverWeakensExistingRules(t *testing.T) {
+	calls := 0
+	g := GitLab{URL: "https://gitlab.example.com", Token: "secret-token", HTTP: &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if r.Method != "GET" {
+			t.Fatal("existing rule mutated")
+		}
+		return response(200, `{"name":"main"}`), nil
+	})}}
+	if err := g.ProtectPublishingBranch(context.Background(), Project{ID: 1}); err != nil || calls != 1 {
+		t.Fatal(err, calls)
+	}
+}
+
+func TestRecipeUpgradeGuardsFilesAndConcurrentSource(t *testing.T) {
+	for _, moved := range []bool{false, true} {
+		sha := strings.Repeat("a", 40)
+		g := GitLab{URL: "https://gitlab.example.com", Token: "secret-token", HTTP: &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
+			if r.Method == "GET" {
+				return response(200, `{"commit":{"id":"`+sha+`"}}`), nil
+			}
+			var data struct {
+				Branch  string `json:"branch"`
+				Force   bool   `json:"force"`
+				Actions []struct {
+					Path string `json:"file_path"`
+					Last string `json:"last_commit_id"`
+				} `json:"actions"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+				t.Fatal(err)
+			}
+			if data.Branch != "main" || data.Force || len(data.Actions) != 1 || data.Actions[0].Path != "Dockerfile" || data.Actions[0].Last != "file-commit" {
+				t.Fatal("unsafe recipe commit", data)
+			}
+			parent := sha
+			if moved {
+				parent = strings.Repeat("b", 40)
+			}
+			return response(201, `{"parent_ids":["`+parent+`"]}`), nil
+		})}}
+		err := g.CommitRecipeUpgrade(context.Background(), RepositorySnapshot{Project: Project{ID: 1}, Revision: "main", SHA: sha}, []RecipeChange{{Path: "Dockerfile", Before: "old", After: "new", Exists: true, LastCommitID: "file-commit"}}, "hash")
+		if moved && err == nil {
+			t.Fatal("concurrent source change accepted")
+		}
+		if !moved && err != nil {
+			t.Fatal(err)
+		}
+	}
+}

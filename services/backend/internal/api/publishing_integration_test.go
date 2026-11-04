@@ -102,3 +102,81 @@ func TestIntegrationPublishingAuthorizationAndAtomicRegistration(t *testing.T) {
 		t.Fatal("orphan source after failed registration")
 	}
 }
+
+func TestIntegrationPublishingNamespaceBinding(t *testing.T) {
+	dsn := os.Getenv("JUSTCD_E2E_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("set JUSTCD_E2E_DATABASE_URL")
+	}
+	db := openWorkspaceAuthorizationDB(t, dsn)
+	ctx := context.Background()
+	for _, q := range []string{
+		`INSERT INTO workspaces(id,name) VALUES('namespace-publish','Namespace'),('namespace-other','Other')`,
+		`INSERT INTO clusters(id,name,api_server) VALUES('namespace-cluster','Cluster','https://cluster.invalid')`,
+	} {
+		if _, err := db.DB.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.PublishingNamespaceBinding(ctx, "namespace-publish", "namespace-cluster", "new-app", true); err == nil {
+		t.Fatal("creation without deployment credentials accepted")
+	}
+	if _, err := db.DB.ExecContext(ctx, `INSERT INTO credentials(id,name,kind,secret_cipher) VALUES('namespace-credential','Provisioner','kubernetes-token','encrypted'); UPDATE clusters SET default_credential_id='namespace-credential' WHERE id='namespace-cluster'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.PublishingNamespaceBinding(ctx, "namespace-publish", "namespace-cluster", "new-app", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NamespaceBinding(ctx, "namespace-publish", "namespace-cluster", "new-app"); err == nil {
+		t.Fatal("preview persisted binding")
+	}
+	if _, err := db.PublishingNamespaceBinding(ctx, "namespace-publish", "namespace-cluster", "new-app", false); err == nil {
+		t.Fatal("implicit creation allowed")
+	}
+	if err := db.CreateNamespaceBinding(ctx, "namespace-other", "namespace-cluster", "taken", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.PublishingNamespaceBinding(ctx, "namespace-publish", "namespace-cluster", "taken", true); err == nil {
+		t.Fatal("another workspace binding adopted")
+	}
+	// A malformed manual upload must not leave the requested binding behind.
+	if _, err := db.DB.ExecContext(ctx, `INSERT INTO users(id,email) VALUES('namespace-owner','owner@namespace.invalid'); INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES('namespace-publish','namespace-owner','owner')`); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{Store: db}
+	server.Config.PublishingTempDir = t.TempDir()
+	metadata, _ := json.Marshal(publishInput{WorkspaceID: "namespace-publish", ClusterID: "namespace-cluster", GitLabURL: "https://gitlab.invalid", Group: "analytics", GitLabToken: "test-api-token", GitReadToken: "test-read-token", RegistryUser: "registry-user", RegistryPassword: "test-push-token", Config: publishing.Config{Name: "new-app", Runtime: "shiny", EntryPoint: ".", BaseImage: "registry.invalid/base:1", BuilderImage: "registry.invalid/builder:1", RegistryImage: "registry.invalid/apps/new-app", Namespace: "new-app", SecretMode: "variables", CreateNamespace: true}})
+	request := uploadRequest(t, string(metadata), []byte("invalid zip"), false)
+	request = request.WithContext(context.WithValue(request.Context(), userContextKey, store.User{ID: "namespace-owner"}))
+	response := httptest.NewRecorder()
+	server.publishApplication(response, request)
+	if response.Code != 400 {
+		t.Fatal("invalid namespace upload accepted", response.Code, response.Body.String())
+	}
+	if _, err := db.NamespaceBinding(ctx, "namespace-publish", "namespace-cluster", "new-app"); err == nil {
+		t.Fatal("invalid upload persisted binding")
+	}
+	// Application registration and namespace binding must roll back together.
+	app := store.Application{ID: "missing-source-app", WorkspaceID: "namespace-publish", Name: "test", SourceID: "missing", ClusterID: "namespace-cluster", Revision: "main", ManifestPath: "deploy", Renderer: "yaml", Namespaces: []store.NamespaceBinding{{Namespace: "new-app"}}, CreateNamespaces: true, SyncPolicy: "manual", PollSeconds: 300, RetryPolicy: store.DefaultRetryPolicy()}
+	if err := db.CreateRepositoryPublishedApplication(ctx, app, nil); err == nil {
+		t.Fatal("invalid app created")
+	}
+	if _, err := db.NamespaceBinding(ctx, "namespace-publish", "namespace-cluster", "new-app"); err == nil {
+		t.Fatal("failed app left binding")
+	}
+	if err := db.CreateGitSource(ctx, store.GitSource{ID: "namespace-source", WorkspaceID: "namespace-publish", Name: "Source", RepositoryURL: "https://gitlab.invalid/apps/report.git"}); err != nil {
+		t.Fatal(err)
+	}
+	app.SourceID = "namespace-source"
+	if err := db.CreateRepositoryPublishedApplication(ctx, app, nil); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := db.ApplicationByID(ctx, app.ID)
+	if err != nil || !saved.CreateNamespaces {
+		t.Fatal("provisioning choice lost", err)
+	}
+	if _, err := db.NamespaceBinding(ctx, "namespace-publish", "namespace-cluster", "new-app"); err != nil {
+		t.Fatal("binding missing after registration", err)
+	}
+
+}

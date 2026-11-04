@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import { ProfileVersionBadge } from "@/components/applications/profile-version-notice"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { StarIcon, Tag01Icon, ViewIcon as SavedViewIcon, Tick02Icon, Add01Icon } from "@hugeicons/core-free-icons"
 import { ApplicationLabelsDialog } from "@/components/application-labels-dialog"
@@ -128,6 +129,7 @@ export function ApplicationCard({
         <span title="Delivery state"><StatusBadge status={app.health} /></span>
         <span title="Runtime state"><StatusBadge status={app.healthCondition?.status ?? "Unknown"} /></span>
         {app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}
+        <ProfileVersionBadge application={app} />
         {app.configurationMissing && <Badge variant="destructive-light" radius="full">Definition missing</Badge>}
       </div>
       {Object.keys(app.labels ?? {}).length > 0 && <div aria-label="Application labels" className="mt-2 flex flex-wrap gap-1">{Object.entries(app.labels ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => <Badge key={key} variant="outline" className="max-w-full truncate text-xs" title={`${key}=${value}`}>{key}{value && <>: {value}</>}</Badge>)}</div>}
@@ -436,6 +438,7 @@ export function ApplicationCollection({
             <div className="flex flex-wrap gap-1.5">
               <StatusBadge status={app.health} /><StatusBadge status={app.healthCondition?.status ?? "Unknown"} />
               {app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}
+              <ProfileVersionBadge application={app} />
               {app.configurationMissing && <Badge variant="destructive-light" radius="full">Definition missing</Badge>}
             </div>
             {reason && <p className="line-clamp-2 text-xs text-muted-foreground" title={reason.text}>{reason.text}</p>}

@@ -3,7 +3,8 @@
 ARG BUILDKIT_IMAGE
 FROM ${BUILDKIT_IMAGE}
 USER root
-RUN apk add --no-cache git jq ca-certificates
+RUN apk upgrade --no-cache \
+    && apk add --no-cache git jq ca-certificates
 # Install the platform CA certificates here before publishing your builder image.
 USER 1000:1000
 ENTRYPOINT []

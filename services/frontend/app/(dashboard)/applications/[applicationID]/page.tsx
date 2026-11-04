@@ -1,5 +1,7 @@
 "use client"
 
+import { ProfileVersionNotice } from "@/components/applications/profile-version-notice"
+import { PublishingProgress } from "@/components/applications/publishing-progress"
 import { AIAssistant } from "@/components/ai-assistant"
 import { DeploymentScheduleNotice } from "@/components/deployment-schedule-notice"
 import { DeploymentSchedulePanel, ScheduledOperationActions } from "@/components/deployment-schedule"
@@ -17,7 +19,7 @@ import { OperationBar, type RollbackRequest } from "@/components/application/ope
 import { OverviewTab } from "@/components/application/overview-tab"
 import { OwnershipConflictDialog } from "@/components/application/ownership-conflict-dialog"
 import { applicationResourceNodes } from "@/lib/topology-view"
-import { deriveApplicationStatus } from "@/lib/application-status"
+import { deriveApplicationStatus, isApplicationHealthy } from "@/lib/application-status"
 import { RuntimeHealthStrip } from "@/components/application/runtime-health"
 import { SettingsTab } from "@/components/application/settings-tab"
 import { ApplicationDetailSkeleton } from "@/components/application-detail-skeleton"
@@ -752,6 +754,8 @@ export default function ApplicationDetailPage() {
         ...(canApprove && !application.autoSyncPaused ? [{ label: "Pause auto-sync", icon: PauseIcon, separatorBefore: true, disabled: busy || hasPendingOperation, onSelect: () => void pauseSync() }] : []),
       ]} />}
     </>} />
+    {application?.publishingProfile && <div className="my-4"><ProfileVersionNotice application={application} canUpgrade={canDeploy} /></div>}
+    {application?.labels?.["justcd.io/published"] === "true" && canDeploy && <PublishingProgress key={application.id} applicationId={application.id} settled={isApplicationHealthy(application)} onReview={() => selectTab("changes")} />}
     <BackgroundTaskStatus tasks={backgroundTasks.tasks} operations={operations} error={backgroundTasks.error} onRefresh={() => void backgroundTasks.refresh()} />
     {error != null && <ErrorNotice error={error} />}
     {application && <AttentionBar application={application} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} plansError={plansError} retryingPlans={retryingPlans} onRetryPlans={() => void retryPlans()}

@@ -50,3 +50,50 @@ func TestStaticProfileDefaults(t *testing.T) {
 		t.Fatal("static defaults missing", c, err)
 	}
 }
+
+func TestStaticWebsiteProfile(t *testing.T) {
+	s := profileSettings()
+	s.TemplateID = "static"
+	s.BaseImage = ""
+	s.WebServerImage = "registry.example.com/nginx:1"
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.Resolve("report", "public")
+	if err != nil || c.Runtime != "static" || c.EntryPoint != "public" || c.BuildCommand != "" || c.OutputDir != "" || c.WebServerImage != s.WebServerImage {
+		t.Fatal("incorrect static profile", c, err)
+	}
+}
+
+func TestProfileNamespaceCreationPolicy(t *testing.T) {
+	s := profileSettings()
+	s.NamespaceMode = "per-application"
+	s.NamespacePrefix = "analytics-"
+	s.Namespace = ""
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.Resolve("report", "")
+	if err != nil || c.Namespace != "analytics-report" || !c.CreateNamespace {
+		t.Fatal(c, err)
+	}
+	for _, prefix := range []string{"", "default", "kube-", "openshift-", "../apps-", "Apps-"} {
+		invalid := s
+		invalid.NamespacePrefix = prefix
+		if invalid.Validate() == nil {
+			t.Fatal("unsafe namespace prefix accepted", prefix)
+		}
+	}
+	s.NamespaceMode = "fixed"
+	if s.Validate() == nil {
+		t.Fatal("fixed profile accepted creation prefix")
+	}
+	for _, namespace := range []string{"default", "kube-system", "openshift", "openshift-config", "../ns", "bad_name"} {
+		c := config()
+		c.CreateNamespace = true
+		c.Namespace = namespace
+		if c.Validate() == nil {
+			t.Fatal("unsafe namespace accepted", namespace)
+		}
+	}
+}

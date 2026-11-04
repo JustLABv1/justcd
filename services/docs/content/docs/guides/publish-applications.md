@@ -4,7 +4,7 @@ description: "Create a private GitLab project, build an image in CI, and registe
 ---
 
 Choose **Applications → New → From a template**. The searchable catalog offers
-Shiny, Streamlit, Shiny Geospatial, and Static website · Python. After selecting a template, choose
+Shiny, Streamlit, Shiny Geospatial, Static website, and Static website · Python. After selecting a template, choose
 **Use a publishing profile** or **Manual setup**. Workspace owners can use the
 manual wizard whether or not profiles exist; deployers use approved profiles. With an enabled publishing profile, workspace owners and deployers
 choose a workspace, application name, and approved destination, then upload their
@@ -46,9 +46,16 @@ variables on subsequent publishing requests. Vault secret lifecycle remains with
 Vault. Disabling a profile blocks new applications and source updates; it does
 not stop existing workloads or cancel already-started CI builds.
 
-Infrastructure settings are locked after the first application uses a profile.
-Names, descriptions, enabled state and credentials remain editable. Create another
-profile for infrastructure changes. Updates use optimistic version checks, and
+Repository and deployment settings are locked after the first application uses a
+profile. Runtime base images, static webserver images, CI builder images, runner
+tags, and image-pull secret references remain editable, along with names, descriptions, enabled state, and credentials. Create
+another profile for other infrastructure changes. Build-setting changes publish a
+new immutable profile revision. Names, descriptions, enablement and credential
+rotation do not create revisions unless the administrator explicitly requests a
+new recipe revision. Existing apps remain pinned until explicitly
+upgraded; normal source uploads retain their current revision and use current
+credentials. Updates use optimistic save counters (separate from published
+revision numbers), and
 in-use profiles cannot be deleted. Deleting an unused profile also removes its
 private credentials; references elsewhere prevent deletion.
 
@@ -74,7 +81,9 @@ selected cluster, never inside the JustCD API process.
   private projects. Profile credentials are stored encrypted. In advanced manual
   setup, only the read credential is retained; the provisioning token is used for
   the request only.
-- A compatible GitLab runner and an approved rootless BuildKit image containing
+- A compatible GitLab runner and builder image for the selected engine. Podman
+  requires Podman and basic shell tools (see Podman publishing below).
+  BuildKit requires an approved rootless BuildKit image containing
   `buildctl-daemonless.sh`, `git`, `jq`, a POSIX shell, and internal CA trust.
   An example builder Dockerfile is supplied in `services/backend/packaging/publisher`.
   The runner must permit the rootless builder and reach GitLab, Artifactory,
@@ -317,7 +326,7 @@ integration), protect the selected branch, and enable CI job-token repository
 pushes before merging. Existing secrets and project settings are never changed.
 After merging, start the selected branch pipeline manually if it did not run
 automatically (for example, after a fast-forward merge of the CI-skipped proposal).
-The generated job uses rootless BuildKit and commits the immutable image digest
+The generated job uses the selected build engine (BuildKit by default) and commits the immutable image digest
 only if the source branch still matches the built commit. Existing Dockerfiles
 must expose the selected template's port (3838 for Shiny, 8501 for Streamlit,
 8080 for static websites) and support the platform's unprivileged user policy.
@@ -329,3 +338,196 @@ credential rotation do not rewrite the existing project's CI configuration.
 The proposal uses GitLab's [batch commit API](https://docs.gitlab.com/api/commits/#create-a-commit)
 with `start_sha` and create-only actions, followed by the
 [merge request API](https://docs.gitlab.com/api/merge_requests/#create-a-merge-request).
+
+## Publish ready-made HTML files
+
+Choose **Static website** for a site that already contains HTML, CSS, JavaScript,
+images, or PDFs. Upload a ZIP containing `index.html` and its assets. The website
+directory defaults to `.` (archive root); select a folder such as `public` if the
+site is nested. That directory must contain `index.html`.
+
+No Python image, dependencies, build command, or output directory is needed.
+JustCD generates a Dockerfile that copies only the selected directory into the
+approved static webserver image, makes its files readable by arbitrary OpenShift
+UIDs, and serves on port 8080. The same unprivileged NGINX-compatible image
+contract as the Python static template applies: `/usr/share/nginx/html` document
+root, working inherited startup command, and support for UID 1001 and arbitrary
+OpenShift UIDs. The CI builder image is still required to package and push the
+container to Artifactory; application files are not built or executed.
+
+Publishing profiles need a webserver image and CI builder image, but no Python
+or application runtime base image. Manual setup exposes the same fields.
+Existing Git projects are supported too: the website directory is relative to
+the selected application directory, existing Dockerfiles and pipelines are
+reused, and missing files are proposed through the existing merge request flow.
+Choose **Static website · Python** instead when Python scripts must first
+produce the HTML.
+
+## Create a namespace while publishing
+
+In manual setup, **Where should the app run? → Create namespace if missing**
+lets a workspace owner enter a new namespace name instead of selecting an
+existing binding. The same choice is available when preparing an existing Git
+project. JustCD registers the workspace binding atomically with the application;
+failed uploads, repository inspections, and proposal previews leave no binding.
+
+The application enables namespace provisioning through JustCD's existing
+deployment flow. Kubernetes namespace creation follows deployment planning and
+apply; OpenShift project requests may provision the project during planning so
+that workload access can be established. No namespace is created merely by
+uploading an application. The configured workspace/cluster default Kubernetes
+credential or cluster agent must support provisioning, and cluster RBAC and
+approval rules still apply. System namespaces cannot be provisioned through this
+workflow, and a namespace bound exclusively to another workspace cannot be
+claimed automatically. Existing image-pull Secrets must be provisioned separately
+in the new namespace when required.
+
+Administrators can also select a profile's **Namespace policy**:
+
+- **Use a fixed existing namespace** retains the previous behavior.
+- **Create a namespace per application** uses a required prefix such as `apps-`;
+  publishing `report` targets `apps-report`. The fixed namespace field is empty
+  in this mode, and the complete namespace name must fit within 63 characters.
+
+Analysts see the derived destination before publishing and cannot override the
+prefix or enable creation on a fixed-namespace profile. The policy is immutable
+once a profile has published applications. Updates retain the application's
+original namespace and provisioning choice.
+
+## Resume a publishing draft
+
+Publishing forms automatically save non-secret settings in this browser for
+30 days. Drafts are scoped to the signed-in user, workspace, publishing flow,
+and (for manual and existing Git setup) template. Reopening the same flow
+restores your inputs and the manual wizard step after a reload or backend
+restart. A draft notice reports autosave status and offers **Discard draft**.
+Successful publishing removes the completed draft.
+
+Credential fields, ZIP contents, acknowledgements, Git inspection results,
+and reviewed proposal hashes are not saved. Reselect your ZIP and re-enter
+credentials before submitting; existing Git projects require a fresh inspection
+and review. Cluster and workspace access are still checked by the server.
+Drafts stay on this browser and do not sync across devices. Browser storage
+restrictions are reported in the notice. Values lost before draft support was
+available cannot be restored retroactively.
+
+## Profile versions and application upgrades
+
+The profile editor shows its latest published version and read-only history.
+Saving changed build settings publishes a new immutable snapshot of approved
+images, settings and the JustCD recipe version. To release updated generated
+recipes without changing images, enable **Publish a new revision even if images
+are unchanged** before saving. Existing template applications
+show **Profile v1 · v2 available** in the application list and a profile update
+notice on their details page. New applications pin the latest published revision.
+
+Select **Review profile update** on a managed template application. JustCD reads
+the existing Git repository, shows old/new images and generated-file diffs, and
+checks the source commit again when the update is applied. No ZIP is required.
+Only generated build recipes are committed; `source/` and the running
+`deploy/application.yaml` are preserved. The app is pinned to the selected
+revision and a new CI build starts. Successful builds continue through the app's
+existing sync and approval policy; automatic apps may deploy after the build.
+
+Ordinary source uploads keep the pinned revision, even after an administrator
+publishes newer images. Disabled profiles cannot be upgraded. Repository,
+namespace and destination changes require a separate migration/new profile.
+The generated repository must retain its original managed identity and `main`
+default branch. A recipe version that this server cannot generate is rejected.
+If a build cannot start after the revision is recorded, the app shows **build
+pending** and its review action can retry starting CI without another ZIP.
+
+Existing installations are migrated using each application's recorded image
+settings. Apps whose images differ from current defaults receive historical
+revision snapshots and correctly show a newer version available; migration does
+not rebuild or move workloads. Historical ordering before this feature was not
+recorded, so imported snapshots are numbered deterministically with current
+defaults last. Existing Git onboarding remains an ordinary Git/CI workflow and
+is not enrolled in managed-template revision upgrades.
+
+### Optional internal CA from GitLab
+
+Set **Custom CA variable** in a publishing profile or manual setup to the name of
+an inherited GitLab CI variable containing PEM certificate text, for example
+`PLAIN2_ROOT_CA`. Leave it blank for normal builder-image trust. JustCD stores the
+variable name, not the certificate, and does not create or overwrite that variable.
+It must be available to the generated project's protected default-branch pipeline.
+A configured but empty or unavailable variable fails with an actionable error.
+
+The generated job combines the supplied PEM with the builder's system CA bundle
+in a temporary directory and configures Git and BuildKit through `GIT_SSL_CAINFO`
+and `SSL_CERT_FILE`. TLS verification remains enabled; the certificate is not
+copied into application images or committed to Git. Publish a new profile version
+and explicitly update/rebuild existing applications to apply this setting.
+
+This does not configure the runner's initial image pull or Git checkout, nor
+package downloads inside Dockerfile `RUN` stages. Configure runner trust separately
+and use runtime/build base images with the required package-mirror CA trust.
+
+
+### Podman publishing
+
+Choose **Podman** under **Build engine** in the publishing profile or manual setup,
+then supply your maintained rootless Podman image as **CI builder image**. An empty
+engine setting preserves the previous BuildKit behavior. Changing an in-use
+profile's engine creates a revision; explicitly review and upgrade existing apps
+to regenerate their pipeline and rebuild without uploading source again.
+
+Podman jobs use `podman login --password-stdin`, `podman build --format docker`,
+and `podman push --digestfile`. The build job requires Podman, grep, a POSIX shell,
+CA certificates and basic utilities, but does not require BuildKit, Git or jq when a separate deployment update image is configured. The pushed
+registry digest is validated before committing the deployment manifest. Passwords
+are passed via standard input; temporary registry authentication is removed when
+the job exits. TLS verification stays enabled.
+
+The optional custom CA variable is supported with Alpine and RHEL system CA bundle
+paths. Podman login, build and push receive a temporary certificate directory.
+Application build stages and the runner's initial pulls/checkout still need their
+own trust configuration.
+
+The image and GitLab runner must already support rootless Podman (user namespaces,
+storage, writable runtime directories, and applicable OpenShift security policy).
+JustCD does not grant privileges, override the image's storage configuration, or
+add insecure TLS flags. Selecting Podman does not certify any particular image or
+its vulnerability policy; validate your maintained image on your runner.
+
+### Runners that require a service account and SCC
+
+Some OpenShift runners only allow rootless builds under a dedicated service
+account and security context constraint (SCC). Without them, Podman fails
+immediately with `cannot clone: Operation not permitted` and
+`cannot re-exec process`. Set these optional profile fields to match your
+platform's working build job:
+
+- **Runner service account** sets `KUBERNETES_SERVICE_ACCOUNT_OVERWRITE`.
+- **Required OpenShift SCC** sets the pod annotation
+  `openshift.io/required-scc`.
+- **Builder setup script** is an absolute path of an executable in the builder image (for example a
+  rootless Podman entrypoint script) that runs in `before_script`. Arguments are not
+  allowed.
+
+JustCD does not create the service account or SCC; the platform team provides them.
+Changing these settings creates a profile revision; upgrade existing apps to
+regenerate their pipeline.
+
+### Separate build and Git jobs
+
+Generated pipelines have a build stage (`publish` job) and a deployment-manifest
+stage (`update-deployment` job). Set **Deployment update image** to a maintained
+image containing Git, sed, grep, CA certificates and a POSIX shell. If omitted,
+the deployment job reuses the builder image for compatibility; that image must
+then still contain Git. With a separate image, Podman builds require no Git or jq;
+BuildKit builds still require jq, but no Git for the publishing workflow itself.
+Dockerfiles that explicitly use Git retain their own build-time requirements.
+
+The build job pushes the application image and exports only its immutable digest
+as an artifact with a one-day lifetime. The deployment job explicitly downloads
+that job's artifact, validates the digest, rejects stale source commits, and
+commits/pushes the manifest under the existing serialization lock. Vault registry
+secrets are requested only by the build job. Both jobs apply the optional CI CA
+variable independently. The runner must be able to pull and run both images.
+
+Git remains JustCD's deployment source of truth; this is not Git-less publishing.
+Changing the deployment update image creates a profile revision. Review and apply
+that revision on existing managed applications to regenerate CI. Existing Git
+onboarding preserves pipelines already owned by the user.

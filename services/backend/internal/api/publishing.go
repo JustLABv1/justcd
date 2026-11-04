@@ -20,21 +20,23 @@ import (
 )
 
 type publishInput struct {
-	BuildCommand        string            `json:"buildCommand"`
-	OutputDir           string            `json:"outputDir"`
-	ProfileID           string            `json:"profileId"`
-	Name                string            `json:"name"`
-	EntryPoint          string            `json:"entryPoint"`
-	UpdateApplicationID string            `json:"updateApplicationId"`
-	WorkspaceID         string            `json:"workspaceId"`
-	ClusterID           string            `json:"clusterId"`
-	GitLabURL           string            `json:"gitlabUrl"`
-	Group               string            `json:"group"`
-	GitLabToken         string            `json:"gitlabToken"`
-	GitReadToken        string            `json:"gitReadToken"`
-	RegistryUser        string            `json:"registryUser"`
-	RegistryPassword    string            `json:"registryPassword"`
-	Config              publishing.Config `json:"config"`
+	ExpectedProfileRevision int64             `json:"expectedProfileRevision,omitempty"`
+	ProfileRevision         int64             `json:"-"`
+	BuildCommand            string            `json:"buildCommand"`
+	OutputDir               string            `json:"outputDir"`
+	ProfileID               string            `json:"profileId"`
+	Name                    string            `json:"name"`
+	EntryPoint              string            `json:"entryPoint"`
+	UpdateApplicationID     string            `json:"updateApplicationId"`
+	WorkspaceID             string            `json:"workspaceId"`
+	ClusterID               string            `json:"clusterId"`
+	GitLabURL               string            `json:"gitlabUrl"`
+	Group                   string            `json:"group"`
+	GitLabToken             string            `json:"gitlabToken"`
+	GitReadToken            string            `json:"gitReadToken"`
+	RegistryUser            string            `json:"registryUser"`
+	RegistryPassword        string            `json:"registryPassword"`
+	Config                  publishing.Config `json:"config"`
 }
 
 func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
@@ -59,9 +61,13 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspaceCluster(w, r, in.WorkspaceID, in.ClusterID) {
 		return
 	}
-	binding, err := s.Store.NamespaceBinding(r.Context(), in.WorkspaceID, in.ClusterID, in.Config.Namespace)
+	if err := in.Config.Validate(); err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	binding, err := s.Store.PublishingNamespaceBinding(r.Context(), in.WorkspaceID, in.ClusterID, in.Config.Namespace, in.Config.CreateNamespace)
 	if err != nil {
-		writeError(w, 400, "select a namespace already bound to this workspace and cluster")
+		writeError(w, 400, "namespace destination is unavailable: "+err.Error())
 		return
 	}
 	if strings.Trim(in.Group, "/") != in.Group || in.Group == "" || strings.ContainsAny(in.Group, "?#\\\r\n\t ") || strings.Contains(in.Group, "..") {
@@ -76,6 +82,27 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 	if in.UpdateApplicationID == "" && (len(in.GitReadToken) < 8 || strings.ContainsAny(in.GitReadToken, "\r\n")) {
 		writeError(w, 400, "provide a repository read token for JustCD to fetch the private repository")
 		return
+	}
+	// Managed publications finish in JustCD; retain the existing mode on source-only updates.
+	in.Config.ManagedCompletion = true
+	if in.UpdateApplicationID != "" {
+		app, e := s.Store.ApplicationByID(r.Context(), in.UpdateApplicationID)
+		if e != nil || app.WorkspaceID != in.WorkspaceID {
+			writeError(w, 404, "application not found")
+			return
+		}
+		src, e := s.Store.GitSourceByID(r.Context(), app.SourceID)
+		if e != nil {
+			writeError(w, 404, "Git source not found")
+			return
+		}
+		previous, e := s.Store.PublishedApplication(r.Context(), in.WorkspaceID, src.RepositoryURL)
+		var cfg publishing.Config
+		if e != nil || json.Unmarshal(previous.Config, &cfg) != nil {
+			writeError(w, 404, "publication not found")
+			return
+		}
+		in.Config.ManagedCompletion = cfg.ManagedCompletion
 	}
 	if err = in.Config.Validate(); err != nil {
 		writeError(w, 400, err.Error())
@@ -252,7 +279,7 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err = git.ProtectPublishingBranch(ctx, project); err != nil {
-			writeError(w, 502, "could not protect main before starting CI; retry setup after checking GitLab permissions")
+			writeError(w, 502, "could not protect main before starting CI: "+err.Error()+". Check the GitLab API token’s protected-branch permissions (normally Maintainer or Owner), or ask a GitLab administrator to protect main. The repository is retained; retry the same upload and settings to resume.")
 			return
 		}
 		cred := store.Credential{}
@@ -270,11 +297,12 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 			credentialID = cred.ID
 		}
 		src := store.GitSource{ID: store.NewID(), WorkspaceID: in.WorkspaceID, Name: in.Config.Name, RepositoryURL: project.RepositoryURL, CredentialID: &credentialID}
-		app := store.Application{Labels: map[string]string{"justcd.io/published": "true"}, ID: store.NewID(), WorkspaceID: in.WorkspaceID, Name: in.Config.Name, SourceID: src.ID, Revision: "main", ManifestPath: "deploy", Renderer: "yaml", ClusterID: in.ClusterID, Namespaces: []store.NamespaceBinding{binding}, SyncPolicy: syncPolicy, PollSeconds: 30, RetryPolicy: store.DefaultRetryPolicy(), Health: "unknown"}
+		app := store.Application{Labels: map[string]string{"justcd.io/published": "true"}, ID: store.NewID(), WorkspaceID: in.WorkspaceID, Name: in.Config.Name, SourceID: src.ID, Revision: "main", ManifestPath: "deploy", Renderer: "yaml", ClusterID: in.ClusterID, Namespaces: []store.NamespaceBinding{binding}, CreateNamespaces: in.Config.CreateNamespace, SyncPolicy: syncPolicy, PollSeconds: 30, RetryPolicy: store.DefaultRetryPolicy(), Health: "unknown"}
 		safeConfig, _ := json.Marshal(in.Config)
 		registered = store.PublishedApplication{Config: safeConfig, GitLabURL: in.GitLabURL, Group: in.Group, ApplicationID: app.ID, Fingerprint: fingerprint, RepositoryURL: project.RepositoryURL, ProjectURL: project.WebURL, ProjectID: project.ID}
 		if profile != nil {
 			app.Labels["justcd.io/publishing-profile"] = profile.ID
+			registered.ProfileRevision = in.ProfileRevision
 			registered.ProfileID = &profile.ID
 			registered.ProfileVersion = profile.Version
 		}
@@ -283,6 +311,17 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = s.Store.Audit(ctx, currentUser(r).ID, "application.published", "application", app.ID, map[string]string{"workspaceId": in.WorkspaceID, "runtime": in.Config.Runtime, "templateVersion": publishing.Version, "secretMode": in.Config.SecretMode, "profileId": in.ProfileID})
+	}
+	if in.Config.ManagedCompletion && profile == nil {
+		cipher, e := security.Encrypt(s.EncryptionKey, []byte(in.GitLabToken), "publication:"+registered.ApplicationID)
+		if e != nil {
+			writeStoreError(w, "could not protect publishing completion token")
+			return
+		}
+		if _, e = s.Store.DB.ExecContext(ctx, `UPDATE published_applications SET completion_token_cipher=$2 WHERE application_id=$1`, registered.ApplicationID, cipher); e != nil {
+			writeStoreError(w, "could not retain publishing completion token")
+			return
+		}
 	}
 	if registered.PipelineURL == "" {
 		registered.PipelineURL, err = git.StartPipeline(ctx, project.ID)
@@ -330,6 +369,12 @@ func (s *Server) getPublication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result := publicationResult(p, app.SyncPolicy)
+	var state, statusError string
+	if err := s.Store.DB.QueryRowContext(r.Context(), `SELECT completion_status,completion_error FROM published_applications WHERE application_id=$1`, app.ID).Scan(&state, &statusError); err != nil {
+		writeStoreError(w, "could not read build completion state")
+		return
+	}
+	result["completionStatus"], result["completionError"] = state, statusError
 	if p.ProfileID != nil {
 		profile, e := s.Store.PublishingProfile(r.Context(), *p.ProfileID)
 		if e != nil || profile.WorkspaceID != app.WorkspaceID {
@@ -338,6 +383,9 @@ func (s *Server) getPublication(w http.ResponseWriter, r *http.Request) {
 		}
 		result["profileName"] = profile.Name
 		result["profileEnabled"] = profile.Enabled
+		result["profileRevision"] = p.ProfileRevision
+		result["latestProfileRevision"] = profile.CurrentRevision
+		result["profileUpdateAvailable"] = profile.CurrentRevision > p.ProfileRevision
 	}
 	writeJSON(w, 200, map[string]any{"publication": result, "workspaceId": app.WorkspaceID, "clusterId": app.ClusterID})
 }

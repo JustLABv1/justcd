@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ArchiveUpload } from "@/components/applications/archive-upload"
 import { FormSelect } from "@/components/ui/form-select"
-import { CheckboxCard, PageHeading } from "@/components/ui-kit"
+import { PageHeading } from "@/components/ui-kit"
 import {
   SummaryList,
   Wizard,
@@ -22,11 +22,14 @@ import {
   type ApplicationTemplate,
 } from "@/components/applications/template-catalog"
 import {
+  PublishingCheckbox,
   PublishingField as FormField,
   PublishingSection as Panel,
 } from "@/components/applications/publishing-fields"
 import { api } from "@/lib/api"
 import { publishProject, publishingSize } from "@/lib/publishing"
+import { usePublishingDraft } from "@/hooks/use-publishing-draft"
+import { PublishingDraftNotice } from "@/components/applications/publishing-draft-notice"
 import { usePublishingLimits } from "@/hooks/use-publishing-limits"
 import type {
   Cluster,
@@ -36,6 +39,7 @@ import type {
 } from "@/lib/types"
 
 type Config = {
+  createNamespace?: boolean
   templateId?: string
   name: string
   runtime: string
@@ -53,7 +57,13 @@ type Config = {
   vaultAddress: string
   vaultRole: string
   vaultPath: string
+  gitImage?: string
+  buildEngine?: string
+  caVariable: string
   runnerTag: string
+  runnerServiceAccount: string
+  runnerScc: string
+  builderSetup: string
 }
 type Publication = {
   applicationId: string
@@ -75,7 +85,13 @@ const initialConfig: Config = {
   vaultAddress: "",
   vaultRole: "",
   vaultPath: "",
+  gitImage: "",
+  buildEngine: "buildkit",
+  caVariable: "",
   runnerTag: "",
+  runnerServiceAccount: "",
+  runnerScc: "",
+  builderSetup: "",
 }
 
 export default function PublishApplicationPage() {
@@ -104,6 +120,33 @@ export default function PublishApplicationPage() {
   const errorRef = useRef<HTMLDivElement>(null)
   const patch = (values: Partial<Config>) =>
     setConfig((current) => ({ ...current, ...values }))
+
+  const draft = usePublishingDraft(
+    workspaceId && selectedTemplate
+      ? `manual:${workspaceId}:${selectedTemplate.id}`
+      : null,
+    {
+      clusterId,
+      gitlabUrl,
+      group,
+      step: wizard.step,
+      config: {
+        ...config,
+        createNamespace: !!config.createNamespace,
+        templateId: config.templateId ?? "",
+        buildCommand: config.buildCommand ?? "",
+        outputDir: config.outputDir ?? "",
+        webServerImage: config.webServerImage ?? "",
+      },
+    },
+    (data) => {
+      setClusterId(data.clusterId)
+      setGitlabUrl(data.gitlabUrl)
+      setGroup(data.group)
+      setConfig((current) => ({ ...current, ...data.config }))
+      wizard.setStep(Math.max(1, Math.min(6, Math.trunc(data.step))))
+    }
+  )
 
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get("templateId")
@@ -163,7 +206,7 @@ export default function PublishApplicationPage() {
       .then(({ items }) => {
         if (!active) return
         setClusters(items)
-        setClusterId(items[0]?.id ?? "")
+        setClusterId((current) => current || items[0]?.id || "")
       })
       .catch((cause) => active && setError(cause))
     return () => {
@@ -181,7 +224,9 @@ export default function PublishApplicationPage() {
         setBindings(items)
         setConfig((current) => ({
           ...current,
-          namespace: items[0]?.namespace ?? "",
+          namespace: current.createNamespace
+            ? current.namespace
+            : current.namespace || items[0]?.namespace || "",
         }))
       })
       .catch((cause) => active && setError(cause))
@@ -236,6 +281,7 @@ export default function PublishApplicationPage() {
         file,
         limits
       )
+      draft.clear()
       setResult(publication)
       setGitlabToken("")
       setGitReadToken("")
@@ -248,7 +294,7 @@ export default function PublishApplicationPage() {
     }
   }
   const textField = (
-    key: keyof Config,
+    key: Exclude<keyof Config, "createNamespace">,
     label: string,
     hint?: string,
     required = true,
@@ -390,9 +436,12 @@ export default function PublishApplicationPage() {
           configure the repository, build runner, and deployment target.
         </p>
       )}
+      <PublishingDraftNotice draft={draft} />
       <form onSubmit={publish} noValidate className="space-y-5">
         <fieldset
-          disabled={busy || loading || !workspaces.length || !limits}
+          disabled={
+            busy || loading || !workspaces.length || !limits || !draft.ready
+          }
           className="min-w-0 space-y-5"
         >
           <Wizard
@@ -419,7 +468,7 @@ export default function PublishApplicationPage() {
                             setClusterId("")
                             setClusters([])
                             setBindings([])
-                            patch({ namespace: "" })
+                            patch({ namespace: "", createNamespace: false })
                           }}
                           items={workspaces.map((item) => ({
                             value: item.id,
@@ -450,12 +499,16 @@ export default function PublishApplicationPage() {
                       ) : (
                         textField(
                           "entryPoint",
-                          config.runtime === "shiny"
-                            ? "Shiny app directory"
-                            : "Python entry point",
-                          config.runtime === "shiny"
-                            ? "Use . for an app at the archive root, or a path such as src/regionalsteckbrief. Include renv.lock or packages.txt at the root."
-                            : "For example app.py. Include requirements.txt at the archive root."
+                          config.runtime === "static"
+                            ? "Website directory"
+                            : config.runtime === "shiny"
+                              ? "Shiny app directory"
+                              : "Python entry point",
+                          config.runtime === "static"
+                            ? "Use . for index.html at the archive root, or a subdirectory such as public containing index.html and assets."
+                            : config.runtime === "shiny"
+                              ? "Use . for an app at the archive root, or a path such as src/regionalsteckbrief. Include renv.lock or packages.txt at the root."
+                              : "For example app.py. Include requirements.txt at the archive root."
                         )
                       )}
                       <FormField
@@ -551,9 +604,11 @@ export default function PublishApplicationPage() {
                         />
                       </FormField>
                       <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
-                        Requires GitLab support for CI job-token Git pushes.
-                        GitLab 18.4 or newer is recommended. The protected main
-                        branch is the publishing branch.
+                        JustCD retains the API token encrypted to update
+                        deployment manifests after builds. It must permit Git
+                        repository writes to the protected main branch. GitLab
+                        18.4 or newer is recommended. The protected main branch
+                        is the publishing branch.
                       </p>
                     </div>
                   </Panel>
@@ -567,25 +622,47 @@ export default function PublishApplicationPage() {
                     description="Your platform team supplies approved image references. JustCD generates the Dockerfile and GitLab pipeline."
                   >
                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                      {textField(
-                        "baseImage",
-                        config.runtime === "python-static"
-                          ? "Python build image"
-                          : "Runtime base image",
-                        "Must provide R/Shiny or Python and your required system libraries and certificate trust. Pin an approved version or digest.",
-                        true,
-                        "artifactory.example.com/platform/shiny-geospatial:4.4.2"
-                      )}
-                      {config.runtime === "python-static" &&
+                      {config.runtime !== "static" &&
+                        textField(
+                          "baseImage",
+                          config.runtime === "python-static"
+                            ? "Python build image"
+                            : "Runtime base image",
+                          "Must provide R/Shiny or Python and your required system libraries and certificate trust. Pin an approved version or digest.",
+                          true,
+                          "artifactory.example.com/platform/shiny-geospatial:4.4.2"
+                        )}
+                      {(config.runtime === "python-static" ||
+                        config.runtime === "static") &&
                         textField(
                           "webServerImage",
                           "Static web server image",
                           "Unprivileged NGINX-compatible image: port 8080, /usr/share/nginx/html, UID 1001 and OpenShift arbitrary UID support."
                         )}
+                      <FormField
+                        label="Build engine"
+                        htmlFor="publish-build-engine"
+                        hint="Choose the engine installed in your CI builder image."
+                      >
+                        <FormSelect
+                          id="publish-build-engine"
+                          value={config.buildEngine || "buildkit"}
+                          onValueChange={(buildEngine) =>
+                            setConfig((previous) => ({
+                              ...previous,
+                              buildEngine,
+                            }))
+                          }
+                          items={[
+                            { value: "buildkit", label: "BuildKit" },
+                            { value: "podman", label: "Podman" },
+                          ]}
+                        />
+                      </FormField>
                       {textField(
                         "builderImage",
                         "CI builder image",
-                        "Requires rootless BuildKit (buildctl-daemonless.sh), git, jq, a POSIX shell and internal CA trust.",
+                        "Podman requires podman, grep and shell tools; BuildKit requires rootless BuildKit, jq and a shell. JustCD updates the deployment manifest after the build.",
                         true,
                         "artifactory.example.com/platform/justcd-builder:1"
                       )}
@@ -597,16 +674,51 @@ export default function PublishApplicationPage() {
                         "artifactory.example.com/analytics-local/regional-statistics"
                       )}
                       {textField(
+                        "caVariable",
+                        "Custom CA variable (optional)",
+                        "Inherited GitLab variable containing PEM certificates. Configures CI Git and build-engine trust; build stages need their own CA configuration.",
+                        false,
+                        "PLAIN2_ROOT_CA"
+                      )}
+                      {textField(
                         "runnerTag",
                         "GitLab runner tag",
                         "Optional. Select a platform runner that can reach GitLab, package repositories, Artifactory and Vault.",
                         false
                       )}
+                      {textField(
+                        "runnerServiceAccount",
+                        "Runner service account (optional)",
+                        "Kubernetes service account the build job runs as, for runners that only allow rootless builds under a dedicated account.",
+                        false,
+                        "gitlab-runner-app-sa"
+                      )}
+                      {textField(
+                        "runnerScc",
+                        "Required OpenShift SCC (optional)",
+                        "Security context constraint the build pod must use. Rootless Podman usually needs one that allows user namespaces.",
+                        false,
+                        "gitlab-runner-scc"
+                      )}
+                      {textField(
+                        "builderSetup",
+                        "Builder setup script (optional)",
+                        "Absolute path of an executable in the builder image that runs before the build. No arguments.",
+                        false,
+                        "/home/user/entrypoint.sh"
+                      )}
                       <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
-                        The base image must configure access to your package
-                        mirrors. Application dependencies are installed from
-                        packages.txt / renv.lock or requirements.txt. Custom
-                        native dependencies must be supplied by the base image.
+                        {config.runtime === "static" ? (
+                          "Your website files are copied directly into the approved webserver image. No dependencies are installed and no build command is run."
+                        ) : (
+                          <>
+                            The base image must configure access to your package
+                            mirrors. Application dependencies are installed from
+                            packages.txt / renv.lock or requirements.txt. Custom
+                            native dependencies must be supplied by the base
+                            image.
+                          </>
+                        )}
                       </p>
                     </div>
                   </Panel>
@@ -722,9 +834,25 @@ export default function PublishApplicationPage() {
                 content: (
                   <Panel
                     title="Where should the app run?"
-                    description="Use an existing workspace cluster and namespace. Cluster credentials remain managed by JustCD."
+                    description="Choose an existing workspace namespace or create one through the deployment flow. Cluster credentials remain managed by JustCD."
                   >
                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                      <div className="md:col-span-2 lg:col-span-3">
+                        <PublishingCheckbox
+                          id="publish-create-namespace"
+                          checked={!!config.createNamespace}
+                          onCheckedChange={(checked) =>
+                            patch({
+                              createNamespace: checked,
+                              namespace: checked
+                                ? config.name
+                                : (bindings[0]?.namespace ?? ""),
+                            })
+                          }
+                          title="Create namespace if missing"
+                          description="Registers a workspace binding now. JustCD provisions the namespace or OpenShift project during deployment using the configured cluster identity; cluster permissions and approval rules still apply."
+                        />
+                      </div>
                       <FormField label="Cluster" htmlFor="publish-cluster">
                         <FormSelect
                           id="publish-cluster"
@@ -732,7 +860,7 @@ export default function PublishApplicationPage() {
                           onValueChange={(value) => {
                             setClusterId(value)
                             setBindings([])
-                            patch({ namespace: "" })
+                            patch({ namespace: "", createNamespace: false })
                           }}
                           items={clusters.map((item) => ({
                             value: item.id,
@@ -741,19 +869,33 @@ export default function PublishApplicationPage() {
                           placeholder="Select cluster"
                         />
                       </FormField>
+
                       <FormField label="Namespace" htmlFor="publish-namespace">
-                        <FormSelect
-                          id="publish-namespace"
-                          value={config.namespace}
-                          onValueChange={(namespace) => patch({ namespace })}
-                          items={bindings.map((item) => ({
-                            value: item.namespace,
-                            label: item.namespace,
-                          }))}
-                          placeholder="Select namespace"
-                        />
+                        {config.createNamespace ? (
+                          <Input
+                            id="publish-namespace"
+                            required
+                            value={config.namespace}
+                            onChange={(event) =>
+                              patch({ namespace: event.target.value })
+                            }
+                            maxLength={63}
+                            placeholder="my-app"
+                          />
+                        ) : (
+                          <FormSelect
+                            id="publish-namespace"
+                            value={config.namespace}
+                            onValueChange={(namespace) => patch({ namespace })}
+                            items={bindings.map((item) => ({
+                              value: item.namespace,
+                              label: item.namespace,
+                            }))}
+                            placeholder="Select namespace"
+                          />
+                        )}
                       </FormField>
-                      {!bindings.length && (
+                      {!bindings.length && !config.createNamespace && (
                         <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
                           Configure namespace access in workspace Connections
                           before publishing.
@@ -762,7 +904,9 @@ export default function PublishApplicationPage() {
                       {textField(
                         "pullSecret",
                         "Existing image pull secret",
-                        "Optional for registries requiring no authentication. Otherwise supply an existing read-only registry secret in the selected namespace.",
+                        config.createNamespace
+                          ? "Optional registry pull secret. Your namespace provisioning setup must create it in the new namespace before deployment; secrets are not copied."
+                          : "Optional for registries requiring no authentication. Otherwise supply an existing read-only registry secret in the selected namespace.",
                         false
                       )}
                       {textField(
@@ -830,7 +974,7 @@ export default function PublishApplicationPage() {
                           },
                         ]}
                       />
-                      <CheckboxCard
+                      <PublishingCheckbox
                         id="publish-confirm"
                         checked={acknowledged}
                         onCheckedChange={setAcknowledged}

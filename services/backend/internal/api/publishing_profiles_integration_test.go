@@ -6,7 +6,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -38,7 +40,7 @@ func profileSource(t *testing.T, version string) []byte {
 	t.Helper()
 	var b bytes.Buffer
 	w := zip.NewWriter(&b)
-	for name, value := range map[string]string{"app.R": "# " + version, "packages.txt": "shiny\n", "build_html.py": "# static build", "build.py": "# custom static build"} {
+	for name, value := range map[string]string{"app.R": "# " + version, "packages.txt": "shiny\n", "build_html.py": "# static build", "build.py": "# custom static build", "index.html": "<h1>Static report</h1>", "app.py": "# streamlit", "requirements.txt": "streamlit"} {
 		f, e := w.Create(name)
 		if e != nil {
 			t.Fatal(e)
@@ -51,7 +53,7 @@ func profileSource(t *testing.T, version string) []byte {
 	return b.Bytes()
 }
 func TestIntegrationPublishingProfilesLifecycleAndDelegation(t *testing.T) {
-	for _, runtime := range []string{"shiny", "python-static"} {
+	for _, runtime := range []string{"shiny", "streamlit", "python-static", "static", "per-application"} {
 		t.Run(runtime, func(t *testing.T) { testPublishingProfileLifecycle(t, runtime) })
 	}
 }
@@ -77,9 +79,27 @@ func testPublishingProfileLifecycle(t *testing.T, runtime string) {
 	}
 	s := &Server{Store: db, EncryptionKey: []byte("0123456789abcdef0123456789abcdef")}
 	settings := publishing.ProfileSettings{TemplateID: "shiny", GitLabURL: "https://gitlab.invalid", Group: "analytics", ClusterID: "profile-cluster", Namespace: "analytics", BaseImage: "registry.invalid/base/shiny:1", BuilderImage: "registry.invalid/base/builder:1", RegistryPrefix: "registry.invalid/apps", HostSuffix: "apps.example.invalid", SecretMode: "variables", SyncPolicy: "auto-safe"}
+	if runtime == "streamlit" {
+		settings.TemplateID = "streamlit"
+	}
+	if runtime == "static" {
+		settings.TemplateID = runtime
+		settings.BaseImage = ""
+		settings.WebServerImage = "registry.invalid/base/nginx:1"
+	}
 	if runtime == "python-static" {
 		settings.TemplateID = runtime
 		settings.WebServerImage = "registry.invalid/base/nginx:1"
+	}
+	expectedNamespace := "analytics"
+	if runtime == "per-application" {
+		settings.NamespaceMode = "per-application"
+		settings.NamespacePrefix = "analytics-"
+		settings.Namespace = ""
+		expectedNamespace = "analytics-report"
+		if _, err := db.DB.ExecContext(ctx, `INSERT INTO credentials(id,name,kind,secret_cipher) VALUES('namespace-default','Provisioner','kubernetes-token','encrypted'); UPDATE clusters SET default_credential_id='namespace-default' WHERE id='profile-cluster'`); err != nil {
+			t.Fatal(err)
+		}
 	}
 	body := map[string]any{"name": "Analytics development", "description": "Approved internal analytics apps", "enabled": true, "settings": settings, "secrets": publishingSecrets{GitLabToken: "profile-api-secret", GitReadToken: "profile-read-secret", RegistryUser: "registry-user", RegistryPassword: "profile-registry-secret"}}
 	save := func(method, user, id string, body any) *httptest.ResponseRecorder {
@@ -143,6 +163,12 @@ func testPublishingProfileLifecycle(t *testing.T, runtime string) {
 	var calls, pipelines int
 	var project publishing.Project
 	var lastRegistryToken string
+	var generatedDocker, generatedCI string
+	remoteFiles := map[string]string{}
+	fileCommits := map[string]string{}
+	remoteSHA := ""
+	commitCount := 0
+	failNextPipeline := false
 	s.PublishingHTTP = &http.Client{Transport: publishingTransport(func(r *http.Request) (*http.Response, error) {
 		calls++
 		var result any = map[string]any{}
@@ -150,23 +176,75 @@ func testPublishingProfileLifecycle(t *testing.T, runtime string) {
 		p := r.URL.Path
 		switch {
 		case r.Method == "GET" && strings.Contains(p, "/repository/tree"):
-			result = []map[string]string{{"path": "source/app.R", "type": "blob"}, {"path": "source/packages.txt", "type": "blob"}, {"path": "Dockerfile", "type": "blob"}, {"path": ".gitlab-ci.yml", "type": "blob"}, {"path": ".dockerignore", "type": "blob"}, {"path": ".justcd/deployment.yaml", "type": "blob"}, {"path": ".justcd/README.md", "type": "blob"}, {"path": "deploy/application.yaml", "type": "blob"}}
-		case r.Method == "GET" && strings.Contains(p, "/repository/branches/main"):
-			if pipelines == 0 {
+			entries := []map[string]string{}
+			for name := range remoteFiles {
+				entries = append(entries, map[string]string{"path": name, "type": "blob", "mode": "100644"})
+			}
+			result = entries
+		case r.Method == "GET" && strings.Contains(p, "/repository/files/"):
+			name := strings.SplitN(p, "/repository/files/", 2)[1]
+			content, exists := remoteFiles[name]
+			if !exists {
 				status = 404
 			} else {
-				result = map[string]any{"commit": map[string]string{"id": "source-sha"}}
+				result = map[string]string{"encoding": "base64", "content": base64.StdEncoding.EncodeToString([]byte(content)), "last_commit_id": fileCommits[name]}
+			}
+		case r.Method == "GET" && strings.Contains(p, "/repository/branches/main"):
+			if remoteSHA == "" {
+				status = 404
+			} else {
+				result = map[string]any{"commit": map[string]string{"id": remoteSHA}}
 			}
 		case r.Method == "POST" && strings.HasSuffix(p, "/repository/commits"):
 			var commit struct {
-				Actions []struct {
-					Path string `json:"file_path"`
+				CommitMessage string `json:"commit_message"`
+				Actions       []struct {
+					Path         string `json:"file_path"`
+					Content      string `json:"content"`
+					Encoding     string `json:"encoding"`
+					Action       string `json:"action"`
+					LastCommitID string `json:"last_commit_id"`
 				}
 			}
 			if e := json.NewDecoder(r.Body).Decode(&commit); e != nil {
 				t.Fatal(e)
 			}
+			previousSHA := remoteSHA
+			commitCount++
+			remoteSHA = fmt.Sprintf("%040x", commitCount)
 			for _, a := range commit.Actions {
+				if strings.HasPrefix(commit.CommitMessage, "JustCD profile upgrade") {
+					if strings.HasPrefix(a.Path, "source/") || strings.HasPrefix(a.Path, "deploy/") {
+						t.Fatal("upgrade changed source or deployment", a.Path)
+					}
+					if a.Action == "update" && a.LastCommitID != fileCommits[a.Path] {
+						t.Fatal("upgrade omitted recipe concurrency guard")
+					}
+				}
+				content := a.Content
+				if a.Encoding == "base64" {
+					decoded, err := base64.StdEncoding.DecodeString(content)
+					if err != nil {
+						t.Fatal(err)
+					}
+					content = string(decoded)
+				}
+				if a.Action == "delete" {
+					delete(remoteFiles, a.Path)
+					delete(fileCommits, a.Path)
+				} else {
+					remoteFiles[a.Path] = content
+					fileCommits[a.Path] = remoteSHA
+				}
+			}
+			result = map[string]any{"parent_ids": []string{previousSHA}}
+			for _, a := range commit.Actions {
+				if a.Path == "Dockerfile" {
+					generatedDocker = a.Content
+				}
+				if a.Path == ".gitlab-ci.yml" {
+					generatedCI = a.Content
+				}
 				if pipelines > 0 && a.Path == "deploy/application.yaml" {
 					t.Fatal("source upload overwrote running manifest")
 				}
@@ -185,6 +263,11 @@ func testPublishingProfileLifecycle(t *testing.T, runtime string) {
 				}
 			}
 		case r.Method == "POST" && strings.HasSuffix(p, "/pipeline"):
+			if failNextPipeline {
+				failNextPipeline = false
+				status = 503
+				break
+			}
 			pipelines++
 			result = map[string]string{"web_url": "https://gitlab.invalid/analytics/report/-/pipelines/1"}
 		case r.Method == "GET" && strings.HasPrefix(p, "/api/v4/groups/"):
@@ -194,7 +277,7 @@ func testPublishingProfileLifecycle(t *testing.T, runtime string) {
 				Description string `json:"description"`
 			}
 			json.NewDecoder(r.Body).Decode(&input)
-			project = publishing.Project{ID: 101, Description: input.Description, RepositoryURL: "https://gitlab.invalid/analytics/report.git", WebURL: "https://gitlab.invalid/analytics/report"}
+			project = publishing.Project{DefaultBranch: "main", ID: 101, Description: input.Description, RepositoryURL: "https://gitlab.invalid/analytics/report.git", WebURL: "https://gitlab.invalid/analytics/report"}
 			result = project
 		case r.Method == "PUT" && p == "/api/v4/projects/101":
 			result = map[string]bool{"ci_push_repository_for_job_token_allowed": true}
@@ -220,6 +303,9 @@ func testPublishingProfileLifecycle(t *testing.T, runtime string) {
 	if runtime == "python-static" {
 		metadata["buildCommand"] = "python build.py"
 		metadata["outputDir"] = "public"
+	}
+	if runtime == "streamlit" {
+		metadata["entryPoint"] = "app.py"
 	}
 	bad := map[string]any{"workspaceId": "profiles", "profileId": profile.ID, "name": "report", "config": map[string]string{"baseImage": "attacker/image"}}
 	if got := publish("profile-analyst", bad, "v1").Code; got != 400 {
@@ -250,7 +336,7 @@ func testPublishingProfileLifecycle(t *testing.T, runtime string) {
 		t.Fatal("publication response exposed protected configuration")
 	}
 	app, e := db.ApplicationByID(ctx, response.ApplicationID)
-	if e != nil || app.SyncPolicy != "auto-safe" || app.Namespaces[0].Namespace != "analytics" {
+	if e != nil || app.SyncPolicy != "auto-safe" || app.Namespaces[0].Namespace != expectedNamespace || app.CreateNamespaces != (runtime == "per-application") {
 		t.Fatal("profile destination/policy not enforced", e)
 	}
 	source, e := db.GitSourceByID(ctx, app.SourceID)
@@ -267,9 +353,17 @@ func testPublishingProfileLifecycle(t *testing.T, runtime string) {
 			t.Fatal("static build configuration not retained", cfg, err)
 		}
 	}
-	// An in-use profile cannot change destinations/images or be deleted.
+	if runtime == "per-application" {
+		if _, err := db.NamespaceBinding(ctx, "profiles", "profile-cluster", expectedNamespace); err != nil {
+			t.Fatal("namespace binding not registered with app", err)
+		}
+		if _, err := db.NamespaceBinding(ctx, "profiles", "profile-cluster", "analytics-profile-check"); err == nil {
+			t.Fatal("profile preview left a namespace binding")
+		}
+	}
+	// An in-use profile cannot change destinations or be deleted.
 	changed := settings
-	changed.BaseImage = "registry.invalid/changed:1"
+	changed.RegistryPrefix = "registry.invalid/other-apps"
 	body["settings"], body["version"], body["secrets"] = changed, profile.Version, publishingSecrets{GitReadToken: "must-not-be-saved"}
 	if got := save("PUT", "profile-owner", profile.ID, body).Code; got != 409 {
 		t.Fatal("changed in-use infrastructure", got)
@@ -307,6 +401,185 @@ func testPublishingProfileLifecycle(t *testing.T, runtime string) {
 	if updated.Code != 201 || pipelines != 3 || lastRegistryToken != "rotated-registry-secret" {
 		t.Fatalf("credential-free source update failed: %d %s", updated.Code, updated.Body.String())
 	}
+
+	// Image corrections are editable without silently rebuilding existing applications.
+	currentProfile, err := db.PublishingProfile(ctx, profile.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if currentProfile.CurrentRevision != 1 {
+		t.Fatal("credential rotation created a release")
+	}
+	nextImages := settings
+	if runtime != "static" {
+		nextImages.BaseImage = "registry.invalid/base/runtime:2"
+	}
+	nextImages.BuilderImage = "registry.invalid/base/builder:2"
+	nextImages.GitImage = "registry.invalid/tools/git:2"
+	nextImages.BuildEngine = "podman"
+	nextImages.CAVariable = "PLATFORM_ROOT_CA"
+	nextImages.RunnerTag = "approved-runner-v2"
+	nextImages.PullSecret = "registry-pull-v2"
+	if runtime == "static" || runtime == "python-static" {
+		nextImages.WebServerImage = "registry.invalid/base/nginx:2"
+	}
+	body["settings"], body["version"], body["secrets"] = nextImages, currentProfile.Version, publishingSecrets{}
+	imageEdit := save("PUT", "profile-owner", profile.ID, body)
+	if imageEdit.Code != 200 || pipelines != 3 {
+		t.Fatal("image correction failed or silently rebuilt apps", imageEdit.Code, imageEdit.Body.String(), pipelines)
+	}
+	if got := save("PUT", "profile-owner", profile.ID, body).Code; got != 409 {
+		t.Fatal("stale image edit accepted", got)
+	}
+	rebuilt := publish("profile-analyst", update, "v2")
+	if rebuilt.Code != 201 || pipelines != 4 {
+		t.Fatal("pinned source upload failed", rebuilt.Code, rebuilt.Body.String(), pipelines)
+	}
+	savedPublication, err := db.PublishedApplication(ctx, "profiles", source.RepositoryURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var savedConfig publishing.Config
+	if err := json.Unmarshal(savedPublication.Config, &savedConfig); err != nil || savedConfig.BaseImage != settings.BaseImage || savedConfig.BuilderImage != settings.BuilderImage || savedConfig.WebServerImage != settings.WebServerImage || savedConfig.RunnerTag != settings.RunnerTag || savedConfig.PullSecret != settings.PullSecret {
+		t.Fatal("source upload silently changed pinned images", savedConfig, err)
+	}
+	runtimeImage := settings.BaseImage
+	if runtime == "static" || runtime == "python-static" {
+		runtimeImage = settings.WebServerImage
+	}
+	if !strings.Contains(generatedDocker, runtimeImage) || !strings.Contains(generatedCI, settings.BuilderImage) {
+		t.Fatal("pinned build recipe changed without an explicit upgrade")
+	}
+	if savedPublication.ProfileRevision != 1 {
+		t.Fatal("source upload changed the profile pin")
+	}
+	historical, err := db.PublishingProfileVersion(ctx, profile.ID, 1)
+	if err != nil || historical.Settings != settings {
+		t.Fatal("published snapshot was mutated", err)
+	}
+	latest, err := db.PublishingProfile(ctx, profile.ID)
+	if err != nil || latest.CurrentRevision != 2 {
+		t.Fatal("image change did not publish v2", err)
+	}
+	apps := []store.Application{app}
+	if err := db.PopulatePublishingProfileStatus(ctx, apps); err != nil || apps[0].PublishingProfile == nil || !apps[0].PublishingProfile.UpdateAvailable || apps[0].PublishingProfile.Revision != 1 || apps[0].PublishingProfile.LatestRevision != 2 {
+		t.Fatal("update not advertised", apps, err)
+	}
+	upgradeRequest := func(handler http.HandlerFunc, user string, body any) *httptest.ResponseRecorder {
+		data, _ := json.Marshal(body)
+		request := httptest.NewRequest("POST", "/", bytes.NewReader(data))
+		request.SetPathValue("applicationID", app.ID)
+		request = request.WithContext(context.WithValue(request.Context(), userContextKey, store.User{ID: user}))
+		response := httptest.NewRecorder()
+		handler(response, request)
+		return response
+	}
+	for _, user := range []string{"profile-viewer", "profile-other"} {
+		before := calls
+		if w := upgradeRequest(s.previewPublishingProfileUpgrade, user, nil); w.Code != 403 || calls != before {
+			t.Fatal("unauthorized upgrade preview", user, w.Code)
+		}
+	}
+	beforeCommits := commitCount
+	preview := upgradeRequest(s.previewPublishingProfileUpgrade, "profile-analyst", nil)
+	if preview.Code != 200 {
+		t.Fatal("upgrade preview failed", preview.Code, preview.Body.String())
+	}
+	var upgrade profileUpgradePlan
+	if err := json.Unmarshal(preview.Body.Bytes(), &upgrade); err != nil {
+		t.Fatal(err)
+	}
+	if upgrade.FromRevision != 1 || upgrade.ToRevision != 2 || len(upgrade.Changes) == 0 || commitCount != beforeCommits {
+		t.Fatal("preview did not show immutable upgrade", upgrade)
+	}
+	originalSHA := remoteSHA
+	remoteSHA = strings.Repeat("f", 40)
+	stale := upgradeRequest(s.applyPublishingProfileUpgrade, "profile-analyst", map[string]any{"revision": 2, "hash": upgrade.Hash})
+	if stale.Code != 409 || commitCount != beforeCommits {
+		t.Fatal("stale source upgrade accepted", stale.Code)
+	}
+	remoteSHA = originalSHA
+	if _, err := db.DB.ExecContext(ctx, `UPDATE publishing_profiles SET enabled=false WHERE id=$1`, profile.ID); err != nil {
+		t.Fatal(err)
+	}
+	if w := upgradeRequest(s.applyPublishingProfileUpgrade, "profile-analyst", map[string]any{"revision": 2, "hash": upgrade.Hash}); w.Code != 403 {
+		t.Fatal("disabled profile upgrade allowed", w.Code)
+	}
+	if _, err := db.DB.ExecContext(ctx, `UPDATE publishing_profiles SET enabled=true WHERE id=$1`, profile.ID); err != nil {
+		t.Fatal(err)
+	}
+	failNextPipeline = true
+	attempted := upgradeRequest(s.applyPublishingProfileUpgrade, "profile-analyst", map[string]any{"revision": 2, "hash": upgrade.Hash})
+	if attempted.Code != 502 {
+		t.Fatal("expected retryable build start failure", attempted.Code, attempted.Body.String())
+	}
+	pending, _ := db.PublishedApplication(ctx, "profiles", source.RepositoryURL)
+	if pending.ProfileRevision != 2 || pending.PipelineURL != "" {
+		t.Fatal("pending revision was not recorded")
+	}
+	pendingApps := []store.Application{app}
+	if err := db.PopulatePublishingProfileStatus(ctx, pendingApps); err != nil || !pendingApps[0].PublishingProfile.NeedsBuild {
+		t.Fatal("pending build was not exposed", err)
+	}
+	retryPreview := upgradeRequest(s.previewPublishingProfileUpgrade, "profile-analyst", nil)
+	if retryPreview.Code != 200 {
+		t.Fatal(retryPreview.Body.String())
+	}
+	var retryPlan profileUpgradePlan
+	json.Unmarshal(retryPreview.Body.Bytes(), &retryPlan)
+	if !retryPlan.Resume {
+		t.Fatal("upgrade could not resume build")
+	}
+	retriedUpgrade := upgradeRequest(s.applyPublishingProfileUpgrade, "profile-analyst", map[string]any{"revision": 2, "hash": retryPlan.Hash})
+	if retriedUpgrade.Code != 200 || pipelines != 5 {
+		t.Fatal("upgrade build retry failed", retriedUpgrade.Code, retriedUpgrade.Body.String(), pipelines)
+	}
+	pinnedAfterUpgrade, _ := db.PublishedApplication(ctx, "profiles", source.RepositoryURL)
+	var upgradedConfig publishing.Config
+	json.Unmarshal(pinnedAfterUpgrade.Config, &upgradedConfig)
+	if pinnedAfterUpgrade.ProfileRevision != 2 || upgradedConfig.GitImage != nextImages.GitImage || upgradedConfig.BuildEngine != nextImages.BuildEngine || upgradedConfig.CAVariable != nextImages.CAVariable || upgradedConfig.BuilderImage != nextImages.BuilderImage || upgradedConfig.WebServerImage != nextImages.WebServerImage || upgradedConfig.BaseImage != nextImages.BaseImage || upgradedConfig.RunnerTag != nextImages.RunnerTag || upgradedConfig.PullSecret != nextImages.PullSecret {
+		t.Fatal("explicit upgrade did not adopt images", upgradedConfig)
+	}
+	completedApps := []store.Application{app}
+	if err := db.PopulatePublishingProfileStatus(ctx, completedApps); err != nil || completedApps[0].PublishingProfile.UpdateAvailable || completedApps[0].PublishingProfile.NeedsBuild {
+		t.Fatal("completed upgrade still advertised", err)
+	}
+	if !strings.Contains(generatedCI, nextImages.BuilderImage) || !strings.Contains(generatedCI, nextImages.RunnerTag) || !strings.Contains(remoteFiles[".justcd/deployment.yaml"], nextImages.PullSecret) {
+		t.Fatal("CI image not upgraded")
+	}
+	duplicate := upgradeRequest(s.applyPublishingProfileUpgrade, "profile-analyst", map[string]any{"revision": 2, "hash": retryPlan.Hash})
+	if duplicate.Code != 200 || pipelines != 5 {
+		t.Fatal("repeated upgrade started duplicate build", duplicate.Code, pipelines)
+	}
+	upgradedSource := publish("profile-analyst", update, "v3")
+	if upgradedSource.Code != 201 || pipelines != 6 {
+		t.Fatal("source update after upgrade failed", upgradedSource.Code, upgradedSource.Body.String())
+	}
+	// A recipe-only release is explicit; ordinary metadata edits do not release.
+	recipeProfile, _ := db.PublishingProfile(ctx, profile.ID)
+	body["version"], body["publishRevision"], body["settings"], body["secrets"] = recipeProfile.Version, true, nextImages, publishingSecrets{}
+	recipeRelease := save("PUT", "profile-owner", profile.ID, body)
+	if recipeRelease.Code != 200 {
+		t.Fatal("recipe-only release failed", recipeRelease.Body.String())
+	}
+	released, _ := db.PublishingProfile(ctx, profile.ID)
+	if released.CurrentRevision != 3 {
+		t.Fatal("recipe release not published")
+	}
+	body["publishRevision"] = false
+	history := profileRequest(t, s.listPublishingProfileVersions, "GET", "/", "profile-owner", nil, "profiles", profile.ID)
+	if history.Code != 200 || strings.Contains(history.Body.String(), "rotated-api-secret") {
+		t.Fatal("unsafe revision history", history.Code)
+	}
+	if w := profileRequest(t, s.listPublishingProfileVersions, "GET", "/", "profile-analyst", nil, "profiles", profile.ID); w.Code != 403 {
+		t.Fatal("analyst browsed full profile history", w.Code)
+	}
+	beforeSelection := calls
+	oldSelection := map[string]any{"workspaceId": "profiles", "profileId": profile.ID, "name": "another-report", "expectedProfileRevision": 2}
+	if w := publish("profile-analyst", oldSelection, "v1"); w.Code != 409 || calls != beforeSelection {
+		t.Fatal("stale initial profile selection accepted", w.Code)
+	}
+	settings = nextImages
 	r := httptest.NewRequest("GET", "/", nil)
 	r.SetPathValue("applicationID", app.ID)
 	r = r.WithContext(context.WithValue(r.Context(), userContextKey, store.User{ID: "profile-analyst"}))

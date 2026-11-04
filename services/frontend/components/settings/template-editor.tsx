@@ -11,7 +11,7 @@ import { Badge } from "@/components/reui/badge"
 import { FormField, Panel } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { api, apiPost } from "@/lib/api"
-import { contextRows, reviewTextRows, type ReviewRow } from "@/lib/line-diff"
+import { reviewTextRows, type ReviewRow } from "@/lib/line-diff"
 import type { PublishingProfile } from "@/lib/publishing"
 
 export type TemplateVersionMeta = {
@@ -34,7 +34,8 @@ export function versionLabel(version: number, label?: string) {
   return label ? `v${version} · ${label}` : `v${version}`
 }
 
-const editorClass = "min-h-[28rem] font-mono text-xs leading-5 whitespace-pre"
+const editorClass =
+  "h-[32rem] min-h-[20rem] resize-y [field-sizing:fixed] rounded-none border-0 font-mono text-xs leading-5 whitespace-pre focus-visible:ring-inset"
 
 /**
  * Admins see the files of an application template with their placeholders,
@@ -59,6 +60,7 @@ export function TemplateEditor({
   const [files, setFiles] = useState<Record<string, string>>({})
   const [active, setActive] = useState("Dockerfile")
   const [label, setLabel] = useState("")
+  const [view, setView] = useState("edit")
   const [previewProfile, setPreviewProfile] = useState("")
   const [rendered, setRendered] = useState<Record<string, string> | null>(null)
   const [error, setError] = useState<unknown>(null)
@@ -101,10 +103,6 @@ export function TemplateEditor({
     () => reviewTextRows(baseFiles[active] ?? "", files[active] ?? ""),
     [baseFiles, files, active]
   )
-  const baseName = versionLabel(
-    baseVersion,
-    detail?.versions.find((v) => v.version === baseVersion)?.label
-  )
 
   function insert(text: string) {
     const el = editor.current
@@ -120,23 +118,34 @@ export function TemplateEditor({
       el?.setSelectionRange(start + text.length, start + text.length)
     })
   }
-  async function preview() {
-    setRendering(true)
-    setError(null)
-    try {
-      const settings = profiles.find((p) => p.id === previewProfile)?.settings
-      const result = await apiPost<{ files: Record<string, string> }>(
-        `${base}/preview`,
-        { files, ...(settings ? { settings } : {}), hasRenvLock: true }
-      )
-      setRendered(result.files)
-    } catch (cause) {
+  useEffect(() => {
+    if (!detail) return
+    let live = true
+    const timer = window.setTimeout(async () => {
       setRendered(null)
-      setError(cause)
-    } finally {
-      setRendering(false)
+      setRendering(true)
+      try {
+        const settings = profiles.find((p) => p.id === previewProfile)?.settings
+        const result = await apiPost<{ files: Record<string, string> }>(
+          `${base}/preview`,
+          { files, ...(settings ? { settings } : {}), hasRenvLock: true }
+        )
+        if (live) {
+          setRendered(result.files)
+          setError(null)
+        }
+      } catch (cause) {
+        if (live) setError(cause)
+      } finally {
+        if (live) setRendering(false)
+      }
+    }, 500)
+    return () => {
+      live = false
+      window.clearTimeout(timer)
     }
-  }
+  }, [base, detail, files, previewProfile, profiles])
+
   async function save() {
     setBusy(true)
     setError(null)
@@ -197,7 +206,7 @@ export function TemplateEditor({
             <FormField
               label="Preview with"
               htmlFor="template-preview-profile"
-              hint="Render with a profile's real settings, or sample values."
+              hint="Preview updates automatically with the selected profile or sample values."
             >
               <FormSelect
                 id="template-preview-profile"
@@ -238,22 +247,89 @@ export function TemplateEditor({
               ))}
             </TabsList>
           </Tabs>
-          <FormField
-            label={active}
-            htmlFor="template-file"
-            hint={`Go template syntax: {{ .Name }}, {{ if .Host }}…{{ end }}, {{ range .ExposureLabels }}. Version: ${baseName}.`}
-          >
-            <Textarea
-              id="template-file"
-              ref={editor}
-              spellCheck={false}
-              className={editorClass}
-              value={files[active] ?? ""}
-              onChange={(event) =>
-                setFiles({ ...files, [active]: event.target.value })
-              }
-            />
-          </FormField>
+          <Tabs value={view} onValueChange={(value) => setView(String(value))}>
+            <TabsList aria-label="Template editor view">
+              <TabsTrigger value="edit">Edit</TabsTrigger>
+              <TabsTrigger value="compare">Compare changes</TabsTrigger>
+            </TabsList>
+          </Tabs>
+          {view === "edit" ? (
+            <div className="grid overflow-hidden rounded-xl border bg-background lg:grid-cols-2">
+              <div className="min-w-0">
+                <div className="flex items-center justify-between border-b bg-muted/40 px-3 py-2">
+                  <label
+                    htmlFor="template-file"
+                    className="text-xs font-medium"
+                  >
+                    Your template
+                  </label>
+                  <Badge
+                    variant={
+                      changed.includes(active) ? "info-light" : "outline"
+                    }
+                    size="sm"
+                  >
+                    {changed.includes(active) ? "Modified" : "Unchanged"}
+                  </Badge>
+                </div>
+                <Textarea
+                  id="template-file"
+                  ref={editor}
+                  spellCheck={false}
+                  wrap="off"
+                  className={editorClass}
+                  value={files[active] ?? ""}
+                  onChange={(event) =>
+                    setFiles({ ...files, [active]: event.target.value })
+                  }
+                />
+              </div>
+              <div className="min-w-0 border-t lg:border-t-0 lg:border-l">
+                <div className="flex items-center justify-between gap-2 border-b bg-muted/40 px-3 py-2">
+                  <label
+                    htmlFor="template-rendered"
+                    className="text-xs font-medium"
+                  >
+                    Rendered output
+                  </label>
+                  <Badge variant="outline" size="sm">
+                    {profiles.find((p) => p.id === previewProfile)?.name ??
+                      "Sample values"}
+                  </Badge>
+                </div>
+                <Textarea
+                  id="template-rendered"
+                  readOnly
+                  spellCheck={false}
+                  wrap="off"
+                  className={editorClass}
+                  aria-busy={rendering}
+                  value={
+                    rendered?.[active] ??
+                    (rendering
+                      ? "Rendering preview…"
+                      : "Preview unavailable. Review the validation error below.")
+                  }
+                />
+                <span className="sr-only" role="status">
+                  {rendering
+                    ? "Rendering preview"
+                    : rendered
+                      ? "Preview updated"
+                      : "Preview unavailable"}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <DiffView rows={rows} />
+          )}
+          <p className="text-xs text-muted-foreground">
+            Go template syntax:{" "}
+            {
+              "{{ .Name }}, {{ if .Host }}…{{ end }}, {{ range .ExposureLabels }}"
+            }
+            .
+          </p>
           <div className="flex flex-wrap items-center gap-3">
             <Button
               type="button"
@@ -264,15 +340,6 @@ export function TemplateEditor({
               }
             >
               Reset this file
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              loading={rendering}
-              loadingText="Rendering…"
-              onClick={() => void preview()}
-            >
-              Preview rendered files
             </Button>
           </div>
           <Disclosure summary="Placeholders and helper functions">
@@ -302,25 +369,6 @@ export function TemplateEditor({
               })}
             </ul>
           </Disclosure>
-          <Disclosure
-            summary={`Changes in ${active} compared with ${baseName}`}
-            defaultOpen={changed.includes(active)}
-          >
-            {rows.some((row) => row.changed) ? (
-              <DiffView rows={rows} />
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                No changes in this file.
-              </p>
-            )}
-          </Disclosure>
-          {rendered && (
-            <Disclosure summary={`Rendered ${active}`} defaultOpen>
-              <pre className="max-h-96 overflow-auto rounded-lg border bg-muted/40 p-3 font-mono text-xs leading-5">
-                {rendered[active]}
-              </pre>
-            </Disclosure>
-          )}
         </div>
       </Panel>
       {error != null && <ErrorNotice error={error} />}
@@ -370,46 +418,51 @@ export function TemplateEditor({
 }
 
 function DiffView({ rows }: { rows: ReviewRow[] }) {
-  const visible = contextRows(rows, 2)
-  const out: React.ReactNode[] = []
-  let skipped = 0
-  const flush = (key: string) => {
-    if (skipped)
-      out.push(
-        <div key={key} className="text-muted-foreground">
-          ⋯ {skipped} unchanged lines
-        </div>
-      )
-    skipped = 0
-  }
-  rows.forEach((row, index) => {
-    if (!visible.has(index)) {
-      skipped++
-      return
-    }
-    flush(`skip-${index}`)
-    if (!row.changed) {
-      out.push(<div key={index}>{"  " + (row.after ?? "")}</div>)
-      return
-    }
-    if (row.before !== undefined)
-      out.push(
-        <div key={`r${index}`} className="bg-destructive/15">
-          {"- " + row.before}
-        </div>
-      )
-    if (row.after !== undefined)
-      out.push(
-        <div key={`a${index}`} className="bg-success/15">
-          {"+ " + row.after}
-        </div>
-      )
-  })
-  flush("skip-end")
   return (
-    <pre className="max-h-96 overflow-auto rounded-lg border bg-muted/40 p-3 font-mono text-xs leading-5">
-      {out}
-    </pre>
+    <div
+      className="max-h-[32rem] overflow-auto rounded-lg border bg-background"
+      tabIndex={0}
+      role="region"
+      aria-label="Side-by-side template changes"
+    >
+      <div className="min-w-[40rem]">
+        <div className="sticky top-0 z-10 grid grid-cols-2 border-b bg-muted text-xs font-medium">
+          <div className="border-r px-3 py-2">Original</div>
+          <div className="px-3 py-2">Your changes</div>
+        </div>
+        {rows.map((row, index) => (
+          <div
+            key={index}
+            className="grid grid-cols-2 font-mono text-xs leading-5"
+          >
+            {(["before", "after"] as const).map((side) => {
+              const line = side === "before" ? row.oldLine : row.newLine
+              const content = row[side]
+              return (
+                <div
+                  key={side}
+                  className={`flex min-w-0 ${side === "before" ? "border-r" : ""} ${row.changed && content !== undefined ? (side === "before" ? "bg-destructive/10" : "bg-success/10") : ""}`}
+                >
+                  <span className="w-10 shrink-0 border-r px-2 text-right text-muted-foreground select-none">
+                    {line}
+                  </span>
+                  <span className="w-5 shrink-0 text-center text-muted-foreground select-none">
+                    {row.changed && content !== undefined
+                      ? side === "before"
+                        ? "−"
+                        : "+"
+                      : ""}
+                  </span>
+                  <code className="min-w-0 flex-1 pr-3 break-all whitespace-pre-wrap">
+                    {content ?? " "}
+                  </code>
+                </div>
+              )
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 

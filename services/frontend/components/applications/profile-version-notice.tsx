@@ -4,6 +4,7 @@ import type { Application } from "@/lib/types"
 import { Badge } from "@/components/reui/badge"
 import { Button } from "@/components/ui/button"
 import { PublishingCard } from "./publishing-fields"
+import type { ReactNode } from "react"
 export function ProfileVersionBadge({
   application,
 }: {
@@ -29,14 +30,16 @@ export function ProfileVersionBadge({
 export function ProfileVersionNotice({
   application,
   canUpgrade,
+  compact = false,
 }: {
   application: Application
   canUpgrade: boolean
+  compact?: boolean
 }) {
   const profile = application.publishingProfile
   if (!profile) return null
   return (
-    <PublishingCard contentClassName="flex flex-wrap items-center justify-between gap-3">
+    <ProfileContainer compact={compact}>
       <div className="min-w-0">
         <p className="text-sm font-medium">
           {profile.name} · using v{profile.revision}
@@ -67,6 +70,10 @@ export function ProfileVersionNotice({
           Review profile update
         </Button>
       )}
-    </PublishingCard>
+    </ProfileContainer>
   )
+}
+
+function ProfileContainer({ compact, children }: { compact: boolean; children: ReactNode }) {
+  return compact ? <div className="space-y-3">{children}</div> : <PublishingCard contentClassName="flex flex-wrap items-center justify-between gap-3">{children}</PublishingCard>
 }

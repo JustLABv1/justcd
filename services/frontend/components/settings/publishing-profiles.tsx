@@ -208,7 +208,7 @@ export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="text-sm font-medium">{profile.name}</h3>
                     <Badge variant="outline">v{profile.currentRevision}</Badge>
-                    <Badge variant={profile.enabled ? "secondary" : "outline"}>
+                    <Badge variant={profile.enabled ? "success-light" : "destructive-light"}>
                       {profile.enabled ? "Enabled" : "Disabled"}
                     </Badge>
                   </div>

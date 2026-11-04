@@ -1,6 +1,5 @@
 "use client"
 
-import { ProfileVersionNotice } from "@/components/applications/profile-version-notice"
 import { PublishingProgress } from "@/components/applications/publishing-progress"
 import { AIAssistant } from "@/components/ai-assistant"
 import { DeploymentScheduleNotice } from "@/components/deployment-schedule-notice"
@@ -19,7 +18,7 @@ import { OperationBar, type RollbackRequest } from "@/components/application/ope
 import { OverviewTab } from "@/components/application/overview-tab"
 import { OwnershipConflictDialog } from "@/components/application/ownership-conflict-dialog"
 import { applicationResourceNodes } from "@/lib/topology-view"
-import { deriveApplicationStatus, isApplicationHealthy } from "@/lib/application-status"
+import { deriveApplicationStatus } from "@/lib/application-status"
 import { RuntimeHealthStrip } from "@/components/application/runtime-health"
 import { SettingsTab } from "@/components/application/settings-tab"
 import { ApplicationDetailSkeleton } from "@/components/application-detail-skeleton"
@@ -124,7 +123,7 @@ export default function ApplicationDetailPage() {
       const value = new URLSearchParams(window.location.search).get("tab")
       const viewParam = new URLSearchParams(window.location.search).get("view")
       setTopologyView(value === "components" || viewParam === "list" ? "list" : viewParam === "graph" ? "graph" : "overview")
-      setActiveTab(value === "components" ? "topology" : ["overview", "topology", "changes", "activity", "pull-requests", "settings"].includes(value ?? "") ? value! : "overview")
+      setActiveTab(value === "components" ? "topology" : ["overview", "topology", "changes", "activity", "pull-requests", "publishing", "settings"].includes(value ?? "") ? value! : "overview")
     }
     readTab()
     window.addEventListener("popstate", readTab)
@@ -754,8 +753,6 @@ export default function ApplicationDetailPage() {
         ...(canApprove && !application.autoSyncPaused ? [{ label: "Pause auto-sync", icon: PauseIcon, separatorBefore: true, disabled: busy || hasPendingOperation, onSelect: () => void pauseSync() }] : []),
       ]} />}
     </>} />
-    {application?.publishingProfile && <div className="my-4"><ProfileVersionNotice application={application} canUpgrade={canDeploy} /></div>}
-    {application?.labels?.["justcd.io/published"] === "true" && canDeploy && <PublishingProgress key={application.id} applicationId={application.id} settled={isApplicationHealthy(application)} onReview={() => selectTab("changes")} />}
     <BackgroundTaskStatus tasks={backgroundTasks.tasks} operations={operations} error={backgroundTasks.error} onRefresh={() => void backgroundTasks.refresh()} />
     {error != null && <ErrorNotice error={error} />}
     {application && <AttentionBar application={application} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} plansError={plansError} retryingPlans={retryingPlans} onRetryPlans={() => void retryPlans()}
@@ -775,6 +772,7 @@ export default function ApplicationDetailPage() {
             { id: "topology", label: "Resources", count: pendingData.topology ? undefined : topology ? applicationResourceNodes(topology).length : undefined },
             { id: "changes", label: "Changes", count: pendingData.plans || plansError != null ? undefined : appStatus?.plan.state === "current" ? latestPlan!.plan.changes.length + (latestPlan?.plan.ignored?.length ?? 0) : latestPlan ? undefined : 0 },
             { id: "activity", label: "Activity" },
+            ...(application.labels?.["justcd.io/published"] === "true" && canDeploy ? [{ id: "publishing", label: "Publishing" }] : []),
             { id: "pull-requests", label: "Pull requests" },
             { id: "settings", label: "Settings" },
           ].map((tab) => <TabsTrigger key={tab.id} value={tab.id}>
@@ -794,9 +792,13 @@ export default function ApplicationDetailPage() {
     </>}
     {!loading && application && <>
         <TabsContent value="overview" className="outline-none">
-          <OverviewTab status={appStatus!} application={application} latestPlan={latestPlan} plansError={plansError} retryingPlans={retryingPlans} topology={topology} topologyError={topologyError} pending={{ topology: pendingData.topology, plans: pendingData.plans, operations: pendingData.operations }} operations={operations} operationsError={operationsError} canRefreshPlan={!createPlanDisabled} creatingPlan={pendingAction === "create-plan"} onCreatePlan={() => void createPlan()} onRetryPlans={() => void retryPlans()} onSelectTab={selectTab} />
+          <OverviewTab canUpgradeProfile={canDeploy} status={appStatus!} application={application} latestPlan={latestPlan} plansError={plansError} retryingPlans={retryingPlans} topology={topology} topologyError={topologyError} pending={{ topology: pendingData.topology, plans: pendingData.plans, operations: pendingData.operations }} operations={operations} operationsError={operationsError} canRefreshPlan={!createPlanDisabled} creatingPlan={pendingAction === "create-plan"} onCreatePlan={() => void createPlan()} onRetryPlans={() => void retryPlans()} onSelectTab={selectTab} />
           <div id="deployment-schedule" className="mt-5 scroll-mt-5"><DeploymentSchedulePanel key={application.id} scope="applications" id={application.id} canEdit={canApprove} /></div>
         </TabsContent>
+
+        {application.labels?.["justcd.io/published"] === "true" && canDeploy && <TabsContent value="publishing" className="outline-none">
+          <PublishingProgress key={application.id} applicationId={application.id} onReview={() => selectTab("changes")} />
+        </TabsContent>}
 
         <TabsContent value="topology" className="outline-none">
       {pendingData.topology || pendingData.resources || pendingData.plans || pendingData.operations ? <SectionLoading label="Loading the resource map" /> : <>

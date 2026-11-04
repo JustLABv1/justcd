@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import { ProfileVersionNotice } from "@/components/applications/profile-version-notice"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { ArrowRight01Icon } from "@hugeicons/core-free-icons"
 import { ErrorDetailsButton } from "@/components/error-details"
@@ -54,6 +55,7 @@ export function OverviewTab({
   operationsError,
   creatingPlan,
   canRefreshPlan,
+  canUpgradeProfile,
   onCreatePlan,
   onRetryPlans,
   onSelectTab,
@@ -70,6 +72,7 @@ export function OverviewTab({
   operationsError: unknown | null
   creatingPlan: boolean
   canRefreshPlan: boolean
+  canUpgradeProfile: boolean
   onCreatePlan: () => void
   onRetryPlans: () => void
   onSelectTab: (tab: string) => void
@@ -266,6 +269,7 @@ export function OverviewTab({
               </>
             )}
           </dl>
+          {application.publishingProfile && <div className="border-t p-5"><ProfileVersionNotice application={application} canUpgrade={canUpgradeProfile} compact /></div>}
           {application.repositoryConfigurationId && (
             <div className="border-t px-5 py-3">
               <Disclosure summary="Application definition">

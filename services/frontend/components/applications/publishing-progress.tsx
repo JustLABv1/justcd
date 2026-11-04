@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react"
 import { Badge } from "@/components/reui/badge"
 import { api } from "@/lib/api"
-import { PublishingCard } from "./publishing-fields"
+import { Button } from "@/components/ui/button"
 
 type Publication = {
   completionStatus?: string
@@ -101,11 +101,9 @@ function steps(p: Publication): Step[] {
 
 export function PublishingProgress({
   applicationId,
-  settled,
   onReview,
 }: {
   applicationId: string
-  settled: boolean
   onReview: () => void
 }) {
   const [publication, setPublication] = useState<Publication | null>(null)
@@ -132,29 +130,50 @@ export function PublishingProgress({
       window.clearTimeout(timer)
     }
   }, [applicationId])
-  if (!publication || (failed && !publication)) return null
-  // Legacy pipelines have no tracked state, and a finished, healthy release needs no panel.
-  if (publication.managedCompletion !== true) return null
-  if (publication.completionStatus === "completed" && settled) return null
+  if (!publication)
+    return (
+      <p role="status" className="py-5 text-sm text-muted-foreground">
+        {failed
+          ? "Publishing progress is unavailable. Retrying automatically…"
+          : "Loading publishing progress…"}
+      </p>
+    )
+  // Legacy pipelines have no tracked completion state.
+  if (publication.managedCompletion !== true)
+    return (
+      <p className="py-5 text-sm text-muted-foreground">
+        Publishing progress is tracked in this application’s GitLab pipeline.
+      </p>
+    )
+
   const list = steps(publication)
   return (
-    <PublishingCard className="my-4 h-auto" contentClassName="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <section
+      aria-label="Publishing progress"
+      className="overflow-hidden rounded-xl border bg-card"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
         <h2 className="text-sm font-semibold">Publishing progress</h2>
         {publication.pipelineUrl && (
-          <a
-            className="text-sm font-medium text-primary hover:underline"
-            href={publication.pipelineUrl}
-            target="_blank"
-            rel="noreferrer"
+          <Button
+            size="sm"
+            variant="ghost"
+            nativeButton={false}
+            render={
+              <a
+                href={publication.pipelineUrl}
+                target="_blank"
+                rel="noreferrer"
+              />
+            }
           >
             Open GitLab pipeline →
-          </a>
+          </Button>
         )}
       </div>
-      <ol className="space-y-2.5">
+      <ol className="space-y-4 p-5">
         {list.map((step) => (
-          <li key={step.label} className="flex items-start gap-3">
+          <li key={step.label} className="flex flex-wrap items-start gap-3">
             <span
               aria-hidden="true"
               className={`mt-1.5 size-2.5 shrink-0 rounded-full ${dot[step.state]}`}
@@ -169,13 +188,14 @@ export function PublishingProgress({
               </p>
             </div>
             {step.label === "Review and apply" && step.state === "active" && (
-              <button
+              <Button
                 type="button"
-                className="text-sm font-medium text-primary hover:underline"
+                size="sm"
+                variant="outline"
                 onClick={onReview}
               >
                 Review changes →
-              </button>
+              </Button>
             )}
             {step.state === "failed" && (
               <Badge size="sm" radius="full" variant="destructive-light">
@@ -186,10 +206,13 @@ export function PublishingProgress({
         ))}
       </ol>
       {publication.completionError && (
-        <p role="alert" className="text-xs leading-5 text-destructive">
+        <p
+          role="alert"
+          className="border-t px-5 py-3 text-xs leading-5 text-destructive"
+        >
           {publication.completionError}
         </p>
       )}
-    </PublishingCard>
+    </section>
   )
 }

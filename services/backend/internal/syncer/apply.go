@@ -177,6 +177,7 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 			}
 		}
 		operation.Progress.Stop(message)
+		operation.Progress.SetFailureDetail(kubernetesFailureDetail(cause))
 		if err := s.Store.SetOperationProgress(finishCtx, operationID, operation.Progress); err != nil {
 			return operation, errors.Join(cause, err)
 		}
@@ -521,6 +522,54 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 	now := time.Now().UTC()
 	operation.FinishedAt = &now
 	return operation, nil
+}
+
+// kubernetesFailureDetail explains a Kubernetes API rejection in a form that is safe to show users.
+// Messages are only passed through for reasons whose text describes policy or availability
+// (permissions, quota, admission, existence). Validation errors can echo submitted values, so they
+// are reduced to the offending field paths and error types. Anything else yields no detail.
+func kubernetesFailureDetail(cause error) string {
+	var api apierrors.APIStatus
+	var recreation *recreationFailure
+	if cause == nil || errors.As(cause, &recreation) || !errors.As(cause, &api) {
+		return ""
+	}
+	status := api.Status()
+	reason := string(status.Reason)
+	if reason == "" {
+		return ""
+	}
+	switch status.Reason {
+	case metav1.StatusReasonForbidden, metav1.StatusReasonUnauthorized, metav1.StatusReasonNotFound,
+		metav1.StatusReasonAlreadyExists, metav1.StatusReasonServiceUnavailable, metav1.StatusReasonTimeout,
+		metav1.StatusReasonServerTimeout, metav1.StatusReasonTooManyRequests:
+		return reason + ": " + compactMessage(status.Message, 600)
+	case metav1.StatusReasonInvalid, metav1.StatusReasonBadRequest:
+		fields := []string{}
+		if status.Details != nil {
+			for _, c := range status.Details.Causes {
+				if c.Field != "" {
+					fields = append(fields, fmt.Sprintf("%s (%s)", c.Field, c.Type))
+				}
+			}
+		}
+		if len(fields) == 0 {
+			return reason
+		}
+		if len(fields) > 8 {
+			fields = append(fields[:8], "…")
+		}
+		return reason + ": " + strings.Join(fields, ", ")
+	}
+	return reason
+}
+
+func compactMessage(message string, limit int) string {
+	message = strings.Join(strings.Fields(message), " ")
+	if runes := []rune(message); len(runes) > limit {
+		return string(runes[:limit]) + "…"
+	}
+	return message
 }
 
 func safeApplyFailure(cause error, progress store.OperationProgress, operationType ...string) string {

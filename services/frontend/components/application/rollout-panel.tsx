@@ -571,6 +571,12 @@ export function RolloutPanel({
                               </ul>
                             </div>
                           )}
+                          {selected.failureDetail && (
+                            <div className="mt-4 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+                              <p className="text-xs font-medium text-destructive">Kubernetes rejected this resource</p>
+                              <p className="mt-1 font-mono text-xs break-words select-text">{selected.failureDetail}</p>
+                            </div>
+                          )}
                           {selected.message && (
                             <p
                               className={`mt-4 text-sm break-words ${selected.status === "failed" ? "text-destructive" : "text-muted-foreground"}`}

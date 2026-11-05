@@ -20,6 +20,9 @@ type ResourceProgress struct {
 	ReasonCode        string        `json:"reasonCode,omitempty"`
 	ChangedPaths      []string      `json:"changedPaths,omitempty"`
 	Message           string        `json:"message,omitempty"`
+	// FailureDetail is the Kubernetes API's own reason for rejecting this resource, reduced to
+	// text that cannot echo user-supplied values (see syncer.kubernetesFailureDetail).
+	FailureDetail string `json:"failureDetail,omitempty"`
 }
 
 func NewOperationProgress(plan core.Plan) (OperationProgress, error) {
@@ -79,6 +82,19 @@ func (p *OperationProgress) CompleteResource(identity core.Identity) {
 
 // Stop preserves confirmed mutations. An in-flight step may have changed the
 // cluster even when the client never received its response; never call it skipped.
+// SetFailureDetail records why the resource that was running when the operation stopped failed.
+// Call it after Stop.
+func (p *OperationProgress) SetFailureDetail(detail string) {
+	if detail == "" {
+		return
+	}
+	for i := range p.Resources {
+		if p.Resources[i].Status == "failed" && p.Resources[i].FailureDetail == "" {
+			p.Resources[i].FailureDetail = detail
+		}
+	}
+}
+
 func (p *OperationProgress) Stop(message string) {
 	now := time.Now().UTC()
 	for i := range p.Resources {

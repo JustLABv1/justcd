@@ -107,8 +107,10 @@ func (s *Store) SavePublishingProfile(ctx context.Context, p PublishingProfile, 
 		previous.BuildEngine = p.Settings.BuildEngine
 		previous.GitImage = p.Settings.GitImage
 		previous.PullSecret = p.Settings.PullSecret
+		previous.PackageSources = p.Settings.PackageSources
+		previous.PackagePolicy = p.Settings.PackagePolicy
 		if count > 0 && previous != p.Settings {
-			return errors.New("profile is in use; only build engines, build/deployment job images, runner tags, runner service account/SCC/setup script, route/ingress type and labels/annotations, template version/parameters, optional application services, custom CA variable names, and image-pull secrets may change; create a new profile to change other infrastructure settings")
+			return errors.New("profile is in use; only build engines, build/deployment job images, runner tags, runner service account/SCC/setup script, route/ingress type and labels/annotations, template version/parameters, optional application services, package sources and policy, custom CA variable names, and image-pull secrets may change; create a new profile to change other infrastructure settings")
 		}
 	}
 	for _, c := range credentials {

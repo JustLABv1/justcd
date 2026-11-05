@@ -19,18 +19,18 @@ type onboardingStep struct {
 }
 
 type onboardingResponse struct {
-	Steps          []onboardingStep `json:"steps"`
-	Completed      int              `json:"completed"`
-	Total          int              `json:"total"`
-	NextStepID     string           `json:"nextStepId,omitempty"`
+	Steps            []onboardingStep `json:"steps"`
+	Completed        int              `json:"completed"`
+	Total            int              `json:"total"`
+	NextStepID       string           `json:"nextStepId,omitempty"`
 	FirstWorkspaceID string           `json:"firstWorkspaceId,omitempty"`
 }
 
 type onboardingSnapshot struct {
 	DatabaseReady, EncryptionAcknowledged, PublicURLReady   bool
-	WorkspaceCount, KubernetesCredentialCount, ClusterCount   int
+	WorkspaceCount, KubernetesCredentialCount, ClusterCount int
 	NamespaceBindingCount, GitSourceCount, ApplicationCount int
-	FirstWorkspaceID, ClusterStatus, ClusterCategory          string
+	FirstWorkspaceID, ClusterStatus, ClusterCategory        string
 	ClusterMessage, ClusterRemediation                      string
 }
 

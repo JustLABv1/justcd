@@ -256,6 +256,73 @@ paths:
       responses:
         '200': {description: Up to 100 published revisions with settings, recipe version, and publication time; credentials excluded}
         '403': {description: Workspace owner required}
+  /applications/{applicationID}/build-setup/preview:
+    post:
+      summary: Review a build setup change of a manually published application
+      description: Workspace owner only; not for profile-managed applications. Regenerates the Dockerfile, pipeline and package script from the stored settings plus the requested package sources and returns the settings and generated files that would change, with a hash. Nothing is committed. The GitLab token is used for the request only.
+      parameters:
+        - {name: applicationID, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [gitlabToken]
+              properties:
+                gitlabToken: {type: string, writeOnly: true}
+                packageSources: {type: string, description: JSON list of package mirrors}
+                packagePolicy: {type: string, enum: ["", enforce]}
+                templateParameters: {type: string, description: "Non-secret key=value lines for the template; omit to keep the current ones"}
+      responses:
+        '200': {description: "Plan: applicationId, sourceSha, hash, changes, images (setting changes), upToDate"}
+        '403': {description: Workspace owner required}
+        '409': {description: The application uses a profile or its repository changed}
+  /applications/{applicationID}/build-setup:
+    post:
+      summary: Apply a reviewed build setup change
+      description: Workspace owner only. Commits the reviewed files (with per-file concurrency guards), sets the package credentials as masked protected CI variables, records the settings and starts a build. The hash must match a fresh review.
+      parameters:
+        - {name: applicationID, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [gitlabToken, hash]
+              properties:
+                gitlabToken: {type: string, writeOnly: true}
+                packageSources: {type: string}
+                packagePolicy: {type: string, enum: ["", enforce]}
+                templateParameters: {type: string, description: "Non-secret key=value lines for the template; omit to keep the current ones"}
+                packageUser: {type: string, writeOnly: true}
+                packageToken: {type: string, writeOnly: true}
+                hash: {type: string}
+      responses:
+        '200': {description: applicationId and pipelineUrl}
+        '400': {description: Invalid package sources or missing package credentials}
+        '409': {description: Stale review, concurrent publication, or repository changed}
+  /applications/{applicationID}/adopt-profile:
+    post:
+      summary: Convert a manually published application to a publishing profile
+      description: Workspace owner only. Succeeds only when the application already matches the profile's destination (template, cluster, namespace, registry, hostname, secret mode, GitLab group); otherwise returns the differences. With dryRun nothing is changed. After conversion the profile's build settings are adopted through the reviewed profile update.
+      parameters:
+        - {name: applicationID, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [profileId]
+              properties:
+                profileId: {type: string}
+                dryRun: {type: boolean}
+      responses:
+        '200': {description: "profileId, profileName, compatible, applied, differences [{field, app, profile}]"}
+        '403': {description: Workspace owner required}
+        '409': {description: Already uses a profile, or the application changed}
   /applications/{applicationID}/profile-upgrade:
     parameters:
       - {name: applicationID, in: path, required: true, schema: {type: string}}
@@ -373,6 +440,8 @@ paths:
                     gitReadToken: {type: string, writeOnly: true, description: Required for initial publishing; encrypted in the JustCD credential store}
                     registryUser: {type: string, writeOnly: true}
                     registryPassword: {type: string, writeOnly: true}
+                    packageUser: {type: string, writeOnly: true, description: "Read-only account for authenticated package mirrors"}
+                    packageToken: {type: string, writeOnly: true}
                     config:
                       type: object
                       required: [name, runtime, entryPoint, builderImage, registryImage, namespace, secretMode]
@@ -403,6 +472,8 @@ paths:
                         ingressTls: {type: string, enum: [hosts, none], description: "Ingress TLS block: hosts (default) lists the host, none renders tls: []."}
                         services: {type: string, description: "JSON-encoded resolved database and VaultStaticSecret configuration for manual publishing; no secret values."}
                         templateParameters: {type: string, description: "Optional non-secret key=value lines available as .Parameters in custom templates."}
+                        packageSources: {type: string, description: "JSON list of package mirrors: [{ecosystem: pip|cran|npm|conda|apt|apk, url: https mirror, authenticated: boolean}]. Builds route that package manager through the mirror; credentials come from the package credentials (variables mode) or the Vault fields package_username and package_token."}
+                        packagePolicy: {type: string, enum: ["", enforce], description: "enforce rejects uploads that name another package index, a Git dependency or a host outside the approved sources."}
                         templateVersion: {type: integer, minimum: 0, description: "Workspace template version used by this profile; 0 or omitted means the built-in template."}
                         runnerServiceAccount: {type: string, description: "Optional Kubernetes-executor service account override for the build job."}
                         runnerScc: {type: string, description: "Optional OpenShift SCC the build pod must run under (openshift.io/required-scc)."}
@@ -1355,6 +1426,8 @@ components:
             gitReadToken: {type: string, writeOnly: true}
             registryUser: {type: string, writeOnly: true}
             registryPassword: {type: string, writeOnly: true}
+            packageUser: {type: string, writeOnly: true, description: "Read-only account for authenticated package mirrors"}
+            packageToken: {type: string, writeOnly: true}
         settings:
           type: object
           required: [templateId, gitlabUrl, group, clusterId, builderImage, registryPrefix, secretMode, syncPolicy]
@@ -1380,6 +1453,8 @@ components:
             ingressTls: {type: string, enum: [hosts, none], description: "Ingress TLS block: hosts (default) lists the host, none renders tls: []."}
             serviceCatalog: {type: string, description: "JSON-encoded optional approved StackGres database plan and VaultStaticSecret bindings; no secret values."}
             templateParameters: {type: string, description: "Optional non-secret key=value lines available as .Parameters in custom templates."}
+            packageSources: {type: string, description: "JSON list of package mirrors: [{ecosystem: pip|cran|npm|conda|apt|apk, url: https mirror, authenticated: boolean}]. Builds route that package manager through the mirror; credentials come from the package credentials (variables mode) or the Vault fields package_username and package_token."}
+            packagePolicy: {type: string, enum: ["", enforce], description: "enforce rejects uploads that name another package index, a Git dependency or a host outside the approved sources."}
             templateVersion: {type: integer, minimum: 0, description: "Workspace template version used by this profile; 0 or omitted means the built-in template."}
             runnerServiceAccount: {type: string, description: "Optional Kubernetes-executor service account override for the build job."}
             runnerScc: {type: string, description: "Optional OpenShift SCC the build pod must run under (openshift.io/required-scc)."}

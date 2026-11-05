@@ -28,7 +28,15 @@ export function ArchiveUpload({
   validation,
   onValidationChange,
 }: {
-  validation?: { workspaceId: string; runtime: string; entryPoint: string }
+  validation?: {
+    workspaceId: string
+    runtime: string
+    entryPoint: string
+    templateId?: string
+    profileId?: string
+    packageSources?: string
+    packagePolicy?: string
+  }
   onValidationChange?: (valid: boolean) => void
   id: string
   file: File | null
@@ -42,11 +50,18 @@ export function ArchiveUpload({
   const [dragging, setDragging] = useState(false)
   const [error, setError] = useState("")
 
-  const [inspection, setInspection] = useState<{ state: "checking" | "valid" | "invalid"; message: string } | null>(null)
+  const [inspection, setInspection] = useState<{
+    state: "checking" | "valid" | "invalid"
+    message: string
+  } | null>(null)
   const validationEnabled = Boolean(validation)
   const workspaceId = validation?.workspaceId
   const runtime = validation?.runtime
   const entryPoint = validation?.entryPoint
+  const templateId = validation?.templateId
+  const profileId = validation?.profileId
+  const packageSources = validation?.packageSources
+  const packagePolicy = validation?.packagePolicy
   useEffect(() => {
     if (!validationEnabled || !onValidationChange) return
     let active = true
@@ -56,19 +71,55 @@ export function ArchiveUpload({
       onValidationChange(false)
       setInspection(null)
       if (!file || !workspaceId || !runtime || !entryPoint) return
-      setInspection({ state: "checking", message: "Checking ZIP contents and project structure…" })
+      setInspection({
+        state: "checking",
+        message: "Checking ZIP contents and project structure…",
+      })
       try {
         const body = new FormData()
-        body.append("metadata", JSON.stringify({ workspaceId, config: { runtime, entryPoint } }))
+        body.append(
+          "metadata",
+          JSON.stringify({
+            workspaceId,
+            ...(profileId ? { profileId } : {}),
+            config: {
+              runtime,
+              entryPoint,
+              ...(templateId ? { templateId } : {}),
+              ...(packageSources ? { packageSources, packagePolicy } : {}),
+            },
+          })
+        )
         body.append("archive", file)
-        const result = await api<{ message: string }>("/api/v1/publishing/validate-archive", { method: "POST", body, signal: controller.signal })
-        if (active) { setInspection({ state: "valid", message: result.message }); onValidationChange(true) }
+        const result = await api<{ message: string }>(
+          "/api/v1/publishing/validate-archive",
+          { method: "POST", body, signal: controller.signal }
+        )
+        if (active) {
+          setInspection({ state: "valid", message: result.message })
+          onValidationChange(true)
+        }
       } catch (cause) {
-        if (active) setInspection({ state: "invalid", message: errorMessage(cause) })
+        if (active)
+          setInspection({ state: "invalid", message: errorMessage(cause) })
       }
     })
-    return () => { active = false; controller.abort() }
-  }, [file, workspaceId, runtime, entryPoint, onValidationChange, validationEnabled])
+    return () => {
+      active = false
+      controller.abort()
+    }
+  }, [
+    file,
+    workspaceId,
+    runtime,
+    entryPoint,
+    templateId,
+    profileId,
+    packageSources,
+    packagePolicy,
+    onValidationChange,
+    validationEnabled,
+  ])
 
   function choose(files: File[]) {
     if (disabled || !files.length) return
@@ -207,7 +258,14 @@ export function ArchiveUpload({
           )}
         </div>
       </div>
-      {file && inspection && <p role={inspection.state === "invalid" ? "alert" : "status"} className={`text-xs leading-5 ${inspection.state === "invalid" ? "text-destructive" : inspection.state === "valid" ? "text-success" : "text-muted-foreground"}`}>{inspection.message}</p>}
+      {file && inspection && (
+        <p
+          role={inspection.state === "invalid" ? "alert" : "status"}
+          className={`text-xs leading-5 ${inspection.state === "invalid" ? "text-destructive" : inspection.state === "valid" ? "text-success" : "text-muted-foreground"}`}
+        >
+          {inspection.message}
+        </p>
+      )}
       {error && (
         <p
           id={`${id}-error`}

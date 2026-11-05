@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { PublishingServicesEditor } from "@/components/settings/publishing-services"
 import { ArchiveUpload } from "@/components/applications/archive-upload"
 import { FormSelect } from "@/components/ui/form-select"
+import { Textarea } from "@/components/ui/textarea"
 import { PageHeading } from "@/components/ui-kit"
 import {
   SummaryList,
@@ -29,7 +30,9 @@ import {
   PublishingSection as Panel,
 } from "@/components/applications/publishing-fields"
 import { api } from "@/lib/api"
-import { publishProject, publishingSize, templatesUrl } from "@/lib/publishing"
+import { publishProject, publishingSize, selectedWorkspaceId, templatesUrl } from "@/lib/publishing"
+import { WorkspaceNote } from "@/components/applications/workspace-note"
+import { PackageSourcesCard } from "@/components/settings/package-sources"
 import { usePublishingDraft } from "@/hooks/use-publishing-draft"
 import { PublishingDraftNotice } from "@/components/applications/publishing-draft-notice"
 import { usePublishingLimits } from "@/hooks/use-publishing-limits"
@@ -67,6 +70,14 @@ type Config = {
   runnerServiceAccount: string
   runnerScc: string
   builderSetup: string
+  exposure: string
+  exposureLabels: string
+  exposureAnnotations: string
+  ingressClass: string
+  ingressTls: string
+  templateParameters: string
+  packageSources: string
+  packagePolicy: string
 }
 type Publication = {
   applicationId: string
@@ -96,6 +107,14 @@ const initialConfig: Config = {
   runnerServiceAccount: "",
   runnerScc: "",
   builderSetup: "",
+  exposure: "route",
+  exposureLabels: "",
+  exposureAnnotations: "",
+  ingressClass: "",
+  ingressTls: "hosts",
+  templateParameters: "",
+  packageSources: "",
+  packagePolicy: "",
 }
 
 export default function PublishApplicationPage() {
@@ -115,6 +134,9 @@ export default function PublishApplicationPage() {
   const [gitReadToken, setGitReadToken] = useState("")
   const [registryUser, setRegistryUser] = useState("")
   const [registryPassword, setRegistryPassword] = useState("")
+  // Package credentials are never kept in the browser draft.
+  const [packageUser, setPackageUser] = useState("")
+  const [packageToken, setPackageToken] = useState("")
   const [file, setFile] = useState<File | null>(null)
   const [archiveValid, setArchiveValid] = useState(false)
   const [acknowledged, setAcknowledged] = useState(false)
@@ -187,9 +209,9 @@ export default function PublishApplicationPage() {
         if (!active) return
         const owners = items.filter((item) => item.role === "owner")
         setWorkspaces(owners)
-        const preferred = new URLSearchParams(window.location.search).get(
-          "workspaceId"
-        )
+        const preferred =
+          new URLSearchParams(window.location.search).get("workspaceId") ||
+          selectedWorkspaceId()
         setWorkspaceId(
           owners.find((item) => item.id === preferred)?.id ??
             owners[0]?.id ??
@@ -243,10 +265,22 @@ export default function PublishApplicationPage() {
     if (error) errorRef.current?.focus()
   }, [error])
 
+  const packagesNeedCredentials =
+    config.secretMode === "variables" &&
+    (() => {
+      try {
+        const list = JSON.parse(config.packageSources || "[]")
+        return Array.isArray(list) && list.some((item) => item?.authenticated)
+      } catch {
+        return false
+      }
+    })()
   const checkStep = (step: number) => {
     const problem =
       step === 1 && (!workspaceId || !file || !archiveValid)
         ? "Choose a workspace and upload a ZIP that passes the structure check."
+        : step === 3 && packagesNeedCredentials && (!packageUser || packageToken.length < 8)
+          ? "Enter the package user and token for the authenticated package sources."
         : step === 5 && (!clusterId || !config.namespace)
           ? "Choose an available cluster and namespace."
           : step === 6 && !acknowledged
@@ -281,6 +315,7 @@ export default function PublishApplicationPage() {
           registryUser: config.secretMode === "variables" ? registryUser : "",
           registryPassword:
             config.secretMode === "variables" ? registryPassword : "",
+          ...(packagesNeedCredentials ? { packageUser, packageToken } : {}),
           config,
         },
         file,
@@ -291,6 +326,7 @@ export default function PublishApplicationPage() {
       setGitlabToken("")
       setGitReadToken("")
       setRegistryPassword("")
+      setPackageToken("")
       setFile(null)
     } catch (cause) {
       setError(cause)
@@ -430,6 +466,9 @@ export default function PublishApplicationPage() {
           </p>
         </div>
       </header>
+      <WorkspaceNote
+        name={workspaces.find((item) => item.id === workspaceId)?.name}
+      />
       <div ref={errorRef} tabIndex={-1}>
         {(error ?? limitsError) != null && (
           <ErrorNotice error={error ?? limitsError} />
@@ -441,7 +480,6 @@ export default function PublishApplicationPage() {
           configure the repository, build runner, and deployment target.
         </p>
       )}
-      <PublishingDraftNotice draft={draft} />
       <form onSubmit={publish} noValidate className="space-y-5">
         <fieldset
           disabled={
@@ -463,24 +501,7 @@ export default function PublishApplicationPage() {
                     title="Bring your application"
                     description="Upload the contents of your project directory, with dependency files at the archive root."
                   >
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                      <FormField label="Workspace" htmlFor="publish-workspace">
-                        <FormSelect
-                          id="publish-workspace"
-                          value={workspaceId}
-                          onValueChange={(value) => {
-                            setWorkspaceId(value)
-                            setClusterId("")
-                            setClusters([])
-                            setBindings([])
-                            patch({ namespace: "", createNamespace: false })
-                          }}
-                          items={workspaces.map((item) => ({
-                            value: item.id,
-                            label: item.name,
-                          }))}
-                        />
-                      </FormField>
+                    <div className="grid gap-4 md:grid-cols-2">
                       {textField(
                         "name",
                         "Application name",
@@ -534,7 +555,7 @@ export default function PublishApplicationPage() {
                           id="publish-archive"
                           key={selectedTemplate.id}
                           file={file}
- validation={{ workspaceId, runtime: config.runtime, entryPoint: config.entryPoint }}
+ validation={{ workspaceId, runtime: config.runtime, entryPoint: config.entryPoint, templateId: config.templateId, packageSources: config.packageSources, packagePolicy: config.packagePolicy }}
  onValidationChange={setArchiveValid}
                           maxBytes={limits?.archiveBytes}
                           disabled={
@@ -719,13 +740,44 @@ export default function PublishApplicationPage() {
                         false,
                         "/home/user/entrypoint.sh"
                       )}
+                      <FormField
+                        label="Template parameters (optional)"
+                        htmlFor="publish-template-parameters"
+                        hint="Non-secret key=value lines for custom templates, available as .Parameters. For the generic server starter: startCommand=python app.py. For Shiny on a geospatial base image: renvRestore=missing installs only the renv.lock packages the image lacks."
+                      >
+                        <Textarea
+                          id="publish-template-parameters"
+                          value={config.templateParameters}
+                          onChange={(event) =>
+                            patch({ templateParameters: event.target.value })
+                          }
+                          placeholder="startCommand=python app.py"
+                          className="font-mono text-xs"
+                        />
+                      </FormField>
+                      <div className="md:col-span-2 lg:col-span-3">
+                        <PackageSourcesCard
+                          sources={config.packageSources}
+                          policy={config.packagePolicy}
+                          onChange={(next) => patch(next)}
+                          secretMode={config.secretMode}
+                          user={packageUser}
+                          token={packageToken}
+                          onCredentials={(next) => {
+                            if (next.packageUser !== undefined) setPackageUser(next.packageUser)
+                            if (next.packageToken !== undefined) setPackageToken(next.packageToken)
+                          }}
+                          missing={packagesNeedCredentials && (!packageUser || packageToken.length < 8)}
+                          credentialsNote="Builds use these mirrors. The token is stored as a masked, protected CI variable in the new GitLab project; JustCD does not keep it."
+                        />
+                      </div>
                       <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
                         {config.runtime === "static" ? (
                           "Your website files are copied directly into the approved webserver image. No dependencies are installed and no build command is run."
                         ) : (
                           <>
-                            The base image must configure access to your package
-                            mirrors. Application dependencies are installed from
+                            Without package sources above, the base image must
+                            configure access to your package mirrors. Application dependencies are installed from
                             packages.txt / renv.lock or requirements.txt. Custom
                             native dependencies must be supplied by the base
                             image.
@@ -927,10 +979,88 @@ export default function PublishApplicationPage() {
                       )}
                       {textField(
                         "host",
-                        "OpenShift application hostname",
-                        "Optional. Creates a TLS Route directly to the app. This initial template does not add SSO; leave blank for internal Service access only.",
+                        "Application hostname",
+                        "Optional. Publishes the app directly over HTTPS through a Route or Ingress. This initial template does not add SSO; leave blank for internal Service access only.",
                         false,
                         "statistics.apps.example.com"
+                      )}
+                      <FormField label="Publish with" htmlFor="publish-exposure">
+                        <FormSelect
+                          id="publish-exposure"
+                          value={config.exposure || "route"}
+                          onValueChange={(exposure) =>
+                            patch({
+                              exposure,
+                              ...(exposure === "ingress"
+                                ? {}
+                                : { ingressClass: "", ingressTls: "hosts" }),
+                            })
+                          }
+                          items={[
+                            { value: "route", label: "OpenShift Route" },
+                            { value: "ingress", label: "Kubernetes Ingress" },
+                          ]}
+                        />
+                      </FormField>
+                      {config.exposure === "ingress" && (
+                        <>
+                          {textField(
+                            "ingressClass",
+                            "Ingress class (optional)",
+                            "Sets ingressClassName.",
+                            false,
+                            "openshift-default"
+                          )}
+                          <FormField
+                            label="Ingress TLS"
+                            htmlFor="publish-ingress-tls"
+                            hint="List the host, or render tls: [] when TLS is handled elsewhere."
+                          >
+                            <FormSelect
+                              id="publish-ingress-tls"
+                              value={config.ingressTls || "hosts"}
+                              onValueChange={(ingressTls) => patch({ ingressTls })}
+                              items={[
+                                { value: "hosts", label: "List the host (default)" },
+                                { value: "none", label: "None (tls: [])" },
+                              ]}
+                            />
+                          </FormField>
+                        </>
+                      )}
+                      <FormField
+                        label="Labels (optional)"
+                        htmlFor="publish-exposure-labels"
+                        hint="One key=value per line, on the Route or Ingress only."
+                      >
+                        <Textarea
+                          id="publish-exposure-labels"
+                          value={config.exposureLabels}
+                          onChange={(event) =>
+                            patch({ exposureLabels: event.target.value })
+                          }
+                          placeholder="router=external"
+                        />
+                      </FormField>
+                      <FormField
+                        label="Annotations (optional)"
+                        htmlFor="publish-exposure-annotations"
+                        hint="One key=value per line, on the Route or Ingress only."
+                      >
+                        <Textarea
+                          id="publish-exposure-annotations"
+                          value={config.exposureAnnotations}
+                          onChange={(event) =>
+                            patch({ exposureAnnotations: event.target.value })
+                          }
+                          placeholder="haproxy.router.openshift.io/timeout=5m"
+                        />
+                      </FormField>
+                      {!config.host && (
+                        <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
+                          Route or Ingress settings apply once an application
+                          hostname is set.
+                        </p>
                       )}
                       <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
                         Deployment starts in manual mode. After the build
@@ -981,7 +1111,7 @@ export default function PublishApplicationPage() {
                           {
                             label: "Access",
                             value: config.host
-                              ? `HTTPS Route ${config.host} · no SSO`
+                              ? `HTTPS ${config.exposure === "ingress" ? "Ingress" : "Route"} ${config.host} · no SSO`
                               : "Internal Service only",
                           },
                           {
@@ -1009,7 +1139,9 @@ export default function PublishApplicationPage() {
               },
             ]}
           />
-          <div className="rounded-2xl border border-border bg-card p-3 dark:border-transparent dark:bg-muted/30 [&_button]:h-10 [&_button]:rounded-lg [&_button]:px-4">
+          <div className="space-y-3 rounded-2xl border border-border bg-card p-3 dark:border-transparent dark:bg-muted/30 [&_button]:h-10 [&_button]:rounded-lg [&_button]:px-4">
+            <PublishingDraftNotice draft={draft} inline />
+            <div className="border-t pt-3">
             <WizardFooter
               step={wizard.step}
               isLast={wizard.isLast}
@@ -1029,6 +1161,7 @@ export default function PublishApplicationPage() {
                 </Button>
               }
             />
+            </div>
           </div>
           {busy && (
             <p role="status" className="text-sm text-muted-foreground">

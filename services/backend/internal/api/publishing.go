@@ -40,6 +40,8 @@ type publishInput struct {
 	GitReadToken            string                      `json:"gitReadToken"`
 	RegistryUser            string                      `json:"registryUser"`
 	RegistryPassword        string                      `json:"registryPassword"`
+	PackageUser             string                      `json:"packageUser"`
+	PackageToken            string                      `json:"packageToken"`
 	Config                  publishing.Config           `json:"config"`
 }
 
@@ -106,6 +108,10 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 404, "publication not found")
 			return
 		}
+		if strings.HasPrefix(previous.Fingerprint, "adopt:") {
+			writeError(w, 409, "this application was converted to a publishing profile; review the profile update first, then upload new versions")
+			return
+		}
 		in.Config.ManagedCompletion = cfg.ManagedCompletion
 	}
 	if err = in.Config.Validate(); err != nil {
@@ -114,6 +120,14 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Config.SecretMode == "variables" && in.UpdateApplicationID == "" && (in.RegistryUser == "" || len(in.RegistryPassword) < 8 || strings.ContainsAny(in.RegistryPassword, " \r\n\t")) {
 		writeError(w, 400, "registry username and a maskable token of at least eight characters are required")
+		return
+	}
+	if in.Config.SecretMode == "variables" && in.UpdateApplicationID == "" && in.Config.PackagesAuthenticated() && (in.PackageUser == "" || len(in.PackageToken) < 8 || strings.ContainsAny(in.PackageToken, " \r\n\t")) {
+		writeError(w, 400, "package credentials (user and a token of at least eight characters) are required for authenticated package sources")
+		return
+	}
+	if in.Config.SecretMode == "vault" && (in.PackageUser != "" || in.PackageToken != "") {
+		writeError(w, 400, "Vault mode reads package credentials from Vault, not from the request")
 		return
 	}
 	if in.Config.SecretMode == "vault" && (in.RegistryUser != "" || in.RegistryPassword != "") {
@@ -292,7 +306,7 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	requestedDatabasePassword = ""
 	if err == nil && profile != nil && in.Config.SecretMode == "variables" {
-		variables := []publishing.Variable{{Key: "REGISTRY_USER", Value: in.RegistryUser, Protected: true, Raw: true}, {Key: "REGISTRY_PASSWORD", Value: in.RegistryPassword, Masked: true, Protected: true, Raw: true}}
+		variables := buildCredentialVariables(in.Config, in.RegistryUser, in.RegistryPassword, in.PackageUser, in.PackageToken)
 		if e := git.SetVariables(ctx, project, variables); e != nil {
 			writeError(w, 502, "could not refresh profile registry credentials in GitLab")
 			return
@@ -342,7 +356,7 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 		}
 		variables := []publishing.Variable{}
 		if in.Config.SecretMode == "variables" {
-			variables = append(variables, publishing.Variable{Key: "REGISTRY_USER", Value: in.RegistryUser, Protected: true, Raw: true}, publishing.Variable{Key: "REGISTRY_PASSWORD", Value: in.RegistryPassword, Masked: true, Protected: true, Raw: true})
+			variables = buildCredentialVariables(in.Config, in.RegistryUser, in.RegistryPassword, in.PackageUser, in.PackageToken)
 		}
 		if err = git.Prepare(ctx, project, files, variables, fingerprint); err != nil {
 			writeError(w, 502, err.Error()+". The private repository is retained; retry the same upload and settings to resume.")
@@ -460,7 +474,24 @@ func (s *Server) getPublication(w http.ResponseWriter, r *http.Request) {
 		result["profileEnabled"] = profile.Enabled
 		result["profileRevision"] = p.ProfileRevision
 		result["latestProfileRevision"] = profile.CurrentRevision
-		result["profileUpdateAvailable"] = profile.CurrentRevision > p.ProfileRevision
+		result["profileUpdateAvailable"] = profile.CurrentRevision > p.ProfileRevision || strings.HasPrefix(p.Fingerprint, "adopt:")
+		result["adoptionPending"] = strings.HasPrefix(p.Fingerprint, "adopt:")
 	}
 	writeJSON(w, 200, map[string]any{"publication": result, "workspaceId": app.WorkspaceID, "clusterId": app.ClusterID})
+}
+
+// buildCredentialVariables are the protected CI variables of a publication: the
+// registry push credentials and, when a package mirror signs in, the package
+// credentials that become the build secret.
+func buildCredentialVariables(c publishing.Config, registryUser, registryPassword, packageUser, packageToken string) []publishing.Variable {
+	variables := []publishing.Variable{
+		{Key: "REGISTRY_USER", Value: registryUser, Protected: true, Raw: true},
+		{Key: "REGISTRY_PASSWORD", Value: registryPassword, Masked: true, Protected: true, Raw: true},
+	}
+	if c.PackagesAuthenticated() {
+		variables = append(variables,
+			publishing.Variable{Key: "JUSTCD_PKG_USER", Value: packageUser, Protected: true, Raw: true},
+			publishing.Variable{Key: "JUSTCD_PKG_TOKEN", Value: packageToken, Masked: true, Protected: true, Raw: true})
+	}
+	return variables
 }

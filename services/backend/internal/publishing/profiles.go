@@ -29,6 +29,9 @@ type ProfileSettings struct {
 	ExposureAnnotations string `json:"exposureAnnotations,omitempty"`
 	IngressClass        string `json:"ingressClass,omitempty"`
 	IngressTLS          string `json:"ingressTls,omitempty"`
+	// PackageSources routes package managers through mirrors (JSON list); see packages.go.
+	PackageSources string `json:"packageSources,omitempty"`
+	PackagePolicy  string `json:"packagePolicy,omitempty"`
 	// TemplateVersion pins a workspace template version (0 = built-in).
 	TemplateVersion      int    `json:"templateVersion,omitempty"`
 	TemplateParameters   string `json:"templateParameters,omitempty"`
@@ -65,7 +68,7 @@ func (s ProfileSettings) ResolveWith(lookup TemplateLookup, name, entry string) 
 	if s.HostSuffix != "" {
 		host = name + "." + s.HostSuffix
 	}
-	c := Config{TemplateParameters: s.TemplateParameters, GitImage: s.GitImage, BuildEngine: s.BuildEngine, CAVariable: s.CAVariable, TemplateID: s.TemplateID, Name: name, Runtime: template.Runtime, EntryPoint: entry, BaseImage: s.BaseImage, BuilderImage: s.BuilderImage, RegistryImage: s.RegistryPrefix + "/" + name, Namespace: s.Namespace, Host: host, PullSecret: s.PullSecret, RunnerTag: s.RunnerTag, Exposure: s.Exposure, ExposureLabels: s.ExposureLabels, ExposureAnnotations: s.ExposureAnnotations, IngressClass: s.IngressClass, IngressTLS: s.IngressTLS, TemplateVersion: s.TemplateVersion, RunnerServiceAccount: s.RunnerServiceAccount, RunnerSCC: s.RunnerSCC, BuilderSetup: s.BuilderSetup, SecretMode: s.SecretMode, VaultAddress: s.VaultAddress, VaultRole: s.VaultRole, VaultPath: s.VaultPath}
+	c := Config{PackageSources: s.PackageSources, PackagePolicy: s.PackagePolicy, TemplateParameters: s.TemplateParameters, GitImage: s.GitImage, BuildEngine: s.BuildEngine, CAVariable: s.CAVariable, TemplateID: s.TemplateID, Name: name, Runtime: template.Runtime, EntryPoint: entry, BaseImage: s.BaseImage, BuilderImage: s.BuilderImage, RegistryImage: s.RegistryPrefix + "/" + name, Namespace: s.Namespace, Host: host, PullSecret: s.PullSecret, RunnerTag: s.RunnerTag, Exposure: s.Exposure, ExposureLabels: s.ExposureLabels, ExposureAnnotations: s.ExposureAnnotations, IngressClass: s.IngressClass, IngressTLS: s.IngressTLS, TemplateVersion: s.TemplateVersion, RunnerServiceAccount: s.RunnerServiceAccount, RunnerSCC: s.RunnerSCC, BuilderSetup: s.BuilderSetup, SecretMode: s.SecretMode, VaultAddress: s.VaultAddress, VaultRole: s.VaultRole, VaultPath: s.VaultPath}
 	c.Port = template.Port
 	if len(template.Layout) > 0 {
 		c.Layout = &TemplateLayout{Rules: template.Layout}

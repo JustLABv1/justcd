@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { PublishingServicesEditor } from "./publishing-services"
+import { PackageSourcesCard } from "./package-sources"
 import { TemplateLibrary, type TemplateSummary } from "./template-library"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -329,6 +330,8 @@ function ProfileEditor({
     gitReadToken: "",
     registryUser: "",
     registryPassword: "",
+    packageUser: "",
+    packageToken: "",
   })
   const [templates, setTemplates] = useState<ApplicationTemplate[]>([])
   const [templateVersions, setTemplateVersions] = useState<
@@ -431,7 +434,7 @@ function ProfileEditor({
   async function save(event: React.FormEvent) {
     event.preventDefault()
     if (busy) return
-    const missing = [...missingBuild, ...missingAccess]
+    const missing = [...missingBuild, ...missingPackages, ...missingAccess]
     if (missing.length) {
       setError(new Error(`Complete the required settings: ${missing.join(", ")}.`))
       return
@@ -461,6 +464,8 @@ function ProfileEditor({
         gitReadToken: "",
         registryUser: "",
         registryPassword: "",
+        packageUser: "",
+        packageToken: "",
       })
       onSaved(saved)
     } catch (cause) {
@@ -542,6 +547,18 @@ function ProfileEditor({
     blank("registryPrefix") && "registry prefix",
   ].filter(Boolean) as string[]
   const needSecrets = !profile && !copyFrom
+  const packageAuth = (() => {
+    try {
+      const list = JSON.parse(settings.packageSources || "[]")
+      return Array.isArray(list) && list.some((s) => s?.authenticated)
+    } catch {
+      return false
+    }
+  })()
+  const missingPackages = [
+    needSecrets && packageAuth && settings.secretMode !== "vault" && !secrets.packageUser && "package user",
+    needSecrets && packageAuth && settings.secretMode !== "vault" && !secrets.packageToken && "package token",
+  ].filter(Boolean) as string[]
   const missingAccess = [
     settings.secretMode === "vault" && blank("vaultAddress") && "Vault URL",
     settings.secretMode === "vault" && blank("vaultRole") && "Vault JWT role",
@@ -644,7 +661,7 @@ function ProfileEditor({
                 label="Template parameters"
                 htmlFor="profile-template-parameters"
                 hint={
-                  "Optional non-secret key=value lines used by custom templates via .Parameters. For the ingress policy starter: ingressNamespace=your-ingress-namespace. For the generic server starter: startCommand=python app.py. Changes create a profile version for applications to review."
+                  "Optional non-secret key=value lines used by custom templates via .Parameters. For the ingress policy starter: ingressNamespace=your-ingress-namespace. For the generic server starter: startCommand=python app.py. For Shiny on a geospatial base image: renvRestore=missing installs only the renv.lock packages the image lacks. Changes create a profile version for applications to review."
                 }
               >
                 <Textarea
@@ -838,6 +855,19 @@ function ProfileEditor({
                 )}
               </div>
             </FeatureCard>
+            <PackageSourcesCard
+              sources={settings.packageSources ?? ""}
+              policy={settings.packagePolicy ?? ""}
+              onChange={patch}
+              secretMode={settings.secretMode}
+              user={secrets.packageUser}
+              token={secrets.packageToken}
+              onCredentials={(next) =>
+                setSecrets((current) => ({ ...current, ...next }))
+              }
+              missing={missingPackages.length > 0}
+              storedCredentials={!needSecrets}
+            />
             <FeatureCard
               id="profile-card-access"
               title="Access and credentials"

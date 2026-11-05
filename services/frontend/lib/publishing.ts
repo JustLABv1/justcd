@@ -24,7 +24,27 @@ export async function publishProject<T>(
   )
 }
 
+export type PackageSource = {
+  ecosystem: "pip" | "cran" | "npm" | "conda" | "apt" | "apk"
+  url: string
+  authenticated?: boolean
+}
+export const packageEcosystems: {
+  value: PackageSource["ecosystem"]
+  label: string
+  placeholder: string
+}[] = [
+  { value: "pip", label: "Python (pip)", placeholder: "https://HOST/artifactory/api/pypi/pypi-remote/simple" },
+  { value: "cran", label: "R (CRAN, renv)", placeholder: "https://HOST/artifactory/api/cran/cran-remote" },
+  { value: "npm", label: "Node.js (npm)", placeholder: "https://HOST/artifactory/api/npm/npm-remote" },
+  { value: "conda", label: "Conda", placeholder: "https://HOST/artifactory/api/conda/conda-remote" },
+  { value: "apt", label: "Debian and Ubuntu (apt)", placeholder: "https://HOST/artifactory/ubuntu-remote" },
+  { value: "apk", label: "Alpine (apk)", placeholder: "https://HOST/artifactory/alpine-remote" },
+]
+
 export type PublishingProfileSettings = {
+  packageSources?: string
+  packagePolicy?: string
   serviceCatalog?: string
   namespaceMode?: string
   namespacePrefix?: string
@@ -71,6 +91,8 @@ export type PublishingProfile = {
   applications: number
 }
 export type ApprovedPublishingProfile = {
+  packageEcosystems?: string[]
+  packagePolicy?: string
   services?: ServiceOptions
   currentRevision: number
   namespaceMode?: string

@@ -187,11 +187,112 @@ this project/group, protected branch, and configured audience. No Vault administ
 token is requested. JustCD does not create Vault policies, write secret values,
 or configure application runtime secrets in this initial flow.
 
-Authenticated package mirrors must be configured by the platform's approved build
-profile. Do not bake package credentials into a base image, source file, or image
-URL. The generated first-version template does not yet supply package-mirror build
-secrets; a mirror that requires per-build authentication needs an extended build
-profile before this flow can be used with it.
+Package managers can be routed through your own mirror; see
+[Package sources and Artifactory](#package-sources-and-artifactory).
+
+## Package sources and Artifactory
+
+Platforms that allow package downloads only through an internal mirror, such as
+JFrog Artifactory remote repositories, configure **Package sources** in the
+publishing profile (**Build and credentials → Package sources**). Without them,
+builds install packages from whatever the base image allows, which for the R
+recipe falls back to public CRAN.
+
+For each package manager add one source:
+
+| Package manager | Used by | Typical Artifactory URL |
+| --- | --- | --- |
+| Python (pip) | Streamlit, Python static, server templates | `https://HOST/artifactory/api/pypi/<repo>/simple` |
+| R (CRAN, renv) | Shiny | `https://HOST/artifactory/api/cran/<repo>` |
+| Node.js (npm) | custom Node templates | `https://HOST/artifactory/api/npm/<repo>` |
+| Conda | custom templates | `https://HOST/artifactory/api/conda/<repo>` |
+| Debian/Ubuntu (apt), Alpine (apk) | custom templates that install system packages | `https://HOST/artifactory/<repo>` |
+
+Copy the exact URL from the repository's **Set Me Up** in Artifactory; layouts
+differ between versions and repository types. Container registry remotes (Docker,
+GCR, GHCR, Quay and similar) are not package sources: reference base images by
+their full Artifactory path in the profile. Pulls sign in with the profile's
+registry credentials, so base image and destination registry should share a host.
+
+**Sign-in.** Turn on **Requires sign-in** for sources that need it and enter a
+username and token. They are stored encrypted with the other profile credentials;
+in Vault mode add the fields `package_username` and `package_token` to the
+profile's Vault secret instead. Use a **read-only** account: installing packages
+runs project code (for example a package's build script), so the token must not
+be able to publish. A custom CA for the mirror uses the profile's *Custom CA
+variable*; the same bundle is used for package downloads.
+
+**How it works.** JustCD writes `.justcd/package-sources.sh` into the repository.
+It contains only URLs. During the build the pipeline joins it with the
+credentials into one build secret, which only the install steps mount. Tokens are
+never written to an image layer, the source, the repository or the running app.
+Your own templates use it by prefixing install steps:
+`RUN {{ .PackageMount }}pip install -r requirements.txt`. `.PackageSources` lists
+the configured mirrors.
+
+**Job logs.** R prints the URL it downloads from, which contains the sign-in. JustCD
+leaves ordinary token characters unencoded in that URL so GitLab recognizes the
+masked `JUSTCD_PKG_TOKEN` and hides it in the log. A token containing characters
+such as `/` is encoded and may appear in the log; use a token made of letters,
+digits and `-_.` (Artifactory access and reference tokens are). If a token ever
+appears in a job log, rotate it and erase that job's log in GitLab.
+
+**R and geospatial images.** `renv::restore` rebuilds the whole lockfile from
+source, including older versions of packages the base image already has, which
+takes very long and fails for `sf` or `terra` without the system libraries. On a
+base image that already provides your packages, set the template parameter
+`renvRestore=missing`: JustCD then installs only the lockfile packages the image
+lacks. Use the Shiny Geospatial template or an image with GDAL, GEOS and PROJ for
+spatial packages.
+
+**Other sources.** With **Allow**, the mirror is the default and projects may add
+sources. With **Only the sources above**, JustCD rejects the ZIP, naming the file
+and reason, when it finds another package index in `requirements*.txt`,
+`pip.conf`, `.npmrc`, `.condarc`, `pyproject.toml` or `Pipfile`; Git or direct URL
+dependencies; `renv.lock` packages that do not come from a repository;
+`package.json` or `package-lock.json` entries from other hosts; or conda channels
+on other hosts. The check runs as soon as a ZIP is chosen. It covers the files
+listed here; it is a guardrail for honest mistakes, not a sandbox, so keep
+network egress controls on the builders as well.
+
+Changing sources publishes a new profile revision. Existing applications adopt it
+through the reviewed profile upgrade, which also writes the new script.
+
+## Updating a manually published app
+
+An app created with **manual setup** keeps its build files (Dockerfile, pipeline,
+manifest) in its private GitLab repository, written once at publication. Three
+actions on the application page (**More actions**, workspace owners) keep it
+current without recreating it.
+
+**Upload new version** replaces only the application source and rebuilds. It asks
+for a GitLab token (used once, never stored) and reuses the stored settings.
+
+**Update build setup** changes how builds get packages, for example adding your
+Artifactory mirrors to an existing app. Enter the package sources and credentials
+and a GitLab token, then **Review changes**. JustCD regenerates the Dockerfile,
+pipeline and `.justcd/package-sources.sh` from the app's stored settings and
+shows every setting and file that would change, including files you edited in
+GitLab since publishing. Nothing is committed until you choose **Apply and
+rebuild**; a file changed in GitLab after your review stops the update so you can
+review again. Applying commits the files, sets `JUSTCD_PKG_USER` and
+`JUSTCD_PKG_TOKEN` as masked, protected CI variables in the project, and starts a
+build. The registry credentials are not touched. Removing a source removes its use
+from the generated files; the old script file stays in Git and is simply unused.
+
+**Convert to profile** binds the app to a publishing profile, so profile updates
+(including package sources managed centrally) reach it like any profile app.
+Because a profile keeps its destination locked, the app must already match what
+the profile would produce: same template, cluster, namespace, registry location,
+hostname, secret mode and GitLab group. **Check compatibility** lists every
+difference as app value versus profile value; adjust the profile (or create one)
+until they agree, then **Convert**. The conversion itself changes no files. The
+app shows *Finish converting to the profile*; review that update to adopt the
+profile's build settings, which replace the app's own (so mirrors set by hand
+disappear unless the profile has them). Uploading a new ZIP waits until that review
+is done.
+
+New manual apps can set package sources in the wizard (Build step) the same way.
 
 ## Build and deployment behavior
 

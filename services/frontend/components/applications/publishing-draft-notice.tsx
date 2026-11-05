@@ -5,6 +5,7 @@ import { PublishingCard } from "./publishing-fields"
 export function PublishingDraftNotice({
   draft,
   needsArchive = true,
+  inline = false,
 }: {
   draft: {
     ready: boolean
@@ -14,9 +15,11 @@ export function PublishingDraftNotice({
     clear: () => boolean
   }
   needsArchive?: boolean
+  /** Render as a plain row for use inside another card, such as a form footer. */
+  inline?: boolean
 }) {
-  return (
-    <PublishingCard contentClassName="flex flex-wrap items-center justify-between gap-3">
+  const content = (
+    <>
       <div className="min-w-0">
         <p className="text-sm font-medium" role="status">
           {draft.error ||
@@ -56,6 +59,12 @@ export function PublishingDraftNotice({
           Reload
         </Button>
       )}
-    </PublishingCard>
+    </>
+  )
+  const row = "flex flex-wrap items-center justify-between gap-3"
+  return inline ? (
+    <div className={row}>{content}</div>
+  ) : (
+    <PublishingCard contentClassName={row}>{content}</PublishingCard>
   )
 }

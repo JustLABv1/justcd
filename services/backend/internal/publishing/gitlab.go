@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -99,8 +100,22 @@ func (g GitLab) request(ctx context.Context, method, p string, body any, out any
 		return &ProviderError{Status: resp.StatusCode, Operation: method + " " + strings.Split(p, "?")[0]}
 	}
 	if out != nil {
-		if err = json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(out); err != nil {
-			return errors.New("GitLab returned an invalid response")
+		var head bytes.Buffer
+		body := io.TeeReader(io.LimitReader(resp.Body, 2<<20), &limitedWriter{buf: &head, max: 4096})
+		if err = json.NewDecoder(body).Decode(out); err != nil {
+			// The decoder stops at the first bad byte; read on for the excerpt.
+			_, _ = io.Copy(&limitedWriter{buf: &head, max: 4096}, io.LimitReader(resp.Body, 4096))
+			// Name the call: a proxy, login page or size limit in front of GitLab
+			// otherwise looks identical to a malformed reply.
+			kind, _, _ := strings.Cut(resp.Header.Get("Content-Type"), ";")
+			if kind == "" {
+				kind = "no content type"
+			}
+			message := fmt.Sprintf("GitLab returned an invalid response to %s %s (HTTP %d, %s)", method, strings.Split(p, "?")[0], resp.StatusCode, kind)
+			if excerpt := textExcerpt(head.Bytes(), 200); excerpt != "" {
+				message += `: "` + excerpt + `"`
+			}
+			return errors.New(message + "; check that the GitLab URL points directly at GitLab and that no login page, firewall or proxy answers instead")
 		}
 	}
 	return nil
@@ -383,12 +398,18 @@ func writeCommit(ctx context.Context, w io.Writer, metadata map[string]string, a
 				return err
 			}
 		}
+		content, encoding := a.File.Content, a.File.Encoding
+		// Shell-heavy content is sent encoded: GitLab stores identical bytes, and
+		// request filters in front of it do not mistake the script for an attack.
+		if encoding == "text" && a.File.DiskPath == "" && a.File.Path == FilePackageSources {
+			content, encoding = base64.StdEncoding.EncodeToString([]byte(content)), "base64"
+		}
 		fields := map[string]string{"action": a.Action, "file_path": a.File.Path}
 		if a.LastCommitID != "" {
 			fields["last_commit_id"] = a.LastCommitID
 		}
 		if a.Action != "delete" {
-			fields["encoding"] = a.File.Encoding
+			fields["encoding"] = encoding
 		}
 		data, _ := json.Marshal(fields)
 		if a.Action == "delete" {
@@ -425,7 +446,7 @@ func writeCommit(ctx context.Context, w io.Writer, metadata map[string]string, a
 				return err
 			}
 		} else {
-			data, _ = json.Marshal(a.File.Content)
+			data, _ = json.Marshal(content)
 			if _, err = w.Write(data); err != nil {
 				return err
 			}
@@ -509,7 +530,7 @@ func (g GitLab) CommitRecipeUpgrade(ctx context.Context, snapshot RepositorySnap
 		if c.Exists {
 			action = "update"
 		}
-		actions = append(actions, commitAction{Action: action, File: File{Path: c.Path, Content: c.After, Encoding: "text"}, LastCommitID: c.LastCommitID})
+		actions = append(actions, commitAction{Action: action, File: File{Path: c.Path, Content: base64.StdEncoding.EncodeToString([]byte(c.After)), Encoding: "base64"}, LastCommitID: c.LastCommitID})
 	}
 	if len(actions) == 0 {
 		return nil
@@ -527,4 +548,34 @@ func (g GitLab) CommitRecipeUpgrade(ctx context.Context, snapshot RepositorySnap
 		return errors.New("repository advanced during the recipe commit; source was preserved; review again before starting the build")
 	}
 	return nil
+}
+
+// limitedWriter keeps the first max bytes written to it.
+type limitedWriter struct {
+	buf *bytes.Buffer
+	max int
+}
+
+func (w *limitedWriter) Write(p []byte) (int, error) {
+	if room := w.max - w.buf.Len(); room > 0 {
+		if len(p) < room {
+			room = len(p)
+		}
+		w.buf.Write(p[:room])
+	}
+	return len(p), nil
+}
+
+var htmlTag = regexp.MustCompile(`(?s)<(script|style)[^>]*>.*?</(script|style)>|<[^>]*>`)
+
+// textExcerpt reduces a non-JSON reply to a short readable line, without
+// markup, so an error can show what answered in GitLab's place.
+func textExcerpt(raw []byte, limit int) string {
+	text := htmlTag.ReplaceAllString(string(raw), " ")
+	text = strings.Join(strings.Fields(text), " ")
+	runes := []rune(text)
+	if len(runes) > limit {
+		return string(runes[:limit]) + "…"
+	}
+	return text
 }

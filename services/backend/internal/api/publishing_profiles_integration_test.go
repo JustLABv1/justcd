@@ -247,11 +247,18 @@ func testPublishingProfileLifecycle(t *testing.T, runtime string) {
 			}
 			result = map[string]any{"parent_ids": []string{previousSHA}}
 			for _, a := range commit.Actions {
+				// Recipe commits send base64; the file content is what counts.
+				text := a.Content
+				if a.Encoding == "base64" {
+					if decoded, err := base64.StdEncoding.DecodeString(a.Content); err == nil {
+						text = string(decoded)
+					}
+				}
 				if a.Path == "Dockerfile" {
-					generatedDocker = a.Content
+					generatedDocker = text
 				}
 				if a.Path == ".gitlab-ci.yml" {
-					generatedCI = a.Content
+					generatedCI = text
 				}
 				if pipelines > 0 && a.Path == "deploy/application.yaml" {
 					t.Fatal("source upload overwrote running manifest")

@@ -215,6 +215,7 @@ export type Application = {
     updateAvailable: boolean
     enabled: boolean
     needsBuild: boolean
+    adoptionPending?: boolean
   }
   labels?: Record<string, string>
   branchTest?: { mode: "existing" | "isolated"; revision: string; baseRevision: string; parentApplicationId?: string; previouslyPaused: boolean; startedAt: string }

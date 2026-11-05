@@ -26,6 +26,7 @@ type profileUpgradePlan struct {
 	Changes       []publishing.RecipeChange `json:"changes"`
 	Images        []profileImageChange      `json:"images"`
 	Resume        bool                      `json:"resume"`
+	Adopting      bool                      `json:"adopting"`
 	UpToDate      bool                      `json:"upToDate"`
 }
 type profileImageChange struct {
@@ -120,12 +121,15 @@ func (s *Server) publishingProfileUpgrade(w http.ResponseWriter, r *http.Request
 		target, expectedHash = input.Revision, input.Hash
 	}
 	resume := target == publication.ProfileRevision && publication.PipelineURL == "" && strings.HasPrefix(publication.Fingerprint, "upgrade:")
-	plan := profileUpgradePlan{ProfileID: p.ID, SyncPolicy: app.SyncPolicy, ApplicationID: app.ID, ProfileName: p.Name, FromRevision: publication.ProfileRevision, ToRevision: target, Changes: []publishing.RecipeChange{}, Images: []profileImageChange{}, Resume: resume}
+	// A converted application adopts the profile's build settings at the
+	// current revision through this same reviewed update.
+	adopting := strings.HasPrefix(publication.Fingerprint, "adopt:")
+	plan := profileUpgradePlan{ProfileID: p.ID, SyncPolicy: app.SyncPolicy, ApplicationID: app.ID, ProfileName: p.Name, FromRevision: publication.ProfileRevision, ToRevision: target, Changes: []publishing.RecipeChange{}, Images: []profileImageChange{}, Resume: resume, Adopting: adopting}
 	if target < publication.ProfileRevision || target > p.CurrentRevision || target <= 0 {
 		writeError(w, 400, "select a newer published profile revision")
 		return
 	}
-	if target == publication.ProfileRevision && !resume {
+	if target == publication.ProfileRevision && !resume && !adopting {
 		if apply {
 			writeJSON(w, 200, map[string]any{"applicationId": app.ID, "profileRevision": target, "pipelineUrl": publication.PipelineURL, "alreadyUpgraded": true})
 			return
@@ -163,6 +167,7 @@ func (s *Server) publishingProfileUpgrade(w http.ResponseWriter, r *http.Request
 	next.TemplateParameters = version.Settings.TemplateParameters
 	next.RunnerServiceAccount = version.Settings.RunnerServiceAccount
 	next.RunnerSCC = version.Settings.RunnerSCC
+	next.PackageSources, next.PackagePolicy = version.Settings.PackageSources, version.Settings.PackagePolicy
 	next.BuilderSetup = version.Settings.BuilderSetup
 	next.CAVariable = version.Settings.CAVariable
 	next.BuildEngine = version.Settings.BuildEngine
@@ -289,7 +294,7 @@ func (s *Server) publishingProfileUpgrade(w http.ResponseWriter, r *http.Request
 			plan.Changes = append(plan.Changes, publishing.RecipeChange{Path: file.Path, Before: before, After: file.Content, Exists: exists, LastCommitID: last})
 		}
 	}
-	for _, change := range []profileImageChange{{"Deployment update image", old.GitImage, next.GitImage}, {"Build engine", old.BuildEngine, next.BuildEngine}, {"CI CA variable", old.CAVariable, next.CAVariable}, {"Runtime base image", old.BaseImage, next.BaseImage}, {"CI builder image", old.BuilderImage, next.BuilderImage}, {"Static web server image", old.WebServerImage, next.WebServerImage}, {"Runner tag", old.RunnerTag, next.RunnerTag}, {"Exposure type", old.Exposure, next.Exposure}, {"Exposure labels", old.ExposureLabels, next.ExposureLabels}, {"Exposure annotations", old.ExposureAnnotations, next.ExposureAnnotations}, {"Ingress class", old.IngressClass, next.IngressClass}, {"Ingress TLS", old.IngressTLS, next.IngressTLS}, {"Application services", old.Services, next.Services}, {"Template parameters", old.TemplateParameters, next.TemplateParameters}, {"Template version", templateLabel(old.TemplateVersion), templateLabel(next.TemplateVersion)}, {"Runner service account", old.RunnerServiceAccount, next.RunnerServiceAccount}, {"Runner SCC", old.RunnerSCC, next.RunnerSCC}, {"Builder setup command", old.BuilderSetup, next.BuilderSetup}, {"Image pull secret", old.PullSecret, next.PullSecret}} {
+	for _, change := range []profileImageChange{{"Deployment update image", old.GitImage, next.GitImage}, {"Build engine", old.BuildEngine, next.BuildEngine}, {"CI CA variable", old.CAVariable, next.CAVariable}, {"Runtime base image", old.BaseImage, next.BaseImage}, {"CI builder image", old.BuilderImage, next.BuilderImage}, {"Static web server image", old.WebServerImage, next.WebServerImage}, {"Runner tag", old.RunnerTag, next.RunnerTag}, {"Exposure type", old.Exposure, next.Exposure}, {"Exposure labels", old.ExposureLabels, next.ExposureLabels}, {"Exposure annotations", old.ExposureAnnotations, next.ExposureAnnotations}, {"Ingress class", old.IngressClass, next.IngressClass}, {"Ingress TLS", old.IngressTLS, next.IngressTLS}, {"Application services", old.Services, next.Services}, {"Template parameters", old.TemplateParameters, next.TemplateParameters}, {"Package sources", old.PackageSources, next.PackageSources}, {"Package policy", old.PackagePolicy, next.PackagePolicy}, {"Template version", templateLabel(old.TemplateVersion), templateLabel(next.TemplateVersion)}, {"Runner service account", old.RunnerServiceAccount, next.RunnerServiceAccount}, {"Runner SCC", old.RunnerSCC, next.RunnerSCC}, {"Builder setup command", old.BuilderSetup, next.BuilderSetup}, {"Image pull secret", old.PullSecret, next.PullSecret}} {
 		if change.Before != change.After {
 			plan.Images = append(plan.Images, change)
 		}
@@ -320,7 +325,7 @@ func (s *Server) publishingProfileUpgrade(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if next.SecretMode == "variables" {
-		if err := git.SetVariables(ctx, snapshot.Project, []publishing.Variable{{Key: "REGISTRY_USER", Value: secrets.RegistryUser, Protected: true, Raw: true}, {Key: "REGISTRY_PASSWORD", Value: secrets.RegistryPassword, Masked: true, Protected: true, Raw: true}}); err != nil {
+		if err := git.SetVariables(ctx, snapshot.Project, buildCredentialVariables(next, secrets.RegistryUser, secrets.RegistryPassword, secrets.PackageUser, secrets.PackageToken)); err != nil {
 			writeError(w, 502, "could not refresh registry credentials: "+err.Error())
 			return
 		}

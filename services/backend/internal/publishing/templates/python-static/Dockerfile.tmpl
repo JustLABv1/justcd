@@ -2,7 +2,7 @@ FROM {{ .BaseImage }} AS site-build
 USER 0
 WORKDIR /app
 COPY source/ /app/
-RUN if [ -f requirements.txt ]; then python -m pip install --no-cache-dir -r requirements.txt; fi
+RUN {{ .PackageMount }}if [ -f requirements.txt ]; then python -m pip install --no-cache-dir -r requirements.txt; fi
 RUN {{ json (list "sh" "-c" .BuildCommand) }}
 RUN {{ json (list "python" "-c" .StaticOutputScript .OutputDir "/justcd-site") }}
 

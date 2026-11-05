@@ -76,6 +76,11 @@ type TemplateData struct {
 	ManagedCompletion                   bool
 	Exposure, IngressClass, IngressTLS  string
 	ExposureLabels, ExposureAnnotations []KV
+	// Package sources (see packages.go): mirrors, and the RUN prefix that mounts them.
+	PackageSources []PackageSource
+	PackageMount   string
+	PackageAuth    bool
+	PackagePolicy  string
 	// Build job
 	BuildEngine, CAVariable                                          string
 	RunnerTag, RunnerServiceAccount, RunnerSCC, BuilderSetup         string
@@ -119,6 +124,10 @@ var placeholderDocs = map[string]string{
 	"IngressTLS":           "hosts or none.",
 	"ExposureLabels":       "Labels for the Route or Ingress: range over .Key and .Value.",
 	"ExposureAnnotations":  "Annotations for the Route or Ingress: range over .Key and .Value.",
+	"PackageSources":       "Approved package mirrors of the profile: range over .Ecosystem, .URL and .Authenticated.",
+	"PackageMount":         "Prefix for RUN steps that install packages: mounts the package secret so pip, R, npm, conda, apt and apk use the profile's mirrors. Empty without mirrors; write RUN {{ .PackageMount }}pip install ...",
+	"PackageAuth":          "True when a mirror needs the profile's package credentials.",
+	"PackagePolicy":        "enforce when uploads may only use the approved package sources.",
 	"BuildEngine":          "buildkit or podman.",
 	"CAVariable":           "Name of the CI variable holding custom CA certificates.",
 	"RunnerTag":            "GitLab runner tag.",
@@ -228,6 +237,7 @@ func templateData(c Config, facts SourceFacts) TemplateData {
 		BaseImage: c.BaseImage, WebServerImage: c.WebServerImage, BuilderImage: c.BuilderImage, GitImage: c.GitImage, RegistryImage: c.RegistryImage,
 		PullSecret: c.PullSecret, ImagePlaceholder: imagePlaceholer, ManagedCompletion: c.ManagedCompletion,
 		Exposure: c.Exposure, IngressClass: c.IngressClass, IngressTLS: c.IngressTLS,
+		PackageSources: c.packageSources(), PackageMount: packageMount(c), PackageAuth: c.PackagesAuthenticated(), PackagePolicy: c.PackagePolicy,
 		BuildEngine: c.BuildEngine, CAVariable: c.CAVariable, RunnerTag: c.RunnerTag, RunnerServiceAccount: c.RunnerServiceAccount,
 		RunnerSCC: c.RunnerSCC, BuilderSetup: c.BuilderSetup, SecretMode: c.SecretMode, VaultAddress: c.VaultAddress, VaultRole: c.VaultRole,
 	}
@@ -503,6 +513,9 @@ func RenderConfig(c Config, facts SourceFacts) (map[string]string, error) {
 	}
 	if err := AddServices(c, out); err != nil {
 		return nil, err
+	}
+	if script := packageScript(c); script != "" {
+		out[FilePackageSources] = script
 	}
 	if err := ValidateRendered(c, out); err != nil {
 		return nil, err

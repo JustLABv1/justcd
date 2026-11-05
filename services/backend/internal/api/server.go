@@ -147,6 +147,9 @@ func (s *Server) routes() {
 	s.Mux.Handle("POST /api/v1/repository-configurations/{repositoryID}/reconcile", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.reconcileRepositoryConfiguration))))
 	s.Mux.Handle("GET /api/v1/git-sources", s.requireAuth(http.HandlerFunc(s.listGitSources)))
 	s.Mux.Handle("GET /api/v1/publishing/profiles/{profileID}/versions", s.requireAuth(http.HandlerFunc(s.listPublishingProfileVersions)))
+	s.Mux.Handle("POST /api/v1/applications/{applicationID}/build-setup/preview", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.previewBuildSetup))))
+	s.Mux.Handle("POST /api/v1/applications/{applicationID}/build-setup", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.applyBuildSetup))))
+	s.Mux.Handle("POST /api/v1/applications/{applicationID}/adopt-profile", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.adoptPublishingProfile))))
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}/profile-upgrade", s.requireAuth(http.HandlerFunc(s.previewPublishingProfileUpgrade)))
 	s.Mux.Handle("POST /api/v1/applications/{applicationID}/profile-upgrade", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.applyPublishingProfileUpgrade))))
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}/publication", s.requireAuth(http.HandlerFunc(s.getPublication)))
@@ -253,6 +256,19 @@ func (s *Server) routes() {
 	s.Mux.HandleFunc("GET /api/v1/openapi.yaml", s.serveOpenAPI)
 }
 
+// requestBodyLimit is the largest body a write request may carry. Endpoints that
+// accept a ZIP archive (publishing and its pre-upload validation) are bounded by
+// the configured archive limit; every other write is small.
+func (s *Server) requestBodyLimit(path string) int64 {
+	switch {
+	case path == "/api/v1/publishing" || path == "/api/v1/publishing/validate-archive":
+		return s.Config.PublishingLimits.WithDefaults().ArchiveBytes + publishMultipartOverhead
+	case strings.HasPrefix(path, "/api/v1/agents/tasks/") && strings.HasSuffix(path, "/result"):
+		return 12 << 20
+	}
+	return 2 << 20
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
@@ -262,14 +278,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != "GET" && r.Method != "HEAD" && r.Method != "OPTIONS" {
-		limit := int64(2 << 20)
-		if r.URL.Path == "/api/v1/publishing" {
-			limit = s.Config.PublishingLimits.WithDefaults().ArchiveBytes + publishMultipartOverhead
-		}
-		if strings.HasPrefix(r.URL.Path, "/api/v1/agents/tasks/") && strings.HasSuffix(r.URL.Path, "/result") {
-			limit = 12 << 20
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, limit)
+		r.Body = http.MaxBytesReader(w, r.Body, s.requestBodyLimit(r.URL.Path))
 	}
 	s.Mux.ServeHTTP(w, r)
 }

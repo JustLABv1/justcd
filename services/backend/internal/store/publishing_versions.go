@@ -100,6 +100,9 @@ type PublishingProfileStatus struct {
 	LatestRevision  int64  `json:"latestRevision"`
 	UpdateAvailable bool   `json:"updateAvailable"`
 	Enabled         bool   `json:"enabled"`
+	// AdoptionPending: the application was converted to this profile but has not
+	// yet adopted its build settings through a reviewed profile update.
+	AdoptionPending bool `json:"adoptionPending,omitempty"`
 }
 
 func (s *Store) PopulatePublishingProfileStatus(ctx context.Context, apps []Application) error {
@@ -110,7 +113,7 @@ func (s *Store) PopulatePublishingProfileStatus(ctx context.Context, apps []Appl
 	for i := range apps {
 		ids[i] = apps[i].ID
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT a.application_id,p.id,p.name,a.profile_revision,p.current_revision,p.enabled,(a.pipeline_url='' AND a.fingerprint LIKE 'upgrade:%') FROM published_applications a JOIN publishing_profiles p ON p.id=a.profile_id WHERE a.application_id=ANY($1)`, ids)
+	rows, err := s.DB.QueryContext(ctx, `SELECT a.application_id,p.id,p.name,a.profile_revision,p.current_revision,p.enabled,(a.pipeline_url='' AND a.fingerprint LIKE 'upgrade:%'),(a.fingerprint LIKE 'adopt:%') FROM published_applications a JOIN publishing_profiles p ON p.id=a.profile_id WHERE a.application_id=ANY($1)`, ids)
 	if err != nil {
 		return err
 	}
@@ -122,11 +125,55 @@ func (s *Store) PopulatePublishingProfileStatus(ctx context.Context, apps []Appl
 	for rows.Next() {
 		var id string
 		var status PublishingProfileStatus
-		if err := rows.Scan(&id, &status.ProfileID, &status.Name, &status.Revision, &status.LatestRevision, &status.Enabled, &status.NeedsBuild); err != nil {
+		if err := rows.Scan(&id, &status.ProfileID, &status.Name, &status.Revision, &status.LatestRevision, &status.Enabled, &status.NeedsBuild, &status.AdoptionPending); err != nil {
 			return err
 		}
-		status.UpdateAvailable = status.LatestRevision > status.Revision
+		status.UpdateAvailable = status.LatestRevision > status.Revision || status.AdoptionPending
 		apps[indexes[id]].PublishingProfile = &status
 	}
 	return rows.Err()
+}
+
+// UpdatePublishedConfig stores a new build configuration for a publication that
+// does not use a publishing profile, after its recipe files were committed. The
+// expected configuration guards against concurrent changes.
+func (s *Store) UpdatePublishedConfig(ctx context.Context, old PublishedApplication, config publishing.Config, fingerprint string) error {
+	data, _ := json.Marshal(config)
+	result, err := s.DB.ExecContext(ctx, `UPDATE published_applications SET config=$3,fingerprint=$4,pipeline_url='' WHERE application_id=$1 AND profile_id IS NULL AND config=$2::jsonb`, old.ApplicationID, old.Config, data, fingerprint)
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil || n != 1 {
+		return errors.New("application changed; review the build setup again")
+	}
+	return nil
+}
+
+// AdoptPublishingProfile binds a manually published application to a profile.
+// The publication is marked as adoption pending, so the next profile update
+// offers the profile's build settings for review even at the current revision.
+func (s *Store) AdoptPublishingProfile(ctx context.Context, old PublishedApplication, profileID string, revision int64) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var enabled bool
+	if err := tx.QueryRowContext(ctx, `SELECT enabled FROM publishing_profiles WHERE id=$1 FOR SHARE`, profileID).Scan(&enabled); err != nil {
+		return err
+	}
+	if !enabled {
+		return errors.New("publishing profile is disabled")
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE published_applications SET profile_id=$2,profile_revision=$4,fingerprint='adopt:'||$2 WHERE application_id=$1 AND profile_id IS NULL AND config=$3::jsonb`, old.ApplicationID, profileID, old.Config, revision)
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil || n != 1 {
+		return errors.New("application changed; check compatibility again")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET labels=labels || jsonb_build_object('justcd.io/publishing-profile',$2::text),updated_at=NOW() WHERE id=$1`, old.ApplicationID, profileID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

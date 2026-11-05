@@ -6,10 +6,9 @@ import Link from "next/link"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { ArrowLeft01Icon, ArrowRight01Icon } from "@hugeicons/core-free-icons"
 import { api } from "@/lib/api"
-import { reviewTextRows } from "@/lib/line-diff"
+import { RecipeReview } from "@/components/applications/recipe-review"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/reui/badge"
-import { Disclosure } from "@/components/ui/collapsible"
 import { PublishingCard } from "@/components/applications/publishing-fields"
 import { ErrorNotice } from "@/components/workspace-ui"
 
@@ -22,6 +21,7 @@ type UpgradePlan = {
   hash: string
   syncPolicy: string
   resume: boolean
+  adopting?: boolean
   upToDate: boolean
   images: { name: string; before: string; after: string }[]
   changes: { path: string; before: string; after: string; exists: boolean }[]
@@ -93,7 +93,11 @@ export default function ProfileUpdatePage() {
           Back to application
         </Button>
         <div>
-          <h1 className="text-xl font-medium">Update publishing profile</h1>
+          <h1 className="text-xl font-medium">
+            {plan?.adopting
+              ? "Convert to publishing profile"
+              : "Update publishing profile"}
+          </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Review the build settings and generated files before rebuilding the
             source already in Git.
@@ -159,7 +163,14 @@ export default function ProfileUpdatePage() {
                   className="flex flex-wrap items-center gap-2"
                   aria-label="Profile version change"
                 >
-                  {plan.resume ? (
+                  {plan.adopting ? (
+                    <>
+                      <Badge variant="warning-light">Converting</Badge>
+                      <Badge variant="primary-light">
+                        Profile v{plan.toRevision}
+                      </Badge>
+                    </>
+                  ) : plan.resume ? (
                     <>
                       <Badge variant="primary-light">v{plan.toRevision}</Badge>
                       <Badge variant="warning-light">Build pending</Badge>
@@ -200,79 +211,22 @@ export default function ProfileUpdatePage() {
                 <p className="mt-1 text-sm text-muted-foreground">
                   {plan.resume
                     ? "The profile update is saved. Retry the build to continue publishing."
-                    : `${plan.images.length} setting changes · ${plan.changes.length} generated file changes. Review the details below before updating.`}
+                    : plan.adopting
+                      ? `The application keeps its destination and source. It now takes the profile's build settings: ${plan.images.length} setting changes · ${plan.changes.length} generated file changes. Review them before converting.`
+                      : `${plan.images.length} setting changes · ${plan.changes.length} generated file changes. Review the details below before updating.`}
                 </p>
               </div>
-              <PublishingCard contentClassName="space-y-3">
-                <h3 className="text-sm font-medium">Build settings</h3>
-                <dl className="space-y-3">
-                  {plan.images.map((image) => (
-                    <div key={image.name}>
-                      <dt className="text-sm font-medium">{image.name}</dt>
-                      <dd className="mt-1 space-y-1 text-xs break-all">
-                        <p className="text-muted-foreground">
-                          From: {image.before || "Not configured"}
-                        </p>
-                        <p>To: {image.after || "Not configured"}</p>
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-                {!plan.images.length && (
-                  <p className="text-sm text-muted-foreground">
-                    {plan.resume
-                      ? "Retry the pending build using the pinned profile version."
-                      : "The profile version changes the approved recipe snapshot; image references are unchanged."}
-                  </p>
-                )}
-              </PublishingCard>
-              {plan.changes.length > 0 && (
-                <h3 className="text-sm font-medium">Generated files</h3>
-              )}
-              {plan.changes.map((file) => (
-                <PublishingCard key={file.path}>
-                  <Disclosure
-                    summary={`${file.exists ? "Update" : "Add"} ${file.path}`}
-                  >
-                    <pre
-                      className="mt-3 max-h-96 overflow-auto rounded-lg border bg-background p-3 text-xs"
-                      aria-label={`Changes to ${file.path}`}
-                    >
-                      <code>
-                        {reviewTextRows(
-                          file.exists ? file.before : undefined,
-                          file.after
-                        ).map((row, i) => (
-                          <span key={i}>
-                            {row.changed ? (
-                              <>
-                                {row.before !== undefined && (
-                                  <span className="block bg-destructive/10 text-destructive">
-                                    − {row.before}
-                                    {"\n"}
-                                  </span>
-                                )}
-                                {row.after !== undefined && (
-                                  <span className="block bg-success/10 text-success">
-                                    + {row.after}
-                                    {"\n"}
-                                  </span>
-                                )}
-                              </>
-                            ) : (
-                              <span className="block">
-                                {" "}
-                                {row.after}
-                                {"\n"}
-                              </span>
-                            )}
-                          </span>
-                        ))}
-                      </code>
-                    </pre>
-                  </Disclosure>
-                </PublishingCard>
-              ))}
+              <RecipeReview
+                images={plan.images}
+                changes={plan.changes}
+                emptyText={
+                  plan.resume
+                    ? "Retry the pending build using the pinned profile version."
+                    : plan.adopting
+                      ? "The profile's build settings match what the application already uses."
+                      : "The profile version changes the approved recipe snapshot; image references are unchanged."
+                }
+              />
             </section>
             <PublishingCard contentClassName="space-y-3">
               <p className="text-sm text-muted-foreground">
@@ -292,7 +246,9 @@ export default function ProfileUpdatePage() {
               >
                 {plan.resume
                   ? "Retry build"
-                  : `Update to v${plan.toRevision} and rebuild`}
+                  : plan.adopting
+                    ? `Adopt profile v${plan.toRevision} and rebuild`
+                    : `Update to v${plan.toRevision} and rebuild`}
               </Button>
             </PublishingCard>
           </>

@@ -178,8 +178,21 @@ func (s *Server) validatePublishingArchive(w http.ResponseWriter, r *http.Reques
 		writeError(w, 409, err.Error())
 		return
 	}
+	if in.ProfileID != "" {
+		// The profile decides which package sources are approved.
+		profile, e := s.Store.PublishingProfile(r.Context(), in.ProfileID)
+		if e != nil || profile.WorkspaceID != in.WorkspaceID || !profile.Enabled {
+			writeError(w, 404, "publishing profile not found")
+			return
+		}
+		in.Config.PackageSources, in.Config.PackagePolicy = profile.Settings.PackageSources, profile.Settings.PackagePolicy
+	}
 	files, root, err := publishing.NormalizeSource(in.Config, source)
 	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	if err = publishing.CheckPackageSources(in.Config, files); err != nil {
 		writeError(w, 400, err.Error())
 		return
 	}

@@ -20,11 +20,13 @@ export function ProfileVersionBadge({
       }
     >
       Profile v{profile.revision}
-      {profile.updateAvailable
-        ? ` · v${profile.latestRevision} available`
-        : profile.needsBuild
-          ? " · build pending"
-          : ""}
+      {profile.adoptionPending
+        ? " · conversion pending"
+        : profile.updateAvailable
+          ? ` · v${profile.latestRevision} available`
+          : profile.needsBuild
+            ? " · build pending"
+            : ""}
     </Badge>
   )
 }
@@ -43,9 +45,11 @@ export function ProfileVersionNotice({
     return (
       <Alert role="status" className="gap-3 border-primary/25 bg-primary/5 p-4">
         <AlertTitle className="text-primary">
-          {profile.needsBuild
-            ? "Profile build pending"
-            : "Profile update available"}
+          {profile.adoptionPending
+            ? "Finish converting to the profile"
+            : profile.needsBuild
+              ? "Profile build pending"
+              : "Profile update available"}
         </AlertTitle>
         <AlertDescription className="space-y-2 text-xs leading-5">
           <p className="font-medium break-words text-foreground">
@@ -58,7 +62,7 @@ export function ProfileVersionNotice({
             <Badge variant="outline" size="sm">
               Current v{profile.revision}
             </Badge>
-            {profile.updateAvailable && (
+            {profile.updateAvailable && !profile.adoptionPending && (
               <>
                 <span aria-hidden="true">→</span>
                 <Badge variant="info-light" size="sm">
@@ -70,9 +74,11 @@ export function ProfileVersionNotice({
           <p>
             {!profile.enabled
               ? "This profile is disabled. Ask an administrator to enable it before upgrading."
-              : profile.needsBuild
-                ? "The profile build has not started. Review the pending update to retry."
-                : "Review the updated build settings before rebuilding your application."}
+              : profile.adoptionPending
+                ? "The application is bound to this profile. Review the profile's build settings, then rebuild to adopt them. Uploading a new ZIP waits until then."
+                : profile.needsBuild
+                  ? "The profile build has not started. Review the pending update to retry."
+                  : "Review the updated build settings before rebuilding your application."}
           </p>
         </AlertDescription>
         <Button
@@ -86,7 +92,9 @@ export function ProfileVersionNotice({
             !canUpgrade || !profile.enabled || application.decommissioning
           }
         >
-          Review profile update
+          {profile.adoptionPending
+            ? "Review conversion"
+            : "Review profile update"}
         </Button>
       </Alert>
     )

@@ -29,7 +29,8 @@ import { usePublishingDraft } from "@/hooks/use-publishing-draft"
 import { PublishingDraftNotice } from "@/components/applications/publishing-draft-notice"
 import { usePublishingLimits } from "@/hooks/use-publishing-limits"
 import { api } from "@/lib/api"
-import { templatesUrl } from "@/lib/publishing"
+import { selectedWorkspaceId, templatesUrl } from "@/lib/publishing"
+import { WorkspaceNote } from "@/components/applications/workspace-note"
 import { showInvalid } from "@/components/applications/wizard"
 import {
   publishProject,
@@ -117,9 +118,9 @@ export default function PublishApplicationPage() {
         const allowed = items.filter(
           (item) => item.role === "owner" || item.role === "deployer"
         )
-        const preferred = new URLSearchParams(window.location.search).get(
-          "workspaceId"
-        )
+        const preferred =
+          new URLSearchParams(window.location.search).get("workspaceId") ||
+          selectedWorkspaceId()
         setWorkspaces(allowed)
         setWorkspaceId(
           allowed.find((item) => item.id === preferred)?.id ??
@@ -313,24 +314,7 @@ export default function PublishApplicationPage() {
           </div>
         </header>
         {error != null && <ErrorNotice error={error} />}
-        <div className="max-w-lg">
-          <PublishingField label="Workspace" htmlFor="setup-workspace">
-            <FormSelect
-              id="setup-workspace"
-              value={workspaceId}
-              onValueChange={(value) => {
-                setWorkspaceId(value)
-                setProfileId("")
-                setProfiles([])
-                setLoading(true)
-              }}
-              items={workspaces.map((item) => ({
-                value: item.id,
-                label: item.name,
-              }))}
-            />
-          </PublishingField>
-        </div>
+        <WorkspaceNote name={workspace?.name} />
         <div className="grid gap-4 md:grid-cols-3">
           <PublishingCard contentClassName="flex h-full flex-col items-start gap-3">
             <h2 className="text-base font-medium">
@@ -437,36 +421,19 @@ export default function PublishApplicationPage() {
       {(error ?? limitsError) != null && (
         <ErrorNotice error={error ?? limitsError} />
       )}
+      <WorkspaceNote name={workspace?.name} />
       {!workspaces.length && (
         <p className="text-sm text-muted-foreground">
           Publishing requires the owner or deployer role in a workspace. Ask
           your administrator for access.
         </p>
       )}
-      <PublishingDraftNotice draft={draft} />
       <form onSubmit={publish} noValidate className="space-y-4">
         <fieldset
           disabled={busy || !limits || !draft.ready}
           className="min-w-0 space-y-4"
         >
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            <PublishingField label="Workspace" htmlFor="publish-workspace">
-              <FormSelect
-                id="publish-workspace"
-                value={workspaceId}
-                onValueChange={(value) => {
-                  setServiceSelection(""); setDatabasePassword("")
-                  setWorkspaceId(value)
-                  setProfileId("")
-                  setProfiles([])
-                  setLoading(true)
-                }}
-                items={workspaces.map((item) => ({
-                  value: item.id,
-                  label: item.name,
-                }))}
-              />
-            </PublishingField>
+          <div className="grid gap-4 md:grid-cols-2">
             <PublishingField
               label="Application name"
               htmlFor="publish-name"
@@ -537,14 +504,14 @@ export default function PublishApplicationPage() {
             htmlFor="publish-archive"
             hint={
               limits
-                ? `Up to ${publishingSize(limits.archiveBytes)} compressed and ${publishingSize(limits.expandedBytes)} expanded. ${template.runtime === "static" ? "Include index.html and assets in the website directory" : template.runtime === "python-static" ? "Optionally include requirements.txt" : template.runtime === "server" ? "Required files: " + (layoutSummary(template) || "your application and its dependency files") : "Include " + (template.runtime === "shiny" ? "renv.lock or packages.txt" : "requirements.txt")}${template.runtime === "static" ? "." : " at the archive root."} Remove local credentials before uploading.`
+                ? `Up to ${publishingSize(limits.archiveBytes)} compressed and ${publishingSize(limits.expandedBytes)} expanded. ${template.runtime === "static" ? "Include index.html and assets in the website directory" : template.runtime === "python-static" ? "Optionally include requirements.txt" : template.runtime === "server" ? "Required files: " + (layoutSummary(template) || "your application and its dependency files") : "Include " + (template.runtime === "shiny" ? "renv.lock or packages.txt" : "requirements.txt")}${template.runtime === "static" ? "." : " at the archive root."} Remove local credentials before uploading.${profile?.packagePolicy === "enforce" ? " Packages must come from the approved mirror; other package sources are rejected." : ""}`
                 : "Loading upload limits…"
             }
           >
             <ArchiveUpload
               id="publish-archive"
               file={file}
- validation={{ workspaceId, runtime: template.runtime, entryPoint: entryPoint || template.entryPoint }}
+ validation={{ workspaceId, runtime: template.runtime, entryPoint: entryPoint || template.entryPoint, templateId: template.id, profileId: profile?.id }}
  onValidationChange={setArchiveValid}
               onFileChange={(next) => {
                 setFile(next)
@@ -644,21 +611,24 @@ export default function PublishApplicationPage() {
               </p>
             </div>
           )}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-card p-3">
-            <p className="text-xs leading-5 text-muted-foreground">
-              {busy
-                ? "Creating the repository, configuring the build, and starting CI…"
-                : "Your administrator’s settings and credentials are applied securely."}
-            </p>
-            <Button
-              type="submit"
-              loading={busy}
-              loadingText="Preparing your app…"
-              disabled={!file || !archiveValid || !profile || !workspaceId || loading}
-              className="h-10 px-5"
-            >
-              Publish app
-            </Button>
+          <div className="space-y-3 rounded-2xl border bg-card p-3">
+            <PublishingDraftNotice draft={draft} inline />
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+              <p className="text-xs leading-5 text-muted-foreground">
+                {busy
+                  ? "Creating the repository, configuring the build, and starting CI…"
+                  : "Your administrator’s settings and credentials are applied securely."}
+              </p>
+              <Button
+                type="submit"
+                loading={busy}
+                loadingText="Preparing your app…"
+                disabled={!file || !archiveValid || !profile || !workspaceId || loading}
+                className="h-10 px-5"
+              >
+                Publish app
+              </Button>
+            </div>
           </div>
         </fieldset>
       </form>

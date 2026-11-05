@@ -31,6 +31,26 @@ function buildDetail(runtime: ApplicationTemplate["runtime"]) {
   }
 }
 
+const mirrorNames: Record<string, string> = {
+  pip: "Python",
+  cran: "R",
+  npm: "Node",
+  conda: "Conda",
+  apt: "system",
+  apk: "system",
+}
+
+/** The Build step when the profile routes package managers through a mirror. */
+function mirrorDetail(ecosystems?: string[]) {
+  if (!ecosystems?.length) return undefined
+  const names = Array.from(new Set(ecosystems.map((e) => mirrorNames[e] ?? e)))
+  const list =
+    names.length > 1
+      ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`
+      : names[0]
+  return `GitLab installs ${list} packages from your mirror and builds the image.`
+}
+
 /** Whether the canvas has room to lay the steps out in a row. */
 function useRoom(least: number) {
   const [wide, setWide] = useState(true)
@@ -99,7 +119,9 @@ export function PublishingFlow({
     {
       id: "build",
       title: "Build",
-      detail: buildDetail(template.runtime),
+      detail:
+        mirrorDetail(profile?.packageEcosystems) ??
+        buildDetail(template.runtime),
       badge: "Automatic",
       color: "info",
     },

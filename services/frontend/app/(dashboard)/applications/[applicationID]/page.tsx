@@ -10,8 +10,9 @@ import { useParams, useRouter } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Edit02Icon, PauseIcon, RefreshIcon, TestTubeIcon } from "@hugeicons/core-free-icons"
+import { ArrowDataTransferHorizontalIcon, Edit02Icon, PauseIcon, RefreshIcon, TestTubeIcon, Upload01Icon, Wrench01Icon } from "@hugeicons/core-free-icons"
 import { ActionMenu } from "@/components/action-menu"
+import { ConvertToProfileDialog } from "@/components/applications/convert-to-profile"
 import { ActivityTab } from "@/components/application/activity-tab"
 import { AttentionBar } from "@/components/application/attention-bar"
 import { ChangesTab } from "@/components/application/changes-tab"
@@ -46,6 +47,7 @@ export default function ApplicationDetailPage() {
   const toast = useToast()
   const [application, setApplication] = useState<Application | null>(null)
   const [branchTestOpen, setBranchTestOpen] = useState(false)
+  const [convertOpen, setConvertOpen] = useState(false)
   const [kustomization, setKustomization] = useState<{ namespace: string; commit: string } | null>(null)
   const [kustomizationError, setKustomizationError] = useState<unknown | null>(null)
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
@@ -711,6 +713,8 @@ export default function ApplicationDetailPage() {
   const canDeploy = workspace?.role === "owner" || workspace?.role === "deployer"
   const canApprove = workspace?.role === "owner"
   const canUploadSource = canDeploy && application?.labels?.["justcd.io/published"] === "true" && (canApprove || !!application.labels?.["justcd.io/publishing-profile"])
+  // Published by hand: JustCD generated its build files but no profile manages them.
+  const manualPublication = application?.labels?.["justcd.io/published"] === "true" && !application.labels?.["justcd.io/publishing-profile"]
   const claimableConflictKeys = ownershipConflicts.filter((item) => isClaimable(item, applicationID)).map((item) => diffId(item.identity))
 
   const requiredApprovals = activePlan ? activePlan.plan.requiredApprovals ?? (activePlan.plan.requiresApproval ? 1 : 0) : 0
@@ -751,7 +755,11 @@ export default function ApplicationDetailPage() {
         </Tooltip>
         : <Button loading={pendingAction === "create-plan"} loadingText="Calculating plan…" onClick={() => void createPlan()} disabled={createPlanDisabled}><HugeiconsIcon icon={RefreshIcon} strokeWidth={1.8} aria-hidden="true" />Refresh plan</Button>}
       {(canApprove || canUploadSource) && <ActionMenu label="More actions" items={[
-        ...(canUploadSource ? [{ label: "Upload new version", icon: Edit02Icon, disabled: busy || application.decommissioning, onSelect: () => router.push(`/applications/${applicationID}/publish`) }] : []),
+        ...(canUploadSource ? [{ label: "Upload new version", icon: Upload01Icon, disabled: busy || application.decommissioning, onSelect: () => router.push(`/applications/${applicationID}/publish`) }] : []),
+        ...(canApprove && manualPublication && !application.decommissioning ? [
+          { label: "Update build setup", icon: Wrench01Icon, disabled: busy, onSelect: () => router.push(`/applications/${applicationID}/build-setup`) },
+          { label: "Convert to profile…", icon: ArrowDataTransferHorizontalIcon, disabled: busy || hasPendingOperation, onSelect: () => setConvertOpen(true) },
+        ] : []),
         ...(canApprove && !application.decommissioning && !application.repositoryConfigurationId ? [{ label: "Edit application", icon: Edit02Icon, disabled: busy || hasPendingOperation || Boolean(application.branchTest), onSelect: () => router.push(`/applications/${applicationID}/edit`) }] : []),
         ...(canApprove && !application.branchTest ? [{ label: "Test branch…", icon: TestTubeIcon, disabled: busy || hasPendingOperation || application.decommissioning || Boolean(application.configurationMissing) || Boolean(application.rollbackResumeAvailable) || Boolean(application.applicationGroupId), onSelect: () => setBranchTestOpen(true) }] : []),
         ...(canApprove && !application.autoSyncPaused ? [{ label: "Pause auto-sync", icon: PauseIcon, separatorBefore: true, disabled: busy || hasPendingOperation, onSelect: () => void pauseSync() }] : []),
@@ -784,6 +792,7 @@ export default function ApplicationDetailPage() {
           </TabsTrigger>)}
         </TabsList>}
 
+    {application && manualPublication && canApprove && <ConvertToProfileDialog open={convertOpen} onOpenChange={setConvertOpen} applicationId={application.id} workspaceId={application.workspaceId} />}
     {application && <BranchTestControls open={branchTestOpen} onOpenChange={setBranchTestOpen} application={application} canManage={canApprove} disabled={busy || hasPendingOperation} onSettings={() => selectTab("settings")} onReview={() => void createPlan()} onChanged={async (updated) => {
       if (updated.id !== applicationID) { router.push(`/applications/${updated.id}`); return }
       setApplication(updated)

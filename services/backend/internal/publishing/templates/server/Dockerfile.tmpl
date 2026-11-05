@@ -3,7 +3,7 @@ USER 0
 WORKDIR /app
 COPY source/ /app/
 # Install your dependencies here, for example:
-# RUN python -m pip install --no-cache-dir -r requirements.txt
+# RUN {{ .PackageMount }}python -m pip install --no-cache-dir -r requirements.txt
 RUN chgrp -R 0 /app && chmod -R g=u /app
 ENV HOME=/tmp
 USER 1001

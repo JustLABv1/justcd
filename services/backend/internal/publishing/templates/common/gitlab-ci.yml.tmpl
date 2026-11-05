@@ -32,6 +32,22 @@ publish:
         field: token
       token: $VAULT_ID_TOKEN
       file: false
+{{- if .PackageAuth }}
+    JUSTCD_PKG_USER:
+      vault:
+        engine: {name: kv-v2, path: {{ quote .VaultMount }}}
+        path: {{ quote .VaultSecretPath }}
+        field: package_username
+      token: $VAULT_ID_TOKEN
+      file: false
+    JUSTCD_PKG_TOKEN:
+      vault:
+        engine: {name: kv-v2, path: {{ quote .VaultMount }}}
+        path: {{ quote .VaultSecretPath }}
+        field: package_token
+      token: $VAULT_ID_TOKEN
+      file: false
+{{- end }}
 {{- end }}
   variables:
     GIT_DEPTH: '0'
@@ -89,13 +105,33 @@ publish:
       export CURL_CA_BUNDLE="$ca_bundle"
       export REQUESTS_CA_BUNDLE="$ca_bundle"
 {{- end }}
+{{- if .PackageSources }}
+      # Package mirrors: credentials and sources become one build secret that only
+      # the Dockerfile's install steps mount. It is never part of an image layer.
+{{- if .PackageAuth }}
+      if [ -z "${JUSTCD_PKG_USER:-}" ] || [ -z "${JUSTCD_PKG_TOKEN:-}" ]; then
+        printf 'JustCD: the package mirrors need credentials, but JUSTCD_PKG_USER or JUSTCD_PKG_TOKEN is empty. Update the publishing profile credentials.\n' >&2
+        exit 1
+      fi
+{{- end }}
+      shq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+      pkg_file="$DOCKER_CONFIG/justcd-pkg.sh"
+      (
+        umask 077
+        {
+          printf 'JUSTCD_PKG_USER=%s\n' "$(shq "${JUSTCD_PKG_USER:-}")"
+          printf 'JUSTCD_PKG_TOKEN=%s\n' "$(shq "${JUSTCD_PKG_TOKEN:-}")"
+          cat .justcd/package-sources.sh
+        } > "$pkg_file"
+      )
+{{- end }}
       registry="${JUSTCD_IMAGE%%/*}"
 {{- if eq .BuildEngine "podman" }}
       export REGISTRY_AUTH_FILE="$DOCKER_CONFIG/auth.json"
       mkdir -p "$DOCKER_CONFIG/certs"
       if [ -n "${SSL_CERT_FILE:-}" ]; then cp "$SSL_CERT_FILE" "$DOCKER_CONFIG/certs/ca.crt"; fi
       printf '%s' "$REGISTRY_PASSWORD" | podman login --authfile "$REGISTRY_AUTH_FILE" --cert-dir "$DOCKER_CONFIG/certs" --tls-verify=true --username "$REGISTRY_USER" --password-stdin "$registry"
-      podman build --authfile "$REGISTRY_AUTH_FILE" --cert-dir "$DOCKER_CONFIG/certs" --tls-verify=true --format docker -f Dockerfile -t "$JUSTCD_IMAGE:$CI_COMMIT_SHA" .
+      podman build --authfile "$REGISTRY_AUTH_FILE" --cert-dir "$DOCKER_CONFIG/certs" --tls-verify=true --format docker{{ if .PackageSources }} --secret id=justcd_pkg,src="$pkg_file"{{ if .CAVariable }} --secret id=justcd_ca,src="$ca_bundle"{{ end }}{{ end }} -f Dockerfile -t "$JUSTCD_IMAGE:$CI_COMMIT_SHA" .
       podman push --authfile "$REGISTRY_AUTH_FILE" --cert-dir "$DOCKER_CONFIG/certs" --tls-verify=true --digestfile "$DOCKER_CONFIG/digest" "$JUSTCD_IMAGE:$CI_COMMIT_SHA" "docker://$JUSTCD_IMAGE:$CI_COMMIT_SHA"
       digest="$(cat "$DOCKER_CONFIG/digest")"
       if ! printf '%s\n' "$digest" | grep -Eq '^sha256:[a-f0-9]{64}$'; then
@@ -104,7 +140,7 @@ publish:
       fi
 {{- else }}
       jq -n --arg host "$registry" --arg user "$REGISTRY_USER" --arg password "$REGISTRY_PASSWORD" '{auths:{($host):{auth:(($user+":"+$password)|@base64)}}}' > "$DOCKER_CONFIG/config.json"
-      buildctl-daemonless.sh build --frontend dockerfile.v0 --local context=. --local dockerfile=. --output "type=image,name=$JUSTCD_IMAGE:$CI_COMMIT_SHA,push=true" --metadata-file /tmp/justcd-image.json
+      buildctl-daemonless.sh build --frontend dockerfile.v0 --local context=. --local dockerfile=.{{ if .PackageSources }} --secret id=justcd_pkg,src="$pkg_file"{{ if .CAVariable }} --secret id=justcd_ca,src="$ca_bundle"{{ end }}{{ end }} --output "type=image,name=$JUSTCD_IMAGE:$CI_COMMIT_SHA,push=true" --metadata-file /tmp/justcd-image.json
       digest="$(jq -er '."containerimage.digest" | select(test("^sha256:[a-f0-9]{64}$"))' /tmp/justcd-image.json)"
 {{- end }}
       mkdir -p .justcd-build

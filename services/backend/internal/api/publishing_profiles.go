@@ -17,6 +17,10 @@ type publishingSecrets struct {
 	GitReadToken     string `json:"gitReadToken"`
 	RegistryUser     string `json:"registryUser"`
 	RegistryPassword string `json:"registryPassword"`
+	// Package credentials sign in to authenticated package mirrors during
+	// builds. Use a read-only account: install steps run project code.
+	PackageUser  string `json:"packageUser"`
+	PackageToken string `json:"packageToken"`
 }
 
 // Read-only profile summaries deliberately exclude infrastructure settings and
@@ -35,6 +39,10 @@ type publishingProfileSummary struct {
 	Namespace       string                    `json:"namespace"`
 	HostSuffix      string                    `json:"hostSuffix"`
 	SyncPolicy      string                    `json:"syncPolicy"`
+	// Package ecosystems routed through the platform mirror, and whether
+	// uploads may only use them. URLs and credentials stay with the profile.
+	PackageEcosystems []string `json:"packageEcosystems"`
+	PackagePolicy     string   `json:"packagePolicy"`
 }
 
 func (s *Server) listApprovedPublishingProfiles(w http.ResponseWriter, r *http.Request) {
@@ -74,7 +82,7 @@ func (s *Server) listApprovedPublishingProfiles(w http.ResponseWriter, r *http.R
 			writeStoreError(w, "invalid publishing service catalog")
 			return
 		}
-		items = append(items, publishingProfileSummary{Services: catalog.Options(), CurrentRevision: p.CurrentRevision, ID: p.ID, Name: p.Name, Description: p.Description, TemplateID: p.Settings.TemplateID, ClusterID: p.Settings.ClusterID, ClusterName: cluster.Name, Namespace: p.Settings.Namespace, HostSuffix: p.Settings.HostSuffix, SyncPolicy: p.Settings.SyncPolicy, NamespaceMode: p.Settings.NamespaceMode, NamespacePrefix: p.Settings.NamespacePrefix})
+		items = append(items, publishingProfileSummary{Services: catalog.Options(), CurrentRevision: p.CurrentRevision, ID: p.ID, Name: p.Name, Description: p.Description, TemplateID: p.Settings.TemplateID, ClusterID: p.Settings.ClusterID, ClusterName: cluster.Name, Namespace: p.Settings.Namespace, HostSuffix: p.Settings.HostSuffix, SyncPolicy: p.Settings.SyncPolicy, NamespaceMode: p.Settings.NamespaceMode, NamespacePrefix: p.Settings.NamespacePrefix, PackageEcosystems: packageEcosystemNames(p.Settings.PackageSources), PackagePolicy: p.Settings.PackagePolicy})
 	}
 	writeJSON(w, 200, map[string]any{"items": items})
 }
@@ -135,6 +143,13 @@ func validatePublishingSecrets(settings publishing.ProfileSettings, secrets publ
 	}
 	if settings.SecretMode == "variables" && (secrets.RegistryUser == "" || len(secrets.RegistryUser) > 256 || len(secrets.RegistryPassword) < 8 || len(secrets.RegistryPassword) > 64<<10 || strings.ContainsAny(secrets.RegistryPassword, " \r\n\t")) {
 		return errors.New("registry username and a maskable token of at least eight characters are required")
+	}
+	if sources, _ := publishing.ParsePackageSources(settings.PackageSources); settings.SecretMode == "variables" {
+		for _, source := range sources {
+			if source.Authenticated && (secrets.PackageUser == "" || len(secrets.PackageUser) > 256 || len(secrets.PackageToken) < 8 || len(secrets.PackageToken) > 64<<10 || strings.ContainsAny(secrets.PackageToken, " \r\n\t")) {
+				return errors.New("package credentials (user and a token of at least eight characters) are required for authenticated package sources")
+			}
+		}
 	}
 	return nil
 }
@@ -247,6 +262,12 @@ func (s *Server) savePublishingProfile(w http.ResponseWriter, r *http.Request) {
 		if secrets.RegistryPassword == "" {
 			secrets.RegistryPassword = previous.RegistryPassword
 		}
+		if secrets.PackageUser == "" {
+			secrets.PackageUser = previous.PackageUser
+		}
+		if secrets.PackageToken == "" {
+			secrets.PackageToken = previous.PackageToken
+		}
 	}
 	if !create {
 		var err error
@@ -272,6 +293,12 @@ func (s *Server) savePublishingProfile(w http.ResponseWriter, r *http.Request) {
 		if secrets.RegistryPassword == "" {
 			secrets.RegistryPassword = previous.RegistryPassword
 		}
+		if secrets.PackageUser == "" {
+			secrets.PackageUser = previous.PackageUser
+		}
+		if secrets.PackageToken == "" {
+			secrets.PackageToken = previous.PackageToken
+		}
 		p.Version = input.Version
 	}
 	p.PublishRevision = input.PublishRevision
@@ -279,6 +306,8 @@ func (s *Server) savePublishingProfile(w http.ResponseWriter, r *http.Request) {
 	if p.Settings.SecretMode == "vault" {
 		secrets.RegistryUser = ""
 		secrets.RegistryPassword = ""
+		secrets.PackageUser = ""
+		secrets.PackageToken = ""
 	}
 	if err := validatePublishingSecrets(p.Settings, secrets); err != nil {
 		writeError(w, 400, err.Error())
@@ -317,7 +346,7 @@ func (s *Server) savePublishingProfile(w http.ResponseWriter, r *http.Request) {
 		action = "publishing_profile.created"
 		status = 201
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, action, "publishing_profile", p.ID, map[string]any{"workspaceId": workspace, "name": p.Name, "enabled": p.Enabled, "credentialsUpdated": input.Secrets.GitLabToken != "" || input.Secrets.GitReadToken != "" || input.Secrets.RegistryPassword != ""})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, action, "publishing_profile", p.ID, map[string]any{"workspaceId": workspace, "name": p.Name, "enabled": p.Enabled, "credentialsUpdated": input.Secrets.GitLabToken != "" || input.Secrets.GitReadToken != "" || input.Secrets.RegistryPassword != "" || input.Secrets.PackageToken != ""})
 	saved, err := s.Store.PublishingProfile(r.Context(), p.ID)
 	if err != nil {
 		writeStoreError(w, "profile saved but could not be reloaded; refresh the profile list")
@@ -456,6 +485,7 @@ func (s *Server) resolvePublishingProfile(w http.ResponseWriter, r *http.Request
 	}
 	in.Config, in.ClusterID, in.GitLabURL, in.Group = cfg, p.Settings.ClusterID, p.Settings.GitLabURL, p.Settings.Group
 	in.GitLabToken, in.GitReadToken, in.RegistryUser, in.RegistryPassword = secrets.GitLabToken, secrets.GitReadToken, secrets.RegistryUser, secrets.RegistryPassword
+	in.PackageUser, in.PackageToken = secrets.PackageUser, secrets.PackageToken
 	return &p, true
 }
 func publicationResult(p store.PublishedApplication, syncPolicy string) map[string]any {
@@ -476,4 +506,13 @@ func publicationResult(p store.PublishedApplication, syncPolicy string) map[stri
 		result["group"] = p.Group
 	}
 	return result
+}
+
+func packageEcosystemNames(raw string) []string {
+	sources, _ := publishing.ParsePackageSources(raw)
+	names := make([]string, 0, len(sources))
+	for _, s := range sources {
+		names = append(names, s.Ecosystem)
+	}
+	return names
 }

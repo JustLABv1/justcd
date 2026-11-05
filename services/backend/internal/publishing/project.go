@@ -87,6 +87,10 @@ type Config struct {
 	TemplateParameters string `json:"templateParameters,omitempty"`
 	// TemplateFiles are the resolved files of that version; never persisted.
 	TemplateFiles *TemplateFileSet `json:"-"`
+	// PackageSources is a JSON list of mirrors for package managers; see packages.go.
+	PackageSources string `json:"packageSources,omitempty"`
+	// PackagePolicy is empty or "enforce" (reject uploads naming other sources).
+	PackagePolicy string `json:"packagePolicy,omitempty"`
 	// Port is the container port; zero selects the runtime default.
 	Port int `json:"port,omitempty"`
 	// Layout holds the upload rules of a template that defines its own.
@@ -136,6 +140,9 @@ func (c Config) Validate() error {
 	}
 	if c.Port < 0 || c.Port > 65535 {
 		return errors.New("container port is invalid")
+	}
+	if err := ValidatePackageSources(c.PackageSources, c.PackagePolicy); err != nil {
+		return err
 	}
 	if !safePath(c.EntryPoint) || !filePattern.MatchString(c.EntryPoint) {
 		return errors.New("entry point must be a relative application path without spaces")
@@ -355,6 +362,9 @@ func Generate(c Config, source []File) ([]File, error) {
 		return nil, err
 	}
 	source = normalized
+	if err := CheckPackageSources(c, source); err != nil {
+		return nil, err
+	}
 	has := func(p string) bool {
 		for _, f := range source {
 			if f.Path == "source/"+p {
@@ -370,6 +380,9 @@ func Generate(c Config, source []File) ([]File, error) {
 	}
 	for _, p := range TemplateFilePaths {
 		files = append(files, File{Path: p, Content: rendered[p], Encoding: "text"})
+	}
+	if script := rendered[FilePackageSources]; script != "" {
+		files = append(files, File{Path: FilePackageSources, Content: script, Encoding: "text"})
 	}
 	files = append(files, File{Path: "deploy/.gitkeep", Content: "", Encoding: "text"})
 	return files, nil

@@ -9,6 +9,7 @@ import { Disclosure } from "@/components/ui/collapsible"
 import { FormSelect } from "@/components/ui/form-select"
 import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
 import { Badge } from "@/components/reui/badge"
+import { FeatureCard } from "@/components/feature-card"
 import { FormField, Panel, SwitchField } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { api, apiPost } from "@/lib/api"
@@ -454,6 +455,11 @@ function ProfileEditor({
   async function save(event: React.FormEvent) {
     event.preventDefault()
     if (busy) return
+    const missing = [...missingBuild, ...missingAccess]
+    if (missing.length) {
+      setError(new Error(`Complete the required settings: ${missing.join(", ")}.`))
+      return
+    }
     setBusy(true)
     setError(null)
     try {
@@ -549,6 +555,27 @@ function ProfileEditor({
       return !!value && value !== "route" && value !== "hosts"
     })
   const domainSet = !!settings.hostSuffix
+  const blank = (key: keyof PublishingProfileSettings) =>
+    !String(settings[key] ?? "").trim()
+  const missingBuild = [
+    blank("gitlabUrl") && "GitLab URL",
+    blank("group") && "GitLab group",
+    settings.templateId !== "static" && blank("baseImage") && "runtime image",
+    (settings.templateId === "python-static" || settings.templateId === "static") &&
+      blank("webServerImage") && "web server image",
+    blank("builderImage") && "CI builder image",
+    blank("registryPrefix") && "registry prefix",
+  ].filter(Boolean) as string[]
+  const needSecrets = !profile && !copyFrom
+  const missingAccess = [
+    settings.secretMode === "vault" && blank("vaultAddress") && "Vault URL",
+    settings.secretMode === "vault" && blank("vaultRole") && "Vault JWT role",
+    settings.secretMode === "vault" && blank("vaultPath") && "KV v2 secret path",
+    needSecrets && !secrets.gitlabToken && "GitLab provisioning token",
+    needSecrets && !secrets.gitReadToken && "Git read token",
+    needSecrets && settings.secretMode !== "vault" && !secrets.registryUser && "registry username",
+    needSecrets && settings.secretMode !== "vault" && !secrets.registryPassword && "registry push token",
+  ].filter(Boolean) as string[]
   return (
     <form onSubmit={save} className="space-y-5">
       <Panel
@@ -758,166 +785,196 @@ function ProfileEditor({
         </Panel>
         <PublishingServicesEditor value={settings.serviceCatalog ?? ""} onChange={serviceCatalog => patch({ serviceCatalog })} />
         <Panel
-          title="Source and build"
-          description="GitLab location, images and registry used to build applications."
+          title="Build and credentials"
+          description="Select a card to review or change its settings. Secret values are encrypted and never returned to the browser."
         >
-          <div className="grid gap-4 p-5 md:grid-cols-2">
-            {field(
-              "gitlabUrl",
-              "GitLab URL",
-              "HTTPS origin.",
-              true,
-              "https://gitlab.example.com"
-            )}
-            {field(
-              "group",
-              "GitLab group",
-              "Private projects are created in this group.",
-              true,
-              "analytics/apps"
-            )}
-            {settings.templateId !== "static" &&
-              field(
-                "baseImage",
-                settings.templateId === "python-static"
-                  ? "Python build image"
-                  : "Application runtime image",
-                "Approved image with native dependencies and internal certificate trust."
-              )}
-            {(settings.templateId === "python-static" ||
-              settings.templateId === "static") &&
-              field(
-                "webServerImage",
-                "Static web server image",
-                "Unprivileged NGINX-compatible image: port 8080, UID 1001, OpenShift arbitrary UIDs."
-              )}
-            <FormField
-              label="Build engine"
-              htmlFor="profile-build-engine"
-              hint="The engine provided by your CI builder image."
+          <div className="grid gap-3 p-5">
+            <FeatureCard
+              id="profile-card-build"
+              title="Source and build"
+              description="GitLab location, images and registry used to build applications."
+              summary={`${settings.group || "No group yet"} · ${settings.buildEngine === "podman" ? "Podman" : "BuildKit"} · ${settings.registryPrefix || "no registry"}`}
+              attention={missingBuild.length ? "Required" : undefined}
+              sheetTitle="Source and build"
+              sheetDescription="GitLab location, images and registry used to build applications."
             >
-              <FormSelect
-                id="profile-build-engine"
-                value={settings.buildEngine || "buildkit"}
-                onValueChange={(buildEngine) => patch({ buildEngine })}
-                items={[
-                  { value: "buildkit", label: "BuildKit" },
-                  { value: "podman", label: "Podman" },
-                ]}
-              />
-            </FormField>
-            {field(
-              "builderImage",
-              "CI builder image",
-              "Podman: podman, grep, shell. BuildKit: rootless BuildKit, jq, shell."
-            )}
-            {field(
-              "registryPrefix",
-              "Registry prefix",
-              "JustCD appends /application-name and publishes image digests.",
-              true,
-              "artifactory.example.com/analytics-local"
-            )}
-          </div>
-        </Panel>
-        <Panel
-          title="Access and credentials"
-          description={
-            copyFrom
-              ? "Leave fields blank to copy credentials securely on the server. The new profile has independent credentials; changes do not affect the original."
-              : profile
-              ? "Leave fields blank to keep stored values. Analysts never receive these values."
-              : "Use service credentials scoped to the approved group and registry. Analysts never receive these values."
-          }
-        >
-          <div className="space-y-4 p-5">
-            <div className="grid gap-4 md:grid-cols-2">
-              <FormField
-                label="Registry secret storage"
-                htmlFor="profile-secret-mode"
-              >
-                <FormSelect
-                  id="profile-secret-mode"
-                  value={settings.secretMode}
-                  onValueChange={(secretMode) => patch({ secretMode })}
-                  items={[
-                    {
-                      value: "variables",
-                      label: "Protected GitLab CI/CD variables",
-                    },
-                    {
-                      value: "vault",
-                      label: "Existing Vault secret · GitLab OIDC",
-                    },
-                  ]}
-                  disabled={locked}
-                />
-              </FormField>
-              {settings.secretMode === "vault" && (
-                <>
-                  {field(
-                    "vaultAddress",
-                    "Vault URL",
-                    "GitLab must already trust this Vault server."
-                  )}
-                  {field(
-                    "vaultRole",
-                    "Vault JWT role",
-                    "Restrict to the project/group and protected main branch."
-                  )}
-                  {field(
-                    "vaultPath",
-                    "KV v2 secret path",
-                    "Secret with username and token fields.",
-                    true,
-                    "secret/data/analytics/registry"
-                  )}
-                </>
+              {missingBuild.length > 0 && (
+                <p role="alert" className="text-sm text-destructive">
+                  Still required: {missingBuild.join(", ")}.
+                </p>
               )}
-              {secret(
-                "gitlabToken",
-                "GitLab provisioning token",
-                "Creates projects, CI variables and branches, commits source, starts pipelines."
-              )}
-              {secret(
-                "gitReadToken",
-                "Git repository read token",
-                "Group token with read_repository. Rotating it updates all apps of this profile."
-              )}
-              {settings.secretMode === "variables" && (
-                <>
-                  {secret(
-                    "registryUser",
-                    "Registry username",
-                    "Service account for pushing images."
+              <div className="grid gap-4 sm:grid-cols-2">
+                {field(
+                  "gitlabUrl",
+                  "GitLab URL",
+                  "HTTPS origin.",
+                  true,
+                  "https://gitlab.example.com"
+                )}
+                {field(
+                  "group",
+                  "GitLab group",
+                  "Private projects are created in this group.",
+                  true,
+                  "analytics/apps"
+                )}
+                {settings.templateId !== "static" &&
+                  field(
+                    "baseImage",
+                    settings.templateId === "python-static"
+                      ? "Python build image"
+                      : "Application runtime image",
+                    "Approved image with native dependencies and internal certificate trust."
                   )}
-                  {secret(
-                    "registryPassword",
-                    "Registry push token",
-                    "At least eight characters, no whitespace. Stored as a masked CI variable."
+                {(settings.templateId === "python-static" ||
+                  settings.templateId === "static") &&
+                  field(
+                    "webServerImage",
+                    "Static web server image",
+                    "Unprivileged NGINX-compatible image: port 8080, UID 1001, OpenShift arbitrary UIDs."
                   )}
-                </>
+                <FormField
+                  label="Build engine"
+                  htmlFor="profile-build-engine"
+                  hint="The engine provided by your CI builder image."
+                >
+                  <FormSelect
+                    id="profile-build-engine"
+                    value={settings.buildEngine || "buildkit"}
+                    onValueChange={(buildEngine) => patch({ buildEngine })}
+                    items={[
+                      { value: "buildkit", label: "BuildKit" },
+                      { value: "podman", label: "Podman" },
+                    ]}
+                  />
+                </FormField>
+                {field(
+                  "builderImage",
+                  "CI builder image",
+                  "Podman: podman, grep, shell. BuildKit: rootless BuildKit, jq, shell."
+                )}
+                {field(
+                  "registryPrefix",
+                  "Registry prefix",
+                  "JustCD appends /application-name and publishes image digests.",
+                  true,
+                  "artifactory.example.com/analytics-local"
+                )}
+              </div>
+            </FeatureCard>
+            <FeatureCard
+              id="profile-card-access"
+              title="Access and credentials"
+              description={
+                copyFrom
+                  ? "Leave fields blank to copy credentials securely. The new profile has independent credentials."
+                  : profile
+                    ? "Leave fields blank to keep stored values. Analysts never receive these values."
+                    : "Use service credentials scoped to the approved group and registry."
+              }
+              summary={
+                settings.secretMode === "vault"
+                  ? "Registry secret from Vault"
+                  : "Protected GitLab CI/CD variables"
+              }
+              attention={missingAccess.length ? "Required" : undefined}
+              sheetTitle="Access and credentials"
+              sheetDescription="Credentials are encrypted at rest and never shown again."
+            >
+              {missingAccess.length > 0 && (
+                <p role="alert" className="text-sm text-destructive">
+                  Still required: {missingAccess.join(", ")}.
+                </p>
               )}
-            </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <FormField
+                  label="Registry secret storage"
+                  htmlFor="profile-secret-mode"
+                >
+                  <FormSelect
+                    id="profile-secret-mode"
+                    value={settings.secretMode}
+                    onValueChange={(secretMode) => patch({ secretMode })}
+                    items={[
+                      {
+                        value: "variables",
+                        label: "Protected GitLab CI/CD variables",
+                      },
+                      {
+                        value: "vault",
+                        label: "Existing Vault secret · GitLab OIDC",
+                      },
+                    ]}
+                    disabled={locked}
+                  />
+                </FormField>
+                {settings.secretMode === "vault" && (
+                  <>
+                    {field(
+                      "vaultAddress",
+                      "Vault URL",
+                      "GitLab must already trust this Vault server."
+                    )}
+                    {field(
+                      "vaultRole",
+                      "Vault JWT role",
+                      "Restrict to the project/group and protected main branch."
+                    )}
+                    {field(
+                      "vaultPath",
+                      "KV v2 secret path",
+                      "Secret with username and token fields.",
+                      true,
+                      "secret/data/analytics/registry"
+                    )}
+                  </>
+                )}
+                {secret(
+                  "gitlabToken",
+                  "GitLab provisioning token",
+                  "Creates projects, CI variables and branches, commits source, starts pipelines."
+                )}
+                {secret(
+                  "gitReadToken",
+                  "Git repository read token",
+                  "Group token with read_repository. Rotating it updates all apps of this profile."
+                )}
+                {settings.secretMode === "variables" && (
+                  <>
+                    {secret(
+                      "registryUser",
+                      "Registry username",
+                      "Service account for pushing images."
+                    )}
+                    {secret(
+                      "registryPassword",
+                      "Registry push token",
+                      "At least eight characters, no whitespace. Stored as a masked CI variable."
+                    )}
+                  </>
+                )}
+              </div>
+            </FeatureCard>
           </div>
         </Panel>
         <Panel
           title="Advanced settings"
-          description="Most profiles do not need these. Groups with values open automatically."
+          description="Most profiles do not need these. Cards with values show a Configured badge."
         >
-          <div className="space-y-3 p-5">
-            <AdvancedGroup
+          <div className="grid gap-3 p-5">
+            <FeatureCard
+              id="profile-card-routing"
               title="Routing and exposure"
-              hint="Route or Ingress, with labels and annotations. Applies when an application domain is set."
-              configured={filled(
-                "exposure",
-                "exposureLabels",
-                "exposureAnnotations",
-                "ingressClass",
-                "ingressTls"
-              )}
+              description="Route or Ingress, with labels and annotations. Applies when an application domain is set."
+              summary={
+                settings.exposure === "ingress"
+                  ? "Kubernetes Ingress"
+                  : "OpenShift Route"
+              }
+              configured={filled("exposure", "exposureLabels", "exposureAnnotations", "ingressClass", "ingressTls")}
+              sheetTitle="Routing and exposure"
             >
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-4 sm:grid-cols-2">
                 <FormField label="Publish with" htmlFor="profile-exposure">
                   <FormSelect
                     id="profile-exposure"
@@ -992,30 +1049,21 @@ function ProfileEditor({
                 </FormField>
               </div>
               {!domainSet && (
-                <p className="mt-3 text-xs text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   Set an application domain under Destination to use these.
                 </p>
               )}
-            </AdvancedGroup>
-            <AdvancedGroup
+            </FeatureCard>
+            <FeatureCard
+              id="profile-card-runner"
               title="CI runner and trust"
-              hint="Runner selection, rootless build permissions and custom certificate trust."
-              configured={filled(
-                "runnerTag",
-                "runnerServiceAccount",
-                "runnerScc",
-                "builderSetup",
-                "caVariable",
-                "gitImage"
-              )}
+              description="Runner selection, rootless build permissions and custom certificate trust."
+              summary={settings.runnerTag ? `Runner tag ${settings.runnerTag}` : "Default runner"}
+              configured={filled("runnerTag", "runnerServiceAccount", "runnerScc", "builderSetup", "caVariable", "gitImage")}
+              sheetTitle="CI runner and trust"
             >
-              <div className="grid gap-4 md:grid-cols-2">
-                {field(
-                  "runnerTag",
-                  "Runner tag",
-                  "Tag of an approved GitLab runner.",
-                  false
-                )}
+              <div className="grid gap-4 sm:grid-cols-2">
+                {field("runnerTag", "Runner tag", "Tag of an approved GitLab runner.", false)}
                 {field(
                   "caVariable",
                   "Custom CA variable",
@@ -1051,53 +1099,48 @@ function ProfileEditor({
                   false
                 )}
               </div>
-            </AdvancedGroup>
+            </FeatureCard>
             {profile && (
-              <AdvancedGroup
+              <FeatureCard
+                id="profile-card-versions"
                 title="Versions"
-                hint="Publish a revision explicitly and review published profile versions."
+                description="Publish a revision explicitly and review published profile versions."
+                summary={`Latest v${profile.currentRevision}${publishRevision ? " · new revision on save" : ""}`}
                 configured={publishRevision}
+                sheetTitle="Profile versions"
               >
-                <div className="space-y-4">
-                  <SwitchField
-                    id="profile-publish-revision"
-                    checked={publishRevision}
-                    onCheckedChange={setPublishRevision}
-                    disabled={busy}
-                    label="Publish a new revision even if nothing changed"
-                    description="Adopts updated JustCD build recipes. Existing applications stay pinned until upgraded."
-                  />
-                  {versions.map((version) => (
-                    <Disclosure
-                      key={version.revision}
-                      summary={`v${version.revision}${version.revision === profile.currentRevision ? " · latest" : ""} · ${new Date(version.createdAt).toLocaleDateString()}`}
-                    >
-                      <dl className="space-y-2 text-xs">
-                        <div>
-                          <dt className="font-medium">Recipe version</dt>
-                          <dd>{version.templateVersion}</dd>
-                        </div>
-                        {(
-                          [
-                            "baseImage",
-                            "webServerImage",
-                            "builderImage",
-                          ] as const
-                        )
-                          .filter((key) => version.settings[key])
-                          .map((key) => (
-                            <div key={key}>
-                              <dt className="font-medium">{key}</dt>
-                              <dd className="break-all text-muted-foreground">
-                                {version.settings[key]}
-                              </dd>
-                            </div>
-                          ))}
-                      </dl>
-                    </Disclosure>
-                  ))}
-                </div>
-              </AdvancedGroup>
+                <SwitchField
+                  id="profile-publish-revision"
+                  checked={publishRevision}
+                  onCheckedChange={setPublishRevision}
+                  disabled={busy}
+                  label="Publish a new revision even if nothing changed"
+                  description="Adopts updated JustCD build recipes. Existing applications stay pinned until upgraded."
+                />
+                {versions.map((version) => (
+                  <Disclosure
+                    key={version.revision}
+                    summary={`v${version.revision}${version.revision === profile.currentRevision ? " · latest" : ""} · ${new Date(version.createdAt).toLocaleDateString()}`}
+                  >
+                    <dl className="space-y-2 text-xs">
+                      <div>
+                        <dt className="font-medium">Recipe version</dt>
+                        <dd>{version.templateVersion}</dd>
+                      </div>
+                      {(["baseImage", "webServerImage", "builderImage"] as const)
+                        .filter((key) => version.settings[key])
+                        .map((key) => (
+                          <div key={key}>
+                            <dt className="font-medium">{key}</dt>
+                            <dd className="break-all text-muted-foreground">
+                              {version.settings[key]}
+                            </dd>
+                          </div>
+                        ))}
+                    </dl>
+                  </Disclosure>
+                ))}
+              </FeatureCard>
             )}
           </div>
         </Panel>
@@ -1117,38 +1160,5 @@ function ProfileEditor({
         </Button>
       </div>
     </form>
-  )
-}
-
-function AdvancedGroup({
-  title,
-  hint,
-  configured,
-  children,
-}: {
-  title: string
-  hint: string
-  configured: boolean
-  children: React.ReactNode
-}) {
-  return (
-    <div className="rounded-xl border p-4">
-      <Disclosure
-        defaultOpen={configured}
-        summary={
-          <span className="flex flex-wrap items-center gap-2">
-            {title}
-            {configured && (
-              <Badge size="sm" radius="full" variant="info-light">
-                Configured
-              </Badge>
-            )}
-          </span>
-        }
-      >
-        <p className="mb-4 text-xs leading-5 text-muted-foreground">{hint}</p>
-        {children}
-      </Disclosure>
-    </div>
   )
 }

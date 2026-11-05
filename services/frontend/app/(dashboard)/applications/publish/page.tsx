@@ -10,7 +10,7 @@ import {
   type ApplicationTemplate,
 } from "@/components/applications/template-catalog"
 import { ExistingProject } from "@/components/applications/existing-project"
-import { PublishingServicesPicker } from "@/components/applications/publishing-services"
+import { PublishingServicesPicker, servicesProblem } from "@/components/applications/publishing-services"
 import type { ServiceSelection } from "@/lib/publishing"
 import { ArchiveUpload } from "@/components/applications/archive-upload"
 import {
@@ -26,6 +26,7 @@ import { usePublishingDraft } from "@/hooks/use-publishing-draft"
 import { PublishingDraftNotice } from "@/components/applications/publishing-draft-notice"
 import { usePublishingLimits } from "@/hooks/use-publishing-limits"
 import { api } from "@/lib/api"
+import { showInvalid } from "@/components/applications/wizard"
 import {
   publishProject,
   publishingSize,
@@ -153,7 +154,13 @@ export default function PublishApplicationPage() {
   }, [workspaceId])
   async function publish(event: React.FormEvent) {
     event.preventDefault()
+    if (!showInvalid(event.currentTarget as HTMLElement)) return
     if (!file || !archiveValid || !limits || !profile || !template || busy) return
+    const serviceIssue = servicesProblem(profile.services, services, databasePassword)
+    if (serviceIssue) {
+      setError(new Error(serviceIssue))
+      return
+    }
     setBusy(true)
     setError(null)
     try {
@@ -429,7 +436,7 @@ export default function PublishApplicationPage() {
         </p>
       )}
       <PublishingDraftNotice draft={draft} />
-      <form onSubmit={publish} className="space-y-4">
+      <form onSubmit={publish} noValidate className="space-y-4">
         <fieldset
           disabled={busy || !limits || !draft.ready}
           className="min-w-0 space-y-4"

@@ -138,27 +138,7 @@ export function EmptyState({
   )
 }
 
-export function FormField({
-  label,
-  htmlFor,
-  hint,
-  error,
-  children,
-}: {
-  label: string
-  htmlFor: string
-  hint?: string
-  error?: string
-  children: ReactNode
-}) {
-  return (
-    <div className="space-y-1.5">
-      <label htmlFor={htmlFor} className="block text-sm font-medium">{label}</label>
-      {children}
-      {error ? <p role="alert" className="text-sm leading-4 text-destructive">{error}</p> : hint && <p className="text-sm leading-4 text-muted-foreground">{hint}</p>}
-    </div>
-  )
-}
+export { FormField } from "@/components/form-field"
 
 export function InlineLink({ href, children }: { href: string; children: ReactNode }) {
   return <Link href={href} className="text-sm font-medium text-primary hover:underline">{children}</Link>

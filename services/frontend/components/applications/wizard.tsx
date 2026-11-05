@@ -4,6 +4,15 @@ import { useCallback, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Stepper, StepperContent, StepperIndicator, StepperItem, StepperNav, StepperPanel, StepperSeparator, StepperTrigger } from "@/components/reui/stepper"
 
+/** Marks every failing control inline (see FormField) and focuses the first. */
+export function showInvalid(container: HTMLElement | null) {
+  const failing = [...(container?.querySelectorAll<HTMLInputElement>(":invalid") ?? [])]
+  failing.forEach((control) => control.checkValidity())
+  failing[0]?.focus()
+  failing[0]?.scrollIntoView?.({ block: "center", behavior: "smooth" })
+  return failing.length === 0
+}
+
 /**
  * Step state for multi-step forms. Every step stays mounted (hidden) so all fields
  * remain part of one <form>; validation is therefore done per step by looking for
@@ -15,11 +24,11 @@ export function useWizard(stepCount: number, idPrefix: string) {
   const invalidIn = useCallback((n: number) => document.getElementById(`${idPrefix}-step-${n}`)?.querySelector<HTMLInputElement>(":invalid") ?? null, [idPrefix])
   const next = useCallback((extraCheck?: (n: number) => boolean) => {
     const invalid = invalidIn(step)
-    if (invalid) { invalid.reportValidity?.(); return false }
+    if (invalid) { showInvalid(document.getElementById(`${idPrefix}-step-${step}`)); return false }
     if (extraCheck && !extraCheck(step)) return false
     setStep((current) => Math.min(stepCount, current + 1))
     return true
-  }, [invalidIn, step, stepCount])
+  }, [invalidIn, idPrefix, step, stepCount])
   const back = useCallback(() => setStep((current) => Math.max(1, current - 1)), [])
   /** Returns true when every step passes native validation; otherwise jumps to the first failing step. */
   const validateAll = useCallback(() => {
@@ -27,12 +36,12 @@ export function useWizard(stepCount: number, idPrefix: string) {
       const invalid = invalidIn(n)
       if (invalid) {
         setStep(n)
-        window.setTimeout(() => invalid.reportValidity?.(), 50)
+        window.setTimeout(() => showInvalid(document.getElementById(`${idPrefix}-step-${n}`)), 50)
         return false
       }
     }
     return true
-  }, [invalidIn, stepCount])
+  }, [invalidIn, idPrefix, stepCount])
   return { step, setStep, stepId, next, back, validateAll, isLast: step === stepCount }
 }
 

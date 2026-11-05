@@ -1,0 +1,10 @@
+FROM {{ .BaseImage }}
+USER 0
+WORKDIR /app
+COPY source/ /app/
+RUN {{ .PackageMount }}python -m pip install --no-cache-dir -r requirements.txt
+RUN chgrp -R 0 /app && chmod -R g=u /app
+ENV HOME=/tmp
+USER 1001
+EXPOSE {{ .Port }}
+CMD {{ json (list "python" "-m" "streamlit" "run" .EntryPoint "--server.address=0.0.0.0" (printf "--server.port=%d" .Port)) }}

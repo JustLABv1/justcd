@@ -55,7 +55,7 @@ export function Panel({
     <section className={`${surface === "flat" ? "min-w-0" : "rounded-xl border bg-card"} ${className}`}>
       {(title || action) && (
         <div className={`flex flex-wrap items-start justify-between gap-4 ${surface === "flat" ? "pb-4" : "border-b px-5 py-4"}`}>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1 basis-72">
             {title && <h2 className="text-sm font-semibold">{title}</h2>}
             {description && <p className="mt-1 text-sm leading-5 text-muted-foreground">{description}</p>}
           </div>
@@ -138,27 +138,7 @@ export function EmptyState({
   )
 }
 
-export function FormField({
-  label,
-  htmlFor,
-  hint,
-  error,
-  children,
-}: {
-  label: string
-  htmlFor: string
-  hint?: string
-  error?: string
-  children: ReactNode
-}) {
-  return (
-    <div className="space-y-1.5">
-      <label htmlFor={htmlFor} className="block text-sm font-medium">{label}</label>
-      {children}
-      {error ? <p role="alert" className="text-sm leading-4 text-destructive">{error}</p> : hint && <p className="text-sm leading-4 text-muted-foreground">{hint}</p>}
-    </div>
-  )
-}
+export { FormField } from "@/components/form-field"
 
 export function InlineLink({ href, children }: { href: string; children: ReactNode }) {
   return <Link href={href} className="text-sm font-medium text-primary hover:underline">{children}</Link>

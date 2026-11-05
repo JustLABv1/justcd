@@ -1,0 +1,18 @@
+FROM {{ .BaseImage }}
+USER 0
+WORKDIR /app
+COPY source/ /app/
+{{- if and .HasRenvLock (eq (index .Parameters "renvRestore") "missing") }}
+# renvRestore=missing: keep what the base image already provides (for example a
+# geospatial image with sf and terra) and install only the lockfile packages it lacks.
+RUN {{ .PackageMount }}R -e 'install.packages("renv", repos=Sys.getenv("R_REPOSITORY", "https://cloud.r-project.org")); lock <- renv::lockfile_read("renv.lock"); wanted <- names(lock$Packages); absent <- setdiff(wanted, rownames(installed.packages())); if (length(absent)) renv::restore(packages=absent, prompt=FALSE); stopifnot(all(wanted %in% rownames(installed.packages())))'
+{{- else if .HasRenvLock }}
+RUN {{ .PackageMount }}R -e 'install.packages("renv", repos=Sys.getenv("R_REPOSITORY", "https://cloud.r-project.org")); renv::restore(prompt=FALSE)'
+{{- else }}
+RUN {{ .PackageMount }}R -e 'p <- trimws(readLines("packages.txt")); p <- p[nzchar(p) & !startsWith(p, "#")]; install.packages(p, repos=Sys.getenv("R_REPOSITORY", "https://cloud.r-project.org")); stopifnot(all(p %in% rownames(installed.packages())))'
+{{- end }}
+RUN chgrp -R 0 /app && chmod -R g=u /app
+ENV HOME=/tmp
+USER 1001
+EXPOSE {{ .Port }}
+CMD {{ json (list "R" "-e" (printf "shiny::runApp('%s', host='0.0.0.0', port=%d)" .EntryPoint .Port)) }}

@@ -55,7 +55,7 @@ func (s *Server) shareCluster(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) shareGitSource(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		TargetWorkspaceID string  `json:"targetWorkspaceId"`
+		TargetWorkspaceID string `json:"targetWorkspaceId"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

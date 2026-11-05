@@ -125,6 +125,7 @@ func runCommand(logger *slog.Logger, args []string) error {
 		server.RunTaskWorker(ctx, executionCtx, logger)
 	})
 	lifecycle.Start(func(ctx, _ context.Context) { server.RunReviewWorker(ctx, logger) })
+	lifecycle.Start(func(ctx, _ context.Context) { server.RunPublishingWorker(ctx, logger) })
 	if telemetry.Metrics.Enabled() {
 		lifecycle.Start(func(ctx, _ context.Context) { runQueueMetrics(ctx, db, telemetry.Metrics, logger) })
 	}

@@ -8,6 +8,495 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /publishing/profiles:
+    get:
+      summary: List enabled publishing destinations without infrastructure or credentials (workspace deployer)
+      parameters:
+        - {name: workspaceId, in: query, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Profile ids, names, descriptions, template ids, destination display metadata, and sync policies}
+        '403': {description: Workspace deployer or owner required}
+  /workspaces/{workspaceID}/publishing-profiles:
+    parameters:
+      - {name: workspaceID, in: path, required: true, schema: {type: string}}
+    get:
+      summary: List workspace profile configuration without secret values (owner)
+      responses:
+        '200': {description: Full profile settings, enabled state, version and application count; credential references and ciphertext omitted}
+        '403': {description: Workspace owner required}
+    post:
+      summary: Create an administrator-configured publishing profile (owner)
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/PublishingProfileInput'}}}
+      responses:
+        '201': {description: Profile created and credentials stored encrypted}
+        '400': {description: Invalid template, settings, credentials or namespace binding}
+        '403': {description: Workspace owner and CSRF required}
+        '409': {description: Profile name already exists}
+  /workspaces/{workspaceID}/publishing-templates:
+    get:
+      summary: List application templates and their custom versions
+      description: Workspace owner only. Each item contains the built-in template and the workspace's custom versions (without file contents), newest first.
+      parameters:
+        - {name: workspaceID, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Templates with custom version metadata}
+        '403': {description: Workspace owner required}
+    post:
+      summary: Create a workspace template
+      description: Requires the workspace owner role and CSRF. Creates a custom template with its first version, either from a kind (server, static, static-build) or as a copy of any template (baseTemplate, optionally baseVersion). The template files are validated like any saved version.
+      parameters:
+        - {name: workspaceID, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, name]
+              properties:
+                id: {type: string, description: "3-40 lowercase letters, numbers and hyphens; must not match a built-in template"}
+                name: {type: string, maxLength: 80}
+                description: {type: string, maxLength: 400}
+                category: {type: string, maxLength: 40}
+                kind: {type: string, enum: [server, static, static-build]}
+                baseTemplate: {type: string, description: Copy this template instead of starting from a kind}
+                baseVersion: {type: integer, minimum: 0}
+                entryPoint: {type: string}
+                port: {type: integer, minimum: 0, maximum: 65535}
+                layout: {type: array, items: {type: object, required: [anyOf], properties: {message: {type: string}, anyOf: {type: array, items: {type: array, items: {type: string}}}}}, description: "Files an uploaded ZIP must contain; {entry} is the entry point"}
+                label: {type: string, maxLength: 100}
+      responses:
+        '201': {description: Template created with version 1}
+        '400': {description: Invalid definition or template files}
+        '403': {description: Workspace owner and CSRF required}
+        '404': {description: Base template not found}
+        '409': {description: The ID exists or the workspace has the maximum number of templates}
+  /workspaces/{workspaceID}/publishing-templates/import:
+    post:
+      summary: Import a template from an exported file
+      description: Requires the workspace owner role and CSRF. The body is a justcd.template/v1 file; the id and name query parameters override the file's values.
+      parameters:
+        - {name: workspaceID, in: path, required: true, schema: {type: string}}
+        - {name: id, in: query, schema: {type: string}}
+        - {name: name, in: query, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, required: [format, template, files], properties: {format: {type: string, enum: ["justcd.template/v1"]}, template: {type: object}, label: {type: string}, files: {type: object, additionalProperties: {type: string}}}}
+      responses:
+        '201': {description: Template imported}
+        '400': {description: Unsupported file or invalid template}
+        '409': {description: The ID exists}
+  /workspaces/{workspaceID}/publishing-templates/{templateID}:
+    put:
+      summary: Update a custom template's definition
+      description: Requires the workspace owner role and CSRF. Changes name, description, entry point, port and upload checks; the ID and kind are fixed. The latest files must still validate.
+      parameters:
+        - {name: workspaceID, in: path, required: true, schema: {type: string}}
+        - {name: templateID, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Template updated}
+        '400': {description: Invalid definition}
+        '404': {description: Not a custom template of this workspace}
+    delete:
+      summary: Delete a custom template
+      description: Requires the workspace owner role and CSRF. Fails while a profile or recorded profile revision references the template. Built-in templates cannot be deleted.
+      parameters:
+        - {name: workspaceID, in: path, required: true, schema: {type: string}}
+        - {name: templateID, in: path, required: true, schema: {type: string}}
+      responses:
+        '204': {description: Deleted with all versions}
+        '400': {description: Built-in template}
+        '404': {description: Not a custom template of this workspace}
+        '409': {description: A profile still uses the template}
+    get:
+      summary: Read a template, its built-in files and placeholders
+      description: Workspace owner only. Returns the read-only built-in files, the ordered file list, the placeholders and helper functions templates can use, and the custom versions.
+      parameters:
+        - {name: workspaceID, in: path, required: true, schema: {type: string}}
+        - {name: templateID, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Template detail}
+        '403': {description: Workspace owner required}
+        '404': {description: Unknown template}
+  /workspaces/{workspaceID}/publishing-templates/{templateID}/export:
+    get:
+      summary: Export a template version as a portable file
+      description: Workspace owner only. Returns a justcd.template/v1 document with the definition and files of the requested (default latest) version.
+      parameters:
+        - {name: workspaceID, in: path, required: true, schema: {type: string}}
+        - {name: templateID, in: path, required: true, schema: {type: string}}
+        - {name: version, in: query, schema: {type: integer, minimum: 0}}
+      responses:
+        '200': {description: Template file}
+        '404': {description: Template or version not found}
+  /workspaces/{workspaceID}/publishing-templates/{templateID}/versions/{version}:
+    get:
+      summary: Read the files of a template version
+      description: Version 0 is the built-in template. Workspace owner only.
+      parameters:
+        - {name: workspaceID, in: path, required: true, schema: {type: string}}
+        - {name: templateID, in: path, required: true, schema: {type: string}}
+        - {name: version, in: path, required: true, schema: {type: integer, minimum: 0}}
+      responses:
+        '200': {description: Template version with files}
+        '403': {description: Workspace owner required}
+        '404': {description: Template version not found}
+  /workspaces/{workspaceID}/publishing-templates/{templateID}/versions:
+    post:
+      summary: Save a new, immutable template version
+      description: Requires the workspace owner role and CSRF. The five required template files and up to ten optional .justcd/manifests/<name>.yaml files are parsed, rendered for a matrix of configurations and validated (safe manifest, digest-publishing pipeline) before the version is stored. Versions are never updated or deleted.
+      parameters:
+        - {name: workspaceID, in: path, required: true, schema: {type: string}}
+        - {name: templateID, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                label: {type: string, maxLength: 100}
+                files: {type: object, additionalProperties: {type: string}, description: "Requires Dockerfile, .gitlab-ci.yml, .justcd/deployment.yaml, .dockerignore and .justcd/README.md. Up to ten optional .justcd/manifests/name.yaml files may contain ConfigMap, NetworkPolicy, PodDisruptionBudget or HorizontalPodAutoscaler resources; they are combined into the deployment manifest."}
+      responses:
+        '201': {description: Version created (metadata without files)}
+        '400': {description: A file is missing, has a syntax error, or renders to something unsafe; the message names the problem}
+        '403': {description: Workspace owner and CSRF required}
+        '409': {description: The version could not be stored}
+  /workspaces/{workspaceID}/publishing-templates/{templateID}/preview:
+    post:
+      summary: Render template files without saving
+      description: Renders the supplied files with sample values or the settings of a profile and validates the result. Requires the workspace owner role and CSRF.
+      parameters:
+        - {name: workspaceID, in: path, required: true, schema: {type: string}}
+        - {name: templateID, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                files: {type: object, additionalProperties: {type: string}}
+                settings: {type: object, description: Optional profile settings used for the sample values}
+                services: {$ref: "#/components/schemas/PublishingServiceSelection"}
+                hasRenvLock: {type: boolean}
+      responses:
+        '200': {description: "Rendered files (field files)"}
+        '400': {description: Rendering or validation failed; the message names the problem}
+        '403': {description: Workspace owner and CSRF required}
+  /workspaces/{workspaceID}/publishing-profiles/{profileID}:
+    parameters:
+      - {name: workspaceID, in: path, required: true, schema: {type: string}}
+      - {name: profileID, in: path, required: true, schema: {type: string}}
+    put:
+      summary: Edit a profile, disable publishing, or rotate credentials (owner)
+      description: Supply the current version. Blank secret fields retain stored values. Build engines, build images, runner tags, runner service account/SCC/setup script, custom CA variable names, and image-pull secrets remain editable on in-use profiles; other infrastructure settings are immutable. Saving does not rebuild existing apps. Build-setting changes publish immutable revisions. Source uploads retain the application pin; explicit reviewed upgrades adopt newer revisions without a ZIP.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/PublishingProfileInput'}}}
+      responses:
+        '200': {description: Profile saved with incremented version; no secret values returned}
+        '403': {description: Workspace owner and CSRF required}
+        '404': {description: Profile not found in workspace}
+        '409': {description: Stale version, duplicate name or in-use infrastructure change}
+    delete:
+      summary: Delete an unused publishing profile and its private credentials (owner)
+      responses:
+        '204': {description: Profile and credentials deleted}
+        '403': {description: Workspace owner and CSRF required}
+        '409': {description: Profile or credentials are in use; disable instead}
+  /publishing/repository/inspect:
+    post:
+      summary: Inspect an owned GitLab repository at a pinned branch commit without changing it
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RepositoryPublishingInput'}
+      responses:
+        '200': {description: Commit SHA and detected Dockerfile, GitLab pipeline, and possible deployment files}
+        '400': {description: Invalid repository, branch, or profile configuration}
+        '403': {description: Workspace owner required for manual settings; deployer required for profiles}
+        '404': {description: Git source or profile not owned by this workspace}
+  /publishing/repository/plan:
+    post:
+      summary: Review create-only additions for an existing GitLab project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RepositoryPublishingInput'}
+      responses:
+        '200': {description: Proposed files and contents, prerequisites, and review hash; no repository writes}
+        '400': {description: Unsafe path, conflicting existing file, or invalid build configuration}
+  /publishing/repository:
+    post:
+      summary: Create a merge request and register a manual-sync application using the existing Git source
+      description: Recomputes the reviewed plan. Never overwrites existing files, CI variables, project settings, or the target branch. Generated build prerequisites must be configured before merging. Profile infrastructure is a bootstrap snapshot, not a managed ZIP publication.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RepositoryPublishingInput'}
+      responses:
+        '201': {description: applicationId, mergeRequestUrl, manifestPath, and CI prerequisites}
+        '409': {description: Stale review hash, existing conflicting application, or application registration failure; a registration failure may include the created merge request URL for recovery}
+        '502': {description: GitLab proposal could not be created}
+  /publishing/profiles/{profileID}/versions:
+    get:
+      summary: List immutable profile revision snapshots (workspace owner)
+      parameters:
+        - {name: profileID, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Up to 100 published revisions with settings, recipe version, and publication time; credentials excluded}
+        '403': {description: Workspace owner required}
+  /applications/{applicationID}/build-setup/preview:
+    post:
+      summary: Review a build setup change of a manually published application
+      description: Workspace owner only; not for profile-managed applications. Regenerates the Dockerfile, pipeline and package script from the stored settings plus the requested package sources and returns the settings and generated files that would change, with a hash. Nothing is committed. The GitLab token is used for the request only.
+      parameters:
+        - {name: applicationID, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [gitlabToken]
+              properties:
+                gitlabToken: {type: string, writeOnly: true}
+                packageSources: {type: string, description: JSON list of package mirrors}
+                packagePolicy: {type: string, enum: ["", enforce]}
+                templateParameters: {type: string, description: "Non-secret key=value lines for the template; omit to keep the current ones"}
+      responses:
+        '200': {description: "Plan: applicationId, sourceSha, hash, changes, images (setting changes), upToDate"}
+        '403': {description: Workspace owner required}
+        '409': {description: The application uses a profile or its repository changed}
+  /applications/{applicationID}/build-setup:
+    post:
+      summary: Apply a reviewed build setup change
+      description: Workspace owner only. Commits the reviewed files (with per-file concurrency guards), sets the package credentials as masked protected CI variables, records the settings and starts a build. The hash must match a fresh review.
+      parameters:
+        - {name: applicationID, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [gitlabToken, hash]
+              properties:
+                gitlabToken: {type: string, writeOnly: true}
+                packageSources: {type: string}
+                packagePolicy: {type: string, enum: ["", enforce]}
+                templateParameters: {type: string, description: "Non-secret key=value lines for the template; omit to keep the current ones"}
+                packageUser: {type: string, writeOnly: true}
+                packageToken: {type: string, writeOnly: true}
+                hash: {type: string}
+      responses:
+        '200': {description: applicationId and pipelineUrl}
+        '400': {description: Invalid package sources or missing package credentials}
+        '409': {description: Stale review, concurrent publication, or repository changed}
+  /applications/{applicationID}/adopt-profile:
+    post:
+      summary: Convert a manually published application to a publishing profile
+      description: Workspace owner only. Succeeds only when the application already matches the profile's destination (template, cluster, namespace, registry, hostname, secret mode, GitLab group); otherwise returns the differences. With dryRun nothing is changed. After conversion the profile's build settings are adopted through the reviewed profile update.
+      parameters:
+        - {name: applicationID, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [profileId]
+              properties:
+                profileId: {type: string}
+                dryRun: {type: boolean}
+      responses:
+        '200': {description: "profileId, profileName, compatible, applied, differences [{field, app, profile}]"}
+        '403': {description: Workspace owner required}
+        '409': {description: Already uses a profile, or the application changed}
+  /applications/{applicationID}/profile-upgrade:
+    parameters:
+      - {name: applicationID, in: path, required: true, schema: {type: string}}
+    get:
+      summary: Review a managed application's latest profile revision using source already in Git
+      description: Returns fromRevision, toRevision, sourceSha, hash, image changes, generated-file changes, and resume/upToDate flags. Read-only; requires workspace deployer access and an enabled original profile.
+      responses:
+        '200': {description: Immutable upgrade review or already-up-to-date status}
+        '403': {description: Workspace deployer, cluster access, and enabled profile required}
+        '409': {description: Application destination changed or recipe version is unsupported}
+    post:
+      summary: Apply a reviewed profile revision and start a build without a ZIP
+      description: Retains source and deployment files. Writes only generated recipes, pins the application revision, and starts CI under existing deployment policies. Stale reviews are rejected. A pending build can be reviewed again and retried after a partial failure.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, hash]
+              properties:
+                revision: {type: integer}
+                hash: {type: string}
+      responses:
+        '200': {description: applicationId, profileRevision, and pipelineUrl; retries of completed upgrades do not start another build}
+        '403': {description: Workspace deployer and enabled profile required}
+        '409': {description: Stale review, application change, or concurrent publication; refresh the upgrade review}
+        '502': {description: GitLab build could not start; application may have a pending upgraded revision}
+  /publishing/templates:
+    get:
+      summary: List supported application templates (authenticated)
+      description: With workspaceId (any workspace member) the workspace's custom templates follow the built-in ones.
+      parameters:
+        - {name: workspaceId, in: query, schema: {type: string}}
+      responses:
+        '200': {description: Built-in template definitions, plus custom ones for the workspace}
+        '403': {description: Not a member of the workspace}
+  /publishing/limits:
+    get:
+      summary: Read the active publishing archive limits (authenticated)
+      responses:
+        '200':
+          description: Configured compressed and expanded byte limits
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  archiveBytes: {type: integer, default: 104857600}
+                  expandedBytes: {type: integer, default: 524288000}
+  /publishing/validate-archive:
+    post:
+      summary: Validate a publishing ZIP without creating external resources
+      description: Requires authentication, CSRF and workspace deployer access. Accepts multipart metadata (workspaceId, config.runtime, config.entryPoint), followed by archive. Enforces publishing limits, safe paths and template layout. One enclosing folder is removed only if the normalized layout is valid. Temporary files are always removed; no repository, pipeline or application is created.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [metadata, archive]
+              properties:
+                metadata: {type: string, description: "JSON with workspaceId and config containing runtime and entryPoint."}
+                archive: {type: string, format: binary}
+      responses:
+        '200':
+          description: Archive is valid
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid: {type: boolean}
+                  rootDirectory: {type: string}
+                  fileCount: {type: integer}
+                  message: {type: string}
+        '400': {description: Invalid ZIP or layout; error explains required files and paths}
+        '403': {description: Workspace deployer access required}
+        '413': {description: Archive exceeds configured limits}
+  /publishing:
+    post:
+      summary: Create a managed application or upload a complete new source snapshot
+      description: Creates a private GitLab repository, protected CI variables or Vault references, generated build files, and a manual JustCD application. CI builds and publishes asynchronously. Workspace deployers may use an enabled administrator-configured profile with profileId, name and entryPoint. Infrastructure fields and credentials are resolved server-side and cannot be overridden. Manual configuration requires a workspace owner. Existing unrelated repositories are never adopted. On partial setup failures, retry the same archive and settings. A new source upload must supply updateApplicationId and reuse the original configuration.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [metadata, archive]
+              properties:
+                archive: {type: string, format: binary, description: ZIP archive; default 100 MiB compressed and 500 MiB expanded; limits configurable on the server}
+                metadata:
+                  type: object
+                  required: [workspaceId]
+                  oneOf:
+                    - required: [profileId]
+                    - required: [clusterId, gitlabUrl, group, gitlabToken, config]
+                  properties:
+                    databasePassword: {type: string, writeOnly: true, minLength: 16, maxLength: 1024, description: "Initial managed-database creation only. Empty or omitted generates a password; accepted only when the profile permits it. Excluded from drafts, Git and responses."}
+                    services: {$ref: "#/components/schemas/PublishingServiceSelection"}
+                    profileId: {type: string, description: Approved workspace profile; infrastructure overrides are rejected}
+                    expectedProfileRevision: {type: integer, description: Optional current revision guard for initial publishing}
+                    name: {type: string, description: Application name for initial profile publishing}
+                    entryPoint: {type: string, description: Optional relative app entry point}
+                    buildCommand: {type: string, description: Python static website build command}
+                    outputDir: {type: string, description: Static output directory containing index.html}
+                    workspaceId: {type: string}
+                    clusterId: {type: string}
+                    updateApplicationId: {type: string}
+                    gitlabUrl: {type: string, format: uri}
+                    group: {type: string}
+                    gitlabToken: {type: string, writeOnly: true}
+                    gitReadToken: {type: string, writeOnly: true, description: Required for initial publishing; encrypted in the JustCD credential store}
+                    registryUser: {type: string, writeOnly: true}
+                    registryPassword: {type: string, writeOnly: true}
+                    packageUser: {type: string, writeOnly: true, description: "Read-only account for authenticated package mirrors"}
+                    packageToken: {type: string, writeOnly: true}
+                    config:
+                      type: object
+                      required: [name, runtime, entryPoint, builderImage, registryImage, namespace, secretMode]
+                      properties:
+                        templateId: {type: string, enum: [shiny, streamlit, shiny-geospatial, python-static, static]}
+                        name: {type: string}
+                        runtime: {type: string, enum: [shiny, streamlit, python-static, static, server]}
+                        entryPoint: {type: string}
+                        buildCommand: {type: string}
+                        outputDir: {type: string}
+                        webServerImage: {type: string, description: Required for static and python-static; unprivileged NGINX-compatible image on port 8080}
+                        baseImage: {type: string, description: Required for Shiny and Python build runtimes; unused for ready-made static websites}
+                        builderImage: {type: string}
+                        registryImage: {type: string}
+                        createNamespace: {type: boolean, default: false, description: Register a new namespace binding and provision it through the deployment flow}
+                        namespace: {type: string}
+                        host: {type: string}
+                        pullSecret: {type: string}
+                        secretMode: {type: string, enum: [variables, vault]}
+                        vaultAddress: {type: string}
+                        vaultRole: {type: string}
+                        vaultPath: {type: string}
+                        runnerTag: {type: string}
+                        exposure: {type: string, enum: [route, ingress], description: "Resource that publishes the application: OpenShift Route (default) or Kubernetes Ingress."}
+                        exposureLabels: {type: string, description: "Newline-separated key=value labels for the Route or Ingress only."}
+                        exposureAnnotations: {type: string, description: "Newline-separated key=value annotations for the Route or Ingress only."}
+                        ingressClass: {type: string, description: "Optional ingressClassName; requires exposure ingress."}
+                        ingressTls: {type: string, enum: [hosts, none], description: "Ingress TLS block: hosts (default) lists the host, none renders tls: []."}
+                        services: {type: string, description: "JSON-encoded resolved database and VaultStaticSecret configuration for manual publishing; no secret values."}
+                        templateParameters: {type: string, description: "Optional non-secret key=value lines available as .Parameters in custom templates."}
+                        packageSources: {type: string, description: "JSON list of package mirrors: [{ecosystem: pip|cran|npm|conda|apt|apk, url: https mirror, authenticated: boolean}]. Builds route that package manager through the mirror; credentials come from the package credentials (variables mode) or the Vault fields package_username and package_token."}
+                        packagePolicy: {type: string, enum: ["", enforce], description: "enforce rejects uploads that name another package index, a Git dependency or a host outside the approved sources."}
+                        templateVersion: {type: integer, minimum: 0, description: "Workspace template version used by this profile; 0 or omitted means the built-in template."}
+                        runnerServiceAccount: {type: string, description: "Optional Kubernetes-executor service account override for the build job."}
+                        runnerScc: {type: string, description: "Optional OpenShift SCC the build pod must run under (openshift.io/required-scc)."}
+                        builderSetup: {type: string, description: "Optional executable in the builder image run before the build, for example a rootless Podman entrypoint script."}
+                        gitImage: {type: string, description: "Deployment update job image containing Git and shell tools. Omitted reuses the builder image."}
+                        buildEngine: {type: string, enum: [buildkit, podman], description: "Optional build engine; omitted means BuildKit."}
+                        caVariable: {type: string, description: "Optional inherited GitLab variable containing PEM CA certificates for CI Git and the build engine."}
+      responses:
+        '201': {description: Application registered and pipeline started; returns applicationId, projectUrl, repositoryUrl, pipelineUrl, and non-secret publication configuration}
+        '400': {description: Invalid source archive, configuration or target}
+        '403': {description: Workspace owner and CSRF required}
+        '413': {description: Archive, expanded source or metadata exceeds configured limits}
+        '409': {description: Concurrent publication, unrelated existing project or settings mismatch}
+        '502': {description: GitLab setup or pipeline failure; provider secrets are not returned}
+  /applications/{applicationID}/publication:
+    parameters:
+      - {name: applicationID, in: path, required: true, schema: {type: string}}
+    get:
+      summary: Read managed publication settings for a source update (profile deployer or manual owner)
+      responses:
+        '200': {description: Publication configuration, workspaceId, and clusterId; no credentials}
+        '403': {description: Workspace owner required}
+        '404': {description: Application was not created with guided publishing}
   /workspaces/{workspaceID}/deployment-schedule:
     parameters:
       - { name: workspaceID, in: path, required: true, schema: { type: string } }
@@ -884,6 +1373,121 @@ paths:
         '409': { description: Issuer change rejected for a provider with linked users }
 components:
   schemas:
+    PublishingServiceSelection:
+      type: object
+      properties:
+        database: {type: boolean, default: false}
+        vaultSecrets: {type: array, items: {type: string}, description: Approved binding IDs from the selected profile}
+        databaseConfig:
+          type: object
+          properties:
+            name: {type: string}
+            username: {type: string}
+            envNames: {type: object, additionalProperties: {type: string}, description: "Connection field to environment-name mappings; allowed only when enabled in the profile. Empty mapping omits the field."}
+        vaultConfig:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              pathSuffix: {type: string, description: Relative path beneath the approved binding path}
+              envs:
+                type: array
+                items:
+                  type: object
+                  required: [name, key]
+                  properties:
+                    name: {type: string}
+                    key: {type: string}
+        environment:
+          type: array
+          maxItems: 30
+          description: Non-secret app configuration permitted by the profile; persisted in Git
+          items:
+            type: object
+            required: [name, value]
+            properties:
+              name: {type: string}
+              value: {type: string, maxLength: 4096}
+    PublishingProfileInput:
+      type: object
+      required: [name, enabled, settings]
+      properties:
+        name: {type: string, maxLength: 100}
+        description: {type: string, maxLength: 1000}
+        enabled: {type: boolean}
+        version: {type: integer, description: Optimistic save counter required for updates; distinct from currentRevision}
+        copyFromProfileId: {type: string, description: "Create only. Copy stored credentials from a profile in this workspace; explicit non-empty credentials override copied values. Requires workspace owner."}
+        publishRevision: {type: boolean, default: false, description: Explicitly publish a recipe revision even if settings are unchanged}
+        secrets:
+          type: object
+          writeOnly: true
+          properties:
+            gitlabToken: {type: string, writeOnly: true}
+            gitReadToken: {type: string, writeOnly: true}
+            registryUser: {type: string, writeOnly: true}
+            registryPassword: {type: string, writeOnly: true}
+            packageUser: {type: string, writeOnly: true, description: "Read-only account for authenticated package mirrors"}
+            packageToken: {type: string, writeOnly: true}
+        settings:
+          type: object
+          required: [templateId, gitlabUrl, group, clusterId, builderImage, registryPrefix, secretMode, syncPolicy]
+          properties:
+            templateId: {type: string, enum: [shiny, streamlit, shiny-geospatial, python-static, static]}
+            gitlabUrl: {type: string, format: uri}
+            group: {type: string}
+            clusterId: {type: string}
+            namespaceMode: {type: string, enum: [fixed, per-application], default: fixed}
+            namespacePrefix: {type: string, description: Required in per-application mode; non-system DNS prefix ending in a hyphen}
+            namespace: {type: string, description: Required only for fixed mode; must be empty in per-application mode}
+            webServerImage: {type: string, description: Required for static and python-static; unprivileged NGINX-compatible image on port 8080}
+            baseImage: {type: string, description: Required for Shiny and Python build runtimes; unused for ready-made static websites}
+            builderImage: {type: string}
+            registryPrefix: {type: string}
+            hostSuffix: {type: string}
+            pullSecret: {type: string}
+            runnerTag: {type: string}
+            exposure: {type: string, enum: [route, ingress], description: "Resource that publishes the application: OpenShift Route (default) or Kubernetes Ingress."}
+            exposureLabels: {type: string, description: "Newline-separated key=value labels for the Route or Ingress only."}
+            exposureAnnotations: {type: string, description: "Newline-separated key=value annotations for the Route or Ingress only."}
+            ingressClass: {type: string, description: "Optional ingressClassName; requires exposure ingress."}
+            ingressTls: {type: string, enum: [hosts, none], description: "Ingress TLS block: hosts (default) lists the host, none renders tls: []."}
+            serviceCatalog: {type: string, description: "JSON-encoded optional approved StackGres database plan and VaultStaticSecret bindings; no secret values."}
+            templateParameters: {type: string, description: "Optional non-secret key=value lines available as .Parameters in custom templates."}
+            packageSources: {type: string, description: "JSON list of package mirrors: [{ecosystem: pip|cran|npm|conda|apt|apk, url: https mirror, authenticated: boolean}]. Builds route that package manager through the mirror; credentials come from the package credentials (variables mode) or the Vault fields package_username and package_token."}
+            packagePolicy: {type: string, enum: ["", enforce], description: "enforce rejects uploads that name another package index, a Git dependency or a host outside the approved sources."}
+            templateVersion: {type: integer, minimum: 0, description: "Workspace template version used by this profile; 0 or omitted means the built-in template."}
+            runnerServiceAccount: {type: string, description: "Optional Kubernetes-executor service account override for the build job."}
+            runnerScc: {type: string, description: "Optional OpenShift SCC the build pod must run under (openshift.io/required-scc)."}
+            builderSetup: {type: string, description: "Optional executable in the builder image run before the build, for example a rootless Podman entrypoint script."}
+            gitImage: {type: string, description: "Separate Git-capable deployment update job image; omitted reuses the builder image."}
+            buildEngine: {type: string, enum: [buildkit, podman], description: "Optional build engine; omitted means BuildKit."}
+            caVariable: {type: string, description: "Optional inherited GitLab variable containing PEM CA certificates."}
+            secretMode: {type: string, enum: [variables, vault]}
+            vaultAddress: {type: string}
+            vaultRole: {type: string}
+            vaultPath: {type: string}
+            syncPolicy: {type: string, enum: [manual, auto-safe]}
+    RepositoryPublishingInput:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, sourceId, revision, appDir]
+      properties:
+        workspaceId: {type: string}
+        sourceId: {type: string, description: Existing Git source owned by this workspace; shared sources cannot be modified}
+        revision: {type: string, description: Existing branch to inspect and target}
+        appDir: {type: string, description: Repository-relative build context; use . for the root}
+        profileId: {type: string, description: Optional approved profile; restricts writes to its GitLab origin and group}
+        name: {type: string, description: App name when using a profile}
+        entryPoint: {type: string}
+        buildCommand: {type: string}
+        outputDir: {type: string}
+        gitlabToken: {type: string, writeOnly: true, description: Manual setup only; API token used for this request and never persisted}
+        clusterId: {type: string, description: Manual setup only}
+        config:
+          type: object
+          description: Manual publishing Config; same fields as ZIP publishing. Unused base or builder images may be omitted when reusing existing builds.
+        image: {type: string, description: Required when keeping existing CI; immutable registry image reference with sha256 digest}
+        planHash: {type: string, description: Required for creation; hash returned by the unchanged reviewed plan}
     DeploymentWindow:
       type: object
       additionalProperties: false

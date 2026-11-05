@@ -256,10 +256,63 @@ function csrfToken() {
   return match ? decodeURIComponent(match[1]) : ""
 }
 
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+// XHR provides upload progress; response/error decoding remains shared with api().
+function uploadResponse(
+  path: string,
+  method: string,
+  headers: Headers,
+  body: FormData,
+  onProgress: (percent: number) => void,
+  signal?: AbortSignal | null
+): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new DOMException("Upload aborted", "AbortError")); return }
+    const xhr = new XMLHttpRequest()
+    const abort = () => xhr.abort()
+    signal?.addEventListener("abort", abort, { once: true })
+    xhr.onloadend = () => signal?.removeEventListener("abort", abort)
+    xhr.open(method, path)
+    headers.forEach((value, key) => xhr.setRequestHeader(key, value))
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable)
+        onProgress(
+          Math.min(99, Math.floor((event.loaded / event.total) * 100))
+        )
+    }
+    xhr.upload.onload = () => onProgress(100)
+    xhr.onload = () =>
+      resolve(
+        new Response(xhr.status === 204 ? null : xhr.responseText, {
+          status: xhr.status,
+          statusText: xhr.statusText,
+          headers: {
+            "content-type": xhr.getResponseHeader("content-type") ?? "",
+          },
+        })
+      )
+    xhr.onerror = () =>
+      reject(
+        new Error(
+          "The upload connection was interrupted. Check the application's publishing status before retrying."
+        )
+      )
+    xhr.onabort = () => reject(new DOMException("Upload aborted", "AbortError"))
+    xhr.send(body)
+  })
+}
+
+export async function api<T>(
+  path: string,
+  init: RequestInit = {},
+  onUploadProgress?: (percent: number) => void
+): Promise<T> {
   const method = (init.method ?? "GET").toUpperCase()
   const headers = new Headers(init.headers)
-  if (init.body && !headers.has("content-type"))
+  if (
+    init.body &&
+    !(init.body instanceof FormData) &&
+    !headers.has("content-type")
+  )
     headers.set("content-type", "application/json")
   if (method !== "GET" && method !== "HEAD") {
     const csrf = csrfToken()
@@ -267,15 +320,26 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   let response: Response
   try {
-    response = await fetch(path, {
-      ...init,
-      headers,
-      cache: "no-store",
-      credentials: "same-origin",
-    })
+    response =
+      onUploadProgress && init.body instanceof FormData
+        ? await uploadResponse(
+            path,
+            method,
+            headers,
+            init.body,
+            onUploadProgress,
+            init.signal
+          )
+        : await fetch(path, {
+            ...init,
+            headers,
+            cache: "no-store",
+            credentials: "same-origin",
+          })
   } catch (cause) {
     if (cause instanceof Error && cause.name === "AbortError") throw cause
-    if (typeof window !== "undefined") window.dispatchEvent(new Event("justcd:service-unavailable"))
+    if (typeof window !== "undefined")
+      window.dispatchEvent(new Event("justcd:service-unavailable"))
     throw new APIError(
       errorMessage(cause),
       0,
@@ -310,7 +374,8 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     )
   }
   if (!response.ok) {
-    if (response.status >= 500 && typeof window !== "undefined") window.dispatchEvent(new Event("justcd:service-unavailable"))
+    if (response.status >= 500 && typeof window !== "undefined")
+      window.dispatchEvent(new Event("justcd:service-unavailable"))
     const message =
       typeof payload === "object" && payload && "error" in payload
         ? String((payload as { error: unknown }).error)

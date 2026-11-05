@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/justlab/justcd/services/backend/internal/publishing"
 	"github.com/justlab/justcd/services/backend/internal/security"
 )
 
@@ -22,6 +23,8 @@ type Config struct {
 	ShutdownGracePeriod time.Duration
 	FrontendURL         string
 	Observability       Observability
+	PublishingLimits    publishing.Limits
+	PublishingTempDir   string
 }
 
 type Observability struct {
@@ -67,6 +70,15 @@ func Load() (Config, error) {
 	if err != nil || cfg.ShutdownGracePeriod < time.Second || cfg.ShutdownGracePeriod > 10*time.Minute {
 		return Config{}, errors.New("JUSTCD_SHUTDOWN_GRACE_PERIOD must be between one second and ten minutes")
 	}
+	cfg.PublishingLimits.ArchiveBytes, err = publishingSize("JUSTCD_PUBLISH_MAX_ARCHIVE_MIB", publishing.DefaultMaxArchive)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.PublishingLimits.ExpandedBytes, err = publishingSize("JUSTCD_PUBLISH_MAX_EXPANDED_MIB", publishing.DefaultMaxSource)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.PublishingTempDir = strings.TrimSpace(os.Getenv("JUSTCD_PUBLISH_TEMP_DIR"))
 	cfg.Observability.MetricsEnabled, err = boolValue("JUSTCD_METRICS_ENABLED", false)
 	if err != nil {
 		return Config{}, err
@@ -108,4 +120,16 @@ func value(name, fallback string) string {
 func secureOrigin(raw string) bool {
 	u, err := url.Parse(raw)
 	return err == nil && u.Scheme == "https" && u.Hostname() != "" && u.User == nil && u.RawQuery == "" && u.Fragment == "" && u.Path == ""
+}
+
+func publishingSize(name string, fallback int64) (int64, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback, nil
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n < 1 || n > 10240 {
+		return 0, errors.New(name + " must be an integer between 1 and 10240 MiB")
+	}
+	return n << 20, nil
 }

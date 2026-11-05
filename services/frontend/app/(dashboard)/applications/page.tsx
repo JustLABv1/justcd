@@ -23,11 +23,9 @@ export default function ApplicationsPage() {
 }
 
 function ApplicationsContent() {
-  const { workspaces, applications, loading, error, refresh, updateApplication } = useWorkspace({
-    includeAllApplications: true,
-  })
+  const { workspaces, applications, loading, error, refresh, updateApplication } = useWorkspace()
   const { workspaceId } = useWorkspaceSelection()
-  const clusterStatuses = useClusterStatuses(workspaces.map((workspace) => workspace.id))
+  const clusterStatuses = useClusterStatuses(workspaces.filter((workspace) => workspace.id === workspaceId).map((workspace) => workspace.id))
   const searchParams = useSearchParams()
   const initialFilter = ["attention", "synced", "other", "paused"].includes(
     searchParams.get("status") ?? ""
@@ -37,12 +35,13 @@ function ApplicationsContent() {
   const renderHeader = (viewMenu?: ReactNode) => (
       <PageHeading
         title="Applications"
-        description="Deployments across your workspaces, from Git revision to running workload."
+        description="Deployments in the selected workspace, from Git revision to running workload."
         actions={<div className="flex flex-wrap items-center gap-2">{viewMenu}<ActionMenu
           label="New"
           variant="default"
           icon={Add01Icon}
           items={[
+            { label: "From a template", icon: Add01Icon, href: workspaceId ? `/applications/publish?workspaceId=${encodeURIComponent(workspaceId)}` : "/applications/publish" },
             { label: "New application", icon: Add01Icon, href: workspaceId ? `/applications/new?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces" },
             { label: "New deployment group", icon: Layers01Icon, href: workspaceId ? `/application-groups/new?workspaceId=${encodeURIComponent(workspaceId)}` : "/workspaces" },
           ]}
@@ -57,7 +56,7 @@ function ApplicationsContent() {
         <>{renderHeader()}<CollectionSkeleton /></>
       ) : (
         <ApplicationCollection
-          key={initialFilter}
+          key={`${workspaceId}:${initialFilter}`}
           renderHeader={renderHeader}
           initialFilter={initialFilter}
           applications={applications}

@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vendored PanelUI registry source (components/panelui); re-added with the
+    // shadcn CLI, so it is not edited or linted here.
+    "components/panelui/**",
   ]),
   {
     files: ["components/reui/**/*.{ts,tsx}"],

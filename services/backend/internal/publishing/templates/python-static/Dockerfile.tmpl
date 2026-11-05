@@ -1,0 +1,12 @@
+FROM {{ .BaseImage }} AS site-build
+USER 0
+WORKDIR /app
+COPY source/ /app/
+RUN {{ .PackageMount }}if [ -f requirements.txt ]; then python -m pip install --no-cache-dir -r requirements.txt; fi
+RUN {{ json (list "sh" "-c" .BuildCommand) }}
+RUN {{ json (list "python" "-c" .StaticOutputScript .OutputDir "/justcd-site") }}
+
+FROM {{ .WebServerImage }} AS site-runtime
+COPY --from=site-build /justcd-site/ /usr/share/nginx/html/
+USER 1001
+EXPOSE {{ .Port }}

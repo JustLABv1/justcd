@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import { ProfileVersionBadge } from "@/components/applications/profile-version-notice"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { StarIcon, Tag01Icon, ViewIcon as SavedViewIcon, Tick02Icon, Add01Icon } from "@hugeicons/core-free-icons"
 import { ApplicationLabelsDialog } from "@/components/application-labels-dialog"
@@ -86,6 +87,11 @@ const checkSources = (app: WorkspaceApplication) => app.statusIssues.map((issue)
 
 const classify = (app: WorkspaceApplication): StatusBucket => needsAttention(app) ? "attention" : isApplicationHealthy(app) ? "synced" : "other"
 const levelRank: Record<HealthLevel, number> = { critical: 0, warning: 1, unknown: 2, healthy: 3 }
+// Publishing metadata has dedicated profile badges; keep raw IDs out of summaries.
+function summaryLabels(app: WorkspaceApplication) {
+  return Object.entries(app.labels ?? {}).filter(([key]) => key !== "justcd.io/published" && key !== "justcd.io/publishing-profile").sort(([a], [b]) => a.localeCompare(b))
+}
+
 const rendererLabel = { helm: "Helm", kustomize: "Kustomize", yaml: "Plain YAML" } as const
 
 function Dot({ level }: { level: HealthLevel }) {
@@ -106,6 +112,7 @@ export function ApplicationCard({
   favorite?: boolean; favoriteBusy?: boolean; onFavorite?: () => void; onEditLabels?: () => void
   showCluster?: boolean; clusterLevel?: HealthLevel; blockedBy?: ConnectionHealth; now?: number
 }) {
+  const labels = summaryLabels(app)
   const namespaces = app.namespaces.map((item) => item.namespace).join(", ") || "No namespace"
   const revision = /^[a-f0-9]{40}$|^[a-f0-9]{64}$/i.test(app.revision) ? app.revision.slice(0, 8) : app.revision
   const reason = reasonFor(app, blockedBy)
@@ -125,12 +132,13 @@ export function ApplicationCard({
         <div className="flex shrink-0 items-center gap-1">{onFavorite && <FavoriteButton name={app.name} favorite={Boolean(favorite)} busy={favoriteBusy} onClick={onFavorite} />}<ApplicationActions app={app} canManage={Boolean(canManage)} onDeleted={onDeleted} onEditLabels={onEditLabels} /></div>
       </header>
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
-        <span title="Delivery state"><StatusBadge status={app.health} /></span>
-        <span title="Runtime state"><StatusBadge status={app.healthCondition?.status ?? "Unknown"} /></span>
+        <span title="Delivery state" className="inline-flex"><StatusBadge status={app.health} /></span>
+        <span title="Runtime state" className="inline-flex"><StatusBadge status={app.healthCondition?.status ?? "Unknown"} /></span>
         {app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}
+        <ProfileVersionBadge application={app} />
         {app.configurationMissing && <Badge variant="destructive-light" radius="full">Definition missing</Badge>}
       </div>
-      {Object.keys(app.labels ?? {}).length > 0 && <div aria-label="Application labels" className="mt-2 flex flex-wrap gap-1">{Object.entries(app.labels ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => <Badge key={key} variant="outline" className="max-w-full truncate text-xs" title={`${key}=${value}`}>{key}{value && <>: {value}</>}</Badge>)}</div>}
+      {labels.length > 0 && <div aria-label="Application labels" className="mt-2 flex flex-wrap gap-1">{labels.map(([key, value]) => <Badge key={key} variant="outline" className="max-w-full truncate text-xs" title={`${key}=${value}`}>{key}{value && <>: {value}</>}</Badge>)}</div>}
       {reason && (
         <p className={`mt-2 line-clamp-2 text-sm ${reason.blocked ? "text-muted-foreground" : "text-warning-foreground dark:text-warning"}`} title={app.statusIssues?.map((issue) => issue.summary).join("\n") || reason.text}>
           {reason.text}{app.statusIssues?.length > 0 && !reason.blocked && <> · <span className="text-muted-foreground">{checkSources(app)} check failed</span></>}
@@ -433,9 +441,10 @@ export function ApplicationCollection({
         const reason = reasonFor(app, blocked?.level === "critical" && blocked.affectedApplications.some((item) => item.id === app.id) ? blocked : undefined)
         return (
           <div className="space-y-1.5">
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               <StatusBadge status={app.health} /><StatusBadge status={app.healthCondition?.status ?? "Unknown"} />
               {app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}
+              <ProfileVersionBadge application={app} />
               {app.configurationMissing && <Badge variant="destructive-light" radius="full">Definition missing</Badge>}
             </div>
             {reason && <p className="line-clamp-2 text-xs text-muted-foreground" title={reason.text}>{reason.text}</p>}
@@ -447,7 +456,7 @@ export function ApplicationCollection({
       id: "cluster", title: "Cluster", size: 160,
       cell: (app: WorkspaceApplication) => <span className="flex items-center gap-1.5 truncate text-xs font-medium" title={`${app.clusterName || app.clusterId} (${app.clusterId})`}><Dot level={clusters.get(app.clusterId)?.health.level ?? "unknown"} />{app.clusterName || app.clusterId}</span>,
     }] : []),
-    { id: "labels", title: "Labels", size: 200, cell: app => { const text = Object.entries(app.labels ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}=${value}`).join(" · "); return <span className="block truncate text-xs text-muted-foreground" title={text}>{text || "—"}</span> } },
+    { id: "labels", title: "Labels", size: 200, cell: app => { const text = summaryLabels(app).map(([key, value]) => `${key}=${value}`).join(" · "); return <span className="block truncate text-xs text-muted-foreground" title={text}>{text || "—"}</span> } },
     { id: "target", title: "Namespace", size: 150, cell: (app) => <span className="block truncate text-xs">{app.namespaces.map((item) => item.namespace).join(", ") || "—"}</span> },
     { id: "revision", title: "Revision", size: 120, cell: (app) => <span className="block truncate font-mono text-xs">{app.revision}</span> },
     {
@@ -520,7 +529,7 @@ export function ApplicationCollection({
             value={clusterFilter}
             onValueChange={setClusterFilter}
           />}
-          <Filters fields={filterFields} query={filterQuery} onQueryChange={setFilterQuery} size="sm" className="min-w-0 flex-1" />
+          <Filters fields={filterFields} query={filterQuery} onQueryChange={setFilterQuery} size="sm" className="min-w-40 flex-[1_1_12rem]" />
           <FormSelect
             ariaLabel="Group applications"
             value={groupBy}

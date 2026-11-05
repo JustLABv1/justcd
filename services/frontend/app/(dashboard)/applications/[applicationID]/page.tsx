@@ -1,5 +1,8 @@
 "use client"
 
+import { PublishingProgress, usePublication } from "@/components/applications/publishing-progress"
+import { isPublishingInProgress } from "@/lib/publishing-status"
+import { Badge } from "@/components/reui/badge"
 import { AIAssistant } from "@/components/ai-assistant"
 import { DeploymentScheduleNotice } from "@/components/deployment-schedule-notice"
 import { DeploymentSchedulePanel, ScheduledOperationActions } from "@/components/deployment-schedule"
@@ -7,8 +10,9 @@ import { useParams, useRouter } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Edit02Icon, PauseIcon, RefreshIcon, TestTubeIcon } from "@hugeicons/core-free-icons"
+import { ArrowDataTransferHorizontalIcon, Edit02Icon, PauseIcon, RefreshIcon, TestTubeIcon, Upload01Icon, Wrench01Icon } from "@hugeicons/core-free-icons"
 import { ActionMenu } from "@/components/action-menu"
+import { ConvertToProfileDialog } from "@/components/applications/convert-to-profile"
 import { ActivityTab } from "@/components/application/activity-tab"
 import { AttentionBar } from "@/components/application/attention-bar"
 import { ChangesTab } from "@/components/application/changes-tab"
@@ -43,9 +47,12 @@ export default function ApplicationDetailPage() {
   const toast = useToast()
   const [application, setApplication] = useState<Application | null>(null)
   const [branchTestOpen, setBranchTestOpen] = useState(false)
+  const [convertOpen, setConvertOpen] = useState(false)
   const [kustomization, setKustomization] = useState<{ namespace: string; commit: string } | null>(null)
   const [kustomizationError, setKustomizationError] = useState<unknown | null>(null)
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
+  const { publication, failed: publicationFailed } = usePublication(application?.labels?.["justcd.io/published"] === "true" && (workspace?.role === "owner" || workspace?.role === "deployer") ? application.id : undefined)
+  const publishingInProgress = isPublishingInProgress(publication)
   const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMember[]>([])
   const [plans, setPlans] = useState<PlanRecord[]>([])
   const [activePlan, setActivePlan] = useState<PlanRecord | null>(null)
@@ -122,7 +129,7 @@ export default function ApplicationDetailPage() {
       const value = new URLSearchParams(window.location.search).get("tab")
       const viewParam = new URLSearchParams(window.location.search).get("view")
       setTopologyView(value === "components" || viewParam === "list" ? "list" : viewParam === "graph" ? "graph" : "overview")
-      setActiveTab(value === "components" ? "topology" : ["overview", "topology", "changes", "activity", "pull-requests", "settings"].includes(value ?? "") ? value! : "overview")
+      setActiveTab(value === "components" ? "topology" : ["overview", "topology", "changes", "activity", "pull-requests", "publishing", "settings"].includes(value ?? "") ? value! : "overview")
     }
     readTab()
     window.addEventListener("popstate", readTab)
@@ -705,6 +712,9 @@ export default function ApplicationDetailPage() {
 
   const canDeploy = workspace?.role === "owner" || workspace?.role === "deployer"
   const canApprove = workspace?.role === "owner"
+  const canUploadSource = canDeploy && application?.labels?.["justcd.io/published"] === "true" && (canApprove || !!application.labels?.["justcd.io/publishing-profile"])
+  // Published by hand: JustCD generated its build files but no profile manages them.
+  const manualPublication = application?.labels?.["justcd.io/published"] === "true" && !application.labels?.["justcd.io/publishing-profile"]
   const claimableConflictKeys = ownershipConflicts.filter((item) => isClaimable(item, applicationID)).map((item) => diffId(item.identity))
 
   const requiredApprovals = activePlan ? activePlan.plan.requiredApprovals ?? (activePlan.plan.requiresApproval ? 1 : 0) : 0
@@ -744,10 +754,15 @@ export default function ApplicationDetailPage() {
           <TooltipContent>Choose a namespace override before refreshing the plan</TooltipContent>
         </Tooltip>
         : <Button loading={pendingAction === "create-plan"} loadingText="Calculating plan…" onClick={() => void createPlan()} disabled={createPlanDisabled}><HugeiconsIcon icon={RefreshIcon} strokeWidth={1.8} aria-hidden="true" />Refresh plan</Button>}
-      {canApprove && <ActionMenu label="More actions" items={[
-        ...(!application.decommissioning && !application.repositoryConfigurationId ? [{ label: "Edit application", icon: Edit02Icon, disabled: busy || hasPendingOperation || Boolean(application.branchTest), onSelect: () => router.push(`/applications/${applicationID}/edit`) }] : []),
-        ...(!application.branchTest ? [{ label: "Test branch…", icon: TestTubeIcon, disabled: busy || hasPendingOperation || application.decommissioning || Boolean(application.configurationMissing) || Boolean(application.rollbackResumeAvailable) || Boolean(application.applicationGroupId), onSelect: () => setBranchTestOpen(true) }] : []),
-        ...(!application.autoSyncPaused ? [{ label: "Pause auto-sync", icon: PauseIcon, separatorBefore: true, disabled: busy || hasPendingOperation, onSelect: () => void pauseSync() }] : []),
+      {(canApprove || canUploadSource) && <ActionMenu label="More actions" items={[
+        ...(canUploadSource ? [{ label: "Upload new version", icon: Upload01Icon, disabled: busy || application.decommissioning, onSelect: () => router.push(`/applications/${applicationID}/publish`) }] : []),
+        ...(canApprove && manualPublication && !application.decommissioning ? [
+          { label: "Update build setup", icon: Wrench01Icon, disabled: busy, onSelect: () => router.push(`/applications/${applicationID}/build-setup`) },
+          { label: "Convert to profile…", icon: ArrowDataTransferHorizontalIcon, disabled: busy || hasPendingOperation, onSelect: () => setConvertOpen(true) },
+        ] : []),
+        ...(canApprove && !application.decommissioning && !application.repositoryConfigurationId ? [{ label: "Edit application", icon: Edit02Icon, disabled: busy || hasPendingOperation || Boolean(application.branchTest), onSelect: () => router.push(`/applications/${applicationID}/edit`) }] : []),
+        ...(canApprove && !application.branchTest ? [{ label: "Test branch…", icon: TestTubeIcon, disabled: busy || hasPendingOperation || application.decommissioning || Boolean(application.configurationMissing) || Boolean(application.rollbackResumeAvailable) || Boolean(application.applicationGroupId), onSelect: () => setBranchTestOpen(true) }] : []),
+        ...(canApprove && !application.autoSyncPaused ? [{ label: "Pause auto-sync", icon: PauseIcon, separatorBefore: true, disabled: busy || hasPendingOperation, onSelect: () => void pauseSync() }] : []),
       ]} />}
     </>} />
     <BackgroundTaskStatus tasks={backgroundTasks.tasks} operations={operations} error={backgroundTasks.error} onRefresh={() => void backgroundTasks.refresh()} />
@@ -769,13 +784,15 @@ export default function ApplicationDetailPage() {
             { id: "topology", label: "Resources", count: pendingData.topology ? undefined : topology ? applicationResourceNodes(topology).length : undefined },
             { id: "changes", label: "Changes", count: pendingData.plans || plansError != null ? undefined : appStatus?.plan.state === "current" ? latestPlan!.plan.changes.length + (latestPlan?.plan.ignored?.length ?? 0) : latestPlan ? undefined : 0 },
             { id: "activity", label: "Activity" },
+            ...(application.labels?.["justcd.io/published"] === "true" && canDeploy ? [{ id: "publishing", label: "Publishing" }] : []),
             { id: "pull-requests", label: "Pull requests" },
             { id: "settings", label: "Settings" },
-          ].map((tab) => <TabsTrigger key={tab.id} value={tab.id}>
-            {tab.label}{tab.count !== undefined && <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs tabular-nums text-muted-foreground">{tab.count}</span>}
+          ].map((tab) => <TabsTrigger key={tab.id} value={tab.id} className={tab.id === "publishing" && publishingInProgress ? "text-primary" : undefined}>
+            {tab.label}{tab.id === "publishing" && publishingInProgress && <Badge variant="info-light" size="sm"><span aria-hidden="true" className="size-1.5 rounded-full bg-primary motion-safe:animate-pulse" />In progress</Badge>}{tab.count !== undefined && <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs tabular-nums text-muted-foreground">{tab.count}</span>}
           </TabsTrigger>)}
         </TabsList>}
 
+    {application && manualPublication && canApprove && <ConvertToProfileDialog open={convertOpen} onOpenChange={setConvertOpen} applicationId={application.id} workspaceId={application.workspaceId} />}
     {application && <BranchTestControls open={branchTestOpen} onOpenChange={setBranchTestOpen} application={application} canManage={canApprove} disabled={busy || hasPendingOperation} onSettings={() => selectTab("settings")} onReview={() => void createPlan()} onChanged={async (updated) => {
       if (updated.id !== applicationID) { router.push(`/applications/${updated.id}`); return }
       setApplication(updated)
@@ -788,9 +805,13 @@ export default function ApplicationDetailPage() {
     </>}
     {!loading && application && <>
         <TabsContent value="overview" className="outline-none">
-          <OverviewTab status={appStatus!} application={application} latestPlan={latestPlan} plansError={plansError} retryingPlans={retryingPlans} topology={topology} topologyError={topologyError} pending={{ topology: pendingData.topology, plans: pendingData.plans, operations: pendingData.operations }} operations={operations} operationsError={operationsError} canRefreshPlan={!createPlanDisabled} creatingPlan={pendingAction === "create-plan"} onCreatePlan={() => void createPlan()} onRetryPlans={() => void retryPlans()} onSelectTab={selectTab} />
+          <OverviewTab canUpgradeProfile={canDeploy} status={appStatus!} application={application} latestPlan={latestPlan} plansError={plansError} retryingPlans={retryingPlans} topology={topology} topologyError={topologyError} pending={{ topology: pendingData.topology, plans: pendingData.plans, operations: pendingData.operations }} operations={operations} operationsError={operationsError} canRefreshPlan={!createPlanDisabled} creatingPlan={pendingAction === "create-plan"} onCreatePlan={() => void createPlan()} onRetryPlans={() => void retryPlans()} onSelectTab={selectTab} />
           <div id="deployment-schedule" className="mt-5 scroll-mt-5"><DeploymentSchedulePanel key={application.id} scope="applications" id={application.id} canEdit={canApprove} /></div>
         </TabsContent>
+
+        {application.labels?.["justcd.io/published"] === "true" && canDeploy && <TabsContent value="publishing" className="outline-none">
+          <PublishingProgress publication={publication} failed={publicationFailed} onReview={() => selectTab("changes")} />
+        </TabsContent>}
 
         <TabsContent value="topology" className="outline-none">
       {pendingData.topology || pendingData.resources || pendingData.plans || pendingData.operations ? <SectionLoading label="Loading the resource map" /> : <>

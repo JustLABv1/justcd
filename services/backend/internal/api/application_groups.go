@@ -217,6 +217,10 @@ func (s *Server) getApplicationGroup(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, "could not load deployment targets")
 		return
 	}
+	if err := s.Store.PopulatePublishingProfileStatus(r.Context(), apps); err != nil {
+		writeStoreError(w, "could not load publishing profile versions")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"group": group, "applications": apps})
 }
 

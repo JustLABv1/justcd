@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: statistics
+  namespace: analytics
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: statistics}
+  template:
+    metadata:
+      labels: {app: statistics}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: app
+          image: JUSTCD_IMAGE_DIGEST
+          ports:
+            - {name: http, containerPort: 8501}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: '1', memory: 1Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          readinessProbe:
+            tcpSocket: {port: http}
+            initialDelaySeconds: 10
+          livenessProbe:
+            tcpSocket: {port: http}
+            initialDelaySeconds: 60
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: statistics
+  namespace: analytics
+spec:
+  selector: {app: statistics}
+  ports:
+    - {name: http, port: 80, targetPort: http}

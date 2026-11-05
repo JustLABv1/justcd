@@ -109,6 +109,12 @@ spec:
               value: {{ .Values.cookieSecure | quote }}
             - name: JUSTCD_SESSION_LIFETIME
               value: {{ .Values.sessionLifetime | quote }}
+            - name: JUSTCD_PUBLISH_MAX_ARCHIVE_MIB
+              value: {{ .Values.backend.publishing.maxArchiveMiB | quote }}
+            - name: JUSTCD_PUBLISH_MAX_EXPANDED_MIB
+              value: {{ .Values.backend.publishing.maxExpandedMiB | quote }}
+            - name: JUSTCD_PUBLISH_TEMP_DIR
+              value: {{ .Values.backend.publishing.tempDir | quote }}
             - name: JUSTCD_SHUTDOWN_GRACE_PERIOD
               value: {{ .Values.backend.shutdownGracePeriod | quote }}
             - name: JUSTCD_METRICS_ENABLED

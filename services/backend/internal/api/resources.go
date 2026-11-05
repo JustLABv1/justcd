@@ -228,6 +228,13 @@ func (s *Server) listCredentials(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, "could not load credentials")
 		return
 	}
+	visible := items[:0]
+	for _, item := range items {
+		if item.Kind != "publishing" && item.Kind != "publishing-database" {
+			visible = append(visible, item)
+		}
+	}
+	items = visible
 	for i := range items {
 		if items[i].Kind != "git-https" {
 			continue
@@ -704,6 +711,10 @@ func (s *Server) listApplications(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, "could not load applications")
 		return
 	}
+	if err = s.Store.PopulatePublishingProfileStatus(r.Context(), items); err != nil {
+		writeStoreError(w, "could not load publishing profile versions")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
@@ -716,6 +727,12 @@ func (s *Server) getApplication(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "viewer") {
 		return
 	}
+	apps := []store.Application{app}
+	if err = s.Store.PopulatePublishingProfileStatus(r.Context(), apps); err != nil {
+		writeStoreError(w, "could not load publishing profile version")
+		return
+	}
+	app = apps[0]
 	writeJSON(w, http.StatusOK, app)
 }
 

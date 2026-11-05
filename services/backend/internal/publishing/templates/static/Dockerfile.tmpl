@@ -1,0 +1,4 @@
+FROM {{ .WebServerImage }}
+COPY --chmod=0755 {{ .StaticDir }}/ /usr/share/nginx/html/
+USER 1001
+EXPOSE {{ .Port }}

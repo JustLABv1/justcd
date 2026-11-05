@@ -39,6 +39,9 @@ services:
       JUSTCD_COOKIE_SECURE: ${JUSTCD_COOKIE_SECURE:-false}
       JUSTCD_SESSION_LIFETIME: ${JUSTCD_SESSION_LIFETIME:-12h}
       JUSTCD_SHUTDOWN_GRACE_PERIOD: 30s
+      JUSTCD_PUBLISH_MAX_ARCHIVE_MIB: ${JUSTCD_PUBLISH_MAX_ARCHIVE_MIB:-100}
+      JUSTCD_PUBLISH_MAX_EXPANDED_MIB: ${JUSTCD_PUBLISH_MAX_EXPANDED_MIB:-500}
+      JUSTCD_PUBLISH_TEMP_DIR: ${JUSTCD_PUBLISH_TEMP_DIR:-}
     # Leave time for worker cancellation and cleanup after the 30s grace period.
     stop_grace_period: 1m
     healthcheck:

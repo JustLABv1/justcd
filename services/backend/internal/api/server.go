@@ -27,24 +27,25 @@ const sessionCookieName = "justcd_session"
 const csrfCookieName = "justcd_csrf"
 
 type Server struct {
-	Store         *store.Store
-	Config        config.Config
-	EncryptionKey []byte
-	Logger        *slog.Logger
-	Metrics       *observability.Metrics
-	Syncer        *syncer.Service
-	aiMu          sync.Mutex
-	aiRequests    map[string]time.Time
-	aiActive      map[string]bool
-	triageMu      sync.Mutex
-	triageRuns    map[string]*triageRun
-	triageLast    map[string]time.Time
-	triagePending map[string]triagePending
-	dummyHash     string
-	agentMu       sync.Mutex
-	agentPolls    map[string]bool
-	agentRequests map[string][]time.Time
-	Mux           *http.ServeMux
+	Store          *store.Store
+	PublishingHTTP *http.Client
+	Config         config.Config
+	EncryptionKey  []byte
+	Logger         *slog.Logger
+	Metrics        *observability.Metrics
+	Syncer         *syncer.Service
+	aiMu           sync.Mutex
+	aiRequests     map[string]time.Time
+	aiActive       map[string]bool
+	triageMu       sync.Mutex
+	triageRuns     map[string]*triageRun
+	triageLast     map[string]time.Time
+	triagePending  map[string]triagePending
+	dummyHash      string
+	agentMu        sync.Mutex
+	agentPolls     map[string]bool
+	agentRequests  map[string][]time.Time
+	Mux            *http.ServeMux
 }
 
 func New(s *store.Store, cfg config.Config, logger *slog.Logger) (*Server, error) {
@@ -145,6 +146,35 @@ func (s *Server) routes() {
 	s.Mux.Handle("PUT /api/v1/repository-configurations/{repositoryID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateRepositoryConfiguration))))
 	s.Mux.Handle("POST /api/v1/repository-configurations/{repositoryID}/reconcile", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.reconcileRepositoryConfiguration))))
 	s.Mux.Handle("GET /api/v1/git-sources", s.requireAuth(http.HandlerFunc(s.listGitSources)))
+	s.Mux.Handle("GET /api/v1/publishing/profiles/{profileID}/versions", s.requireAuth(http.HandlerFunc(s.listPublishingProfileVersions)))
+	s.Mux.Handle("POST /api/v1/applications/{applicationID}/build-setup/preview", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.previewBuildSetup))))
+	s.Mux.Handle("POST /api/v1/applications/{applicationID}/build-setup", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.applyBuildSetup))))
+	s.Mux.Handle("POST /api/v1/applications/{applicationID}/adopt-profile", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.adoptPublishingProfile))))
+	s.Mux.Handle("GET /api/v1/applications/{applicationID}/profile-upgrade", s.requireAuth(http.HandlerFunc(s.previewPublishingProfileUpgrade)))
+	s.Mux.Handle("POST /api/v1/applications/{applicationID}/profile-upgrade", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.applyPublishingProfileUpgrade))))
+	s.Mux.Handle("GET /api/v1/applications/{applicationID}/publication", s.requireAuth(http.HandlerFunc(s.getPublication)))
+	s.Mux.Handle("GET /api/v1/publishing/profiles", s.requireAuth(http.HandlerFunc(s.listApprovedPublishingProfiles)))
+	s.Mux.Handle("GET /api/v1/workspaces/{workspaceID}/publishing-profiles", s.requireAuth(http.HandlerFunc(s.listPublishingProfiles)))
+	s.Mux.Handle("POST /api/v1/workspaces/{workspaceID}/publishing-profiles", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.savePublishingProfile))))
+	s.Mux.Handle("GET /api/v1/workspaces/{workspaceID}/publishing-templates", s.requireAuth(http.HandlerFunc(s.listPublishingTemplates)))
+	s.Mux.Handle("GET /api/v1/workspaces/{workspaceID}/publishing-templates/{templateID}", s.requireAuth(http.HandlerFunc(s.getPublishingTemplate)))
+	s.Mux.Handle("POST /api/v1/workspaces/{workspaceID}/publishing-templates", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createPublishingTemplate))))
+	s.Mux.Handle("POST /api/v1/workspaces/{workspaceID}/publishing-templates/import", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.importPublishingTemplate))))
+	s.Mux.Handle("PUT /api/v1/workspaces/{workspaceID}/publishing-templates/{templateID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updatePublishingTemplate))))
+	s.Mux.Handle("DELETE /api/v1/workspaces/{workspaceID}/publishing-templates/{templateID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.deletePublishingTemplate))))
+	s.Mux.Handle("GET /api/v1/workspaces/{workspaceID}/publishing-templates/{templateID}/export", s.requireAuth(http.HandlerFunc(s.exportPublishingTemplate)))
+	s.Mux.Handle("GET /api/v1/workspaces/{workspaceID}/publishing-templates/{templateID}/versions/{version}", s.requireAuth(http.HandlerFunc(s.getPublishingTemplateVersion)))
+	s.Mux.Handle("POST /api/v1/workspaces/{workspaceID}/publishing-templates/{templateID}/versions", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createPublishingTemplateVersion))))
+	s.Mux.Handle("POST /api/v1/workspaces/{workspaceID}/publishing-templates/{templateID}/preview", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.previewPublishingTemplate))))
+	s.Mux.Handle("PUT /api/v1/workspaces/{workspaceID}/publishing-profiles/{profileID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.savePublishingProfile))))
+	s.Mux.Handle("DELETE /api/v1/workspaces/{workspaceID}/publishing-profiles/{profileID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.deletePublishingProfile))))
+	s.Mux.Handle("GET /api/v1/publishing/templates", s.requireAuth(http.HandlerFunc(s.getPublishingTemplates)))
+	s.Mux.Handle("GET /api/v1/publishing/limits", s.requireAuth(http.HandlerFunc(s.getPublishingLimits)))
+	s.Mux.Handle("POST /api/v1/publishing/repository/inspect", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.inspectPublishingRepository))))
+	s.Mux.Handle("POST /api/v1/publishing/repository/plan", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.planPublishingRepository))))
+	s.Mux.Handle("POST /api/v1/publishing/repository", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.publishRepository))))
+	s.Mux.Handle("POST /api/v1/publishing/validate-archive", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.validatePublishingArchive))))
+	s.Mux.Handle("POST /api/v1/publishing", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.publishApplication))))
 	s.Mux.Handle("POST /api/v1/git-sources", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createGitSource))))
 	s.Mux.Handle("PUT /api/v1/git-sources/{sourceID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateGitSource))))
 	s.Mux.Handle("GET /api/v1/git-sources/{sourceID}/push-webhook", s.requireAuth(http.HandlerFunc(s.getGitPushWebhook)))
@@ -226,6 +256,19 @@ func (s *Server) routes() {
 	s.Mux.HandleFunc("GET /api/v1/openapi.yaml", s.serveOpenAPI)
 }
 
+// requestBodyLimit is the largest body a write request may carry. Endpoints that
+// accept a ZIP archive (publishing and its pre-upload validation) are bounded by
+// the configured archive limit; every other write is small.
+func (s *Server) requestBodyLimit(path string) int64 {
+	switch {
+	case path == "/api/v1/publishing" || path == "/api/v1/publishing/validate-archive":
+		return s.Config.PublishingLimits.WithDefaults().ArchiveBytes + publishMultipartOverhead
+	case strings.HasPrefix(path, "/api/v1/agents/tasks/") && strings.HasSuffix(path, "/result"):
+		return 12 << 20
+	}
+	return 2 << 20
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
@@ -235,11 +278,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != "GET" && r.Method != "HEAD" && r.Method != "OPTIONS" {
-		limit := int64(2 << 20)
-		if strings.HasPrefix(r.URL.Path, "/api/v1/agents/tasks/") && strings.HasSuffix(r.URL.Path, "/result") {
-			limit = 12 << 20
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, limit)
+		r.Body = http.MaxBytesReader(w, r.Body, s.requestBodyLimit(r.URL.Path))
 	}
 	s.Mux.ServeHTTP(w, r)
 }

@@ -207,6 +207,16 @@ export type RepositoryConfiguration = {
 }
 
 export type Application = {
+  publishingProfile?: {
+    profileId: string
+    name: string
+    revision: number
+    latestRevision: number
+    updateAvailable: boolean
+    enabled: boolean
+    needsBuild: boolean
+    adoptionPending?: boolean
+  }
   labels?: Record<string, string>
   branchTest?: { mode: "existing" | "isolated"; revision: string; baseRevision: string; parentApplicationId?: string; previouslyPaused: boolean; startedAt: string }
   createNamespaces: boolean

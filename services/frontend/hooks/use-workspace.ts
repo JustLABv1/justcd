@@ -11,6 +11,8 @@ export { needsAttention, isApplicationHealthy } from "@/lib/application-status"
 
 export function useWorkspace({ includeAllApplications = false }: { includeAllApplications?: boolean } = {}) {
   const { workspaceId } = useWorkspaceSelection()
+  const scope = includeAllApplications ? "*" : workspaceId
+  const [loadedScope, setLoadedScope] = useState<string | null>(null)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [applications, setApplications] = useState<WorkspaceApplication[]>([])
   const [loading, setLoading] = useState(true)
@@ -47,9 +49,10 @@ export function useWorkspace({ includeAllApplications = false }: { includeAllApp
           setWorkspaces(result.items)
           setApplications(grouped.flat())
           setError(null)
+          setLoadedScope(scope)
         }
       } catch (cause) {
-        if (!controller.signal.aborted) setError(cause)
+        if (!controller.signal.aborted) { setError(cause); setApplications([]); setLoadedScope(scope) }
       } finally {
         if (!controller.signal.aborted) setLoading(false)
       }
@@ -62,7 +65,7 @@ export function useWorkspace({ includeAllApplications = false }: { includeAllApp
       void load().finally(() => { refreshing = false })
     }, 5000)
     return () => { controller.abort(); window.clearInterval(timer) }
-  }, [version, workspaceId, includeAllApplications])
+  }, [version, workspaceId, includeAllApplications, scope])
   const updateApplication = useCallback((app: WorkspaceApplication) => { setApplications(current => current.map(item => item.id === app.id ? { ...item, ...app } : item)) }, [])
-  return { workspaces, applications, loading, error, refresh, updateApplication }
+  return { workspaces, applications: includeAllApplications ? applications : applications.filter(app => app.workspaceId === workspaceId), loading: loading || loadedScope !== scope, error: loadedScope === scope ? error : null, refresh, updateApplication }
 }

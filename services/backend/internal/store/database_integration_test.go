@@ -150,6 +150,13 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 			t.Fatal(err)
 		}
 	}
+	if pending == 1 && files[len(files)-1] == "migrations/065_publishing_profile_versions.sql" {
+		if _, err := db.ExecContext(ctx, `INSERT INTO credentials(id,workspace_id,name,kind,secret_cipher) VALUES('migration-publishing','integration-workspace','Publishing','publishing',decode('01','hex'));
+   INSERT INTO publishing_profiles(id,workspace_id,name,settings,credential_id,git_read_credential_id) VALUES('migration-profile','integration-workspace','Profile','{"templateId":"shiny","baseImage":"registry.invalid/base:2","builderImage":"registry.invalid/builder:2"}','migration-publishing','integration-git-credential');
+   INSERT INTO published_applications(application_id,workspace_id,fingerprint,config,gitlab_url,group_path,repository_url,project_url,gitlab_project_id,profile_id) VALUES('integration-app','integration-workspace','legacy','{"baseImage":"registry.invalid/base:1","builderImage":"registry.invalid/builder:1"}','https://gitlab.invalid','apps','https://gitlab.invalid/apps/test.git','https://gitlab.invalid/apps/test',1,'migration-profile')`); err != nil {
+			t.Fatal(err)
+		}
+	}
 	s := &Store{DB: db}
 	if files[len(files)-pending] == "migrations/033_repair_plan_namespace_creations.sql" {
 		// Reproduce an installation whose ledger contains 032 but whose
@@ -163,6 +170,20 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 	}
 	if err := s.Migrate(ctx); err != nil {
 		t.Fatalf("idempotent migration: %v", err)
+	}
+	if pending == 1 && files[len(files)-1] == "migrations/065_publishing_profile_versions.sql" {
+		legacy, err := s.PublishedApplication(ctx, "integration-workspace", "https://gitlab.invalid/apps/test.git")
+		if err != nil || legacy.ProfileRevision != 1 {
+			t.Fatal("legacy publication pin not preserved", legacy, err)
+		}
+		profile, err := s.PublishingProfile(ctx, "migration-profile")
+		if err != nil || profile.CurrentRevision != 2 {
+			t.Fatal("current profile release not preserved", profile, err)
+		}
+		old, err := s.PublishingProfileVersion(ctx, "migration-profile", 1)
+		if err != nil || old.Settings.BaseImage != "registry.invalid/base:1" {
+			t.Fatal("migration changed app images", old, err)
+		}
 	}
 	testTopologyObservationPersistence(t, ctx, s)
 	if _, err := s.ListPlans(ctx, "integration-app", 20); err != nil {

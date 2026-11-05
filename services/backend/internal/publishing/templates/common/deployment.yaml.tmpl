@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: {{ .Name }}}
+  template:
+    metadata:
+      labels: {app: {{ .Name }}}
+    spec:
+      automountServiceAccountToken: false
+{{- if .PullSecret }}
+      imagePullSecrets:
+        - name: {{ .PullSecret }}
+{{- end }}
+      containers:
+        - name: app
+          image: {{ .ImagePlaceholder }}
+          ports:
+            - {name: http, containerPort: {{ .Port }}}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: '1', memory: 1Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          readinessProbe:
+            tcpSocket: {port: http}
+            initialDelaySeconds: 10
+          livenessProbe:
+            tcpSocket: {port: http}
+            initialDelaySeconds: 60
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+spec:
+  selector: {app: {{ .Name }}}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+{{- if .Host }}
+---
+{{- if eq .Exposure "ingress" }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+{{- if .ExposureLabels }}
+  labels:
+{{- range .ExposureLabels }}
+    {{ quote .Key }}: {{ quote .Value }}
+{{- end }}
+{{- end }}
+{{- if .ExposureAnnotations }}
+  annotations:
+{{- range .ExposureAnnotations }}
+    {{ quote .Key }}: {{ quote .Value }}
+{{- end }}
+{{- end }}
+spec:
+{{- if .IngressClass }}
+  ingressClassName: {{ quote .IngressClass }}
+{{- end }}
+  rules:
+    - host: {{ .Host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Name }}
+                port: {name: http}
+{{- if eq .IngressTLS "none" }}
+  tls: []
+{{- else }}
+  tls:
+    - hosts: [{{ .Host }}]
+{{- end }}
+{{- else }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+{{- if .ExposureLabels }}
+  labels:
+{{- range .ExposureLabels }}
+    {{ quote .Key }}: {{ quote .Value }}
+{{- end }}
+{{- end }}
+{{- if .ExposureAnnotations }}
+  annotations:
+{{- range .ExposureAnnotations }}
+    {{ quote .Key }}: {{ quote .Value }}
+{{- end }}
+{{- end }}
+spec:
+  host: {{ .Host }}
+  to: {kind: Service, name: {{ .Name }}}
+  port: {targetPort: http}
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+{{- end }}
+{{- end }}

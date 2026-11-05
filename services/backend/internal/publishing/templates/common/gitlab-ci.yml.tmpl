@@ -1,0 +1,211 @@
+# JustCD template v{{ .RecipeVersion }}. Builder image must support the selected engine and CI tools.
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes: [source/**/*, Dockerfile, .gitlab-ci.yml, .justcd/**/*]
+    - when: never
+stages: [build{{ if not .ManagedCompletion }}, publish{{ end }}]
+publish:
+  stage: build
+  image:
+    name: {{ quote .BuilderImage }}
+    entrypoint: [""]
+{{- if .RunnerTag }}
+  tags: [{{ quote .RunnerTag }}]
+{{- end }}
+{{- if eq .SecretMode "vault" }}
+  id_tokens:
+    VAULT_ID_TOKEN:
+      aud: {{ quote .VaultAddress }}
+  secrets:
+    REGISTRY_USER:
+      vault:
+        engine: {name: kv-v2, path: {{ quote .VaultMount }}}
+        path: {{ quote .VaultSecretPath }}
+        field: username
+      token: $VAULT_ID_TOKEN
+      file: false
+    REGISTRY_PASSWORD:
+      vault:
+        engine: {name: kv-v2, path: {{ quote .VaultMount }}}
+        path: {{ quote .VaultSecretPath }}
+        field: token
+      token: $VAULT_ID_TOKEN
+      file: false
+{{- if .PackageAuth }}
+    JUSTCD_PKG_USER:
+      vault:
+        engine: {name: kv-v2, path: {{ quote .VaultMount }}}
+        path: {{ quote .VaultSecretPath }}
+        field: package_username
+      token: $VAULT_ID_TOKEN
+      file: false
+    JUSTCD_PKG_TOKEN:
+      vault:
+        engine: {name: kv-v2, path: {{ quote .VaultMount }}}
+        path: {{ quote .VaultSecretPath }}
+        field: package_token
+      token: $VAULT_ID_TOKEN
+      file: false
+{{- end }}
+{{- end }}
+  variables:
+    GIT_DEPTH: '0'
+{{- if .RunnerServiceAccount }}
+    KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: {{ quote .RunnerServiceAccount }}
+{{- end }}
+{{- if .RunnerSCC }}
+    KUBERNETES_POD_ANNOTATIONS_1: {{ quote (printf "openshift.io/required-scc=%s" .RunnerSCC) }}
+{{- end }}
+    BUILDKITD_FLAGS: '--oci-worker-no-process-sandbox'
+    JUSTCD_IMAGE: {{ quote .RegistryImage }}
+    VAULT_SERVER_URL: {{ quote .VaultAddress }}
+    VAULT_AUTH_ROLE: {{ quote .VaultRole }}
+{{- if .BuilderSetup }}
+  before_script:
+    - {{ quote .BuilderSetup }}
+{{- end }}
+  script:
+    - |
+      set -eu
+{{- if eq .BuildEngine "podman" }}
+      for tool in podman grep cat cp mkdir; do
+{{- else }}
+      for tool in buildctl-daemonless.sh buildctl buildkitd jq; do
+{{- end }}
+        if ! command -v "$tool" >/dev/null 2>&1; then
+{{- if eq .BuildEngine "podman" }}
+          printf 'JustCD: CI builder image is missing %s. The selected Podman engine requires: podman grep cat cp mkdir. Update the publishing profile builder image or build engine and rebuild.\n' "$tool" >&2
+{{- else }}
+          printf 'JustCD: CI builder image is missing %s. The selected BuildKit engine requires: buildctl-daemonless.sh buildctl buildkitd jq. Update the publishing profile builder image or build engine and rebuild.\n' "$tool" >&2
+{{- end }}
+          exit 1
+        fi
+      done
+      test -n "$REGISTRY_USER"
+      test -n "$REGISTRY_PASSWORD"
+      export DOCKER_CONFIG="$(mktemp -d)"
+      trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+{{- if .CAVariable }}
+      # Optional platform CA, supplied as PEM text by an inherited CI variable.
+      if [ -z "${{ "{" }}{{ .CAVariable }}:-}" ]; then
+        printf 'JustCD: configured CA variable {{ .CAVariable }} is empty or unavailable. Check GitLab variable inheritance and protected-branch scope.\n' >&2
+        exit 1
+      fi
+      ca_bundle="$DOCKER_CONFIG/ca-bundle.pem"
+      system_ca=""
+      for candidate in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt; do
+        if [ -r "$candidate" ]; then system_ca="$candidate"; break; fi
+      done
+      if [ -z "$system_ca" ]; then printf 'JustCD: builder image has no supported system CA bundle.\n' >&2; exit 1; fi
+      cat "$system_ca" > "$ca_bundle"
+      printf '\n%s\n' "${{ .CAVariable }}" >> "$ca_bundle"
+      export SSL_CERT_FILE="$ca_bundle"
+      export GIT_SSL_CAINFO="$ca_bundle"
+      export CURL_CA_BUNDLE="$ca_bundle"
+      export REQUESTS_CA_BUNDLE="$ca_bundle"
+{{- end }}
+{{- if .PackageSources }}
+      # Package mirrors: credentials and sources become one build secret that only
+      # the Dockerfile's install steps mount. It is never part of an image layer.
+{{- if .PackageAuth }}
+      if [ -z "${JUSTCD_PKG_USER:-}" ] || [ -z "${JUSTCD_PKG_TOKEN:-}" ]; then
+        printf 'JustCD: the package mirrors need credentials, but JUSTCD_PKG_USER or JUSTCD_PKG_TOKEN is empty. Update the publishing profile credentials.\n' >&2
+        exit 1
+      fi
+{{- end }}
+      shq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+      pkg_file="$DOCKER_CONFIG/justcd-pkg.sh"
+      (
+        umask 077
+        {
+          printf 'JUSTCD_PKG_USER=%s\n' "$(shq "${JUSTCD_PKG_USER:-}")"
+          printf 'JUSTCD_PKG_TOKEN=%s\n' "$(shq "${JUSTCD_PKG_TOKEN:-}")"
+          cat .justcd/package-sources.sh
+        } > "$pkg_file"
+      )
+{{- end }}
+      registry="${JUSTCD_IMAGE%%/*}"
+{{- if eq .BuildEngine "podman" }}
+      export REGISTRY_AUTH_FILE="$DOCKER_CONFIG/auth.json"
+      mkdir -p "$DOCKER_CONFIG/certs"
+      if [ -n "${SSL_CERT_FILE:-}" ]; then cp "$SSL_CERT_FILE" "$DOCKER_CONFIG/certs/ca.crt"; fi
+      printf '%s' "$REGISTRY_PASSWORD" | podman login --authfile "$REGISTRY_AUTH_FILE" --cert-dir "$DOCKER_CONFIG/certs" --tls-verify=true --username "$REGISTRY_USER" --password-stdin "$registry"
+      podman build --authfile "$REGISTRY_AUTH_FILE" --cert-dir "$DOCKER_CONFIG/certs" --tls-verify=true --format docker{{ if .PackageSources }} --secret id=justcd_pkg,src="$pkg_file"{{ if .CAVariable }} --secret id=justcd_ca,src="$ca_bundle"{{ end }}{{ end }} -f Dockerfile -t "$JUSTCD_IMAGE:$CI_COMMIT_SHA" .
+      podman push --authfile "$REGISTRY_AUTH_FILE" --cert-dir "$DOCKER_CONFIG/certs" --tls-verify=true --digestfile "$DOCKER_CONFIG/digest" "$JUSTCD_IMAGE:$CI_COMMIT_SHA" "docker://$JUSTCD_IMAGE:$CI_COMMIT_SHA"
+      digest="$(cat "$DOCKER_CONFIG/digest")"
+      if ! printf '%s\n' "$digest" | grep -Eq '^sha256:[a-f0-9]{64}$'; then
+        printf 'JustCD: Podman push returned an invalid image digest.\n' >&2
+        exit 1
+      fi
+{{- else }}
+      jq -n --arg host "$registry" --arg user "$REGISTRY_USER" --arg password "$REGISTRY_PASSWORD" '{auths:{($host):{auth:(($user+":"+$password)|@base64)}}}' > "$DOCKER_CONFIG/config.json"
+      buildctl-daemonless.sh build --frontend dockerfile.v0 --local context=. --local dockerfile=.{{ if .PackageSources }} --secret id=justcd_pkg,src="$pkg_file"{{ if .CAVariable }} --secret id=justcd_ca,src="$ca_bundle"{{ end }}{{ end }} --output "type=image,name=$JUSTCD_IMAGE:$CI_COMMIT_SHA,push=true" --metadata-file /tmp/justcd-image.json
+      digest="$(jq -er '."containerimage.digest" | select(test("^sha256:[a-f0-9]{64}$"))' /tmp/justcd-image.json)"
+{{- end }}
+      mkdir -p .justcd-build
+      printf '%s\n' "$digest" > .justcd-build/image-digest
+  artifacts:
+    paths: [.justcd-build/image-digest]
+    expire_in: 1 day
+{{- if not .ManagedCompletion }}
+update-deployment:
+  stage: publish
+  resource_group: justcd-publish
+  needs:
+    - job: publish
+      artifacts: true
+  image:
+    name: {{ quote .GitImage }}
+    entrypoint: [""]
+{{- if .RunnerTag }}
+  tags: [{{ quote .RunnerTag }}]
+{{- end }}
+  variables:
+    GIT_DEPTH: '0'
+    JUSTCD_IMAGE: {{ quote .RegistryImage }}
+  script:
+    - |
+      set -eu
+      for tool in git sed grep; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+          printf 'JustCD: deployment update image is missing %s. Configure a Git-capable deployment update image in the publishing profile.\n' "$tool" >&2
+          exit 1
+        fi
+      done
+      export DOCKER_CONFIG="$(mktemp -d)"
+      trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+{{- if .CAVariable }}
+      # Optional platform CA, supplied as PEM text by an inherited CI variable.
+      if [ -z "${{ "{" }}{{ .CAVariable }}:-}" ]; then
+        printf 'JustCD: configured CA variable {{ .CAVariable }} is empty or unavailable. Check GitLab variable inheritance and protected-branch scope.\n' >&2
+        exit 1
+      fi
+      ca_bundle="$DOCKER_CONFIG/ca-bundle.pem"
+      system_ca=""
+      for candidate in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt; do
+        if [ -r "$candidate" ]; then system_ca="$candidate"; break; fi
+      done
+      if [ -z "$system_ca" ]; then printf 'JustCD: builder image has no supported system CA bundle.\n' >&2; exit 1; fi
+      cat "$system_ca" > "$ca_bundle"
+      printf '\n%s\n' "${{ .CAVariable }}" >> "$ca_bundle"
+      export SSL_CERT_FILE="$ca_bundle"
+      export GIT_SSL_CAINFO="$ca_bundle"
+      export CURL_CA_BUNDLE="$ca_bundle"
+      export REQUESTS_CA_BUNDLE="$ca_bundle"
+{{- end }}
+      digest="$(cat .justcd-build/image-digest)"
+      if ! printf '%s\n' "$digest" | grep -Eq '^sha256:[a-f0-9]{64}$'; then
+        printf 'JustCD: build artifact has an invalid image digest.\n' >&2
+        exit 1
+      fi
+      # A newer source commit must never be replaced by an older build.
+      git fetch origin "$CI_DEFAULT_BRANCH"
+      test "$(git rev-parse FETCH_HEAD)" = "$CI_COMMIT_SHA"
+      sed "s|{{ .ImagePlaceholder }}|$JUSTCD_IMAGE@$digest|g" .justcd/deployment.yaml > deploy/application.yaml
+      git config user.name 'JustCD Publisher'
+      git config user.email 'justcd@localhost'
+      git add deploy/application.yaml
+      git commit -m "Publish $CI_COMMIT_SHA [skip ci]"
+      git push "$CI_REPOSITORY_URL" "HEAD:$CI_DEFAULT_BRANCH"
+{{- end }}

@@ -1,0 +1,77 @@
+# JustCD template v1. Builder image must support the selected engine and CI tools.
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes: [source/**/*, Dockerfile, .gitlab-ci.yml, .justcd/**/*]
+    - when: never
+stages: [build, publish]
+publish:
+  stage: build
+  image:
+    name: "registry.example.com/base/builder:1"
+    entrypoint: [""]
+  variables:
+    GIT_DEPTH: '0'
+    BUILDKITD_FLAGS: '--oci-worker-no-process-sandbox'
+    JUSTCD_IMAGE: "registry.example.com/apps/statistics"
+    VAULT_SERVER_URL: ""
+    VAULT_AUTH_ROLE: ""
+  script:
+    - |
+      set -eu
+      for tool in buildctl-daemonless.sh buildctl buildkitd jq; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+          printf 'JustCD: CI builder image is missing %s. The selected BuildKit engine requires: buildctl-daemonless.sh buildctl buildkitd jq. Update the publishing profile builder image or build engine and rebuild.\n' "$tool" >&2
+          exit 1
+        fi
+      done
+      test -n "$REGISTRY_USER"
+      test -n "$REGISTRY_PASSWORD"
+      export DOCKER_CONFIG="$(mktemp -d)"
+      trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+      registry="${JUSTCD_IMAGE%%/*}"
+      jq -n --arg host "$registry" --arg user "$REGISTRY_USER" --arg password "$REGISTRY_PASSWORD" '{auths:{($host):{auth:(($user+":"+$password)|@base64)}}}' > "$DOCKER_CONFIG/config.json"
+      buildctl-daemonless.sh build --frontend dockerfile.v0 --local context=. --local dockerfile=. --output "type=image,name=$JUSTCD_IMAGE:$CI_COMMIT_SHA,push=true" --metadata-file /tmp/justcd-image.json
+      digest="$(jq -er '."containerimage.digest" | select(test("^sha256:[a-f0-9]{64}$"))' /tmp/justcd-image.json)"
+      mkdir -p .justcd-build
+      printf '%s\n' "$digest" > .justcd-build/image-digest
+  artifacts:
+    paths: [.justcd-build/image-digest]
+    expire_in: 1 day
+update-deployment:
+  stage: publish
+  resource_group: justcd-publish
+  needs:
+    - job: publish
+      artifacts: true
+  image:
+    name: "registry.example.com/base/git:1"
+    entrypoint: [""]
+  variables:
+    GIT_DEPTH: '0'
+    JUSTCD_IMAGE: "registry.example.com/apps/statistics"
+  script:
+    - |
+      set -eu
+      for tool in git sed grep; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+          printf 'JustCD: deployment update image is missing %s. Configure a Git-capable deployment update image in the publishing profile.\n' "$tool" >&2
+          exit 1
+        fi
+      done
+      export DOCKER_CONFIG="$(mktemp -d)"
+      trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+      digest="$(cat .justcd-build/image-digest)"
+      if ! printf '%s\n' "$digest" | grep -Eq '^sha256:[a-f0-9]{64}$'; then
+        printf 'JustCD: build artifact has an invalid image digest.\n' >&2
+        exit 1
+      fi
+      # A newer source commit must never be replaced by an older build.
+      git fetch origin "$CI_DEFAULT_BRANCH"
+      test "$(git rev-parse FETCH_HEAD)" = "$CI_COMMIT_SHA"
+      sed "s|JUSTCD_IMAGE_DIGEST|$JUSTCD_IMAGE@$digest|g" .justcd/deployment.yaml > deploy/application.yaml
+      git config user.name 'JustCD Publisher'
+      git config user.email 'justcd@localhost'
+      git add deploy/application.yaml
+      git commit -m "Publish $CI_COMMIT_SHA [skip ci]"
+      git push "$CI_REPOSITORY_URL" "HEAD:$CI_DEFAULT_BRANCH"

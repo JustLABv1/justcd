@@ -332,6 +332,7 @@ func BuildPlan(applicationID, revision string, bindings []Binding, desired, live
 }
 
 func RefreshDigest(plan *Plan) error {
+	RetainResources(plan)
 	canonical := *plan
 	canonical.Digest = ""
 	canonical.Changes = append([]Change(nil), plan.Changes...)

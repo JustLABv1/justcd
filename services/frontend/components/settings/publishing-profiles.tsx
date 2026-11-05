@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { PublishingServicesEditor } from "./publishing-services"
+import { TemplateLibrary, type TemplateSummary } from "./template-library"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -14,14 +15,14 @@ import { FormField, Panel, SwitchField } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { api, apiPost } from "@/lib/api"
 import {
-  TemplateBadge,
   TemplateEditor,
   versionLabel,
   type TemplateVersionMeta,
 } from "./template-editor"
-import type {
-  PublishingProfile,
-  PublishingProfileSettings,
+import {
+  templatesUrl,
+  type PublishingProfile,
+  type PublishingProfileSettings,
 } from "@/lib/publishing"
 import type { ApplicationTemplate } from "@/components/applications/template-catalog"
 import type { Cluster, ListResponse, NamespaceBinding } from "@/lib/types"
@@ -59,11 +60,6 @@ const emptySettings: PublishingProfileSettings = {
   vaultRole: "",
   vaultPath: "",
   syncPolicy: "auto-safe",
-}
-
-type TemplateSummary = {
-  template: { id: string; name: string; description: string; category: string }
-  versions: TemplateVersionMeta[]
 }
 
 export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
@@ -260,48 +256,18 @@ export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
           </div>
         )}
       </Panel>
-      <Panel
-        title="Application templates"
-        description="The files JustCD generates for each application type: Dockerfile, build pipeline and Kubernetes manifest. Customize them for your platform; every save is a new, immutable version that profiles can select."
-      >
-        <div className="divide-y">
-          {templates.map(({ template, versions }) => (
-            <div
-              key={template.id}
-              className="flex flex-wrap items-center justify-between gap-4 px-5 py-4"
-            >
-              <div className="min-w-0 space-y-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-sm font-medium">{template.name}</h3>
-                  <Badge variant="outline" size="sm">
-                    {template.category}
-                  </Badge>
-                  <TemplateBadge version={versions[0]?.version} />
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {versions.length
-                    ? `${versions.length} custom version${versions.length === 1 ? "" : "s"} · latest ${versionLabel(versions[0].version, versions[0].label)}`
-                    : "Using the built-in template."}
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setEditingTemplate(template.id)
-                  setNotice("")
-                }}
-              >
-                Customize
-              </Button>
-            </div>
-          ))}
-          {!templates.length && (
-            <p className="p-5 text-sm text-muted-foreground">
-              Templates are loading or unavailable.
-            </p>
-          )}
-        </div>
-      </Panel>
+      <TemplateLibrary
+        workspaceId={workspaceId}
+        templates={templates}
+        onCustomize={(id) => {
+          setEditingTemplate(id)
+          setNotice("")
+        }}
+        onChanged={(message) => {
+          setTemplatesReload((n) => n + 1)
+          setNotice(message)
+        }}
+      />
       {notice && (
         <p role="status" className="text-sm text-muted-foreground">
           {notice}
@@ -407,7 +373,7 @@ function ProfileEditor({
   useEffect(() => {
     let active = true
     Promise.all([
-      api<ListResponse<ApplicationTemplate>>("/api/v1/publishing/templates"),
+      api<ListResponse<ApplicationTemplate>>(templatesUrl(workspaceId)),
       api<ListResponse<Cluster>>(
         `/api/v1/clusters?workspaceId=${encodeURIComponent(workspaceId)}`
       ),
@@ -452,6 +418,16 @@ function ProfileEditor({
       live = false
     }
   }, [workspaceId, settings.templateId])
+  const selectedTemplate = templates.find((t) => t.id === settings.templateId)
+  // Built-in IDs double as runtimes until the list has loaded.
+  const runtime = selectedTemplate?.runtime ?? settings.templateId
+  const staticRuntime = runtime === "static" || runtime === "python-static"
+  const customTemplate = !!selectedTemplate?.custom
+  // A custom template has no built-in files: it uses its newest version
+  // unless one is chosen.
+  const templateVersion =
+    settings.templateVersion ||
+    (customTemplate && templateVersions[0] ? templateVersions[0].version : 0)
   async function save(event: React.FormEvent) {
     event.preventDefault()
     if (busy) return
@@ -468,7 +444,7 @@ function ProfileEditor({
         name,
         description,
         enabled,
-        settings,
+        settings: { ...settings, templateVersion },
         secrets,
         version: profile?.version ?? 0,
         publishRevision,
@@ -560,9 +536,8 @@ function ProfileEditor({
   const missingBuild = [
     blank("gitlabUrl") && "GitLab URL",
     blank("group") && "GitLab group",
-    settings.templateId !== "static" && blank("baseImage") && "runtime image",
-    (settings.templateId === "python-static" || settings.templateId === "static") &&
-      blank("webServerImage") && "web server image",
+    runtime !== "static" && blank("baseImage") && "runtime image",
+    staticRuntime && blank("webServerImage") && "web server image",
     blank("builderImage") && "CI builder image",
     blank("registryPrefix") && "registry prefix",
   ].filter(Boolean) as string[]
@@ -637,7 +612,9 @@ function ProfileEditor({
                 }
                 items={templates.map((template) => ({
                   value: template.id,
-                  label: template.name,
+                  label: template.custom
+                    ? `${template.name} (custom)`
+                    : template.name,
                 }))}
                 disabled={locked}
               />
@@ -645,16 +622,16 @@ function ProfileEditor({
             <FormField
               label="Template version"
               htmlFor="profile-template-version"
-              hint="Built-in, or a version you customized under Application templates."
+              hint={customTemplate ? "A version of your custom template. Applications stay on the version they were published with until upgraded." : "Built-in, or a version you customized under Application templates."}
             >
               <FormSelect
                 id="profile-template-version"
-                value={String(settings.templateVersion ?? 0)}
+                value={String(templateVersion)}
                 onValueChange={(value) =>
                   patch({ templateVersion: Number(value) })
                 }
                 items={[
-                  { value: "0", label: "Built-in" },
+                  ...(customTemplate ? [] : [{ value: "0", label: "Built-in" }]),
                   ...templateVersions.map((v) => ({
                     value: String(v.version),
                     label: `Custom ${versionLabel(v.version, v.label)}`,
@@ -667,7 +644,7 @@ function ProfileEditor({
                 label="Template parameters"
                 htmlFor="profile-template-parameters"
                 hint={
-                  "Optional non-secret key=value lines used by custom templates via .Parameters. For the ingress policy starter: ingressNamespace=your-ingress-namespace. Verify the namespace with your platform administrator. Changes create a profile version for applications to review."
+                  "Optional non-secret key=value lines used by custom templates via .Parameters. For the ingress policy starter: ingressNamespace=your-ingress-namespace. For the generic server starter: startCommand=python app.py. Changes create a profile version for applications to review."
                 }
               >
                 <Textarea
@@ -818,16 +795,15 @@ function ProfileEditor({
                   true,
                   "analytics/apps"
                 )}
-                {settings.templateId !== "static" &&
+                {runtime !== "static" &&
                   field(
                     "baseImage",
-                    settings.templateId === "python-static"
+                    runtime === "python-static"
                       ? "Python build image"
                       : "Application runtime image",
                     "Approved image with native dependencies and internal certificate trust."
                   )}
-                {(settings.templateId === "python-static" ||
-                  settings.templateId === "static") &&
+                {staticRuntime &&
                   field(
                     "webServerImage",
                     "Static web server image",

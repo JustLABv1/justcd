@@ -118,8 +118,23 @@ func (s *Server) getPublishingLimits(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.Config.PublishingLimits.WithDefaults())
 }
 
+// getPublishingTemplates lists the built-in templates. With a workspaceId the
+// workspace's own templates follow them.
 func (s *Server) getPublishingTemplates(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"items": publishing.Templates()})
+	workspace := r.URL.Query().Get("workspaceId")
+	if workspace == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"items": publishing.Templates()})
+		return
+	}
+	if !s.requireWorkspaceRole(w, r, workspace, "viewer") {
+		return
+	}
+	items, err := s.workspaceTemplates(r.Context(), workspace)
+	if err != nil {
+		writeStoreError(w, "could not load templates")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
 // Validate an upload without creating repositories, pipelines, or applications.
@@ -157,6 +172,10 @@ func (s *Server) validatePublishingArchive(w http.ResponseWriter, r *http.Reques
 	source, err := publishing.ExtractArchive(r.Context(), archive, stat.Size(), dir, limits)
 	if err != nil {
 		writePublishingUploadError(w, err)
+		return
+	}
+	if err = s.attachTemplate(r.Context(), in.WorkspaceID, &in.Config); err != nil {
+		writeError(w, 409, err.Error())
 		return
 	}
 	files, root, err := publishing.NormalizeSource(in.Config, source)

@@ -9,19 +9,51 @@ import {
   Search01Icon,
 } from "@hugeicons/core-free-icons"
 import { api } from "@/lib/api"
+import { templatesUrl } from "@/lib/publishing"
 import { ErrorNotice } from "@/components/workspace-ui"
+import { Badge } from "@/components/reui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+
+export type TemplateLayoutRule = { message?: string; anyOf: string[][] }
 
 export type ApplicationTemplate = {
   id: string
   name: string
   description: string
-  runtime: "shiny" | "streamlit" | "python-static" | "static"
-  category: "R" | "Python" | "Geospatial" | "Websites"
+  runtime: "shiny" | "streamlit" | "python-static" | "static" | "server"
+  category: string
   entryPoint: string
   detail: string
+  port?: number
+  layout?: TemplateLayoutRule[]
+  /** Owned by a workspace rather than shipped with JustCD. */
+  custom?: boolean
+  baseTemplate?: string
+}
+
+export function entryLabel(template: Pick<ApplicationTemplate, "runtime">) {
+  if (template.runtime === "static") return "Website directory"
+  if (template.runtime === "shiny") return "Shiny app directory"
+  if (template.runtime === "server") return "Entry file or directory"
+  return "Python entry file"
+}
+
+/** Plain-language list of the files a template's upload rules require. */
+export function layoutSummary(
+  template: ApplicationTemplate,
+  entry = template.entryPoint
+) {
+  return (template.layout ?? [])
+    .map((rule) =>
+      rule.anyOf
+        .map((group) =>
+          group.map((file) => file.replaceAll("{entry}", entry)).join(" + ")
+        )
+        .join(" or ")
+    )
+    .join("; ")
 }
 
 export function TemplateGlyph({
@@ -44,7 +76,7 @@ export function TemplateGlyph({
           className="size-5 text-emerald-600 dark:text-emerald-400"
           strokeWidth={1.7}
         />
-      ) : template.runtime === "streamlit" ? (
+      ) : template.runtime === "streamlit" || template.runtime === "server" ? (
         <HugeiconsIcon
           icon={CodeIcon}
           className="size-5 text-rose-500"
@@ -70,7 +102,7 @@ export function TemplateCatalog({
   const [reload, setReload] = useState(0)
   useEffect(() => {
     let active = true
-    api<{ items: ApplicationTemplate[] }>("/api/v1/publishing/templates")
+    api<{ items: ApplicationTemplate[] }>(templatesUrl())
       .then((result) => {
         if (active) {
           setTemplates(result.items)
@@ -133,7 +165,18 @@ export function TemplateCatalog({
           }}
           className="max-w-full gap-2 overflow-x-auto rounded-none border-0 bg-transparent p-0"
         >
-          {["All", "R", "Python", "Geospatial", "Websites"].map((value) => (
+          {[
+            "All",
+            ...Array.from(
+              new Set([
+                "R",
+                "Python",
+                "Geospatial",
+                "Websites",
+                ...templates.map((template) => template.category),
+              ])
+            ),
+          ].map((value) => (
             <ToggleGroupItem
               key={value}
               value={value}
@@ -168,6 +211,16 @@ export function TemplateCatalog({
               <span className="flex items-center justify-between gap-3">
                 <span className="text-base font-medium tracking-tight">
                   {template.name}
+                  {template.custom && (
+                    <Badge
+                      size="sm"
+                      radius="full"
+                      variant="outline"
+                      className="ml-2 align-middle"
+                    >
+                      Custom
+                    </Badge>
+                  )}
                 </span>
                 <HugeiconsIcon
                   icon={ArrowRight01Icon}

@@ -178,19 +178,24 @@ func (s *Server) savePublishingProfile(w http.ResponseWriter, r *http.Request) {
 	if input.Settings.SyncPolicy == "" {
 		input.Settings.SyncPolicy = "manual"
 	}
-	if err := input.Settings.Validate(); err != nil {
+	lookup, err := s.templateLookup(r.Context(), workspace)
+	if err != nil {
+		writeStoreError(w, "could not load templates")
+		return
+	}
+	if err := input.Settings.ValidateWith(lookup); err != nil {
 		writeError(w, 400, err.Error())
 		return
 	}
 	if !s.requireWorkspaceCluster(w, r, workspace, input.Settings.ClusterID) {
 		return
 	}
-	checkConfig, _ := input.Settings.Resolve("profile-check", "")
+	checkConfig, _ := input.Settings.ResolveWith(lookup, "profile-check", "")
+	if err := s.attachTemplate(r.Context(), workspace, &checkConfig); err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
 	if input.Settings.TemplateVersion > 0 {
-		if err := s.attachTemplate(r.Context(), workspace, &checkConfig); err != nil {
-			writeError(w, 400, err.Error())
-			return
-		}
 		for _, renv := range []bool{false, true} {
 			if _, err := publishing.RenderConfig(checkConfig, publishing.SourceFacts{HasRenvLock: renv}); err != nil {
 				writeError(w, 400, "the selected template version does not render with these settings: "+err.Error())
@@ -405,7 +410,12 @@ func (s *Server) resolvePublishingProfile(w http.ResponseWriter, r *http.Request
 		writeError(w, 409, "pinned recipe version is unsupported by this server; upgrade the application profile before publishing source")
 		return nil, false
 	}
-	cfg, err := version.Settings.Resolve(in.Name, in.EntryPoint)
+	lookup, err := s.templateLookup(r.Context(), p.WorkspaceID)
+	if err != nil {
+		writeStoreError(w, "could not load templates")
+		return nil, false
+	}
+	cfg, err := version.Settings.ResolveWith(lookup, in.Name, in.EntryPoint)
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return nil, false

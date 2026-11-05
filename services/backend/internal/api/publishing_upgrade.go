@@ -169,7 +169,12 @@ func (s *Server) publishingProfileUpgrade(w http.ResponseWriter, r *http.Request
 	next.GitImage = version.Settings.GitImage
 	next.PullSecret = version.Settings.PullSecret
 	// Destination and secret policy remain application-owned during an upgrade.
-	resolved, err := version.Settings.Resolve(app.Name, old.EntryPoint)
+	lookup, err := s.templateLookup(ctx, app.WorkspaceID)
+	if err != nil {
+		writeStoreError(w, "could not load templates")
+		return
+	}
+	resolved, err := version.Settings.ResolveWith(lookup, app.Name, old.EntryPoint)
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return

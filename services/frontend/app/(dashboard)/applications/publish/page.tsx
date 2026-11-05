@@ -7,6 +7,8 @@ import { ArrowLeft01Icon } from "@hugeicons/core-free-icons"
 import {
   TemplateCatalog,
   TemplateGlyph,
+  entryLabel,
+  layoutSummary,
   type ApplicationTemplate,
 } from "@/components/applications/template-catalog"
 import { ExistingProject } from "@/components/applications/existing-project"
@@ -26,6 +28,7 @@ import { usePublishingDraft } from "@/hooks/use-publishing-draft"
 import { PublishingDraftNotice } from "@/components/applications/publishing-draft-notice"
 import { usePublishingLimits } from "@/hooks/use-publishing-limits"
 import { api } from "@/lib/api"
+import { templatesUrl } from "@/lib/publishing"
 import { showInvalid } from "@/components/applications/wizard"
 import {
   publishProject,
@@ -76,7 +79,7 @@ export default function PublishApplicationPage() {
     async (data, signal) => {
       if (data.templateId) {
         const { items } = await api<ListResponse<ApplicationTemplate>>(
-          "/api/v1/publishing/templates",
+          templatesUrl(workspaceId),
           { signal }
         )
         if (signal.aborted) return
@@ -529,7 +532,7 @@ export default function PublishApplicationPage() {
             htmlFor="publish-archive"
             hint={
               limits
-                ? `Up to ${publishingSize(limits.archiveBytes)} compressed and ${publishingSize(limits.expandedBytes)} expanded. ${template.runtime === "static" ? "Include index.html and assets in the website directory" : template.runtime === "python-static" ? "Optionally include requirements.txt" : "Include " + (template.runtime === "shiny" ? "renv.lock or packages.txt" : "requirements.txt")}${template.runtime === "static" ? "." : " at the archive root."} Remove local credentials before uploading.`
+                ? `Up to ${publishingSize(limits.archiveBytes)} compressed and ${publishingSize(limits.expandedBytes)} expanded. ${template.runtime === "static" ? "Include index.html and assets in the website directory" : template.runtime === "python-static" ? "Optionally include requirements.txt" : template.runtime === "server" ? "Required files: " + (layoutSummary(template) || "your application and its dependency files") : "Include " + (template.runtime === "shiny" ? "renv.lock or packages.txt" : "requirements.txt")}${template.runtime === "static" ? "." : " at the archive root."} Remove local credentials before uploading.`
                 : "Loading upload limits…"
             }
           >
@@ -595,9 +598,7 @@ export default function PublishApplicationPage() {
                     htmlFor="publish-entry"
                     className="mb-2 block text-sm font-medium"
                   >
-                    {template.runtime === "shiny"
-                      ? "Shiny app directory"
-                      : "Python entry file"}
+                    {entryLabel(template)}
                   </label>
                   <Input
                     id="publish-entry"
@@ -608,7 +609,9 @@ export default function PublishApplicationPage() {
                   <p className="mt-2 text-xs leading-5 text-muted-foreground">
                     {template.runtime === "shiny"
                       ? "Use . for an app at the archive root, or a folder such as src/regionalsteckbrief."
-                      : "Relative path to your Streamlit app, for example app.py."}
+                      : template.runtime === "server"
+                        ? "Relative path to the file or directory your template expects, for example app.py."
+                        : "Relative path to your Streamlit app, for example app.py."}
                   </p>
                 </div>
               </Disclosure>

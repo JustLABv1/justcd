@@ -23,7 +23,7 @@ export type TemplateVersionMeta = {
   createdAt: string
 }
 type TemplateDetail = {
-  template: { id: string; name: string; description: string; runtime: string }
+  template: { id: string; name: string; description: string; runtime: string; custom?: boolean }
   builtin: Record<string, string>
   versions: TemplateVersionMeta[]
   fileOrder: string[]
@@ -214,7 +214,7 @@ export function TemplateEditor({
   return (
     <div className="space-y-5">
       <Panel
-        title={`Customize ${detail.template.name}`}
+        title={`${detail.template.custom ? "Edit" : "Customize"} ${detail.template.name}`}
         description="Edit the files JustCD generates for this application template. Saving creates a new immutable version; profiles choose which version to use."
         action={
           <Button
@@ -240,7 +240,7 @@ export function TemplateEditor({
                   void loadVersion(Number(value)).catch(setError)
                 }
                 items={[
-                  { value: "0", label: "Built-in (read-only original)" },
+                  ...(detail.template.custom ? [] : [{ value: "0", label: "Built-in (read-only original)" }]),
                   ...detail.versions.map((v) => ({
                     value: String(v.version),
                     label: versionLabel(v.version, v.label),

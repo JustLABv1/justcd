@@ -42,17 +42,21 @@ type ProfileSettings struct {
 	SyncPolicy           string `json:"syncPolicy"`
 }
 
+// Resolve builds the configuration of an application using a built-in template.
 func (s ProfileSettings) Resolve(name, entry string) (Config, error) {
-	var template *Template
-	for _, t := range Templates() {
-		if t.ID == s.TemplateID {
-			copy := t
-			template = &copy
-			break
-		}
-	}
-	if template == nil {
+	return s.ResolveWith(BuiltinLookup, name, entry)
+}
+
+// ResolveWith builds the configuration of an application; lookup finds the
+// built-in and workspace templates.
+func (s ProfileSettings) ResolveWith(lookup TemplateLookup, name, entry string) (Config, error) {
+	found, ok := lookup(s.TemplateID)
+	if !ok {
 		return Config{}, errors.New("select a supported application template")
+	}
+	template := &found
+	if template.Custom && s.TemplateVersion <= 0 {
+		return Config{}, errors.New("select a version of the custom template " + template.Name)
 	}
 	if entry == "" {
 		entry = template.EntryPoint
@@ -62,21 +66,29 @@ func (s ProfileSettings) Resolve(name, entry string) (Config, error) {
 		host = name + "." + s.HostSuffix
 	}
 	c := Config{TemplateParameters: s.TemplateParameters, GitImage: s.GitImage, BuildEngine: s.BuildEngine, CAVariable: s.CAVariable, TemplateID: s.TemplateID, Name: name, Runtime: template.Runtime, EntryPoint: entry, BaseImage: s.BaseImage, BuilderImage: s.BuilderImage, RegistryImage: s.RegistryPrefix + "/" + name, Namespace: s.Namespace, Host: host, PullSecret: s.PullSecret, RunnerTag: s.RunnerTag, Exposure: s.Exposure, ExposureLabels: s.ExposureLabels, ExposureAnnotations: s.ExposureAnnotations, IngressClass: s.IngressClass, IngressTLS: s.IngressTLS, TemplateVersion: s.TemplateVersion, RunnerServiceAccount: s.RunnerServiceAccount, RunnerSCC: s.RunnerSCC, BuilderSetup: s.BuilderSetup, SecretMode: s.SecretMode, VaultAddress: s.VaultAddress, VaultRole: s.VaultRole, VaultPath: s.VaultPath}
+	c.Port = template.Port
+	if len(template.Layout) > 0 {
+		c.Layout = &TemplateLayout{Rules: template.Layout}
+	}
 	if s.NamespaceMode == "per-application" {
 		c.Namespace = s.NamespacePrefix + name
 		c.CreateNamespace = true
 	}
-	if c.Runtime == "static" {
+	if IsStaticRuntime(c.Runtime) {
 		c.WebServerImage = s.WebServerImage
 	}
 	if c.Runtime == "python-static" {
-		c.WebServerImage = s.WebServerImage
 		c.BuildCommand = "python " + template.EntryPoint
 		c.OutputDir = "dist"
 	}
 	return c, c.Validate()
 }
-func (s ProfileSettings) Validate() error {
+
+// Validate checks settings against the built-in templates.
+func (s ProfileSettings) Validate() error { return s.ValidateWith(BuiltinLookup) }
+
+// ValidateWith checks settings; lookup finds the built-in and workspace templates.
+func (s ProfileSettings) ValidateWith(lookup TemplateLookup) error {
 	if _, err := ParseServiceCatalog(s.ServiceCatalog); err != nil {
 		return err
 	}
@@ -113,6 +125,6 @@ func (s ProfileSettings) Validate() error {
 	if s.HostSuffix != "" && (len(s.HostSuffix) > 189 || !hostPattern.MatchString(s.HostSuffix) || strings.Contains(s.HostSuffix, "..") || !strings.Contains(s.HostSuffix, ".")) {
 		return errors.New("application domain must be a valid DNS suffix")
 	}
-	_, err := s.Resolve("profile-check", "")
+	_, err := s.ResolveWith(lookup, "profile-check", "")
 	return err
 }

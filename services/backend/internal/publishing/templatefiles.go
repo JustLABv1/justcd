@@ -98,7 +98,7 @@ var placeholderDocs = map[string]string{
 	"Name":                 "Application name (DNS label).",
 	"Namespace":            "Target namespace.",
 	"Host":                 "Application host name; empty when the profile has no application domain.",
-	"Runtime":              "shiny, streamlit, static or python-static.",
+	"Runtime":              "shiny, streamlit, static, python-static or server (custom templates).",
 	"EntryPoint":           "Entry directory or file inside source/.",
 	"Port":                 "Container port of the runtime.",
 	"StaticDir":            "Static website directory inside the build context (source/<entry point>).",
@@ -171,7 +171,7 @@ func yamlString(s string) string { b, _ := json.Marshal(s); return string(b) }
 // BuiltinTemplateFiles returns the built-in, read-only files of a runtime.
 func BuiltinTemplateFiles(runtime string) (map[string]string, error) {
 	switch runtime {
-	case "shiny", "streamlit", "static", "python-static":
+	case "shiny", "streamlit", "static", "python-static", RuntimeServer:
 	default:
 		return nil, errors.New("unsupported runtime " + runtime)
 	}
@@ -202,7 +202,12 @@ func BuiltinFilesForTemplate(templateID string) (map[string]string, error) {
 }
 
 func runtimePort(c Config) int {
+	if c.Port > 0 {
+		return c.Port
+	}
 	switch c.Runtime {
+	case RuntimeServer:
+		return 8080
 	case "streamlit":
 		return 8501
 	case "static", "python-static":
@@ -509,13 +514,19 @@ func RenderConfig(c Config, facts SourceFacts) (map[string]string, error) {
 // configurations and validates every result, so conditionals that only trigger
 // for some settings are checked when the template is saved.
 func ValidateTemplate(templateID string, files map[string]string) error {
+	t, ok := BuiltinLookup(templateID)
+	if !ok {
+		return errors.New("unknown application template " + templateID)
+	}
+	return ValidateTemplateFor(t, files)
+}
+
+// ValidateTemplateFor is ValidateTemplate for any template definition.
+func ValidateTemplateFor(t Template, files map[string]string) error {
 	if err := CheckTemplateFiles(files); err != nil {
 		return err
 	}
-	base, err := SampleConfig(templateID)
-	if err != nil {
-		return err
-	}
+	base := SampleConfigFor(t)
 	base.TemplateFiles = &TemplateFileSet{Files: files}
 	seen := map[string]bool{}
 	var problems []string
@@ -567,22 +578,25 @@ func ValidateTemplate(templateID string, files map[string]string) error {
 
 // SampleConfig is a representative configuration for previews and validation.
 func SampleConfig(templateID string) (Config, error) {
-	for _, t := range Templates() {
-		if t.ID != templateID {
-			continue
-		}
-		c := Config{
-			TemplateID: t.ID, Name: "sample-app", Runtime: t.Runtime, EntryPoint: t.EntryPoint, Namespace: "sample-namespace",
-			Host: "sample-app.apps.example.com", BaseImage: "registry.example.com/base/runtime:1", BuilderImage: "registry.example.com/base/builder:1",
-			RegistryImage: "registry.example.com/apps/sample-app", SecretMode: "variables", ManagedCompletion: true,
-		}
-		if t.Runtime == "static" || t.Runtime == "python-static" {
-			c.WebServerImage = "registry.example.com/base/nginx:1"
-		}
-		if t.Runtime == "python-static" {
-			c.BuildCommand, c.OutputDir = "python "+t.EntryPoint, "dist"
-		}
-		return c, nil
+	t, ok := BuiltinLookup(templateID)
+	if !ok {
+		return Config{}, errors.New("unknown application template " + templateID)
 	}
-	return Config{}, errors.New("unknown application template " + templateID)
+	return SampleConfigFor(t), nil
+}
+
+// SampleConfigFor builds the sample configuration of any template definition.
+func SampleConfigFor(t Template) Config {
+	c := Config{
+		TemplateID: t.ID, Name: "sample-app", Runtime: t.Runtime, EntryPoint: t.EntryPoint, Namespace: "sample-namespace", Port: t.Port,
+		Host: "sample-app.apps.example.com", BaseImage: "registry.example.com/base/runtime:1", BuilderImage: "registry.example.com/base/builder:1",
+		RegistryImage: "registry.example.com/apps/sample-app", SecretMode: "variables", ManagedCompletion: true,
+	}
+	if IsStaticRuntime(t.Runtime) {
+		c.WebServerImage = "registry.example.com/base/nginx:1"
+	}
+	if t.Runtime == "python-static" {
+		c.BuildCommand, c.OutputDir = "python "+t.EntryPoint, "dist"
+	}
+	return c
 }

@@ -46,7 +46,17 @@ func checkSourceLayout(c Config, files []File) error {
 		}
 		return false
 	}
+	if c.Layout != nil && len(c.Layout.Rules) > 0 {
+		if len(files) == 0 {
+			return errors.New("archive contains no application files")
+		}
+		return c.Layout.check(c.EntryPoint, has)
+	}
 	switch c.Runtime {
+	case RuntimeServer:
+		if len(files) == 0 {
+			return errors.New("archive contains no application files")
+		}
 	case "shiny":
 		if !has(path.Join(c.EntryPoint, "app.R")) && !(has(path.Join(c.EntryPoint, "ui.R")) && has(path.Join(c.EntryPoint, "server.R"))) {
 			return fmt.Errorf("Shiny needs app.R, or both ui.R and server.R, in app directory %q. Put the project contents at the ZIP root, or choose the correct app directory", c.EntryPoint)

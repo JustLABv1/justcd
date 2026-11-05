@@ -20,6 +20,7 @@ import { ArrowLeft01Icon } from "@hugeicons/core-free-icons"
 import {
   TemplateCatalog,
   TemplateGlyph,
+  layoutSummary,
   type ApplicationTemplate,
 } from "@/components/applications/template-catalog"
 import {
@@ -28,7 +29,7 @@ import {
   PublishingSection as Panel,
 } from "@/components/applications/publishing-fields"
 import { api } from "@/lib/api"
-import { publishProject, publishingSize } from "@/lib/publishing"
+import { publishProject, publishingSize, templatesUrl } from "@/lib/publishing"
 import { usePublishingDraft } from "@/hooks/use-publishing-draft"
 import { PublishingDraftNotice } from "@/components/applications/publishing-draft-notice"
 import { usePublishingLimits } from "@/hooks/use-publishing-limits"
@@ -156,7 +157,7 @@ export default function PublishApplicationPage() {
     const id = new URLSearchParams(window.location.search).get("templateId")
     if (!id) return
     let active = true
-    api<ListResponse<ApplicationTemplate>>("/api/v1/publishing/templates")
+    api<ListResponse<ApplicationTemplate>>(templatesUrl(new URLSearchParams(window.location.search).get("workspaceId") ?? undefined))
       .then(({ items }) => {
         const template = items.find((item) => item.id === id)
         if (!active || !template) return
@@ -507,12 +508,16 @@ export default function PublishApplicationPage() {
                             ? "Website directory"
                             : config.runtime === "shiny"
                               ? "Shiny app directory"
-                              : "Python entry point",
+                              : config.runtime === "server"
+                                ? "Entry file or directory"
+                                : "Python entry point",
                           config.runtime === "static"
                             ? "Use . for index.html at the archive root, or a subdirectory such as public containing index.html and assets."
                             : config.runtime === "shiny"
                               ? "Use . for an app at the archive root, or a path such as src/regionalsteckbrief. Include renv.lock or packages.txt at the root."
-                              : "For example app.py. Include requirements.txt at the archive root."
+                              : config.runtime === "server"
+                                ? `Relative path to the file or directory your template expects. ${selectedTemplate?.layout?.length ? "Required files: " + layoutSummary(selectedTemplate, config.entryPoint) + "." : ""}`
+                                : "For example app.py. Include requirements.txt at the archive root."
                         )
                       )}
                       <FormField

@@ -86,10 +86,14 @@ type Config struct {
 	TemplateVersion    int    `json:"templateVersion,omitempty"`
 	TemplateParameters string `json:"templateParameters,omitempty"`
 	// TemplateFiles are the resolved files of that version; never persisted.
-	TemplateFiles        *TemplateFileSet `json:"-"`
-	RunnerServiceAccount string           `json:"runnerServiceAccount,omitempty"`
-	RunnerSCC            string           `json:"runnerScc,omitempty"`
-	BuilderSetup         string           `json:"builderSetup,omitempty"`
+	TemplateFiles *TemplateFileSet `json:"-"`
+	// Port is the container port; zero selects the runtime default.
+	Port int `json:"port,omitempty"`
+	// Layout holds the upload rules of a template that defines its own.
+	Layout               *TemplateLayout `json:"-"`
+	RunnerServiceAccount string          `json:"runnerServiceAccount,omitempty"`
+	RunnerSCC            string          `json:"runnerScc,omitempty"`
+	BuilderSetup         string          `json:"builderSetup,omitempty"`
 }
 
 type File struct {
@@ -122,20 +126,16 @@ func (c Config) Validate() error {
 			return err
 		}
 	}
-	if c.Runtime != "shiny" && c.Runtime != "streamlit" && c.Runtime != "python-static" && c.Runtime != "static" {
-		return errors.New("select Shiny, Streamlit, or a static website")
+	if !validRuntime(c.Runtime) {
+		return errors.New("select an application template")
 	}
-	if c.TemplateID != "" {
-		found := false
-		for _, template := range Templates() {
-			if template.ID == c.TemplateID && template.Runtime == c.Runtime {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return errors.New("selected application template does not match the runtime")
-		}
+	// Built-in IDs must match their runtime. Workspace templates are resolved
+	// and checked against the workspace's own list by the server.
+	if template, builtin := BuiltinLookup(c.TemplateID); c.TemplateID != "" && builtin && template.Runtime != c.Runtime {
+		return errors.New("selected application template does not match the runtime")
+	}
+	if c.Port < 0 || c.Port > 65535 {
+		return errors.New("container port is invalid")
 	}
 	if !safePath(c.EntryPoint) || !filePattern.MatchString(c.EntryPoint) {
 		return errors.New("entry point must be a relative application path without spaces")
@@ -170,7 +170,7 @@ func (c Config) Validate() error {
 			return errors.New("an approved unprivileged webserver image is required for static websites")
 		}
 	} else if c.BuildCommand != "" || c.OutputDir != "" || c.WebServerImage != "" {
-		return errors.New("static build settings are only supported by the Python static website template")
+		return errors.New("static build settings are only supported by static website templates")
 	}
 	// Destination has no tag: every build receives its own source revision tag.
 	last := path.Base(c.RegistryImage)

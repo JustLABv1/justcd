@@ -4,7 +4,8 @@ description: "Create a private GitLab project, build an image in CI, and registe
 ---
 
 Choose **Applications → New → From a template**. The searchable catalog offers
-Shiny, Streamlit, Shiny Geospatial, Static website, and Static website · Python. After selecting a template, choose
+Shiny, Streamlit, Shiny Geospatial, Static website, Static website · Python, and any
+custom templates your workspace owners created. After selecting a template, choose
 **Use a publishing profile** or **Manual setup**. Workspace owners can use the
 manual wizard whether or not profiles exist; deployers use approved profiles. With an enabled publishing profile, workspace owners and deployers
 choose a workspace, application name, and approved destination, then upload their
@@ -561,6 +562,41 @@ spec:
   podSelector: {matchLabels: {app: {{ .Name }}}}
   policyTypes: [Ingress]
 ```
+
+### Creating your own templates
+
+Besides customizing the built-in templates you can add templates of your own, for
+example for Dash, Quarto, Plumber or Node apps. Owners manage them under
+**Settings → Publishing profiles → Application templates**; custom templates are
+shown to analysts in the catalog with a **Custom** badge.
+
+- **New template** asks for a name, an ID (fixed once created), a kind and, for
+  server applications, the container port and default entry point. The kinds are
+  *Server application* (a base image, your start command in the `Dockerfile` and a
+  port), *Static website* (ready-made files) and *Static website built with Python*.
+  JustCD adds editable starter files; the server starter reads its start command
+  from the profile's template parameter `startCommand` (for example
+  `startCommand=python app.py`) or from the `CMD` line.
+- **Copy as new template** (in a row's menu) copies any built-in or custom
+  template, including its latest files, upload checks and port.
+- **Template settings** changes the name, description, entry point, port and
+  upload checks of a custom template. The ID and kind cannot change.
+- **Export** downloads a template version as a `justcd.template/v1` JSON file;
+  **Import** adds such a file to another workspace after validating its files. You
+  can change the name and ID before importing.
+- **Delete template** removes a custom template and its versions, but only while no
+  profile (or earlier profile revision) uses it.
+
+**Upload checks** list the files a ZIP must contain, one requirement per line.
+Separate alternatives with `|` and files that are all required with `,`; `{entry}`
+stands for the entry point. For example `{entry}` followed by
+`requirements.txt | pyproject.toml` requires the entry file and either dependency
+file. Leave the box empty to accept any non-empty project.
+
+A custom template always runs a pinned version: profiles use the newest version
+unless you pick another, and applications keep their version until the reviewed
+profile upgrade. Creating templates is limited to workspace owners; custom
+templates are subject to the same sandbox and safety validation described below.
 
 **Safety rules.** Templates are rendered in a sandbox: only the listed placeholders
 and the helpers `quote`, `json`, `list` and `default` exist; there is no `define`,

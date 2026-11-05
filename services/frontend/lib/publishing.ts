@@ -96,17 +96,87 @@ export type PublicationResult = {
 }
 
 export type DatabasePlan = {
-  credentialMode?: "platform" | "generated"; username?: string; allowConfigure?: boolean; allowEnvMapping?: boolean; allowCustomPassword?: boolean; envNames?: Record<string, string>
-  name: string; postgresVersion: string; instances: number; instanceProfile?: string
-  storage: string; storageClass?: string; backupStorage?: string; databaseName: string
-  credentialsSecret: string; usernameKey: string; passwordKey: string
-  bootstrapSecret: string; bootstrapKey: string; requiredVaultSecret?: string
+  credentialMode?: "platform" | "generated"
+  username?: string
+  allowConfigure?: boolean
+  allowEnvMapping?: boolean
+  allowCustomPassword?: boolean
+  envNames?: Record<string, string>
+  name: string
+  postgresVersion: string
+  instances: number
+  instanceProfile?: string
+  storage: string
+  storageClass?: string
+  backupStorage?: string
+  databaseName: string
+  credentialsSecret: string
+  usernameKey: string
+  passwordKey: string
+  bootstrapSecret: string
+  bootstrapKey: string
+  requiredVaultSecret?: string
 }
 export type VaultSecretBinding = {
-  allowPathSuffix?: boolean; allowEnvMapping?: boolean
-  id: string; name: string; authRef: string; vaultNamespace?: string; mount: string; path: string
-  type: string; refreshAfter: string; destination: string; envs: { name: string; key: string }[]
+  allowPathSuffix?: boolean
+  allowEnvMapping?: boolean
+  id: string
+  name: string
+  authRef: string
+  vaultNamespace?: string
+  mount: string
+  path: string
+  type: string
+  refreshAfter: string
+  destination: string
+  envs: { name: string; key: string }[]
 }
-export type ServiceCatalog = { allowEnvironment?: boolean; database?: DatabasePlan; vaultSecrets?: VaultSecretBinding[] }
-export type ServiceSelection = { database: boolean; vaultSecrets: string[]; databaseConfig?: { name?: string; username?: string; envNames?: Record<string,string> }; vaultConfig?: Record<string,{ pathSuffix?: string; envs?: {name:string;key:string}[] }>; environment?: {name:string;value:string}[] }
-export type ServiceOptions = { allowEnvironment?: boolean; database?: Partial<DatabasePlan>; databaseVaultSecret?: string; databaseName?: string; vaultSecrets: { id: string; name: string; path?:string; allowPathSuffix?:boolean; allowEnvMapping?:boolean; envs?:{name:string;key:string}[] }[] }
+export type ServiceCatalog = {
+  allowEnvironment?: boolean
+  database?: DatabasePlan
+  vaultSecrets?: VaultSecretBinding[]
+}
+export type ServiceSelection = {
+  database: boolean
+  vaultSecrets: string[]
+  databaseConfig?: {
+    name?: string
+    username?: string
+    envNames?: Record<string, string>
+  }
+  vaultConfig?: Record<
+    string,
+    { pathSuffix?: string; envs?: { name: string; key: string }[] }
+  >
+  environment?: { name: string; value: string }[]
+}
+export type ServiceOptions = {
+  allowEnvironment?: boolean
+  database?: Partial<DatabasePlan>
+  databaseVaultSecret?: string
+  databaseName?: string
+  vaultSecrets: {
+    id: string
+    name: string
+    path?: string
+    allowPathSuffix?: boolean
+    allowEnvMapping?: boolean
+    envs?: { name: string; key: string }[]
+  }[]
+}
+
+/** The workspace the user selected in the app shell, if any. */
+export function selectedWorkspaceId(): string {
+  try {
+    return window.localStorage.getItem("justcd.selectedWorkspaceId") ?? ""
+  } catch {
+    return ""
+  }
+}
+
+/** Template list URL; with a workspace it also returns that workspace's own templates. */
+export function templatesUrl(workspaceId: string = selectedWorkspaceId()) {
+  return workspaceId
+    ? `/api/v1/publishing/templates?workspaceId=${encodeURIComponent(workspaceId)}`
+    : "/api/v1/publishing/templates"
+}

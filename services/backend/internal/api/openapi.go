@@ -43,7 +43,75 @@ paths:
       responses:
         '200': {description: Templates with custom version metadata}
         '403': {description: Workspace owner required}
+    post:
+      summary: Create a workspace template
+      description: Requires the workspace owner role and CSRF. Creates a custom template with its first version, either from a kind (server, static, static-build) or as a copy of any template (baseTemplate, optionally baseVersion). The template files are validated like any saved version.
+      parameters:
+        - {name: workspaceID, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, name]
+              properties:
+                id: {type: string, description: "3-40 lowercase letters, numbers and hyphens; must not match a built-in template"}
+                name: {type: string, maxLength: 80}
+                description: {type: string, maxLength: 400}
+                category: {type: string, maxLength: 40}
+                kind: {type: string, enum: [server, static, static-build]}
+                baseTemplate: {type: string, description: Copy this template instead of starting from a kind}
+                baseVersion: {type: integer, minimum: 0}
+                entryPoint: {type: string}
+                port: {type: integer, minimum: 0, maximum: 65535}
+                layout: {type: array, items: {type: object, required: [anyOf], properties: {message: {type: string}, anyOf: {type: array, items: {type: array, items: {type: string}}}}}, description: "Files an uploaded ZIP must contain; {entry} is the entry point"}
+                label: {type: string, maxLength: 100}
+      responses:
+        '201': {description: Template created with version 1}
+        '400': {description: Invalid definition or template files}
+        '403': {description: Workspace owner and CSRF required}
+        '404': {description: Base template not found}
+        '409': {description: The ID exists or the workspace has the maximum number of templates}
+  /workspaces/{workspaceID}/publishing-templates/import:
+    post:
+      summary: Import a template from an exported file
+      description: Requires the workspace owner role and CSRF. The body is a justcd.template/v1 file; the id and name query parameters override the file's values.
+      parameters:
+        - {name: workspaceID, in: path, required: true, schema: {type: string}}
+        - {name: id, in: query, schema: {type: string}}
+        - {name: name, in: query, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, required: [format, template, files], properties: {format: {type: string, enum: ["justcd.template/v1"]}, template: {type: object}, label: {type: string}, files: {type: object, additionalProperties: {type: string}}}}
+      responses:
+        '201': {description: Template imported}
+        '400': {description: Unsupported file or invalid template}
+        '409': {description: The ID exists}
   /workspaces/{workspaceID}/publishing-templates/{templateID}:
+    put:
+      summary: Update a custom template's definition
+      description: Requires the workspace owner role and CSRF. Changes name, description, entry point, port and upload checks; the ID and kind are fixed. The latest files must still validate.
+      parameters:
+        - {name: workspaceID, in: path, required: true, schema: {type: string}}
+        - {name: templateID, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Template updated}
+        '400': {description: Invalid definition}
+        '404': {description: Not a custom template of this workspace}
+    delete:
+      summary: Delete a custom template
+      description: Requires the workspace owner role and CSRF. Fails while a profile or recorded profile revision references the template. Built-in templates cannot be deleted.
+      parameters:
+        - {name: workspaceID, in: path, required: true, schema: {type: string}}
+        - {name: templateID, in: path, required: true, schema: {type: string}}
+      responses:
+        '204': {description: Deleted with all versions}
+        '400': {description: Built-in template}
+        '404': {description: Not a custom template of this workspace}
+        '409': {description: A profile still uses the template}
     get:
       summary: Read a template, its built-in files and placeholders
       description: Workspace owner only. Returns the read-only built-in files, the ordered file list, the placeholders and helper functions templates can use, and the custom versions.
@@ -54,6 +122,17 @@ paths:
         '200': {description: Template detail}
         '403': {description: Workspace owner required}
         '404': {description: Unknown template}
+  /workspaces/{workspaceID}/publishing-templates/{templateID}/export:
+    get:
+      summary: Export a template version as a portable file
+      description: Workspace owner only. Returns a justcd.template/v1 document with the definition and files of the requested (default latest) version.
+      parameters:
+        - {name: workspaceID, in: path, required: true, schema: {type: string}}
+        - {name: templateID, in: path, required: true, schema: {type: string}}
+        - {name: version, in: query, schema: {type: integer, minimum: 0}}
+      responses:
+        '200': {description: Template file}
+        '404': {description: Template or version not found}
   /workspaces/{workspaceID}/publishing-templates/{templateID}/versions/{version}:
     get:
       summary: Read the files of a template version
@@ -209,8 +288,12 @@ paths:
   /publishing/templates:
     get:
       summary: List supported application templates (authenticated)
+      description: With workspaceId (any workspace member) the workspace's custom templates follow the built-in ones.
+      parameters:
+        - {name: workspaceId, in: query, schema: {type: string}}
       responses:
-        '200': {description: Built-in Shiny, Streamlit and Shiny Geospatial template definitions and versions}
+        '200': {description: Built-in template definitions, plus custom ones for the workspace}
+        '403': {description: Not a member of the workspace}
   /publishing/limits:
     get:
       summary: Read the active publishing archive limits (authenticated)
@@ -296,7 +379,7 @@ paths:
                       properties:
                         templateId: {type: string, enum: [shiny, streamlit, shiny-geospatial, python-static, static]}
                         name: {type: string}
-                        runtime: {type: string, enum: [shiny, streamlit, python-static, static]}
+                        runtime: {type: string, enum: [shiny, streamlit, python-static, static, server]}
                         entryPoint: {type: string}
                         buildCommand: {type: string}
                         outputDir: {type: string}

@@ -591,7 +591,9 @@ export function ExistingProject({
                       ? "Website directory"
                       : template.runtime === "shiny"
                         ? "Shiny app directory"
-                        : "Python entry file",
+                        : template.runtime === "server"
+                          ? "Entry file or directory"
+                          : "Python entry file",
                     entryPoint,
                     setEntryPoint,
                     template.runtime === "static"

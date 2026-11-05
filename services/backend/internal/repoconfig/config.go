@@ -63,6 +63,7 @@ type Definition struct {
 		Notifications      *RepositoryNotificationPolicy `json:"notifications,omitempty"`
 		DeploymentSchedule schedule.Policy               `json:"deploymentSchedule,omitempty"`
 		PullRequests       *store.RepositoryPRConfig     `json:"pullRequests,omitempty"`
+		Environment        *store.ApplicationEnvironment `json:"environment,omitempty"`
 		IgnoreResources    []IgnoreResource              `json:"ignoreResources,omitempty"`
 		SyncPolicy         string                        `json:"syncPolicy,omitempty"`
 		PollSeconds        int                           `json:"pollSeconds,omitempty"`
@@ -246,6 +247,11 @@ func Discover(root string) ([]Definition, error) {
 			}
 			if err := n.Validate(); err != nil {
 				return fail(fmt.Errorf("notifications: %w", err))
+			}
+		}
+		if d.Spec.Environment != nil {
+			if err := store.ValidateApplicationEnvironment(*d.Spec.Environment); err != nil {
+				return fail(fmt.Errorf("environment: %w", err))
 			}
 		}
 		if err := d.Spec.DeploymentSchedule.Validate(); err != nil {

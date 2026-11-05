@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useState } from "react"
 import type { FormEvent } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Copy01Icon, Delete02Icon, GitBranchIcon, PauseIcon, PlayIcon, Settings02Icon, Tick02Icon } from "@hugeicons/core-free-icons"
+import { Copy01Icon, Delete02Icon, GitBranchIcon, Layers01Icon, PauseIcon, PlayIcon, Settings02Icon, Tick02Icon } from "@hugeicons/core-free-icons"
 import { RowActions } from "@/components/action-menu"
+import { RepositoryEnvironmentSettingsDialog } from "@/components/repository-environment-settings"
 import { RepositoryPRSettingsDialog } from "@/components/repository-pr-settings"
 import { Badge } from "@/components/reui/badge"
 import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
@@ -71,6 +72,7 @@ export function RepositoryConfigurations({
   const [revision, setRevision] = useState("main")
   const [busy, setBusy] = useState("")
   const [settingsFor, setSettingsFor] = useState<RepositoryConfiguration | null>(null)
+  const [environmentsFor, setEnvironmentsFor] = useState<RepositoryConfiguration | null>(null)
   const load = useCallback(async () => {
     try {
       const result = await api<ListResponse<RepositoryConfiguration>>(
@@ -208,6 +210,7 @@ export function RepositoryConfigurations({
                 primary={<Button size="sm" variant="outline" disabled={Boolean(busy)} loading={busy === item.id} onClick={() => void update(item, item.enabled ? "refresh" : "toggle")}>{item.enabled ? "Discover now" : "Resume discovery"}</Button>}
                 items={[
                   { label: "PR discovery settings", icon: Settings02Icon, onSelect: () => setSettingsFor(item) },
+                  { label: "GitLab environments", icon: Layers01Icon, onSelect: () => setEnvironmentsFor(item) },
                   { label: item.enabled ? "Pause discovery" : "Resume discovery", icon: item.enabled ? PauseIcon : PlayIcon, disabled: Boolean(busy), onSelect: () => void update(item, "toggle") },
                   { label: "Remove", icon: Delete02Icon, destructive: true, disabled: Boolean(busy), confirm: {
                     title: `Remove ${nameOf(item)}?`,
@@ -221,6 +224,7 @@ export function RepositoryConfigurations({
           ))}
         </ul>
       )}
+      {environmentsFor && <RepositoryEnvironmentSettingsDialog repository={items.find((item) => item.id === environmentsFor.id) ?? environmentsFor} open onOpenChange={(next) => { if (!next) setEnvironmentsFor(null) }} onSaved={load} />}
       {settingsFor && <RepositoryPRSettingsDialog repository={items.find((item) => item.id === settingsFor.id) ?? settingsFor} open onOpenChange={(next) => { if (!next) setSettingsFor(null) }} onSaved={load} />}
       <AppDialog
         open={open}

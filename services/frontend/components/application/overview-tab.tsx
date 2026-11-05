@@ -13,6 +13,7 @@ import { StatusBadge } from "@/components/ui-kit"
 import { ago } from "@/lib/relative-time"
 import type { ApplicationStatus } from "@/lib/application-status"
 import { applicationResourceNodes } from "@/lib/topology-view"
+import { EnvironmentSummary } from "@/components/application/environment-summary"
 import { SyncHistoryChart } from "@/components/application/sync-history-chart"
 import type {
   Application,
@@ -308,6 +309,9 @@ export function OverviewTab({
                 compact
               />
             </div>
+          )}
+          {application.repositoryConfigurationId && (
+            <EnvironmentSummary applicationId={application.id} />
           )}
           {application.repositoryConfigurationId && (
             <div className="border-t px-5 py-3">

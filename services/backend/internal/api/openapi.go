@@ -625,6 +625,33 @@ paths:
       responses:
         '200': { description: PR applications with applicationId, definitionName, phase, error and plan }
         '403': { description: Workspace access required }
+  /repository-configurations/{repositoryID}/environment-settings:
+    get:
+      summary: Read GitLab environment reporting settings (workspace viewer)
+      parameters:
+        - { name: repositoryID, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Settings with enabled, credentialId and optional apiUrl }
+        '403': { description: Workspace access required }
+    put:
+      summary: Configure GitLab environment reporting (workspace owner)
+      description: When enabled, JustCD records a GitLab deployment after each finished sync of applications defined by this repository. The environment defaults to cluster/namespace and can be overridden by spec.environment in justcd.yaml. The credential needs a token with the api scope.
+      parameters:
+        - { name: repositoryID, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+                credentialId: { type: string }
+                apiUrl: { type: string, format: uri }
+      responses:
+        '200': { description: Saved settings }
+        '409': { description: Repository is not on GitLab or the credential is unavailable }
   /repository-configurations/{repositoryID}/pull-requests/settings:
     put:
       summary: Configure trusted repository PR discovery policy (workspace owner)
@@ -1188,6 +1215,14 @@ paths:
       summary: Show desired, managed, and read-only observed Kubernetes resources with their relationships
       responses:
         '200': { description: Resource graph with safe metadata and observation warnings }
+  /applications/{applicationID}/environment:
+    get:
+      summary: GitLab environment and latest reported deployment (workspace viewer)
+      parameters:
+        - { name: applicationID, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: reporting flag, resolved environment (name, tier, url), whether it is declared in justcd.yaml, and the latest deployment report }
+        '403': { description: Workspace access required }
   /applications/{applicationID}/health-history:
     get:
       summary: List recent Kubernetes health condition transitions

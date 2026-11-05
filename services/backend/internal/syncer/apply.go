@@ -216,6 +216,7 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		operation.TerminalReason = decision.TerminalReason
 		now := time.Now().UTC()
 		operation.FinishedAt = &now
+		s.reportEnvironmentDeployment(app, operationID, record, record.Plan.Revision, "failed")
 		return operation, cause
 	}
 	if actorID != systemActorID {
@@ -521,6 +522,7 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 	operation.Message = message
 	now := time.Now().UTC()
 	operation.FinishedAt = &now
+	s.reportEnvironmentDeployment(app, operationID, record, lastSyncedRevision, "success")
 	return operation, nil
 }
 

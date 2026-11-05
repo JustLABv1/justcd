@@ -296,3 +296,20 @@ func TestDiscoverCreateNamespaceAlias(t *testing.T) {
 	}
 
 }
+
+func TestDiscoverEnvironmentOverride(t *testing.T) {
+	root := t.TempDir()
+	writeDefinition(t, root, "apps/shop/justcd.yaml", validDefinition+"  environment:\n    name: shop/production\n    tier: production\n    url: https://shop.example.com\n")
+	definitions, err := Discover(root)
+	if err != nil || len(definitions) != 1 {
+		t.Fatalf("definitions=%v err=%v", definitions, err)
+	}
+	if e := definitions[0].Spec.Environment; e == nil || e.Name != "shop/production" || e.Tier != "production" || e.URL != "https://shop.example.com" {
+		t.Fatalf("unexpected environment: %+v", e)
+	}
+	bad := t.TempDir()
+	writeDefinition(t, bad, "apps/shop/justcd.yaml", validDefinition+"  environment:\n    tier: prod\n")
+	if _, err := Discover(bad); err == nil || !strings.Contains(err.Error(), "environment") {
+		t.Fatalf("expected environment validation error, got %v", err)
+	}
+}

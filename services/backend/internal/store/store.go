@@ -1369,6 +1369,7 @@ type Application struct {
 	Labels                         map[string]string                  `json:"labels"`
 	RepositoryNotifications        *ApplicationNotificationPolicy     `json:"-"`
 	RepositoryDeploymentSchedule   schedule.Policy                    `json:"-"`
+	RepositoryEnvironment          ApplicationEnvironment             `json:"-"`
 	BranchTest                     *BranchTest                        `json:"branchTest,omitempty"`
 	ClusterName                    string                             `json:"clusterName,omitempty"`
 	CreateNamespaces               bool                               `json:"createNamespaces"`

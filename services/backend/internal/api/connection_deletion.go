@@ -51,6 +51,10 @@ func (s *Server) deleteCredential(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "instance administrator role required")
 		return
 	}
+	if credential.Kind == "publishing-database" {
+		writeError(w, 409, "database credentials are retained with the database and cannot be deleted as a connection")
+		return
+	}
 	s.deleteConnection(w, r, "credential", credential.ID, "Credential is still assigned to a cluster, namespace, Git source, or shared connection. Replace or remove its assignments before deleting it.")
 }
 

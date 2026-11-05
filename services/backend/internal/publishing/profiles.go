@@ -6,6 +6,7 @@ import (
 )
 
 type ProfileSettings struct {
+	ServiceCatalog      string `json:"serviceCatalog,omitempty"`
 	GitImage            string `json:"gitImage,omitempty"`
 	BuildEngine         string `json:"buildEngine,omitempty"`
 	CAVariable          string `json:"caVariable,omitempty"`
@@ -76,6 +77,9 @@ func (s ProfileSettings) Resolve(name, entry string) (Config, error) {
 	return c, c.Validate()
 }
 func (s ProfileSettings) Validate() error {
+	if _, err := ParseServiceCatalog(s.ServiceCatalog); err != nil {
+		return err
+	}
 	if s.NamespaceMode != "" && s.NamespaceMode != "fixed" && s.NamespaceMode != "per-application" {
 		return errors.New("namespace mode must be fixed or per-application")
 	}

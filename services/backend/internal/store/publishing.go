@@ -29,7 +29,7 @@ func (s *Store) PublishedApplication(ctx context.Context, workspace, url string)
 
 // RegisterPublishedApplication atomically stores the encrypted Git read credential,
 // source, application and publication metadata. Failed registrations leave no local partial objects.
-func (s *Store) RegisterPublishedApplication(ctx context.Context, c Credential, source GitSource, a Application, p PublishedApplication) error {
+func (s *Store) RegisterPublishedApplication(ctx context.Context, c Credential, source GitSource, a Application, p PublishedApplication, extraCredentials ...Credential) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -48,6 +48,17 @@ func (s *Store) RegisterPublishedApplication(ctx context.Context, c Credential, 
 	if c.ID != "" {
 		_, err = tx.ExecContext(ctx, `INSERT INTO credentials(id,workspace_id,name,kind,secret_cipher) VALUES($1,$2,$3,$4,$5)`, c.ID, c.WorkspaceID, c.Name, c.Kind, c.Cipher)
 		if err != nil {
+			return err
+		}
+	}
+	for _, credential := range extraCredentials {
+		if credential.ID == "" {
+			continue
+		}
+		if credential.Kind != "publishing-database" || credential.WorkspaceID == nil || *credential.WorkspaceID != a.WorkspaceID {
+			return errors.New("invalid runtime credential scope")
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO credentials(id,workspace_id,name,kind,secret_cipher) VALUES($1,$2,$3,$4,$5)`, credential.ID, credential.WorkspaceID, credential.Name, credential.Kind, credential.Cipher); err != nil {
 			return err
 		}
 	}

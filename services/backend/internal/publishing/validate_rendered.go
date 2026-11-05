@@ -33,7 +33,7 @@ type resource struct {
 }
 
 var (
-	extraKinds     = map[string]string{"ConfigMap": "v1", "NetworkPolicy": "networking.k8s.io/v1", "PodDisruptionBudget": "policy/v1", "HorizontalPodAutoscaler": "autoscaling/v2"}
+	extraKinds     = map[string]string{"SGCluster": "stackgres.io/v1", "SGScript": "stackgres.io/v1", "VaultStaticSecret": "secrets.hashicorp.com/v1beta1", "ConfigMap": "v1", "NetworkPolicy": "networking.k8s.io/v1", "PodDisruptionBudget": "policy/v1", "HorizontalPodAutoscaler": "autoscaling/v2"}
 	generatedKinds = map[string]string{"Deployment": "apps/v1", "Service": "v1", "Route": "route.openshift.io/v1", "Ingress": "networking.k8s.io/v1"}
 	allowedVolumes = map[string]bool{"name": true, "emptyDir": true, "configMap": true, "secret": true, "projected": true, "downwardAPI": true, "persistentVolumeClaim": true}
 	documentSplit  = regexp.MustCompile(`(?m)^---[ \t]*$`)
@@ -110,6 +110,8 @@ func validateManifest(c Config, text string) error {
 
 func validateResource(c Config, r resource) error {
 	switch r.kind {
+	case "SGCluster", "SGScript", "VaultStaticSecret":
+		return validateServiceObject(c, r)
 	case "Deployment":
 		return validatePod(c, dig(r.body, "spec", "template", "spec"))
 	case "Service":
@@ -335,8 +337,12 @@ func validateNetworkPolicy(c Config, r resource) error {
 		return fmt.Errorf("invalid NetworkPolicy: %w", err)
 	}
 	selector := policy.Spec.PodSelector
-	if len(selector.MatchLabels) != 1 || selector.MatchLabels["app"] != c.Name || len(selector.MatchExpressions) != 0 {
-		return errors.New("NetworkPolicy podSelector must be exactly matchLabels: {app: <application name>}")
+	selectedApp := selector.MatchLabels["app"] == c.Name
+	if services, err := resolvedServices(c); err == nil && services.Database != nil && selector.MatchLabels["app"] == ServiceResourceName(c.Name, "-db") {
+		selectedApp = true
+	}
+	if len(selector.MatchLabels) != 1 || !selectedApp || len(selector.MatchExpressions) != 0 {
+		return errors.New("NetworkPolicy must select exactly this application's app pods or its selected database pods using matchLabels.app")
 	}
 	seen := map[networkingv1.PolicyType]bool{}
 	for _, typ := range policy.Spec.PolicyTypes {

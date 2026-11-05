@@ -22,18 +22,19 @@ type publishingSecrets struct {
 // Read-only profile summaries deliberately exclude infrastructure settings and
 // credential references. Analysts choose an approved destination, not its tokens.
 type publishingProfileSummary struct {
-	CurrentRevision int64  `json:"currentRevision"`
-	NamespaceMode   string `json:"namespaceMode"`
-	NamespacePrefix string `json:"namespacePrefix"`
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Description     string `json:"description"`
-	TemplateID      string `json:"templateId"`
-	ClusterID       string `json:"clusterId"`
-	ClusterName     string `json:"clusterName"`
-	Namespace       string `json:"namespace"`
-	HostSuffix      string `json:"hostSuffix"`
-	SyncPolicy      string `json:"syncPolicy"`
+	Services        publishing.ServiceOptions `json:"services"`
+	CurrentRevision int64                     `json:"currentRevision"`
+	NamespaceMode   string                    `json:"namespaceMode"`
+	NamespacePrefix string                    `json:"namespacePrefix"`
+	ID              string                    `json:"id"`
+	Name            string                    `json:"name"`
+	Description     string                    `json:"description"`
+	TemplateID      string                    `json:"templateId"`
+	ClusterID       string                    `json:"clusterId"`
+	ClusterName     string                    `json:"clusterName"`
+	Namespace       string                    `json:"namespace"`
+	HostSuffix      string                    `json:"hostSuffix"`
+	SyncPolicy      string                    `json:"syncPolicy"`
 }
 
 func (s *Server) listApprovedPublishingProfiles(w http.ResponseWriter, r *http.Request) {
@@ -68,7 +69,12 @@ func (s *Server) listApprovedPublishingProfiles(w http.ResponseWriter, r *http.R
 		if e != nil {
 			continue
 		}
-		items = append(items, publishingProfileSummary{CurrentRevision: p.CurrentRevision, ID: p.ID, Name: p.Name, Description: p.Description, TemplateID: p.Settings.TemplateID, ClusterID: p.Settings.ClusterID, ClusterName: cluster.Name, Namespace: p.Settings.Namespace, HostSuffix: p.Settings.HostSuffix, SyncPolicy: p.Settings.SyncPolicy, NamespaceMode: p.Settings.NamespaceMode, NamespacePrefix: p.Settings.NamespacePrefix})
+		catalog, err := publishing.ParseServiceCatalog(p.Settings.ServiceCatalog)
+		if err != nil {
+			writeStoreError(w, "invalid publishing service catalog")
+			return
+		}
+		items = append(items, publishingProfileSummary{Services: catalog.Options(), CurrentRevision: p.CurrentRevision, ID: p.ID, Name: p.Name, Description: p.Description, TemplateID: p.Settings.TemplateID, ClusterID: p.Settings.ClusterID, ClusterName: cluster.Name, Namespace: p.Settings.Namespace, HostSuffix: p.Settings.HostSuffix, SyncPolicy: p.Settings.SyncPolicy, NamespaceMode: p.Settings.NamespaceMode, NamespacePrefix: p.Settings.NamespacePrefix})
 	}
 	writeJSON(w, 200, map[string]any{"items": items})
 }
@@ -138,17 +144,31 @@ func (s *Server) savePublishingProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		PublishRevision bool                       `json:"publishRevision"`
-		Name            string                     `json:"name"`
-		Description     string                     `json:"description"`
-		Enabled         bool                       `json:"enabled"`
-		Settings        publishing.ProfileSettings `json:"settings"`
-		Secrets         publishingSecrets          `json:"secrets"`
-		Version         int64                      `json:"version"`
+		CopyFromProfileID string                     `json:"copyFromProfileId"`
+		PublishRevision   bool                       `json:"publishRevision"`
+		Name              string                     `json:"name"`
+		Description       string                     `json:"description"`
+		Enabled           bool                       `json:"enabled"`
+		Settings          publishing.ProfileSettings `json:"settings"`
+		Secrets           publishingSecrets          `json:"secrets"`
+		Version           int64                      `json:"version"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, 400, "invalid publishing profile")
 		return
+	}
+	var copySource *store.PublishingProfile
+	if input.CopyFromProfileID != "" {
+		if r.Method != "POST" {
+			writeError(w, 400, "copyFromProfileId is only supported when creating a profile")
+			return
+		}
+		source, err := s.Store.PublishingProfile(r.Context(), input.CopyFromProfileID)
+		if err != nil || source.WorkspaceID != workspace {
+			writeError(w, 404, "source publishing profile not found")
+			return
+		}
+		copySource = &source
 	}
 	input.Name = strings.TrimSpace(input.Name)
 	if input.Name == "" || len(input.Name) > 100 || len(input.Description) > 1000 {
@@ -178,6 +198,25 @@ func (s *Server) savePublishingProfile(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if input.Settings.ServiceCatalog != "" {
+		catalog, _ := publishing.ParseServiceCatalog(input.Settings.ServiceCatalog)
+		all := publishing.ServiceSelection{Database: catalog.Database != nil}
+		for _, v := range catalog.VaultSecrets {
+			all.VaultSecrets = append(all.VaultSecrets, v.ID)
+		}
+		resolvedServices, err := catalog.Resolve(all)
+		checkConfig.Services = resolvedServices
+		if err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
+		for _, renv := range []bool{false, true} {
+			if _, err := publishing.RenderConfig(checkConfig, publishing.SourceFacts{HasRenvLock: renv}); err != nil {
+				writeError(w, 400, "application services: "+err.Error())
+				return
+			}
+		}
+	}
 	if _, err := s.Store.PublishingNamespaceBinding(r.Context(), workspace, input.Settings.ClusterID, checkConfig.Namespace, checkConfig.CreateNamespace); err != nil {
 		writeError(w, 400, "profile namespace destination is unavailable: "+err.Error())
 		return
@@ -185,6 +224,25 @@ func (s *Server) savePublishingProfile(w http.ResponseWriter, r *http.Request) {
 	create := r.Method == "POST"
 	p := store.PublishingProfile{ID: store.NewID(), WorkspaceID: workspace, CredentialID: store.NewID(), GitReadCredentialID: store.NewID(), Version: 1}
 	secrets := input.Secrets
+	if copySource != nil {
+		previous, err := s.loadPublishingSecrets(r, *copySource)
+		if err != nil {
+			writeStoreError(w, "could not copy profile credentials")
+			return
+		}
+		if secrets.GitLabToken == "" {
+			secrets.GitLabToken = previous.GitLabToken
+		}
+		if secrets.GitReadToken == "" {
+			secrets.GitReadToken = previous.GitReadToken
+		}
+		if secrets.RegistryUser == "" {
+			secrets.RegistryUser = previous.RegistryUser
+		}
+		if secrets.RegistryPassword == "" {
+			secrets.RegistryPassword = previous.RegistryPassword
+		}
+	}
 	if !create {
 		var err error
 		p, err = s.Store.PublishingProfile(r.Context(), r.PathValue("profileID"))
@@ -332,6 +390,11 @@ func (s *Server) resolvePublishingProfile(w http.ResponseWriter, r *http.Request
 		}
 		in.Name, in.EntryPoint = app.Name, config.EntryPoint
 		in.BuildCommand, in.OutputDir = config.BuildCommand, config.OutputDir
+		in.Services, e = publishing.ServiceChoices(config.Services)
+		if e != nil {
+			writeStoreError(w, "invalid application services")
+			return nil, false
+		}
 	}
 	version, e := s.Store.PublishingProfileVersion(r.Context(), p.ID, in.ProfileRevision)
 	if e != nil {
@@ -360,6 +423,16 @@ func (s *Server) resolvePublishingProfile(w http.ResponseWriter, r *http.Request
 		}
 	} else if in.BuildCommand != "" || in.OutputDir != "" {
 		writeError(w, 400, "static build settings require a Python static website profile")
+		return nil, false
+	}
+	catalog, err := publishing.ParseServiceCatalog(version.Settings.ServiceCatalog)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return nil, false
+	}
+	cfg.Services, err = catalog.Resolve(in.Services)
+	if err != nil {
+		writeError(w, 400, err.Error())
 		return nil, false
 	}
 	secrets, err := s.loadPublishingSecrets(r, p)

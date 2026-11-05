@@ -46,6 +46,7 @@ func SizeLabel(n int64) string      { return fmt.Sprintf("%g MiB", float64(n)/(1
 const Version = "1"
 
 type Config struct {
+	Services          string `json:"services,omitempty"`
 	ManagedCompletion bool   `json:"managedCompletion,omitempty"`
 	GitImage          string `json:"gitImage,omitempty"`
 	BuildEngine       string `json:"buildEngine,omitempty"`
@@ -104,6 +105,9 @@ var hostPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
 var filePattern = regexp.MustCompile(`^[a-zA-Z0-9_./-]+$`)
 
 func (c Config) Validate() error {
+	if _, err := resolvedServices(c); err != nil {
+		return err
+	}
 	if c.BuildEngine != "" && c.BuildEngine != "buildkit" && c.BuildEngine != "podman" {
 		return errors.New("build engine must be buildkit or podman")
 	}

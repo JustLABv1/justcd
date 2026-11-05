@@ -230,7 +230,7 @@ func (s *Server) listCredentials(w http.ResponseWriter, r *http.Request) {
 	}
 	visible := items[:0]
 	for _, item := range items {
-		if item.Kind != "publishing" {
+		if item.Kind != "publishing" && item.Kind != "publishing-database" {
 			visible = append(visible, item)
 		}
 	}

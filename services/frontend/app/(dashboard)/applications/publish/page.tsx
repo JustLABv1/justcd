@@ -10,6 +10,8 @@ import {
   type ApplicationTemplate,
 } from "@/components/applications/template-catalog"
 import { ExistingProject } from "@/components/applications/existing-project"
+import { PublishingServicesPicker } from "@/components/applications/publishing-services"
+import type { ServiceSelection } from "@/lib/publishing"
 import { ArchiveUpload } from "@/components/applications/archive-upload"
 import {
   PublishingCard,
@@ -39,6 +41,11 @@ export default function PublishApplicationPage() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [workspaceId, setWorkspaceId] = useState("")
   const [profiles, setProfiles] = useState<ApprovedPublishingProfile[]>([])
+  const [databasePassword, setDatabasePassword] = useState("")
+  const [serviceSelection, setServiceSelection] = useState("")
+  const services: ServiceSelection = (() => {
+    try { const value = JSON.parse(serviceSelection); return { ...value, database: value.database === true, vaultSecrets: Array.isArray(value.vaultSecrets) ? value.vaultSecrets.filter((id: unknown): id is string => typeof id === "string") : [] } } catch { return { database: false, vaultSecrets: [] } }
+  })()
   const [profileId, setProfileId] = useState("")
   const [name, setName] = useState("")
   const [buildCommand, setBuildCommand] = useState("python build_html.py")
@@ -53,6 +60,7 @@ export default function PublishApplicationPage() {
   const draft = usePublishingDraft(
     workspaceId ? `catalog:${workspaceId}` : null,
     {
+      serviceSelection,
       templateId: template?.id ?? "",
       method: method ?? "",
       profileId:
@@ -80,6 +88,7 @@ export default function PublishApplicationPage() {
           ? data.method
           : null
       )
+      setServiceSelection(data.serviceSelection)
       setProfileId(data.profileId)
       setName(data.name)
       setEntryPoint(data.entryPoint)
@@ -153,6 +162,8 @@ export default function PublishApplicationPage() {
           {
             workspaceId,
             profileId: profile.id,
+            services,
+            databasePassword: services.database ? databasePassword : undefined,
             expectedProfileRevision: profile.currentRevision,
             name,
             entryPoint,
@@ -164,6 +175,7 @@ export default function PublishApplicationPage() {
           limits
         )
       )
+      setDatabasePassword("")
       draft.clear()
     } catch (cause) {
       setError(cause)
@@ -244,6 +256,7 @@ export default function PublishApplicationPage() {
             setBuildCommand("python build_html.py")
             setOutputDir("dist")
             setFile(null)
+            setServiceSelection(""); setDatabasePassword("")
             setProfileId("")
             setError(null)
           }}
@@ -427,6 +440,7 @@ export default function PublishApplicationPage() {
                 id="publish-workspace"
                 value={workspaceId}
                 onValueChange={(value) => {
+                  setServiceSelection(""); setDatabasePassword("")
                   setWorkspaceId(value)
                   setProfileId("")
                   setProfiles([])
@@ -465,7 +479,7 @@ export default function PublishApplicationPage() {
               <FormSelect
                 id="publish-profile"
                 value={profile?.id ?? ""}
-                onValueChange={setProfileId}
+                onValueChange={(id) => { setProfileId(id); setServiceSelection(""); setDatabasePassword("") }}
                 items={choices.map((item) => ({
                   value: item.id,
                   label: `${item.name} · v${item.currentRevision}`,
@@ -593,6 +607,7 @@ export default function PublishApplicationPage() {
               </Disclosure>
             </PublishingCard>
           )}
+          <PublishingServicesPicker options={profile?.services} value={services} password={databasePassword} onPasswordChange={setDatabasePassword} onChange={value => { if (!value.database) setDatabasePassword(""); setServiceSelection(JSON.stringify(value)) }} />
           {profile && (
             <div className="space-y-1 px-1 text-sm leading-6 text-muted-foreground">
               {profile.description && <p>{profile.description}</p>}

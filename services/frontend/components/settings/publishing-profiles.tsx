@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { PublishingServicesEditor } from "./publishing-services"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -70,6 +71,7 @@ export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
   const [editingTemplate, setEditingTemplate] = useState<string | null>(null)
   const [profiles, setProfiles] = useState<PublishingProfile[]>([])
   const [editing, setEditing] = useState<PublishingProfile | null>(null)
+  const [copying, setCopying] = useState<PublishingProfile | null>(null)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [loading, setLoading] = useState(true)
@@ -148,15 +150,17 @@ export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
         }}
       />
     )
-  if (creating || editing)
+  if (creating || editing || copying)
     return (
       <ProfileEditor
-        key={editing ? `${editing.id}:${editing.version}` : "new"}
+        key={editing ? `${editing.id}:${editing.version}` : copying ? `copy:${copying.id}` : "new"}
         workspaceId={workspaceId}
         profile={editing}
+        copyFrom={copying}
         onCancel={() => {
           setCreating(false)
           setEditing(null)
+          setCopying(null)
         }}
         onSaved={(profile) => {
           setProfiles((items) =>
@@ -166,6 +170,7 @@ export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
           )
           setCreating(false)
           setEditing(null)
+          setCopying(null)
           setNotice("Publishing profile saved.")
         }}
       />
@@ -231,6 +236,7 @@ export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
                   )}
                 </div>
                 <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => { setCopying(profile); setNotice("") }}>Copy profile</Button>
                   <Button
                     variant="outline"
                     onClick={() => {
@@ -335,19 +341,22 @@ export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
 function ProfileEditor({
   workspaceId,
   profile,
+  copyFrom,
   onCancel,
   onSaved,
 }: {
   workspaceId: string
+  copyFrom: PublishingProfile | null
   profile: PublishingProfile | null
   onCancel: () => void
   onSaved: (profile: PublishingProfile) => void
 }) {
+  const initial = profile ?? copyFrom
   const [publishRevision, setPublishRevision] = useState(false)
-  const [name, setName] = useState(profile?.name ?? "")
-  const [description, setDescription] = useState(profile?.description ?? "")
-  const [enabled, setEnabled] = useState(profile?.enabled ?? true)
-  const [settings, setSettings] = useState(profile?.settings ?? emptySettings)
+  const [name, setName] = useState(profile?.name ?? (copyFrom ? `${copyFrom.name.slice(0, 93)} (copy)` : ""))
+  const [description, setDescription] = useState(initial?.description ?? "")
+  const [enabled, setEnabled] = useState(copyFrom ? false : profile?.enabled ?? true)
+  const [settings, setSettings] = useState(initial?.settings ?? emptySettings)
   const [secrets, setSecrets] = useState({
     gitlabToken: "",
     gitReadToken: "",
@@ -457,6 +466,7 @@ function ProfileEditor({
         secrets,
         version: profile?.version ?? 0,
         publishRevision,
+        copyFromProfileId: copyFrom?.id,
       }
       const saved = profile
         ? await api<PublishingProfile>(
@@ -521,14 +531,14 @@ function ProfileEditor({
         id={`profile-secret-${key}`}
         type={key === "registryUser" ? "text" : "password"}
         autoComplete="off"
-        required={!profile}
+        required={!profile && !copyFrom}
         minLength={key === "registryUser" ? 1 : 8}
         value={secrets[key]}
         onChange={(event) =>
           setSecrets((current) => ({ ...current, [key]: event.target.value }))
         }
         placeholder={
-          profile ? "Leave blank to keep the stored value" : undefined
+          copyFrom ? "Leave blank to copy the stored value" : profile ? "Leave blank to keep the stored value" : undefined
         }
       />
     </FormField>
@@ -542,8 +552,8 @@ function ProfileEditor({
   return (
     <form onSubmit={save} className="space-y-5">
       <Panel
-        title={profile ? `Edit ${profile.name}` : "Create publishing profile"}
-        description="Choose the approved build and destination. Secret values are encrypted and never returned to the browser."
+        title={profile ? `Edit ${profile.name}` : copyFrom ? `Copy ${copyFrom.name}` : "Create publishing profile"}
+        description={copyFrom ? "Review the copied settings and give the profile a new name. The copy starts disabled; enable it when ready. Credentials are copied securely when saved." : "Choose the approved build and destination. Secret values are encrypted and never returned to the browser."}
       >
         <fieldset disabled={busy} className="space-y-4 p-5">
           <div className="grid gap-4 md:grid-cols-2">
@@ -746,6 +756,7 @@ function ProfileEditor({
             )}
           </div>
         </Panel>
+        <PublishingServicesEditor value={settings.serviceCatalog ?? ""} onChange={serviceCatalog => patch({ serviceCatalog })} />
         <Panel
           title="Source and build"
           description="GitLab location, images and registry used to build applications."
@@ -812,7 +823,9 @@ function ProfileEditor({
         <Panel
           title="Access and credentials"
           description={
-            profile
+            copyFrom
+              ? "Leave fields blank to copy credentials securely on the server. The new profile has independent credentials; changes do not affect the original."
+              : profile
               ? "Leave fields blank to keep stored values. Analysts never receive these values."
               : "Use service credentials scoped to the approved group and registry. Analysts never receive these values."
           }

@@ -168,6 +168,7 @@ func (s *Server) previewPublishingTemplate(w http.ResponseWriter, r *http.Reques
 		Files       map[string]string           `json:"files"`
 		Settings    *publishing.ProfileSettings `json:"settings"`
 		HasRenvLock bool                        `json:"hasRenvLock"`
+		Services    publishing.ServiceSelection `json:"services"`
 	}
 	if err := decodeJSON(w, r, &in); err != nil {
 		writeError(w, 400, "invalid preview request")
@@ -189,6 +190,21 @@ func (s *Server) previewPublishingTemplate(w http.ResponseWriter, r *http.Reques
 			writeError(w, 400, "profile settings: "+err.Error())
 			return
 		}
+	}
+	if in.Settings != nil {
+		catalog, e := publishing.ParseServiceCatalog(in.Settings.ServiceCatalog)
+		if e != nil {
+			writeError(w, 400, e.Error())
+			return
+		}
+		cfg.Services, e = catalog.Resolve(in.Services)
+		if e != nil {
+			writeError(w, 400, e.Error())
+			return
+		}
+	} else if in.Services.Database || len(in.Services.VaultSecrets) > 0 {
+		writeError(w, 400, "select a profile to preview application services")
+		return
 	}
 	cfg.TemplateFiles = &publishing.TemplateFileSet{Files: in.Files}
 	out, err := publishing.RenderConfig(cfg, publishing.SourceFacts{HasRenvLock: in.HasRenvLock})

@@ -57,8 +57,11 @@ type KV struct{ Key, Value string }
 
 // TemplateData is everything a template can reference, as {{ .Field }}.
 type TemplateData struct {
-	Parameters    map[string]string
-	RecipeVersion string
+	HasDatabase         bool
+	DatabaseClusterName string
+	DatabaseName        string
+	Parameters          map[string]string
+	RecipeVersion       string
 	// Application
 	Name, Namespace, Host, Runtime, EntryPoint string
 	Port                                       int
@@ -87,6 +90,9 @@ type Placeholder struct {
 }
 
 var placeholderDocs = map[string]string{
+	"HasDatabase":          "True when this application selected the optional StackGres database.",
+	"DatabaseClusterName":  "The generated SGCluster name, also used as app label on its database pods.",
+	"DatabaseName":         "The SQL database name from the selected database plan.",
 	"Parameters":           `Non-secret profile parameters, for example {{ quote (default "ingress-system" (index .Parameters "ingressNamespace")) }}.`,
 	"RecipeVersion":        "JustCD recipe version of the built-in templates.",
 	"Name":                 "Application name (DNS label).",
@@ -219,6 +225,11 @@ func templateData(c Config, facts SourceFacts) TemplateData {
 		Exposure: c.Exposure, IngressClass: c.IngressClass, IngressTLS: c.IngressTLS,
 		BuildEngine: c.BuildEngine, CAVariable: c.CAVariable, RunnerTag: c.RunnerTag, RunnerServiceAccount: c.RunnerServiceAccount,
 		RunnerSCC: c.RunnerSCC, BuilderSetup: c.BuilderSetup, SecretMode: c.SecretMode, VaultAddress: c.VaultAddress, VaultRole: c.VaultRole,
+	}
+	if services, err := resolvedServices(c); err == nil && services.Database != nil {
+		d.HasDatabase = true
+		d.DatabaseClusterName = ServiceResourceName(c.Name, "-db")
+		d.DatabaseName = services.Database.DatabaseName
 	}
 	if d.GitImage == "" {
 		d.GitImage = c.BuilderImage
@@ -484,6 +495,9 @@ func RenderConfig(c Config, facts SourceFacts) (map[string]string, error) {
 	}
 	if len(out[FileDeployment]) > maxRenderedBytes {
 		return nil, errOutputLimit
+	}
+	if err := AddServices(c, out); err != nil {
+		return nil, err
 	}
 	if err := ValidateRendered(c, out); err != nil {
 		return nil, err

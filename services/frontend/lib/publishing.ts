@@ -25,6 +25,7 @@ export async function publishProject<T>(
 }
 
 export type PublishingProfileSettings = {
+  serviceCatalog?: string
   namespaceMode?: string
   namespacePrefix?: string
   templateId: string
@@ -70,6 +71,7 @@ export type PublishingProfile = {
   applications: number
 }
 export type ApprovedPublishingProfile = {
+  services?: ServiceOptions
   currentRevision: number
   namespaceMode?: string
   namespacePrefix?: string
@@ -92,3 +94,19 @@ export type PublicationResult = {
   syncPolicy: string
   applicationUrl: string
 }
+
+export type DatabasePlan = {
+  credentialMode?: "platform" | "generated"; username?: string; allowConfigure?: boolean; allowEnvMapping?: boolean; allowCustomPassword?: boolean; envNames?: Record<string, string>
+  name: string; postgresVersion: string; instances: number; instanceProfile?: string
+  storage: string; storageClass?: string; backupStorage?: string; databaseName: string
+  credentialsSecret: string; usernameKey: string; passwordKey: string
+  bootstrapSecret: string; bootstrapKey: string; requiredVaultSecret?: string
+}
+export type VaultSecretBinding = {
+  allowPathSuffix?: boolean; allowEnvMapping?: boolean
+  id: string; name: string; authRef: string; vaultNamespace?: string; mount: string; path: string
+  type: string; refreshAfter: string; destination: string; envs: { name: string; key: string }[]
+}
+export type ServiceCatalog = { allowEnvironment?: boolean; database?: DatabasePlan; vaultSecrets?: VaultSecretBinding[] }
+export type ServiceSelection = { database: boolean; vaultSecrets: string[]; databaseConfig?: { name?: string; username?: string; envNames?: Record<string,string> }; vaultConfig?: Record<string,{ pathSuffix?: string; envs?: {name:string;key:string}[] }>; environment?: {name:string;value:string}[] }
+export type ServiceOptions = { allowEnvironment?: boolean; database?: Partial<DatabasePlan>; databaseVaultSecret?: string; databaseName?: string; vaultSecrets: { id: string; name: string; path?:string; allowPathSuffix?:boolean; allowEnvMapping?:boolean; envs?:{name:string;key:string}[] }[] }

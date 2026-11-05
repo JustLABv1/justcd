@@ -6,6 +6,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha1"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -53,7 +54,7 @@ func profileSource(t *testing.T, version string) []byte {
 	return b.Bytes()
 }
 func TestIntegrationPublishingProfilesLifecycleAndDelegation(t *testing.T) {
-	for _, runtime := range []string{"shiny", "streamlit", "python-static", "static", "per-application"} {
+	for _, runtime := range []string{"shiny", "streamlit", "python-static", "static", "per-application", "services", "managed-services"} {
 		t.Run(runtime, func(t *testing.T) { testPublishingProfileLifecycle(t, runtime) })
 	}
 }
@@ -90,6 +91,12 @@ func testPublishingProfileLifecycle(t *testing.T, runtime string) {
 	if runtime == "python-static" {
 		settings.TemplateID = runtime
 		settings.WebServerImage = "registry.invalid/base/nginx:1"
+	}
+	if runtime == "services" {
+		settings.ServiceCatalog = `{"database":{"name":"PostgreSQL","postgresVersion":"17","instances":1,"storage":"10Gi","databaseName":"app","credentialsSecret":"{app}-database","usernameKey":"username","passwordKey":"password","bootstrapSecret":"{app}-database","bootstrapKey":"init.sql","requiredVaultSecret":"database"},"vaultSecrets":[{"id":"database","name":"Database credentials","authRef":"platform/apps","mount":"secret","path":"apps/{app}/database","type":"kv-v2","refreshAfter":"1m","destination":"{app}-database"}]}`
+	}
+	if runtime == "managed-services" {
+		settings.ServiceCatalog = `{"allowEnvironment":true,"database":{"name":"PostgreSQL","credentialMode":"generated","username":"app","allowConfigure":true,"allowEnvMapping":true,"allowCustomPassword":true,"postgresVersion":"17","instances":1,"storage":"10Gi","databaseName":"app","credentialsSecret":"{app}-database","usernameKey":"username","passwordKey":"password","bootstrapSecret":"{app}-database","bootstrapKey":"init.sql"}}`
 	}
 	expectedNamespace := "analytics"
 	if runtime == "per-application" {
@@ -137,7 +144,7 @@ func testPublishingProfileLifecycle(t *testing.T, runtime string) {
 	}
 	countCredentials := func() int {
 		var n int
-		if err := db.DB.QueryRowContext(ctx, `SELECT count(*) FROM credentials WHERE workspace_id='profiles'`).Scan(&n); err != nil {
+		if err := db.DB.QueryRowContext(ctx, `SELECT count(*) FROM credentials WHERE workspace_id='profiles' AND kind!='publishing-database'`).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
 		return n
@@ -177,8 +184,9 @@ func testPublishingProfileLifecycle(t *testing.T, runtime string) {
 		switch {
 		case r.Method == "GET" && strings.Contains(p, "/repository/tree"):
 			entries := []map[string]string{}
-			for name := range remoteFiles {
-				entries = append(entries, map[string]string{"path": name, "type": "blob", "mode": "100644"})
+			for name, content := range remoteFiles {
+				hash := sha1.Sum([]byte(fmt.Sprintf("blob %d\x00%s", len(content), content)))
+				entries = append(entries, map[string]string{"path": name, "type": "blob", "mode": "100644", "id": fmt.Sprintf("%x", hash)})
 			}
 			result = entries
 		case r.Method == "GET" && strings.Contains(p, "/repository/files/"):
@@ -307,6 +315,13 @@ func testPublishingProfileLifecycle(t *testing.T, runtime string) {
 	if runtime == "streamlit" {
 		metadata["entryPoint"] = "app.py"
 	}
+	if runtime == "services" {
+		metadata["services"] = publishing.ServiceSelection{Database: true}
+	}
+	if runtime == "managed-services" {
+		metadata["services"] = publishing.ServiceSelection{Database: true, DatabaseConfig: &publishing.DatabaseInput{Name: "reports", Username: "report_user", EnvNames: map[string]string{"DB_HOST": "PGHOST"}}, Environment: []publishing.LiteralEnv{{Name: "APP_THEME", Value: "dark"}}}
+		metadata["databasePassword"] = "integration-db-password-canary"
+	}
 	bad := map[string]any{"workspaceId": "profiles", "profileId": profile.ID, "name": "report", "config": map[string]string{"baseImage": "attacker/image"}}
 	if got := publish("profile-analyst", bad, "v1").Code; got != 400 {
 		t.Fatal("profile infrastructure override accepted", got)
@@ -342,6 +357,77 @@ func testPublishingProfileLifecycle(t *testing.T, runtime string) {
 	source, e := db.GitSourceByID(ctx, app.SourceID)
 	if e != nil || source.CredentialID == nil || *source.CredentialID != profile.GitReadCredentialID || countCredentials() != 2 {
 		t.Fatal("Git read credential not shared by reference")
+	}
+	if runtime == "managed-services" {
+		saved, err := db.PublishedApplication(ctx, "profiles", source.RepositoryURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cfg publishing.Config
+		json.Unmarshal(saved.Config, &cfg)
+		d, err := publishing.ManagedDatabase(cfg)
+		if err != nil || d == nil || d.DatabaseName != "reports" || d.Username != "report_user" || d.CredentialID == "" {
+			t.Fatal("app database parameters not persisted", err)
+		}
+		credential, err := db.CredentialByID(ctx, d.CredentialID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(credential.Cipher, []byte("integration-db-password-canary")) {
+			t.Fatal("database password stored unencrypted")
+		}
+		plain, err := security.Decrypt(s.EncryptionKey, credential.Cipher, "credential:"+credential.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var values publishing.DatabaseCredentials
+		json.Unmarshal(plain, &values)
+		if values.Username != "report_user" || values.Password != "integration-db-password-canary" {
+			t.Fatal("wrong protected database values")
+		}
+		for _, check := range []struct {
+			handler http.HandlerFunc
+			method  string
+			status  int
+		}{{s.updateCredential, "PUT", 400}, {s.deleteCredential, "DELETE", 409}} {
+			request := httptest.NewRequest(check.method, "/", strings.NewReader(`{"name":"changed"}`))
+			request.SetPathValue("credentialID", credential.ID)
+			request = request.WithContext(context.WithValue(request.Context(), userContextKey, store.User{ID: "profile-owner"}))
+			result := httptest.NewRecorder()
+			check.handler(result, request)
+			if result.Code != check.status {
+				t.Fatal("generic credential settings bypass database lifecycle", result.Code)
+			}
+		}
+		metadata["databasePassword"] = "different-password-canary"
+		beforePipelines := pipelines
+		if retry := publish("profile-analyst", metadata, "v1"); retry.Code != 409 || pipelines != beforePipelines {
+			t.Fatal("retry changed existing database password", retry.Code)
+		}
+		metadata["databasePassword"] = "integration-db-password-canary"
+		for _, content := range remoteFiles {
+			if strings.Contains(content, values.Password) {
+				t.Fatal("database password entered Git")
+			}
+		}
+		if strings.Contains(published.Body.String(), values.Password) || strings.Contains(string(saved.Config), values.Password) {
+			t.Fatal("database password entered response/config")
+		}
+	}
+	if runtime == "services" {
+		saved, err := db.PublishedApplication(ctx, "profiles", source.RepositoryURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cfg publishing.Config
+		if err := json.Unmarshal(saved.Config, &cfg); err != nil || cfg.Services == "" {
+			t.Fatal("selected services not persisted", err)
+		}
+		for _, want := range []string{"kind: SGCluster", "kind: SGScript", "kind: VaultStaticSecret", "DB_PASSWORD"} {
+			if !strings.Contains(remoteFiles[".justcd/deployment.yaml"], want) {
+				t.Fatalf("missing generated service %s", want)
+			}
+		}
 	}
 	if runtime == "python-static" {
 		saved, err := db.PublishedApplication(ctx, "profiles", source.RepositoryURL)
@@ -537,6 +623,9 @@ func testPublishingProfileLifecycle(t *testing.T, runtime string) {
 	pinnedAfterUpgrade, _ := db.PublishedApplication(ctx, "profiles", source.RepositoryURL)
 	var upgradedConfig publishing.Config
 	json.Unmarshal(pinnedAfterUpgrade.Config, &upgradedConfig)
+	if (runtime == "services" || runtime == "managed-services") && upgradedConfig.Services == "" {
+		t.Fatal("profile update lost service selection")
+	}
 	if pinnedAfterUpgrade.ProfileRevision != 2 || upgradedConfig.GitImage != nextImages.GitImage || upgradedConfig.BuildEngine != nextImages.BuildEngine || upgradedConfig.CAVariable != nextImages.CAVariable || upgradedConfig.BuilderImage != nextImages.BuilderImage || upgradedConfig.WebServerImage != nextImages.WebServerImage || upgradedConfig.BaseImage != nextImages.BaseImage || upgradedConfig.RunnerTag != nextImages.RunnerTag || upgradedConfig.PullSecret != nextImages.PullSecret {
 		t.Fatal("explicit upgrade did not adopt images", upgradedConfig)
 	}
@@ -597,6 +686,41 @@ func testPublishingProfileLifecycle(t *testing.T, runtime string) {
 	if got := publish("profile-analyst", update, "v3").Code; got != 403 || calls != before {
 		t.Fatal("disabled profile still authorized builds", got)
 	}
+	// Copying keeps credentials server-side and creates independent credential records.
+	copyBody := map[string]any{"name": "Copied database profile", "settings": settings, "enabled": false, "copyFromProfileId": profile.ID}
+	if got := profileRequest(t, s.savePublishingProfile, "POST", "/", "profile-other", copyBody, "other-profiles", "").Code; got != 404 {
+		t.Fatal("cross-workspace copy accepted", got)
+	}
+	if got := save("POST", "profile-analyst", "", copyBody).Code; got != 403 {
+		t.Fatal("deployer copied protected credentials", got)
+	}
+	copied := save("POST", "profile-owner", "", copyBody)
+	if copied.Code != 201 {
+		t.Fatal("copy failed", copied.Body.String())
+	}
+	var clone store.PublishingProfile
+	json.Unmarshal(copied.Body.Bytes(), &clone)
+	clone, err = db.PublishingProfile(ctx, clone.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clone.ID == profile.ID || clone.CredentialID == profile.CredentialID || clone.GitReadCredentialID == profile.GitReadCredentialID || clone.CurrentRevision != 1 || clone.Applications != 0 || clone.Enabled {
+		t.Fatal("copy did not create an independent disabled profile")
+	}
+	sourceSecrets, err := s.loadPublishingSecrets(httptest.NewRequest("GET", "/", nil), profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copySecrets, err := s.loadPublishingSecrets(httptest.NewRequest("GET", "/", nil), clone)
+	if err != nil || copySecrets != sourceSecrets {
+		t.Fatal("copied credentials differ", err)
+	}
+	if strings.Contains(copied.Body.String(), sourceSecrets.GitLabToken) {
+		t.Fatal("copied credentials leaked")
+	}
+	if got := profileRequest(t, s.deletePublishingProfile, "DELETE", "/", "profile-owner", nil, "profiles", clone.ID).Code; got != 204 || countCredentials() != 2 {
+		t.Fatal("copy cleanup affected original credentials", got)
+	}
 	// Unused profiles can be deleted together with their private credentials.
 	body["name"], body["enabled"], body["secrets"] = "Unused profile", true, publishingSecrets{GitLabToken: "unused-api-secret", GitReadToken: "unused-read-secret", RegistryUser: "registry-user", RegistryPassword: "unused-registry-secret"}
 	unused := save("POST", "profile-owner", "", body)
@@ -612,4 +736,36 @@ func testPublishingProfileLifecycle(t *testing.T, runtime string) {
 		t.Fatal("profile foreign keys blocked workspace cleanup", err)
 	}
 
+}
+
+func TestIntegrationGeneratedDatabaseRoleBootstrap(t *testing.T) {
+	dsn := os.Getenv("JUSTCD_E2E_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("set JUSTCD_E2E_DATABASE_URL")
+	}
+	db := openWorkspaceAuthorizationDB(t, dsn)
+	ctx := context.Background()
+	user := "app_" + store.NewID()[:12]
+	plan := publishing.DatabasePlan{Name: "Test", PostgresVersion: "17", Instances: 1, Storage: "1Gi", DatabaseName: "reports", Username: user, CredentialMode: "generated", AllowCustomPassword: true, CredentialsSecret: "{app}-database", BootstrapSecret: "{app}-database", UsernameKey: "username", PasswordKey: "password", BootstrapKey: "init.sql"}
+	values, err := publishing.NewDatabaseCredentials(plan, "quotes'and\\slashes-and-$delimiters$-canary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.DB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	for i := 0; i < 2; i++ {
+		if _, err := tx.ExecContext(ctx, values.SQL); err != nil {
+			t.Fatal("generated role bootstrap failed", err)
+		}
+	}
+	var login, superuser, createDB, createRole, replication bool
+	if err := tx.QueryRowContext(ctx, `SELECT rolcanlogin,rolsuper,rolcreatedb,rolcreaterole,rolreplication FROM pg_roles WHERE rolname=$1`, user).Scan(&login, &superuser, &createDB, &createRole, &replication); err != nil {
+		t.Fatal(err)
+	}
+	if !login || superuser || createDB || createRole || replication {
+		t.Fatal("generated role has wrong privileges")
+	}
 }

@@ -683,3 +683,138 @@ Git remains JustCD's deployment source of truth; this is not Git-less publishing
 Changing the deployment update image creates a profile revision. Review and apply
 that revision on existing managed applications to regenerate CI. Existing Git
 onboarding preserves pipelines already owned by the user.
+
+## Optional databases and runtime secrets
+
+Workspace owners can configure **Optional application services** in a publishing
+profile. A profile can offer one StackGres PostgreSQL plan and independently
+selectable Vault static secret bindings. Users choose approved services and the application parameters their owner allows;
+database infrastructure and Vault authentication remain controlled by the profile. Leaving all
+services off preserves the ordinary application deployment.
+
+### Platform setup
+
+Install StackGres on clusters where database plans are offered. Install Vault
+Secrets Operator where Vault bindings are offered. JustCD does not install either
+operator. Its cluster identity and workspace policies must permit `SGCluster`,
+`SGScript`, and/or `VaultStaticSecret` resources in the destination namespace.
+Missing CRDs and admission failures appear during deployment planning.
+
+For a database plan, configure PostgreSQL version, instances, storage, and optional
+existing SGInstanceProfile, storage class, and SGObjectStorage backup destination.
+Namespaced referenced resources must exist in each application namespace.
+Omitting backup storage adds no backup configuration; configure backups before
+using a plan for data that must survive infrastructure failures.
+
+JustCD generates an SGCluster and an SGScript. For **platform/Vault-managed
+credentials**, the platform must supply:
+
+- An application credentials Secret with the configured username and password keys.
+- A bootstrap Secret whose configured key contains idempotent SQL that creates the
+  named database and a restricted application role, with matching credentials.
+
+Both Secrets can be the same Secret synchronized by a required Vault binding.
+For example, `{app}-database` can contain `username`, `password`, and `init.sql`.
+Secret names and Vault paths support `{app}` and `{namespace}` substitutions.
+In platform/Vault-managed mode, JustCD references these values; it does not
+generate database passwords or write bootstrap SQL into Git. Never use StackGres superuser credentials for the app.
+The database name in the plan must match the bootstrap SQL.
+
+The app receives `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD`.
+Application code must read these variables and include its PostgreSQL client
+library. Resource apply order accounts for Vault-generated Secrets and SQL
+scripts; application code should still retry connections while PostgreSQL starts.
+Network access remains subject to your cluster policies. Custom policy templates
+can use `.HasDatabase`, `.DatabaseClusterName`, and `.DatabaseName`; database pods
+have the `app: <DatabaseClusterName>` label. Configure database ingress, app egress,
+DNS, replication and operator access as required by your platform.
+
+### Vault secrets beyond the database
+
+Add an approved binding for each secret users may need, such as S3 credentials or
+an encryption key. Configure an existing authorized VaultAuth reference, KV mount,
+relative path, KV v1/v2, refresh interval, and destination Kubernetes Secret. Map
+individual Secret keys to explicit environment variable names. No Vault token or
+secret value belongs in the profile. VaultAuth policies and namespace permissions
+remain the platform's responsibility.
+
+A binding can synchronize a Secret without exposing any keys as environment
+variables, for example a database bootstrap Secret. Mark it as the database's
+required binding to include it automatically when a database is selected. Other
+bindings remain independently optional, including for apps without a database.
+
+VSO restarts the app Deployment when synchronized data changes. Database password
+rotation also needs SQL to update the PostgreSQL role; changing the Kubernetes
+Secret alone does not rotate the role's password. Design and test that SQL and
+rotation process with your database administrator.
+
+### Updates and retention
+
+Source uploads retain the application's selected services. Profile updates
+re-resolve those choices against the new approved profile version and show changes
+in the generated manifest review. Removing a selected capability from a profile
+blocks the upgrade rather than silently dropping it. Template previews let owners
+select services to inspect the rendered manifests before publishing a version.
+
+Database clusters, bootstrap scripts, and their required Vault bindings carry
+`justcd.io/retain: "true"`. JustCD excludes their deletion from prune and app
+retirement plans, and retains their namespace to prevent cascading deletion.
+Deleting the application therefore does not reclaim its database. Administrators
+must review backups, retained credentials and storage, then explicitly clean up
+retained resources outside that app retirement flow. Unrelated optional Vault
+bindings follow the ordinary application lifecycle.
+
+The manual publishing wizard also supports these settings; every service
+configured there is included directly in that application.
+
+### App-specific settings and profile permissions
+
+Profiles define infrastructure and permissions; they do not have to fix every
+application setting. In **Optional application services**, owners can enable:
+
+- **JustCD-managed database credentials**: JustCD generates an application password,
+  or accepts a user-supplied password if permitted (16–1024 characters). The owner
+  can allow users to choose their database name and restricted username.
+- **Custom database environment names**: users can map connection fields to the
+  names their code expects, such as `PGHOST` and `PGPASSWORD`, or omit a field.
+- **Vault path suffixes**: users select a relative secret path below the binding's
+  approved path. Absolute paths and parent traversal are rejected. VaultAuth,
+  KV mount, destination Secret, refresh behavior and namespace stay fixed.
+- **Vault environment mappings**: users select Secret keys and environment names.
+- **Additional environment variables**: users add non-secret configuration. These
+  values are stored in Git and browser drafts. Use Vault for secret values.
+
+Existing profiles keep their current locks until an owner enables these options.
+New database plans default to JustCD-managed credentials with editable application
+names and environment mappings. A platform/Vault-managed database keeps its
+SQL database name and username fixed because those must match externally supplied
+bootstrap SQL. The password is changed at its external source.
+
+For JustCD-managed credentials, the configured credentials and bootstrap Secret
+names must be identical and include `{app}`. JustCD stores the credential bundle
+encrypted in its existing credential store, separately from publication metadata.
+Applying the reviewed SGScript provisions the retained Secret directly in the
+application namespace before StackGres executes SQL. The cluster identity needs
+Secret read/create permission. Existing Secrets are never adopted or overwritten;
+a conflicting Secret stops deployment. Back up JustCD's database and encryption
+key along with the PostgreSQL backup and retained namespace resources.
+
+The Secret contains the configured username/password keys, the role SQL under the
+bootstrap key, and standalone database creation SQL under `<bootstrap-key>.database`.
+StackGres executes them as separate managed script entries. Database creation is a
+one-time operation; it is not retried automatically after an ambiguous failure.
+Review StackGres script status before retrying a failed database creation manually.
+Passwords and SQL never enter generated Git files, template previews, browser
+storage, or publishing responses. Custom passwords are only accepted at initial
+creation; source uploads and profile updates reuse the stored credentials. This
+flow does not implement database password rotation or renaming existing databases.
+
+Users' non-secret service parameters survive source uploads and profile upgrades.
+A profile upgrade that changes an existing database's identity, credential mode,
+or Secret references is rejected, rather than silently provisioning a different
+database. Other infrastructure changes remain visible in the profile review.
+
+**Copy profile** opens an unsaved editable copy, including its template version,
+service rules and infrastructure defaults. It starts disabled. Credentials are
+copied on the server into independent encrypted records when saved; edits and
+credential rotations on the copy do not affect the original profile.

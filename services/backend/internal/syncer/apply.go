@@ -595,6 +595,9 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 		existingUID = current.GetUID()
 		resourceVersion = current.GetResourceVersion()
 	}
+	if err := s.ensurePublishingDatabase(ctx, input, applicationID, resource); err != nil {
+		return err
+	}
 	object, err := render.NormalizedObject(resource)
 	if err != nil {
 		return err

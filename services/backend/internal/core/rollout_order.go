@@ -67,6 +67,23 @@ func orderChangePhase(changes []Change, deleting bool) ([]Change, error) {
 			}
 		}
 	}
+	// VSO creates Secrets indirectly. Treat its destination as a Secret producer.
+	for i, c := range changes {
+		if c.Identity.Kind == "VaultStaticSecret" && strings.HasPrefix(c.Identity.APIVersion, "secrets.hashicorp.com/") {
+			var spec struct {
+				Destination struct {
+					Name string `json:"name"`
+				} `json:"destination"`
+			}
+			_ = json.Unmarshal(objects[i].Spec, &spec)
+			if spec.Destination.Name != "" {
+				id := Identity{ClusterID: c.Identity.ClusterID, APIVersion: "v1", Kind: "Secret", Namespace: c.Identity.Namespace, Name: spec.Destination.Name}
+				if _, exists := index[id.Key()]; !exists {
+					index[id.Key()] = i
+				}
+			}
+		}
+	}
 	deps := make([]map[int]bool, len(changes))
 	for i, change := range changes {
 		deps[i] = map[int]bool{}
@@ -122,6 +139,36 @@ func orderChangePhase(changes []Change, deleting bool) ([]Change, error) {
 				ref("storage.k8s.io/v1", "StorageClass", "", *spec.StorageClassName)
 			}
 			ref("v1", "PersistentVolume", "", spec.VolumeName)
+		}
+		if strings.HasPrefix(id.APIVersion, "stackgres.io/") {
+			if id.Kind == "SGCluster" {
+				var spec struct {
+					ManagedSQL struct {
+						Scripts []struct {
+							SGScript string `json:"sgScript"`
+						} `json:"scripts"`
+					} `json:"managedSql"`
+				}
+				_ = json.Unmarshal(obj.Spec, &spec)
+				for _, script := range spec.ManagedSQL.Scripts {
+					ref("stackgres.io/v1", "SGScript", id.Namespace, script.SGScript)
+				}
+			}
+			if id.Kind == "SGScript" {
+				var spec struct {
+					Scripts []struct {
+						ScriptFrom struct {
+							SecretKeyRef struct {
+								Name string `json:"name"`
+							} `json:"secretKeyRef"`
+						} `json:"scriptFrom"`
+					} `json:"scripts"`
+				}
+				_ = json.Unmarshal(obj.Spec, &spec)
+				for _, script := range spec.Scripts {
+					ref("v1", "Secret", id.Namespace, script.ScriptFrom.SecretKeyRef.Name)
+				}
+			}
 		}
 		pod, err := rolloutPodSpec(id, obj.Spec)
 		if err != nil {

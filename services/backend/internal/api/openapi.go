@@ -105,6 +105,7 @@ paths:
               properties:
                 files: {type: object, additionalProperties: {type: string}}
                 settings: {type: object, description: Optional profile settings used for the sample values}
+                services: {$ref: "#/components/schemas/PublishingServiceSelection"}
                 hasRenvLock: {type: boolean}
       responses:
         '200': {description: "Rendered files (field files)"}
@@ -272,6 +273,8 @@ paths:
                     - required: [profileId]
                     - required: [clusterId, gitlabUrl, group, gitlabToken, config]
                   properties:
+                    databasePassword: {type: string, writeOnly: true, minLength: 16, maxLength: 1024, description: "Initial managed-database creation only. Empty or omitted generates a password; accepted only when the profile permits it. Excluded from drafts, Git and responses."}
+                    services: {$ref: "#/components/schemas/PublishingServiceSelection"}
                     profileId: {type: string, description: Approved workspace profile; infrastructure overrides are rejected}
                     expectedProfileRevision: {type: integer, description: Optional current revision guard for initial publishing}
                     name: {type: string, description: Application name for initial profile publishing}
@@ -315,6 +318,7 @@ paths:
                         exposureAnnotations: {type: string, description: "Newline-separated key=value annotations for the Route or Ingress only."}
                         ingressClass: {type: string, description: "Optional ingressClassName; requires exposure ingress."}
                         ingressTls: {type: string, enum: [hosts, none], description: "Ingress TLS block: hosts (default) lists the host, none renders tls: []."}
+                        services: {type: string, description: "JSON-encoded resolved database and VaultStaticSecret configuration for manual publishing; no secret values."}
                         templateParameters: {type: string, description: "Optional non-secret key=value lines available as .Parameters in custom templates."}
                         templateVersion: {type: integer, minimum: 0, description: "Workspace template version used by this profile; 0 or omitted means the built-in template."}
                         runnerServiceAccount: {type: string, description: "Optional Kubernetes-executor service account override for the build job."}
@@ -1215,6 +1219,41 @@ paths:
         '409': { description: Issuer change rejected for a provider with linked users }
 components:
   schemas:
+    PublishingServiceSelection:
+      type: object
+      properties:
+        database: {type: boolean, default: false}
+        vaultSecrets: {type: array, items: {type: string}, description: Approved binding IDs from the selected profile}
+        databaseConfig:
+          type: object
+          properties:
+            name: {type: string}
+            username: {type: string}
+            envNames: {type: object, additionalProperties: {type: string}, description: "Connection field to environment-name mappings; allowed only when enabled in the profile. Empty mapping omits the field."}
+        vaultConfig:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              pathSuffix: {type: string, description: Relative path beneath the approved binding path}
+              envs:
+                type: array
+                items:
+                  type: object
+                  required: [name, key]
+                  properties:
+                    name: {type: string}
+                    key: {type: string}
+        environment:
+          type: array
+          maxItems: 30
+          description: Non-secret app configuration permitted by the profile; persisted in Git
+          items:
+            type: object
+            required: [name, value]
+            properties:
+              name: {type: string}
+              value: {type: string, maxLength: 4096}
     PublishingProfileInput:
       type: object
       required: [name, enabled, settings]
@@ -1223,6 +1262,7 @@ components:
         description: {type: string, maxLength: 1000}
         enabled: {type: boolean}
         version: {type: integer, description: Optimistic save counter required for updates; distinct from currentRevision}
+        copyFromProfileId: {type: string, description: "Create only. Copy stored credentials from a profile in this workspace; explicit non-empty credentials override copied values. Requires workspace owner."}
         publishRevision: {type: boolean, default: false, description: Explicitly publish a recipe revision even if settings are unchanged}
         secrets:
           type: object
@@ -1255,6 +1295,7 @@ components:
             exposureAnnotations: {type: string, description: "Newline-separated key=value annotations for the Route or Ingress only."}
             ingressClass: {type: string, description: "Optional ingressClassName; requires exposure ingress."}
             ingressTls: {type: string, enum: [hosts, none], description: "Ingress TLS block: hosts (default) lists the host, none renders tls: []."}
+            serviceCatalog: {type: string, description: "JSON-encoded optional approved StackGres database plan and VaultStaticSecret bindings; no secret values."}
             templateParameters: {type: string, description: "Optional non-secret key=value lines available as .Parameters in custom templates."}
             templateVersion: {type: integer, minimum: 0, description: "Workspace template version used by this profile; 0 or omitted means the built-in template."}
             runnerServiceAccount: {type: string, description: "Optional Kubernetes-executor service account override for the build job."}

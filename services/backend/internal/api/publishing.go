@@ -3,10 +3,12 @@ package api
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,23 +22,25 @@ import (
 )
 
 type publishInput struct {
-	ExpectedProfileRevision int64             `json:"expectedProfileRevision,omitempty"`
-	ProfileRevision         int64             `json:"-"`
-	BuildCommand            string            `json:"buildCommand"`
-	OutputDir               string            `json:"outputDir"`
-	ProfileID               string            `json:"profileId"`
-	Name                    string            `json:"name"`
-	EntryPoint              string            `json:"entryPoint"`
-	UpdateApplicationID     string            `json:"updateApplicationId"`
-	WorkspaceID             string            `json:"workspaceId"`
-	ClusterID               string            `json:"clusterId"`
-	GitLabURL               string            `json:"gitlabUrl"`
-	Group                   string            `json:"group"`
-	GitLabToken             string            `json:"gitlabToken"`
-	GitReadToken            string            `json:"gitReadToken"`
-	RegistryUser            string            `json:"registryUser"`
-	RegistryPassword        string            `json:"registryPassword"`
-	Config                  publishing.Config `json:"config"`
+	DatabasePassword        string                      `json:"databasePassword,omitempty"`
+	Services                publishing.ServiceSelection `json:"services"`
+	ExpectedProfileRevision int64                       `json:"expectedProfileRevision,omitempty"`
+	ProfileRevision         int64                       `json:"-"`
+	BuildCommand            string                      `json:"buildCommand"`
+	OutputDir               string                      `json:"outputDir"`
+	ProfileID               string                      `json:"profileId"`
+	Name                    string                      `json:"name"`
+	EntryPoint              string                      `json:"entryPoint"`
+	UpdateApplicationID     string                      `json:"updateApplicationId"`
+	WorkspaceID             string                      `json:"workspaceId"`
+	ClusterID               string                      `json:"clusterId"`
+	GitLabURL               string                      `json:"gitlabUrl"`
+	Group                   string                      `json:"group"`
+	GitLabToken             string                      `json:"gitlabToken"`
+	GitReadToken            string                      `json:"gitReadToken"`
+	RegistryUser            string                      `json:"registryUser"`
+	RegistryPassword        string                      `json:"registryPassword"`
+	Config                  publishing.Config           `json:"config"`
 }
 
 func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
@@ -147,6 +151,40 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, err.Error())
 		return
 	}
+	requestedDatabasePassword := in.DatabasePassword
+	dbPlan, err := publishing.ManagedDatabase(in.Config)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	var databaseCredential store.Credential
+	if in.DatabasePassword != "" && (dbPlan == nil || in.UpdateApplicationID != "") {
+		writeError(w, 400, "database passwords can only be supplied when creating an app with managed credentials")
+		return
+	}
+	if dbPlan != nil {
+		sum := sha256.Sum256([]byte(in.WorkspaceID + "\n" + in.GitLabURL + "\n" + in.Group + "/" + in.Config.Name))
+		id := fmt.Sprintf("publishing-db-%x", sum[:16])
+		if err := publishing.SetDatabaseCredentialID(&in.Config, id); err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
+		if in.UpdateApplicationID == "" {
+			values, err := publishing.NewDatabaseCredentials(*dbPlan, in.DatabasePassword)
+			if err != nil {
+				writeError(w, 400, err.Error())
+				return
+			}
+			plain, _ := json.Marshal(values)
+			cipher, err := security.Encrypt(s.EncryptionKey, plain, "credential:"+id)
+			if err != nil {
+				writeStoreError(w, "could not protect database credentials")
+				return
+			}
+			databaseCredential = store.Credential{ID: id, WorkspaceID: &in.WorkspaceID, Name: in.Config.Name + " database", Kind: "publishing-database", Cipher: cipher}
+		}
+	}
+	in.DatabasePassword = ""
 	files, err := publishing.Generate(in.Config, source)
 	if err != nil {
 		writeError(w, 400, err.Error())
@@ -234,6 +272,25 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, "application must use its original publishing workflow and profile")
 		return
 	}
+	if err == nil && dbPlan != nil && requestedDatabasePassword != "" {
+		managed, _ := publishing.ManagedDatabase(in.Config)
+		credential, e := s.Store.CredentialByID(ctx, managed.CredentialID)
+		if e != nil || credential.Kind != "publishing-database" || credential.WorkspaceID == nil || *credential.WorkspaceID != in.WorkspaceID {
+			writeStoreError(w, "database credential is unavailable")
+			return
+		}
+		plain, e := security.Decrypt(s.EncryptionKey, credential.Cipher, "credential:"+credential.ID)
+		var values publishing.DatabaseCredentials
+		if e != nil || json.Unmarshal(plain, &values) != nil {
+			writeStoreError(w, "database credential is unavailable")
+			return
+		}
+		if subtle.ConstantTimeCompare([]byte(values.Password), []byte(requestedDatabasePassword)) != 1 {
+			writeError(w, 409, "this application already has database credentials; an upload retry cannot change its password")
+			return
+		}
+	}
+	requestedDatabasePassword = ""
 	if err == nil && profile != nil && in.Config.SecretMode == "variables" {
 		variables := []publishing.Variable{{Key: "REGISTRY_USER", Value: in.RegistryUser, Protected: true, Raw: true}, {Key: "REGISTRY_PASSWORD", Value: in.RegistryPassword, Masked: true, Protected: true, Raw: true}}
 		if e := git.SetVariables(ctx, project, variables); e != nil {
@@ -319,7 +376,7 @@ func (s *Server) publishApplication(w http.ResponseWriter, r *http.Request) {
 			registered.ProfileID = &profile.ID
 			registered.ProfileVersion = profile.Version
 		}
-		if err = s.Store.RegisterPublishedApplication(ctx, cred, src, app, registered); err != nil {
+		if err = s.Store.RegisterPublishedApplication(ctx, cred, src, app, registered, databaseCredential); err != nil {
 			writeError(w, 409, "could not register publication; the repository is retained. Retry the same upload and settings to resume")
 			return
 		}
@@ -388,6 +445,11 @@ func (s *Server) getPublication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result["completionStatus"], result["completionError"] = state, statusError
+	var serviceConfig publishing.Config
+	if json.Unmarshal(p.Config, &serviceConfig) == nil {
+		choices, _ := publishing.ServiceChoices(serviceConfig.Services)
+		result["services"] = choices
+	}
 	if p.ProfileID != nil {
 		profile, e := s.Store.PublishingProfile(r.Context(), *p.ProfileID)
 		if e != nil || profile.WorkspaceID != app.WorkspaceID {

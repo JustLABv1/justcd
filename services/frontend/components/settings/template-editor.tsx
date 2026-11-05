@@ -12,6 +12,8 @@ import { FormField, Panel } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { api, apiPost } from "@/lib/api"
 import { reviewTextRows, type ReviewRow } from "@/lib/line-diff"
+import { PublishingServicesPicker } from "@/components/applications/publishing-services"
+import type { ServiceCatalog, ServiceSelection } from "@/lib/publishing"
 import type { PublishingProfile } from "@/lib/publishing"
 
 export type TemplateVersionMeta = {
@@ -84,6 +86,13 @@ export function TemplateEditor({
   const [manifestName, setManifestName] = useState("")
   const [view, setView] = useState("edit")
   const [previewProfile, setPreviewProfile] = useState("")
+  const [previewServices, setPreviewServices] = useState<ServiceSelection>({ database: false, vaultSecrets: [] })
+  const serviceOptions = useMemo(() => {
+    try {
+      const catalog: ServiceCatalog = JSON.parse(profiles.find(p => p.id === previewProfile)?.settings.serviceCatalog || "{}") || {}
+      return { allowEnvironment:catalog.allowEnvironment, database:catalog.database, databaseName: catalog.database?.name, databaseVaultSecret: catalog.database?.requiredVaultSecret, vaultSecrets: (catalog.vaultSecrets || []).map(b => ({ id: b.id, name: b.name, path:b.path, envs:b.envs, allowPathSuffix:b.allowPathSuffix, allowEnvMapping:b.allowEnvMapping })) }
+    } catch { return undefined }
+  }, [profiles, previewProfile])
   const [rendered, setRendered] = useState<Record<string, string> | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
@@ -164,7 +173,7 @@ export function TemplateEditor({
         const settings = profiles.find((p) => p.id === previewProfile)?.settings
         const result = await apiPost<{ files: Record<string, string> }>(
           `${base}/preview`,
-          { files, ...(settings ? { settings } : {}), hasRenvLock: true }
+          { files, ...(settings ? { settings } : {}), hasRenvLock: true, services: previewServices }
         )
         if (live) {
           setRendered(result.files)
@@ -180,7 +189,7 @@ export function TemplateEditor({
       live = false
       window.clearTimeout(timer)
     }
-  }, [base, detail, files, previewProfile, profiles])
+  }, [base, detail, files, previewProfile, profiles, previewServices])
 
   async function save() {
     setBusy(true)
@@ -247,7 +256,7 @@ export function TemplateEditor({
               <FormSelect
                 id="template-preview-profile"
                 value={previewProfile}
-                onValueChange={setPreviewProfile}
+                onValueChange={value => { setPreviewProfile(value); setPreviewServices({ database: false, vaultSecrets: [] }) }}
                 items={[
                   { value: "", label: "Sample values" },
                   ...profiles
@@ -257,6 +266,7 @@ export function TemplateEditor({
               />
             </FormField>
           </div>
+          <PublishingServicesPicker preview options={serviceOptions} value={previewServices} onChange={setPreviewServices} />
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/20 p-3">
             <p className="max-w-2xl text-xs leading-5 text-muted-foreground">
               Optional manifests are included in the deployment plan. An ingress
@@ -284,10 +294,11 @@ export function TemplateEditor({
                 <FormField
                   label="Manifest filename"
                   htmlFor="template-manifest-name"
-                  hint="Lowercase letters, numbers and hyphens, ending in .yaml. Up to 10 optional files; all resources must target this app's namespace."
+
                 >
                   <Input
                     id="template-manifest-name"
+                    aria-describedby="template-manifest-hint"
                     value={manifestName}
                     onChange={(event) => setManifestName(event.target.value)}
                     placeholder="monitoring-policy.yaml"
@@ -319,6 +330,7 @@ export function TemplateEditor({
                 Add manifest
               </Button>
             </div>
+            <p className="mt-2 text-sm leading-4 text-muted-foreground" id="template-manifest-hint">Lowercase letters, numbers and hyphens, ending in .yaml. Up to 10 optional files; all resources must target this app&apos;s namespace.</p>
           </Disclosure>
           <Tabs
             value={active}

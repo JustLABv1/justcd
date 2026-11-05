@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { PublishingServicesEditor } from "@/components/settings/publishing-services"
 import { ArchiveUpload } from "@/components/applications/archive-upload"
 import { FormSelect } from "@/components/ui/form-select"
 import { PageHeading } from "@/components/ui-kit"
@@ -39,6 +40,7 @@ import type {
 } from "@/lib/types"
 
 type Config = {
+  services?: string
   createNamespace?: boolean
   templateId?: string
   name: string
@@ -72,6 +74,7 @@ type Publication = {
   pipelineUrl: string
 }
 const initialConfig: Config = {
+  services: "",
   name: "",
   runtime: "shiny",
   entryPoint: ".",
@@ -731,6 +734,7 @@ export default function PublishApplicationPage() {
               {
                 title: "Secrets",
                 content: (
+                  <>
                   <Panel
                     title="Where should build secrets come from?"
                     description="Registry credentials are used by CI to push images. They are never committed to Git or included in the application image."
@@ -831,6 +835,9 @@ export default function PublishApplicationPage() {
                       )}
                     </div>
                   </Panel>
+                  <PublishingServicesEditor value={config.services ?? ""} onChange={services => patch({ services })} />
+                  <p className="text-xs text-muted-foreground">Every service configured here is included for this application. Use approved publishing profiles to offer end users optional services.</p>
+                  </>
                 ),
               },
               {

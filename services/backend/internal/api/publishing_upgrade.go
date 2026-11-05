@@ -174,6 +174,26 @@ func (s *Server) publishingProfileUpgrade(w http.ResponseWriter, r *http.Request
 		writeError(w, 400, err.Error())
 		return
 	}
+	choices, err := publishing.ServiceChoices(old.Services)
+	if err != nil {
+		writeError(w, 409, err.Error())
+		return
+	}
+	catalog, err := publishing.ParseServiceCatalog(version.Settings.ServiceCatalog)
+	if err != nil {
+		writeError(w, 409, err.Error())
+		return
+	}
+	next.Services, err = catalog.Resolve(choices)
+	if err != nil {
+		writeError(w, 409, "the new profile must retain the application's selected services: "+err.Error())
+		return
+	}
+	if err := publishing.PreserveDatabaseCredentials(old, &next); err != nil {
+		writeError(w, 409, err.Error())
+		return
+	}
+	resolved.Services = next.Services
 	resolved.BuildCommand, resolved.OutputDir = old.BuildCommand, old.OutputDir
 	resolved.ManagedCompletion = true
 	if resolved != next || old.Namespace != app.Namespaces[0].Namespace {
@@ -264,7 +284,7 @@ func (s *Server) publishingProfileUpgrade(w http.ResponseWriter, r *http.Request
 			plan.Changes = append(plan.Changes, publishing.RecipeChange{Path: file.Path, Before: before, After: file.Content, Exists: exists, LastCommitID: last})
 		}
 	}
-	for _, change := range []profileImageChange{{"Deployment update image", old.GitImage, next.GitImage}, {"Build engine", old.BuildEngine, next.BuildEngine}, {"CI CA variable", old.CAVariable, next.CAVariable}, {"Runtime base image", old.BaseImage, next.BaseImage}, {"CI builder image", old.BuilderImage, next.BuilderImage}, {"Static web server image", old.WebServerImage, next.WebServerImage}, {"Runner tag", old.RunnerTag, next.RunnerTag}, {"Exposure type", old.Exposure, next.Exposure}, {"Exposure labels", old.ExposureLabels, next.ExposureLabels}, {"Exposure annotations", old.ExposureAnnotations, next.ExposureAnnotations}, {"Ingress class", old.IngressClass, next.IngressClass}, {"Ingress TLS", old.IngressTLS, next.IngressTLS}, {"Template parameters", old.TemplateParameters, next.TemplateParameters}, {"Template version", templateLabel(old.TemplateVersion), templateLabel(next.TemplateVersion)}, {"Runner service account", old.RunnerServiceAccount, next.RunnerServiceAccount}, {"Runner SCC", old.RunnerSCC, next.RunnerSCC}, {"Builder setup command", old.BuilderSetup, next.BuilderSetup}, {"Image pull secret", old.PullSecret, next.PullSecret}} {
+	for _, change := range []profileImageChange{{"Deployment update image", old.GitImage, next.GitImage}, {"Build engine", old.BuildEngine, next.BuildEngine}, {"CI CA variable", old.CAVariable, next.CAVariable}, {"Runtime base image", old.BaseImage, next.BaseImage}, {"CI builder image", old.BuilderImage, next.BuilderImage}, {"Static web server image", old.WebServerImage, next.WebServerImage}, {"Runner tag", old.RunnerTag, next.RunnerTag}, {"Exposure type", old.Exposure, next.Exposure}, {"Exposure labels", old.ExposureLabels, next.ExposureLabels}, {"Exposure annotations", old.ExposureAnnotations, next.ExposureAnnotations}, {"Ingress class", old.IngressClass, next.IngressClass}, {"Ingress TLS", old.IngressTLS, next.IngressTLS}, {"Application services", old.Services, next.Services}, {"Template parameters", old.TemplateParameters, next.TemplateParameters}, {"Template version", templateLabel(old.TemplateVersion), templateLabel(next.TemplateVersion)}, {"Runner service account", old.RunnerServiceAccount, next.RunnerServiceAccount}, {"Runner SCC", old.RunnerSCC, next.RunnerSCC}, {"Builder setup command", old.BuilderSetup, next.BuilderSetup}, {"Image pull secret", old.PullSecret, next.PullSecret}} {
 		if change.Before != change.After {
 			plan.Images = append(plan.Images, change)
 		}

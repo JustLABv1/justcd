@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/justlab/justcd/services/backend/internal/publishing"
 )
@@ -119,4 +120,56 @@ func (s *Server) getPublishingLimits(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getPublishingTemplates(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": publishing.Templates()})
+}
+
+// Validate an upload without creating repositories, pipelines, or applications.
+func (s *Server) validatePublishingArchive(w http.ResponseWriter, r *http.Request) {
+	limits := s.Config.PublishingLimits.WithDefaults()
+	r.Body = http.MaxBytesReader(w, r.Body, limits.ArchiveBytes+publishMetadataLimit+publishMultipartOverhead)
+	in, reader, err := readPublishingMetadata(r)
+	if err != nil {
+		writePublishingUploadError(w, err)
+		return
+	}
+	if !s.requireWorkspaceRole(w, r, in.WorkspaceID, "deployer") {
+		return
+	}
+	controller := http.NewResponseController(w)
+	_ = controller.SetReadDeadline(time.Now().Add(5 * time.Minute))
+	_ = controller.SetWriteDeadline(time.Now().Add(6 * time.Minute))
+	dir, err := os.MkdirTemp(s.Config.PublishingTempDir, "justcd-validate-*")
+	if err != nil {
+		writeError(w, 500, "cannot allocate temporary upload storage")
+		return
+	}
+	defer os.RemoveAll(dir)
+	archive, err := savePublishingArchive(r, reader, dir, limits)
+	if err != nil {
+		writePublishingUploadError(w, err)
+		return
+	}
+	defer archive.Close()
+	stat, err := archive.Stat()
+	if err != nil {
+		writeError(w, 500, "cannot inspect archive")
+		return
+	}
+	source, err := publishing.ExtractArchive(r.Context(), archive, stat.Size(), dir, limits)
+	if err != nil {
+		writePublishingUploadError(w, err)
+		return
+	}
+	files, root, err := publishing.NormalizeSource(in.Config, source)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	message := "ZIP structure is valid for this template."
+	if root != "" {
+		message = "ZIP structure is valid. Enclosing folder " + root + "/ will be removed automatically."
+	}
+	if in.Config.Runtime == "python-static" {
+		message += " The build command and generated output are checked during CI."
+	}
+	writeJSON(w, 200, map[string]any{"valid": true, "rootDirectory": root, "fileCount": len(files), "message": message})
 }

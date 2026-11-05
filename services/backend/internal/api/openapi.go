@@ -223,6 +223,35 @@ paths:
                 properties:
                   archiveBytes: {type: integer, default: 104857600}
                   expandedBytes: {type: integer, default: 524288000}
+  /publishing/validate-archive:
+    post:
+      summary: Validate a publishing ZIP without creating external resources
+      description: Requires authentication, CSRF and workspace deployer access. Accepts multipart metadata (workspaceId, config.runtime, config.entryPoint), followed by archive. Enforces publishing limits, safe paths and template layout. One enclosing folder is removed only if the normalized layout is valid. Temporary files are always removed; no repository, pipeline or application is created.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [metadata, archive]
+              properties:
+                metadata: {type: string, description: "JSON with workspaceId and config containing runtime and entryPoint."}
+                archive: {type: string, format: binary}
+      responses:
+        '200':
+          description: Archive is valid
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid: {type: boolean}
+                  rootDirectory: {type: string}
+                  fileCount: {type: integer}
+                  message: {type: string}
+        '400': {description: Invalid ZIP or layout; error explains required files and paths}
+        '403': {description: Workspace deployer access required}
+        '413': {description: Archive exceeds configured limits}
   /publishing:
     post:
       summary: Create a managed application or upload a complete new source snapshot

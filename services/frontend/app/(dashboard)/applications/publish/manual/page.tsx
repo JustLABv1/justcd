@@ -112,6 +112,7 @@ export default function PublishApplicationPage() {
   const [registryUser, setRegistryUser] = useState("")
   const [registryPassword, setRegistryPassword] = useState("")
   const [file, setFile] = useState<File | null>(null)
+  const [archiveValid, setArchiveValid] = useState(false)
   const [acknowledged, setAcknowledged] = useState(false)
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -240,8 +241,8 @@ export default function PublishApplicationPage() {
 
   const checkStep = (step: number) => {
     const problem =
-      step === 1 && (!workspaceId || !file)
-        ? "Choose a workspace and upload your application ZIP."
+      step === 1 && (!workspaceId || !file || !archiveValid)
+        ? "Choose a workspace and upload a ZIP that passes the structure check."
         : step === 5 && (!clusterId || !config.namespace)
           ? "Choose an available cluster and namespace."
           : step === 6 && !acknowledged
@@ -261,7 +262,7 @@ export default function PublishApplicationPage() {
         wizard.setStep(step)
         return
       }
-    if (!file || !limits || busy) return
+    if (!file || !archiveValid || !limits || busy) return
     setBusy(true)
     setError(null)
     try {
@@ -525,12 +526,15 @@ export default function PublishApplicationPage() {
                           id="publish-archive"
                           key={selectedTemplate.id}
                           file={file}
+ validation={{ workspaceId, runtime: config.runtime, entryPoint: config.entryPoint }}
+ onValidationChange={setArchiveValid}
                           maxBytes={limits?.archiveBytes}
                           disabled={
                             busy || loading || !workspaces.length || !limits
                           }
                           onFileChange={(next) => {
                             setFile(next)
+                setArchiveValid(false)
                             setError(null)
                           }}
                         />

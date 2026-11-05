@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState, type DragEvent } from "react"
+import { useEffect, useRef, useState, type DragEvent } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
   Cancel01Icon,
@@ -8,6 +8,7 @@ import {
   FileZipIcon,
 } from "@hugeicons/core-free-icons"
 import { Button } from "@/components/ui/button"
+import { api, errorMessage } from "@/lib/api"
 import { Input } from "@/components/ui/input"
 
 function fileSize(bytes: number) {
@@ -24,7 +25,11 @@ export function ArchiveUpload({
   onFileChange,
   maxBytes,
   disabled = false,
+  validation,
+  onValidationChange,
 }: {
+  validation?: { workspaceId: string; runtime: string; entryPoint: string }
+  onValidationChange?: (valid: boolean) => void
   id: string
   file: File | null
   onFileChange: (file: File | null) => void
@@ -36,6 +41,34 @@ export function ArchiveUpload({
   const dragDepth = useRef(0)
   const [dragging, setDragging] = useState(false)
   const [error, setError] = useState("")
+
+  const [inspection, setInspection] = useState<{ state: "checking" | "valid" | "invalid"; message: string } | null>(null)
+  const validationEnabled = Boolean(validation)
+  const workspaceId = validation?.workspaceId
+  const runtime = validation?.runtime
+  const entryPoint = validation?.entryPoint
+  useEffect(() => {
+    if (!validationEnabled || !onValidationChange) return
+    let active = true
+    const controller = new AbortController()
+    Promise.resolve().then(async () => {
+      if (!active) return
+      onValidationChange(false)
+      setInspection(null)
+      if (!file || !workspaceId || !runtime || !entryPoint) return
+      setInspection({ state: "checking", message: "Checking ZIP contents and project structure…" })
+      try {
+        const body = new FormData()
+        body.append("metadata", JSON.stringify({ workspaceId, config: { runtime, entryPoint } }))
+        body.append("archive", file)
+        const result = await api<{ message: string }>("/api/v1/publishing/validate-archive", { method: "POST", body, signal: controller.signal })
+        if (active) { setInspection({ state: "valid", message: result.message }); onValidationChange(true) }
+      } catch (cause) {
+        if (active) setInspection({ state: "invalid", message: errorMessage(cause) })
+      }
+    })
+    return () => { active = false; controller.abort() }
+  }, [file, workspaceId, runtime, entryPoint, onValidationChange, validationEnabled])
 
   function choose(files: File[]) {
     if (disabled || !files.length) return
@@ -174,6 +207,7 @@ export function ArchiveUpload({
           )}
         </div>
       </div>
+      {file && inspection && <p role={inspection.state === "invalid" ? "alert" : "status"} className={`text-xs leading-5 ${inspection.state === "invalid" ? "text-destructive" : inspection.state === "valid" ? "text-success" : "text-muted-foreground"}`}>{inspection.message}</p>}
       {error && (
         <p
           id={`${id}-error`}

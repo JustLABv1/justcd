@@ -28,3 +28,15 @@ test("expired and unsupported drafts are ignored; corrupt drafts are reported",(
 test("malformed fields cannot change the form's value types",()=>{
  assert.deepEqual(pickDraft(shape,{step:"6",config:{name:123,createNamespace:"false",namespace:"safe"}}),{...shape,config:{...shape.config,namespace:"safe"}})
 })
+
+test("catalog ignores previously saved default state but restores a selected template", () => {
+  const shape = { templateId: "", method: "", name: "", buildCommand: "python build_html.py", outputDir: "dist" }
+  const now = Date.now()
+  const raw = data => JSON.stringify({ version: 1, updatedAt: now, data })
+  const eligible = data => Boolean(data.templateId)
+  assert.equal(readDraft(raw(shape), shape, now, eligible), null)
+  assert.equal(readDraft(raw({ name: "stale name" }), shape, now, eligible), null)
+  const restored = readDraft(raw({ ...shape, templateId: "static", name: "my-site" }), shape, now, eligible)
+  assert.equal(restored.data.templateId, "static")
+  assert.equal(restored.data.name, "my-site")
+})

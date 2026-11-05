@@ -360,7 +360,7 @@ func TestReadyMadeStaticWebsite(t *testing.T) {
 					t.Fatal("static files require a build", docker)
 				}
 			}
-			if _, err := Generate(c, []File{{Path: "source/other/index.html"}}); err == nil {
+			if _, err := Generate(c, []File{{Path: "source/other/index.html"}, {Path: "source/README.md"}}); err == nil {
 				t.Fatal("missing selected index accepted")
 			}
 		})

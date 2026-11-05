@@ -7,18 +7,19 @@ import { draftKey, pickDraft, readDraft } from "@/lib/publishing-draft"
 export function usePublishingDraft<T extends object>(
   scope: string | null,
   value: T,
-  restore: (data: T, signal: AbortSignal) => void | Promise<void>
+  restore: (data: T, signal: AbortSignal) => void | Promise<void>,
+  shouldSave: (data: T) => boolean = () => true
 ) {
   const [userId, setUserId] = useState("")
   const [loadedKey, setLoadedKey] = useState<string | null>(null)
   const [savedAt, setSavedAt] = useState<number | null>(null)
   const [restored, setRestored] = useState(false)
   const [error, setError] = useState("")
-  const latest = useRef({ value, restore })
+  const latest = useRef({ value, restore, shouldSave })
   const stopped = useRef(false)
   useEffect(() => {
-    latest.current = { value, restore }
-  }, [value, restore])
+    latest.current = { value, restore, shouldSave }
+  }, [value, restore, shouldSave])
   useEffect(() => {
     let active = true
     api<{ user: { id: string } }>("/api/v1/auth/session")
@@ -43,7 +44,9 @@ export function usePublishingDraft<T extends object>(
     stopped.current = false
     Promise.resolve().then(async () => {
       try {
-        const draft = readDraft(localStorage.getItem(key), latest.current.value)
+        const raw = localStorage.getItem(key)
+        const draft = readDraft(raw, latest.current.value, Date.now(), latest.current.shouldSave)
+        if (raw && !draft) localStorage.removeItem(key)
         if (draft && active)
           await latest.current.restore(draft.data, controller.signal)
         if (active) {
@@ -74,6 +77,13 @@ export function usePublishingDraft<T extends object>(
     Promise.resolve().then(() => {
       if (!active || stopped.current) return
       try {
+        if (!latest.current.shouldSave(JSON.parse(serialized))) {
+          localStorage.removeItem(key)
+          setSavedAt(null)
+          setRestored(false)
+          setError("")
+          return
+        }
         const updatedAt = Date.now()
         localStorage.setItem(
           key,
@@ -100,6 +110,10 @@ export function usePublishingDraft<T extends object>(
     const flush = () => {
       if (stopped.current) return
       try {
+        if (!latest.current.shouldSave(latest.current.value)) {
+          localStorage.removeItem(key)
+          return
+        }
         localStorage.setItem(
           key,
           JSON.stringify({

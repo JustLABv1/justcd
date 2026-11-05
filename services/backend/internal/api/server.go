@@ -165,6 +165,7 @@ func (s *Server) routes() {
 	s.Mux.Handle("POST /api/v1/publishing/repository/inspect", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.inspectPublishingRepository))))
 	s.Mux.Handle("POST /api/v1/publishing/repository/plan", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.planPublishingRepository))))
 	s.Mux.Handle("POST /api/v1/publishing/repository", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.publishRepository))))
+	s.Mux.Handle("POST /api/v1/publishing/validate-archive", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.validatePublishingArchive))))
 	s.Mux.Handle("POST /api/v1/publishing", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.publishApplication))))
 	s.Mux.Handle("POST /api/v1/git-sources", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.createGitSource))))
 	s.Mux.Handle("PUT /api/v1/git-sources/{sourceID}", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.updateGitSource))))

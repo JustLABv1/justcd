@@ -33,7 +33,8 @@ export function pickDraft<T>(shape: T, value: unknown): T {
 export function readDraft<T>(
   raw: string | null,
   shape: T,
-  now = Date.now()
+  now = Date.now(),
+  isMeaningful: (data: T) => boolean = () => true
 ): { data: T; updatedAt: number } | null {
   if (!raw) return null
   const envelope = JSON.parse(raw)
@@ -44,8 +45,10 @@ export function readDraft<T>(
     envelope.updatedAt > now + 60000
   )
     return null
+  const data = pickDraft(shape, envelope.data)
+  if (!isMeaningful(data)) return null
   return {
-    data: pickDraft(shape, envelope.data),
+    data,
     updatedAt: envelope.updatedAt,
   }
 }

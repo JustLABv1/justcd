@@ -101,9 +101,24 @@ are not part of this first implementation.
 
 ## Prepare an application archive
 
-ZIP the **contents** of the project directory, preserving relative paths. A ZIP
-containing an extra enclosing directory requires that directory in the entry
-point, but dependency files still belong at the archive root.
+ZIP the **contents** of the project directory, preserving relative paths. Shiny,
+Streamlit and static-site uploads may also have one enclosing project folder:
+JustCD removes that folder automatically only when all application files are
+inside it and the resulting layout matches the selected template and entry point.
+It never guesses between multiple apps. Explicit app directories such as
+`src/dashboard` or `public` are checked first and preserved when valid.
+
+The upload component checks ZIP integrity, paths, size limits and template layout
+as soon as you select an archive. It shows a success message (including any folder
+normalization) or an actionable error beside the upload. Publishing and the manual
+wizard cannot continue until the check succeeds. Changing the entry point triggers
+another check. This validation uploads a temporary copy but creates no GitLab
+repository, pipeline or application; temporary files are removed after validation.
+The publishing request repeats the same checks. Python-generated sites validate
+archive safety here; the build command and output remain CI checks.
+
+Finder metadata (`__MACOSX/` and `.DS_Store`) is ignored. Dependency files must
+be at the project root after any enclosing folder is removed.
 
 For Shiny, include `renv.lock` or `packages.txt` at the archive root. The selected
 app directory must contain `app.R`, or both `ui.R` and `server.R`. Choose `.` when

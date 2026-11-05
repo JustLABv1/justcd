@@ -47,6 +47,7 @@ export default function PublishVersionPage() {
   const { applicationID } = useParams<{ applicationID: string }>()
   const [setup, setSetup] = useState<Setup | null>(null)
   const [file, setFile] = useState<File | null>(null)
+  const [archiveValid, setArchiveValid] = useState(false)
   const [token, setToken] = useState("")
   const [confirmed, setConfirmed] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -72,6 +73,7 @@ export default function PublishVersionPage() {
     if (
       !setup ||
       !file ||
+      !archiveValid ||
       !limits ||
       !confirmed ||
       busy ||
@@ -205,10 +207,13 @@ export default function PublishVersionPage() {
                 <ArchiveUpload
                   id="version-archive"
                   file={file}
+ validation={{ workspaceId: setup?.workspaceId ?? "", runtime: setup?.publication.config.runtime ?? "", entryPoint: setup?.publication.config.entryPoint ?? "." }}
+ onValidationChange={setArchiveValid}
                   maxBytes={limits?.archiveBytes}
                   disabled={!setup || !limits || busy}
                   onFileChange={(next) => {
                     setFile(next)
+                setArchiveValid(false)
                     setError(null)
                   }}
                 />
@@ -270,7 +275,7 @@ export default function PublishVersionPage() {
                     ? `Uploading source · ${uploadPercent}%`
                     : "Preparing build…"
                 }
-                disabled={!file || !confirmed}
+                disabled={!file || !archiveValid || !confirmed}
               >
                 Upload and build version
               </Button>

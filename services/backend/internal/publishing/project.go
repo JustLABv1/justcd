@@ -243,6 +243,9 @@ func ExtractArchive(ctx context.Context, input io.ReaderAt, size int64, dir stri
 			return nil, err
 		}
 		n := strings.TrimSuffix(f.Name, "/")
+		if n == "__MACOSX" || strings.HasPrefix(n, "__MACOSX/") || path.Base(n) == ".DS_Store" {
+			continue
+		}
 		if n == "." || !safePath(n) {
 			return nil, errors.New("archive contains an unsafe path or special file")
 		}
@@ -343,6 +346,11 @@ func Generate(c Config, source []File) ([]File, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
+	normalized, _, err := NormalizeSource(c, source)
+	if err != nil {
+		return nil, err
+	}
+	source = normalized
 	has := func(p string) bool {
 		for _, f := range source {
 			if f.Path == "source/"+p {
@@ -350,18 +358,6 @@ func Generate(c Config, source []File) ([]File, error) {
 			}
 		}
 		return false
-	}
-	if c.Runtime == "streamlit" && (!has(c.EntryPoint) || !has("requirements.txt")) {
-		return nil, errors.New("Streamlit requires the entry point and requirements.txt at the archive root")
-	}
-	if c.Runtime == "shiny" && (!has(path.Join(c.EntryPoint, "app.R")) && !(has(path.Join(c.EntryPoint, "ui.R")) && has(path.Join(c.EntryPoint, "server.R")))) {
-		return nil, errors.New("Shiny entry directory must contain app.R or ui.R and server.R")
-	}
-	if c.Runtime == "shiny" && !has("renv.lock") && !has("packages.txt") {
-		return nil, errors.New("Shiny requires renv.lock or packages.txt at the archive root")
-	}
-	if c.Runtime == "static" && !has(path.Join(c.EntryPoint, "index.html")) {
-		return nil, errors.New("static website directory must contain index.html")
 	}
 	files := append([]File{}, source...)
 	rendered, err := RenderConfig(c, SourceFacts{HasRenvLock: has("renv.lock")})

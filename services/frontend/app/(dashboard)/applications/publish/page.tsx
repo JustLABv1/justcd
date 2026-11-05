@@ -45,6 +45,7 @@ export default function PublishApplicationPage() {
   const [outputDir, setOutputDir] = useState("dist")
   const [entryPoint, setEntryPoint] = useState("")
   const [file, setFile] = useState<File | null>(null)
+  const [archiveValid, setArchiveValid] = useState(false)
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<unknown>(null)
@@ -84,7 +85,8 @@ export default function PublishApplicationPage() {
       setEntryPoint(data.entryPoint)
       setBuildCommand(data.buildCommand)
       setOutputDir(data.outputDir)
-    }
+    },
+    (data) => Boolean(data.templateId)
   )
   const workspace = workspaces.find((item) => item.id === workspaceId)
   const choices = profiles.filter(
@@ -142,7 +144,7 @@ export default function PublishApplicationPage() {
   }, [workspaceId])
   async function publish(event: React.FormEvent) {
     event.preventDefault()
-    if (!file || !limits || !profile || !template || busy) return
+    if (!file || !archiveValid || !limits || !profile || !template || busy) return
     setBusy(true)
     setError(null)
     try {
@@ -439,7 +441,7 @@ export default function PublishApplicationPage() {
             <PublishingField
               label="Application name"
               htmlFor="publish-name"
-              hint="Lowercase letters, numbers, and hyphens."
+              hint="Choose a name for your new app and Git repository. Use lowercase letters, numbers, and hyphens."
             >
               <Input
                 id="publish-name"
@@ -452,12 +454,12 @@ export default function PublishApplicationPage() {
               />
             </PublishingField>
             <PublishingField
-              label="Where to publish"
+              label="Publishing profile"
               htmlFor="publish-profile"
               hint={
                 profile
-                  ? `${profile.clusterName} / ${profile.namespaceMode === "per-application" ? `${profile.namespacePrefix}${name || "<app-name>"} · create if missing` : profile.namespace}`
-                  : "An administrator must configure an approved destination."
+                  ? `Shared build and deployment settings, not an existing app. Destination: ${profile.clusterName} / ${profile.namespaceMode === "per-application" ? `${profile.namespacePrefix}${name || "<app-name>"} · create if missing` : profile.namespace}`
+                  : "Choose shared build and deployment settings configured by your administrator. This does not select an existing app."
               }
             >
               <FormSelect
@@ -470,8 +472,8 @@ export default function PublishApplicationPage() {
                 }))}
                 placeholder={
                   loading
-                    ? "Loading destinations…"
-                    : "No destinations available"
+                    ? "Loading publishing profiles…"
+                    : "No publishing profiles available"
                 }
                 disabled={loading || !choices.length}
               />
@@ -513,8 +515,11 @@ export default function PublishApplicationPage() {
             <ArchiveUpload
               id="publish-archive"
               file={file}
+ validation={{ workspaceId, runtime: template.runtime, entryPoint: entryPoint || template.entryPoint }}
+ onValidationChange={setArchiveValid}
               onFileChange={(next) => {
                 setFile(next)
+                setArchiveValid(false)
                 setError(null)
               }}
               maxBytes={limits?.archiveBytes}
@@ -611,7 +616,7 @@ export default function PublishApplicationPage() {
               type="submit"
               loading={busy}
               loadingText="Preparing your app…"
-              disabled={!file || !profile || !workspaceId || loading}
+              disabled={!file || !archiveValid || !profile || !workspaceId || loading}
               className="h-10 px-5"
             >
               Publish app

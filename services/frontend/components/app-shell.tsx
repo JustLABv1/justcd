@@ -160,7 +160,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (!workspaces.some((workspace) => workspace.id === id)) return
     setSelectedWorkspaceId(id)
     window.localStorage.setItem("justcd.selectedWorkspaceId", id)
-    router.push(`/workspaces/${encodeURIComponent(id)}`)
+    // Stay on the current page; only leave it when it belongs to the workspace being left.
+    const segments = pathname.split("/").filter(Boolean)
+    if (segments[0] === "workspaces" && segments[1] && segments[1] !== "new") {
+      segments[1] = encodeURIComponent(id)
+      router.push(`/${segments.join("/")}`)
+    } else if ((segments[0] === "applications" && segments[1] && !["new", "publish"].includes(segments[1])) || segments[0] === "application-groups") {
+      router.push("/applications")
+    }
   }
 
   // Pending approvals drive the badge on the Approvals nav item.

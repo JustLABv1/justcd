@@ -11,6 +11,7 @@ import {
   layoutSummary,
   type ApplicationTemplate,
 } from "@/components/applications/template-catalog"
+import { PublishingFlow } from "@/components/applications/publishing-flow"
 import { ExistingProject } from "@/components/applications/existing-project"
 import { PublishingServicesPicker, servicesProblem } from "@/components/applications/publishing-services"
 import type { ServiceSelection } from "@/lib/publishing"
@@ -403,6 +404,10 @@ export default function PublishApplicationPage() {
             )}
           </PublishingCard>
         </div>
+        <PublishingFlow
+          template={template}
+          description="This is what happens for a new project from a ZIP. With an existing Git project, JustCD adds the build files to your repository through a merge request instead."
+        />
       </div>
     )
   return (
@@ -618,6 +623,14 @@ export default function PublishApplicationPage() {
             </PublishingCard>
           )}
           <PublishingServicesPicker options={profile?.services} value={services} password={databasePassword} onPasswordChange={setDatabasePassword} onChange={value => { if (!value.database) setDatabasePassword(""); setServiceSelection(JSON.stringify(value)) }} />
+          {profile && (
+            <PublishingFlow
+              template={template}
+              profile={profile}
+              services={services}
+              name={name}
+            />
+          )}
           {profile && (
             <div className="space-y-1 px-1 text-sm leading-6 text-muted-foreground">
               {profile.description && <p>{profile.description}</p>}

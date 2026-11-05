@@ -18,6 +18,7 @@ import { ErrorNotice } from "@/components/workspace-ui"
 import { api } from "@/lib/api"
 import { publishProject, publishingSize } from "@/lib/publishing"
 import { usePublishingLimits } from "@/hooks/use-publishing-limits"
+import { useToast } from "@/components/toast-provider"
 
 type Publication = {
   applicationId: string
@@ -41,6 +42,7 @@ type Setup = {
 }
 
 export default function PublishVersionPage() {
+  const toast = useToast()
   const router = useRouter()
   const [uploadPercent, setUploadPercent] = useState(0)
   const { limits, error: limitsError } = usePublishingLimits()
@@ -84,7 +86,7 @@ export default function PublishVersionPage() {
     setUploadPercent(0)
     setError(null)
     try {
-      const result = await publishProject<Publication>(
+      const result = await toast.promise(publishProject<Publication>(
         setup.publication.profileId
           ? {
               workspaceId: setup.workspaceId,
@@ -106,7 +108,7 @@ export default function PublishVersionPage() {
         file,
         limits,
         setUploadPercent
-      )
+      ), { loading: "Publishing the new version…", success: "New version published. The pipeline has started.", error: null })
       setPipeline(result.pipelineUrl)
       setToken("")
       setFile(null)

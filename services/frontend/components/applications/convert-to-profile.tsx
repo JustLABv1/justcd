@@ -10,6 +10,7 @@ import { ErrorNotice } from "@/components/workspace-ui"
 import { api } from "@/lib/api"
 import type { ApprovedPublishingProfile } from "@/lib/publishing"
 import type { ListResponse } from "@/lib/types"
+import { useToast } from "@/components/toast-provider"
 
 type Difference = { field: string; app: string; profile: string }
 type Check = {
@@ -37,6 +38,7 @@ export function ConvertToProfileDialog({
   workspaceId: string
 }) {
   const router = useRouter()
+  const toast = useToast()
   const base = `/api/v1/applications/${encodeURIComponent(applicationId)}`
   const [profiles, setProfiles] = useState<ApprovedPublishingProfile[]>([])
   const [templateId, setTemplateId] = useState("")
@@ -81,6 +83,7 @@ export function ConvertToProfileDialog({
       setCheck(result)
       if (result.applied) {
         onOpenChange(false)
+        toast.success("Publishing profile adopted.")
         router.push(`/applications/${applicationId}/profile-update`)
       }
     } catch (cause) {

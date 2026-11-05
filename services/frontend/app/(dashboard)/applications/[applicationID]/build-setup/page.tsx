@@ -19,6 +19,7 @@ import {
 } from "@/components/applications/recipe-review"
 import { PackageSourcesCard } from "@/components/settings/package-sources"
 import { ErrorNotice } from "@/components/workspace-ui"
+import { useToast } from "@/components/toast-provider"
 
 type Publication = {
   profileId?: string
@@ -56,6 +57,7 @@ export default function BuildSetupPage() {
   const [gitlabToken, setGitlabToken] = useState("")
   const [tokenError, setTokenError] = useState("")
   const [plan, setPlan] = useState<Plan | null>(null)
+  const toast = useToast()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [result, setResult] = useState<{ pipelineUrl?: string } | null>(null)
@@ -144,10 +146,13 @@ export default function BuildSetupPage() {
     setError(null)
     try {
       setResult(
-        await api(`${base}/build-setup`, {
-          method: "POST",
-          body: JSON.stringify({ ...body, hash: plan.hash }),
-        })
+        await toast.promise(
+          api(`${base}/build-setup`, {
+            method: "POST",
+            body: JSON.stringify({ ...body, hash: plan.hash }),
+          }),
+          { loading: "Committing build setup…", success: "Build setup committed.", error: null }
+        )
       )
       setGitlabToken("")
       setPackageToken("")

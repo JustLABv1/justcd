@@ -20,8 +20,10 @@ import type { Credential } from "@/lib/types"
  */
 export type ActionRunner = <T>(
   work: () => Promise<T>,
-  success: string | ((result: T) => string),
-  after?: (value: T) => void
+  success: string | ((result: T) => string | { message: string; kind: "success" | "warning" | "error" }),
+  after?: (value: T) => void,
+  /** Shows a progress toast while a slow request (a connection test) runs. */
+  loading?: string
 ) => Promise<boolean>
 
 export const monoTextareaClass = "min-h-24 font-mono text-sm"

@@ -109,11 +109,15 @@ export function NamespacePanel({
         }),
         (report) => report.status === "passed"
           ? `Kubernetes permissions passed in ${report.namespace}.`
-          : (report.failure?.message ?? `Kubernetes permission checks: ${statusLabel(report.status).toLowerCase()} in ${report.namespace}.`),
+          : {
+            kind: report.status === "partial" || report.status === "missing" ? "warning" as const : "error" as const,
+            message: report.failure?.message ?? `Kubernetes permission checks: ${statusLabel(report.status).toLowerCase()} in ${report.namespace}.`,
+          },
         (report) => setReports((current) => ({
           ...current,
           [report.namespace]: { workspaceId: workspace.id, clusterId: cluster.id, namespace: report.namespace, report, checkedAt: report.checkedAt },
-        }))
+        })),
+        `Testing permissions in ${targetNamespace}…`
       )
     } finally {
       setTestingNamespace("")

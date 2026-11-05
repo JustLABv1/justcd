@@ -26,6 +26,7 @@ import { StatusBadge } from "@/components/ui-kit"
 import { rolloutSummary } from "@/lib/rollout-timeline"
 import { syncRunProgress } from "@/lib/run-progress"
 import type { Identity, Operation, PlanRecord } from "@/lib/types"
+import { useToast } from "@/components/toast-provider"
 
 export type RollbackRequest = {
   kind: "successful_sync" | "pre_operation" | "git_revision"
@@ -64,6 +65,7 @@ export function OperationBar({
   onReviewResource: (identity: Identity) => void
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const toast = useToast()
   const [cancelling, setCancelling] = useState(false)
   const [cancelError, setCancelError] = useState<unknown>(null)
   const [now, setNow] = useState(() => Date.now())
@@ -90,6 +92,7 @@ export function OperationBar({
         `/api/v1/operations/${encodeURIComponent(operation.id)}/cancel`,
         {}
       )
+      toast.info("Cancellation requested.")
       await onUpdated()
     } catch (cause) {
       setCancelError(cause)

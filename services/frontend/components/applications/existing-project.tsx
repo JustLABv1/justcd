@@ -25,6 +25,7 @@ import { Input } from "@/components/ui/input"
 import { FormSelect } from "@/components/ui/form-select"
 import { Disclosure } from "@/components/ui/collapsible"
 import { ErrorNotice } from "@/components/workspace-ui"
+import { useToast } from "@/components/toast-provider"
 
 type Inspection = {
   sha: string
@@ -92,6 +93,7 @@ export function ExistingProject({
   const [inspection, setInspection] = useState<Inspection | null>(null)
   const [plan, setPlan] = useState<Plan | null>(null)
   const [result, setResult] = useState<Result | null>(null)
+  const toast = useToast()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const manual = profileId === "manual"
@@ -262,10 +264,13 @@ export function ExistingProject({
         )
       } else {
         setResult(
-          await api<Result>("/api/v1/publishing/repository", {
-            method: "POST",
-            body: JSON.stringify({ ...metadata(), planHash: plan?.hash }),
-          })
+          await toast.promise(
+            api<Result>("/api/v1/publishing/repository", {
+              method: "POST",
+              body: JSON.stringify({ ...metadata(), planHash: plan?.hash }),
+            }),
+            { loading: "Publishing to your repository…", success: "Repository published.", error: null }
+          )
         )
         draft.clear()
         onPublished()

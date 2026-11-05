@@ -179,12 +179,13 @@ export default function ConnectClusterPage() {
   async function verify() {
     if (!cluster || !workspace) return
     setBusy(true); setError(null)
+    const progress = toast.loading("Verifying cluster access…")
     try {
       const result = await apiPost<KubernetesPermissionReport>(`/api/v1/clusters/${encodeURIComponent(cluster.id)}/test`, { workspaceId: workspace.id, namespace })
       setReport(result)
-      if (result.status === "passed") toast.success("Cluster access verified.")
-      else toast.error(result.failure?.message ?? "Some Kubernetes permissions are missing.")
-    } catch (cause) { setError(cause) }
+      if (result.status === "passed") toast.finish(progress, "success", "Cluster access verified.")
+      else toast.finish(progress, "error", result.failure?.message ?? "Some Kubernetes permissions are missing.")
+    } catch (cause) { toast.dismiss(progress); setError(cause) }
     finally { setBusy(false) }
   }
 

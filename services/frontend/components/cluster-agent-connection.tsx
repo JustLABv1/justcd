@@ -14,6 +14,7 @@ import { FormField } from "@/components/ui-kit"
 import { ErrorDetailsButton } from "@/components/error-details"
 import { api, apiDelete, apiPost, errorMessage } from "@/lib/api"
 import type { Cluster, Workspace } from "@/lib/types"
+import { useToast } from "@/components/toast-provider"
 
 type Status = { mode: "direct" | "agent"; online?: boolean; environments?: { namespace: string; applicationId?: string; status: { phase: string; shared: boolean; managed: boolean; failedPhase?: string; reason?: string; resources?: string[] } }[]; agent?: { defaultProfile: string; clusterProfile: string; clusterUid: string; version: string; revoked: boolean; lastSeenAt?: string; profiles: { name: string; namespaces: string[]; clusterScope: boolean; deploymentCredentials?: { lifetimeSeconds: number; audience?: string; provisioning?: { platform?: string; deploymentClusterRole: string; deleteNamespaces: boolean } } }[] } }
 
@@ -29,6 +30,7 @@ export function ClusterAgentConnection({ cluster, workspace, canManage, onModeCh
   const [token, setToken] = useState("")
   const [expiresAt, setExpiresAt] = useState("")
   const [error, setError] = useState<unknown>(null)
+  const toast = useToast()
   const [busy, setBusy] = useState(false)
   const [showToken, setShowToken] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -51,19 +53,21 @@ export function ClusterAgentConnection({ cluster, workspace, canManage, onModeCh
     return () => clearTimeout(timer)
   }, [copied])
   async function copyToken() {
-    try { await navigator.clipboard.writeText(token); setCopied(true) } catch (cause) { setError(cause) }
+    try { await navigator.clipboard.writeText(token); setCopied(true); toast.success("Enrollment token copied.") } catch (cause) { setError(cause) }
   }
   async function enroll() {
     setBusy(true); setError(null)
     try {
       const result = await apiPost<{ enrollmentToken: string; expiresAt: string }>(`${endpoint}/enrollment`, { defaultProfile, clusterProfile: managedProfile ? "" : clusterProfile })
       setToken(result.enrollmentToken); setExpiresAt(result.expiresAt); onModeChange("agent"); setStatus(await refresh())
+      toast.success("Enrollment token created.")
     } catch (cause) { setError(cause) }
     finally { setBusy(false) }
   }
   async function revoke(direct = false) {
     await apiDelete(`${endpoint}${direct ? "?mode=direct" : ""}`)
     setToken(""); setShowToken(false); onModeChange(direct ? "direct" : "agent"); setStatus(await refresh())
+    toast.success(direct ? "Switched to a direct API connection." : "Agent connection revoked.")
   }
   return <>
     {!controlled && <Button size="sm" type="button" variant="outline" onClick={() => { setError(null); setOpen(true) }}>{cluster.connectionMode === "agent" ? "Agent connection" : "Set up agent connection"}</Button>}

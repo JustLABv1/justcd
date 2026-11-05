@@ -142,10 +142,11 @@ export function ClusterPanel({
           return result.status === "passed"
             ? `${cluster.name}: all Kubernetes permissions passed in ${result.namespace}.`
             : result.status === "partial"
-              ? `${cluster.name}: ${missing} Kubernetes permission${missing === 1 ? "" : "s"} missing in ${result.namespace}.`
-              : `${cluster.name}: ${result.failure?.message ?? "Kubernetes permission test failed."}`
+              ? { kind: "warning" as const, message: `${cluster.name}: ${missing} Kubernetes permission${missing === 1 ? "" : "s"} missing in ${result.namespace}.` }
+              : { kind: "error" as const, message: `${cluster.name}: ${result.failure?.message ?? "Kubernetes permission test failed."}` }
         },
-        (result) => setLatestTests((current) => ({ ...current, [cluster.id]: { workspaceId: workspace.id, clusterId: cluster.id, namespace: result.namespace, report: result, checkedAt: result.checkedAt } }))
+        (result) => setLatestTests((current) => ({ ...current, [cluster.id]: { workspaceId: workspace.id, clusterId: cluster.id, namespace: result.namespace, report: result, checkedAt: result.checkedAt } })),
+        `Testing ${cluster.name}…`
       )
       setTestFailed((current) => ({ ...current, [cluster.id]: !ok }))
     } finally {

@@ -62,7 +62,8 @@ export function GitSourcePanel({
       const ok = await action(
         () => apiPost<{ status: string; commit: string }>(`/api/v1/git-sources/${encodeURIComponent(source.id)}/test?workspaceId=${encodeURIComponent(workspace.id)}`),
         (result) => `${source.name}: HEAD ${result.commit.slice(0, 12)} reachable`,
-        (result) => setTestResults((current) => ({ ...current, [source.id]: { status: "ok", commit: result.commit, testedAt: new Date().toISOString() } }))
+        (result) => setTestResults((current) => ({ ...current, [source.id]: { status: "ok", commit: result.commit, testedAt: new Date().toISOString() } })),
+        `Testing ${source.name}…`
       )
       if (!ok) setTestResults((current) => ({ ...current, [source.id]: { status: "failed" } }))
     } finally {

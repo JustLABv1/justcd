@@ -42,6 +42,7 @@ import type {
   NamespaceBinding,
   Workspace,
 } from "@/lib/types"
+import { useToast } from "@/components/toast-provider"
 
 type Config = {
   services?: string
@@ -118,6 +119,7 @@ const initialConfig: Config = {
 }
 
 export default function PublishApplicationPage() {
+  const toast = useToast()
   const { limits, error: limitsError } = usePublishingLimits()
   const [selectedTemplate, setSelectedTemplate] =
     useState<ApplicationTemplate | null>(null)
@@ -304,7 +306,7 @@ export default function PublishApplicationPage() {
     setBusy(true)
     setError(null)
     try {
-      const publication = await publishProject<Publication>(
+      const publication = await toast.promise(publishProject<Publication>(
         {
           workspaceId,
           clusterId,
@@ -320,7 +322,7 @@ export default function PublishApplicationPage() {
         },
         file,
         limits
-      )
+      ), { loading: "Publishing your project…", success: "Project published. The pipeline has started.", error: null })
       draft.clear()
       setResult(publication)
       setGitlabToken("")

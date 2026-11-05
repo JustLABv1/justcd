@@ -121,9 +121,11 @@ export default function ConnectGitSourcePage() {
     setBusy(true)
     setError(null)
     try {
-      const result = await apiPost<{ status: string; commit: string }>(`/api/v1/git-sources/${encodeURIComponent(source.id)}/test?workspaceId=${encodeURIComponent(workspace.id)}`)
+      const result = await toast.promise(
+        apiPost<{ status: string; commit: string }>(`/api/v1/git-sources/${encodeURIComponent(source.id)}/test?workspaceId=${encodeURIComponent(workspace.id)}`),
+        { loading: "Checking repository access…", success: (checked) => `Repository access verified at ${checked.commit.slice(0, 12)}.`, error: null }
+      )
       setTestResult({ commit: result.commit })
-      toast.success(`Repository access verified at ${result.commit.slice(0, 12)}.`)
     } catch (cause) {
       setError(cause)
       toast.error(errorMessage(cause), cause)

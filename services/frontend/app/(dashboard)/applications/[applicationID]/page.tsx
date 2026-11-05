@@ -335,14 +335,17 @@ export default function ApplicationDetailPage() {
     conflictEpoch.current += 1
     setBusy(true); setPendingAction("create-plan"); setError(null); setApprovalSummary(null)
     try {
-      const plan = await backgroundTasks.run<PlanRecord>(`/api/v1/applications/${encodeURIComponent(applicationID)}/plans`)
+      const plan = await toast.promise(backgroundTasks.run<PlanRecord>(`/api/v1/applications/${encodeURIComponent(applicationID)}/plans`), {
+        loading: "Building a plan from the Git revision…",
+        success: (created) => created.plan.decommission
+          ? `Deletion plan ready: ${created.plan.changes.length} resource${created.plan.changes.length === 1 ? "" : "s"} remaining to delete.`
+          : created.plan.changes.length ? `Plan ready: ${created.plan.changes.length} change${created.plan.changes.length === 1 ? "" : "s"} to review.` : "The application already matches its Git revision.",
+        error: null,
+      })
       setConflictReview([])
       setPlansError(null)
       setActivePlan(plan)
       setPlans((current) => [plan, ...current.filter((item) => item.id !== plan.id)])
-      toast.success(plan.plan.decommission
-        ? `Deletion plan ready: ${plan.plan.changes.length} resource${plan.plan.changes.length === 1 ? "" : "s"} remaining to delete.`
-        : plan.plan.changes.length ? `Plan ready: ${plan.plan.changes.length} change${plan.plan.changes.length === 1 ? "" : "s"} to review.` : "The application already matches its Git revision.")
       selectTab("changes")
       await refreshSummary()
     } catch (cause) {
@@ -390,6 +393,7 @@ export default function ApplicationDetailPage() {
     if (selected.length === 0) return
     conflictEpoch.current += 1
     setBusy(true); setPendingAction("adopt-batch")
+    const progress = toast.loading(`Claiming ${selected.length} resource${selected.length === 1 ? "" : "s"}…`)
     try {
       const result = await apiPost<{ claimed: number; failed: number; results: { identity: Identity; status: string; error?: string }[] }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/adopt-batch`, {
         conflicts: selected,
@@ -400,9 +404,10 @@ export default function ApplicationDetailPage() {
       await loadData().catch(() => {})
       const next = await api<{ conflict: OwnershipConflict | null; conflicts: OwnershipConflict[] }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ownership-conflict`).catch(() => null)
       if (next) setConflictReview(next.conflicts ?? (next.conflict ? [next.conflict] : []))
-      if (result.failed) toast.error(`${result.claimed} claimed; ${result.failed} failed. Refresh the conflict list and retry the remaining resources.`)
-      else toast.success(`${result.claimed} resources claimed without changing workloads. Auto-sync is paused; review a fresh plan before syncing.`)
+      if (result.failed) toast.finish(progress, "error", `${result.claimed} claimed; ${result.failed} failed. Refresh the conflict list and retry the remaining resources.`)
+      else toast.finish(progress, "success", `${result.claimed} resources claimed without changing workloads. Auto-sync is paused; review a fresh plan before syncing.`)
     } catch (cause) {
+      toast.dismiss(progress)
       if (cause instanceof APIError && cause.status === 409) {
         const next = await api<{ conflict: OwnershipConflict | null; conflicts: OwnershipConflict[] }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ownership-conflict`).catch(() => null)
         if (next) {
@@ -605,20 +610,19 @@ export default function ApplicationDetailPage() {
   async function retryReconciliation(operationId?: string) {
     setBusy(true); setPendingAction("retry-reconciliation"); setError(null)
     try {
-      const result = await apiPost<{ status: "queued" | "review_required" | "up_to_date"; operation?: Operation; plan?: PlanRecord }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/retry`, operationId ? { operationId } : {})
+      const result = await toast.promise(apiPost<{ status: "queued" | "review_required" | "up_to_date"; operation?: Operation; plan?: PlanRecord }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/retry`, operationId ? { operationId } : {}), {
+        loading: "Refreshing the reconciliation plan…",
+        success: (outcome) => outcome.status === "review_required" ? "Fresh reconciliation plan ready for review."
+          : outcome.status === "up_to_date" ? "Live cluster state already matches the desired revision."
+          : "Fresh reconciliation plan queued.",
+        error: null,
+      })
       if (result.plan) {
         setPlans((current) => [result.plan!, ...current.filter((item) => item.id !== result.plan!.id)])
         setActivePlan(result.plan)
       }
       if (result.operation) setOperations((current) => [result.operation!, ...current.filter((item) => item.id !== result.operation!.id)])
-      if (result.status === "review_required") {
-        toast.success("Fresh reconciliation plan ready for review.")
-        selectTab("changes")
-      } else if (result.status === "up_to_date") {
-        toast.success("Live cluster state already matches the desired revision.")
-      } else {
-        toast.success("Fresh reconciliation plan queued.")
-      }
+      if (result.status === "review_required") selectTab("changes")
       await loadData()
     } catch (cause) { toast.error(errorMessage(cause), cause) }
     finally { setBusy(false); setPendingAction("") }
@@ -636,20 +640,24 @@ export default function ApplicationDetailPage() {
   }
 
   async function finishApproval(task: BackgroundTask<{ id: string; expiresAt: string; operation?: Operation; autoApplyError?: string }>, planId: string) {
+    const progress = toast.loading("Recording your approval…")
     try {
       const result = await backgroundTasks.wait(task)
       if (result.operation) {
         setApprovalSummary(null)
-        toast.success("Final approval recorded. Automatic sync queued for the reviewed plan.")
+        toast.finish(progress, "success", "Final approval recorded. Automatic sync queued for the reviewed plan.")
         await loadData()
         await refreshSummary()
         return
       }
       const summary = await api<PlanApprovalSummary>(`/api/v1/plans/${encodeURIComponent(planId)}/approvals`)
       setApprovalSummary(summary)
-      if (result.autoApplyError) toast.warning(result.autoApplyError)
-      else toast.success(`Approval recorded: ${summary.approvedApprovals} of ${summary.requiredApprovals} required.`)
-    } catch (cause) { if (!(cause instanceof Error && cause.name === "AbortError") && !acceptRefreshedPlan(cause)) toast.error(errorMessage(cause), cause) }
+      if (result.autoApplyError) toast.finish(progress, "warning", result.autoApplyError)
+      else toast.finish(progress, "success", `Approval recorded: ${summary.approvedApprovals} of ${summary.requiredApprovals} required.`)
+    } catch (cause) {
+      if ((cause instanceof Error && cause.name === "AbortError") || acceptRefreshedPlan(cause)) toast.dismiss(progress)
+      else toast.finish(progress, "error", errorMessage(cause), cause)
+    }
   }
 
   async function applyPlan() {
@@ -672,10 +680,13 @@ export default function ApplicationDetailPage() {
   async function createRollbackPlan(target: RollbackRequest): Promise<boolean> {
     setBusy(true); setPendingAction("rollback-plan"); setError(null); setApprovalSummary(null)
     try {
-      const plan = await apiPost<PlanRecord>(`/api/v1/applications/${encodeURIComponent(applicationID)}/rollback-plans`, { kind: target.kind, targetId: target.id, revision: target.revision })
+      const plan = await toast.promise(apiPost<PlanRecord>(`/api/v1/applications/${encodeURIComponent(applicationID)}/rollback-plans`, { kind: target.kind, targetId: target.id, revision: target.revision }), {
+        loading: "Building the rollback plan…",
+        success: (created) => `Rollback plan ready: ${created.plan.changes.length} reviewed change${created.plan.changes.length === 1 ? "" : "s"}. No cluster resources have changed.`,
+        error: null,
+      })
       setActivePlan(plan)
       setPlans((current) => [plan, ...current.filter((item) => item.id !== plan.id)])
-      toast.success(`Rollback plan ready: ${plan.plan.changes.length} reviewed change${plan.plan.changes.length === 1 ? "" : "s"}. No cluster resources have changed.`)
       selectTab("changes")
       await refreshSummary()
       return true

@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/reui/badge"
 import { PublishingCard } from "@/components/applications/publishing-fields"
 import { ErrorNotice } from "@/components/workspace-ui"
+import { useToast } from "@/components/toast-provider"
 
 type UpgradePlan = {
   applicationId: string
@@ -27,6 +28,7 @@ type UpgradePlan = {
   changes: { path: string; before: string; after: string; exists: boolean }[]
 }
 export default function ProfileUpdatePage() {
+  const toast = useToast()
   const { applicationID } = useParams<{ applicationID: string }>()
   const [plan, setPlan] = useState<UpgradePlan | null>(null)
   const [error, setError] = useState<unknown>(null)
@@ -58,15 +60,18 @@ export default function ProfileUpdatePage() {
     setError(null)
     try {
       setResult(
-        await api(
-          `/api/v1/applications/${encodeURIComponent(applicationID)}/profile-upgrade`,
-          {
-            method: "POST",
-            body: JSON.stringify({
-              revision: plan.toRevision,
-              hash: plan.hash,
-            }),
-          }
+        await toast.promise(
+          api(
+            `/api/v1/applications/${encodeURIComponent(applicationID)}/profile-upgrade`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                revision: plan.toRevision,
+                hash: plan.hash,
+              }),
+            }
+          ),
+          { loading: "Applying the profile update…", success: "Profile update applied.", error: null }
         )
       )
     } catch (e) {

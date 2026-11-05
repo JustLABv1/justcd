@@ -12,6 +12,7 @@ import { RowActions, type ActionItem } from "@/components/action-menu"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { api, apiPost } from "@/lib/api"
 import type { Application } from "@/lib/types"
+import { useToast } from "@/components/toast-provider"
 
 export function BranchTestControls({ application, canManage, disabled, onChanged, onReview, onSettings, open, onOpenChange }: {
   application: Application
@@ -27,6 +28,7 @@ export function BranchTestControls({ application, canManage, disabled, onChanged
   const [revision, setRevision] = useState("")
   const [namespace, setNamespace] = useState("")
   const [manifestPath, setManifestPath] = useState("")
+  const toast = useToast()
   const [confirmed, setConfirmed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
@@ -61,6 +63,7 @@ export function BranchTestControls({ application, canManage, disabled, onChanged
     try {
       const updated = await apiPost<Application>(`/api/v1/applications/${encodeURIComponent(application.id)}/branch-test`, { revision: revision.trim(), mode, namespace: namespace.trim(), manifestPath: manifestPath.trim(), confirmExisting: confirmed })
       onOpenChange(false)
+      toast.success(`Testing branch ${revision.trim()}.`)
       await onChanged(updated)
     } catch (cause) { setError(cause) }
     finally { setBusy(false) }
@@ -75,7 +78,7 @@ export function BranchTestControls({ application, canManage, disabled, onChanged
         title: "Return to the tracked source?", confirmLabel: "Restore tracked source",
         description: "This ends the branch override. Review and deploy a fresh plan to restore the tracked source, then resume automatic reconciliation. Database migrations and data changes are not undone.",
         onConfirm: async () => {
-          try { const updated = await apiPost<Application>(`/api/v1/applications/${encodeURIComponent(application.id)}/branch-test/resume`, {}); await onChanged(updated) }
+          try { const updated = await apiPost<Application>(`/api/v1/applications/${encodeURIComponent(application.id)}/branch-test/resume`, {}); toast.success("Returned to the tracked source."); await onChanged(updated) }
           catch (cause) { await onChanged(await api<Application>(`/api/v1/applications/${encodeURIComponent(application.id)}`)); throw cause }
         },
       },

@@ -7,16 +7,17 @@ import styles from "./app-shell.module.css"
 import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useMemo, useState } from "react"
 import { AccountMenu } from "@/components/account-menu"
+import { CommandPalette, CommandPaletteButton } from "@/components/command-palette"
+import { Select } from "@/components/panelui/select"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { APIError, api, apiPost, errorMessage } from "@/lib/api"
 import { WorkspaceSelectionProvider } from "@/hooks/workspace-selection"
 import type { Application, ListResponse, OnboardingStatus, Workspace, User } from "@/lib/types"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Home01Icon, Folder01Icon, Layers01Icon, Task01Icon, Settings02Icon, Audit01Icon, ArrowDown01Icon, Link01Icon, Add01Icon, Rocket01Icon, SidebarLeftIcon, SidebarRightIcon } from "@hugeicons/core-free-icons"
+import { Home01Icon, Folder01Icon, Layers01Icon, Task01Icon, Settings02Icon, Audit01Icon, Link01Icon, Add01Icon, Rocket01Icon, SidebarLeftIcon, SidebarRightIcon } from "@hugeicons/core-free-icons"
 
-type NavItem = { href: string; label: string; icon: typeof Home01Icon }
+type NavItem = { href: string; label: string; icon: typeof Home01Icon; badge?: number; dot?: boolean }
 
 const deliveryNavigation: NavItem[] = [
   { href: "/", label: "Overview", icon: Home01Icon },
@@ -42,6 +43,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [routeApplication, setRouteApplication] = useState<Application | null>(null)
   const [onboardingIncomplete, setOnboardingIncomplete] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [pendingApprovals, setPendingApprovals] = useState(0)
 
   useEffect(() => {
     // Restore after mount so server and client markup match.
@@ -157,8 +160,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (!workspaces.some((workspace) => workspace.id === id)) return
     setSelectedWorkspaceId(id)
     window.localStorage.setItem("justcd.selectedWorkspaceId", id)
-    router.push(`/workspaces/${encodeURIComponent(id)}`)
+    // Stay on the current page; only leave it when it belongs to the workspace being left.
+    const segments = pathname.split("/").filter(Boolean)
+    if (segments[0] === "workspaces" && segments[1] && segments[1] !== "new") {
+      segments[1] = encodeURIComponent(id)
+      router.push(`/${segments.join("/")}`)
+    } else if ((segments[0] === "applications" && segments[1] && !["new", "publish"].includes(segments[1])) || segments[0] === "application-groups") {
+      router.push("/applications")
+    }
   }
+
+  // Pending approvals drive the badge on the Approvals nav item.
+  useEffect(() => {
+    if (!selectedWorkspaceId) return
+    let active = true
+    const load = () => {
+      if (document.visibilityState === "hidden") return
+      void api<{ total: number }>(`/api/v1/approval-inbox?workspaceId=${encodeURIComponent(selectedWorkspaceId)}&page=1&limit=1`)
+        .then((response) => { if (active) setPendingApprovals(response.total) }, () => { if (active) setPendingApprovals(0) })
+    }
+    load()
+    const timer = window.setInterval(load, 30000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [selectedWorkspaceId, pathname])
 
   const crumbs = pageCrumbs(pathname, routeWorkspace, routeApplication)
   const showAdmin = user?.isAdmin ?? false
@@ -176,9 +200,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     { href: `/workspaces/${selectedWorkspaceId}`, label: "Workspace settings", icon: Settings02Icon },
     ...(!user?.isAdmin ? [{ href: "/audit", label: "Audit trail", icon: Audit01Icon }] : []),
   ]
-  const administration = adminNavigation.filter((item) => item.href !== "/onboarding" || onboardingIncomplete)
+  const administration = adminNavigation.filter((item) => item.href !== "/onboarding" || onboardingIncomplete).map((item) => item.href === "/onboarding" ? { ...item, dot: true } : item)
+  const delivery = deliveryNavigation.map((item) => item.href === "/approvals" ? { ...item, badge: pendingApprovals } : item)
   const mobileGroups = [
-    { label: "Delivery", items: deliveryNavigation },
+    { label: "Delivery", items: delivery },
     ...(showAdmin ? [{ label: "Administration", items: administration }] : []),
   ]
 
@@ -195,16 +220,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-svh overflow-x-clip bg-muted text-foreground dark:bg-background">
       <aside aria-label="Sidebar" className={`fixed bottom-3 left-3 top-3 z-20 hidden ${collapsed ? "w-[72px]" : "w-[224px]"} flex-col overflow-hidden transition-[width] duration-200 motion-reduce:transition-none rounded-[24px] border border-border/70 bg-card shadow-[0_8px_32px_-16px_rgb(0_0_0_/_0.2)] lg:flex`}>
-        <Link href="/" aria-label="JustCD home" className={`flex shrink-0 items-center gap-3 ${collapsed ? "justify-center pb-5 pt-6" : "px-5 pb-7 pt-6"}`}>
+        <div className={`flex shrink-0 items-center ${collapsed ? "justify-center pb-4 pt-6" : "justify-between gap-2 py-6 pl-5 pr-3"}`}>
+                  <Link href="/" aria-label="JustCD home" className={`flex min-w-0 items-center gap-3 ${collapsed ? "justify-center" : ""}`}>
           <LogoMark className="h-9 w-auto shrink-0 text-foreground" />
-          {!collapsed && <span>
-            <span className="block text-[15px] font-semibold tracking-tight">JustCD</span>
-            <span className="block text-xs text-muted-foreground">continuous delivery</span>
-          </span>}
+          {!collapsed && <span className="text-[15px] font-semibold tracking-tight">JustCD</span>}
         </Link>
+          {!collapsed && <CommandPaletteButton onClick={() => setPaletteOpen(true)} />}
+        </div>
         <WorkspaceSelector workspaces={workspaces} selectedId={selectedWorkspaceId} onChange={selectWorkspace} loading={workspacesLoading} collapsed={collapsed} />
+        {collapsed && <div className="mb-3 flex justify-center"><CommandPaletteButton collapsed onClick={() => setPaletteOpen(true)} /></div>}
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-5">
-          <NavGroup label="Delivery" items={deliveryNavigation} pathname={pathname} first collapsed={collapsed} />
+          <NavGroup label="Delivery" items={delivery} pathname={pathname} first collapsed={collapsed} />
           {selectedWorkspaceId && <NavGroup label="Workspace" items={workspaceNavigation} pathname={pathname} collapsed={collapsed} />}
           {user.isAdmin && <NavGroup label="Administration" items={administration} pathname={pathname} collapsed={collapsed} />}
         </div>
@@ -220,11 +246,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             : <button type="button" aria-expanded aria-keyshortcuts="Control+B Meta+B" onClick={toggleSidebar} className={`${styles.navItem} w-full cursor-pointer`}>
               <HugeiconsIcon icon={SidebarLeftIcon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />
               Collapse
-              <kbd className="ml-auto text-[11px] text-muted-foreground/70">⌘B</kbd>
+              <kbd className="ml-auto text-[11px] font-medium text-muted-foreground/70">⌘B</kbd>
             </button>}
         </div>
         <AccountMenu user={user} onSignOut={signOut} collapsed={collapsed} />
       </aside>
+
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} isAdmin={user.isAdmin} workspaces={workspaces} workspaceId={selectedWorkspaceId} onSelectWorkspace={selectWorkspace} onToggleSidebar={toggleSidebar} onboardingIncomplete={onboardingIncomplete} />
 
       <div className={`${collapsed ? "lg:pl-[96px]" : "lg:pl-[248px]"} transition-[padding] duration-200 motion-reduce:transition-none`}>
         <header className="flex h-14 items-center justify-between gap-4 px-5 sm:px-8 lg:hidden">
@@ -232,7 +260,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <LogoMark className="h-7 w-auto text-foreground" />
             <span className="font-semibold">JustCD</span>
           </Link>
-          <div className="flex items-center gap-1"><DocumentationLink compact /><AccountMenu user={user} onSignOut={signOut} compact /></div>
+          <div className="flex items-center gap-1"><CommandPaletteButton compact onClick={() => setPaletteOpen(true)} /><DocumentationLink compact /><AccountMenu user={user} onSignOut={signOut} compact /></div>
         </header>
         <div className="mx-4 mb-2 lg:hidden">
           <WorkspaceSelector workspaces={workspaces} selectedId={selectedWorkspaceId} onChange={selectWorkspace} compact loading={workspacesLoading} />
@@ -247,7 +275,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {mobileGroups.map((group, groupIndex) => <div key={group.label} role="group" aria-label={group.label} className="flex shrink-0 items-center gap-1">
             {groupIndex > 0 && <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 bg-border" />}
             <span className="shrink-0 px-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">{group.label}</span>
-            {group.items.map((item) => <Link key={item.href} href={item.href} aria-current={isNavSelected(item.href, pathname) ? "page" : undefined} className={`${styles.navItem} shrink-0 !px-3 !py-2 !text-xs`}><HugeiconsIcon icon={item.icon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />{item.label}</Link>)}
+            {group.items.map((item) => <Link key={item.href} href={item.href} aria-current={isNavSelected(item.href, pathname) ? "page" : undefined} className={`${styles.navItem} shrink-0 !py-1.5 !text-xs`}><HugeiconsIcon icon={item.icon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />{item.label}<NavBadge item={item} /></Link>)}
           </div>)}
         </nav>
         <main style={{ paddingBottom: "calc(2rem + var(--toast-clearance, 0px))" }} className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") && !pathname.endsWith("/publish") ? "max-w-none" : "max-w-[1440px]"} px-5 pb-7 pt-5 sm:px-8 sm:pb-8 sm:pt-6 lg:pt-9 ${pathname === "/audit" ? "lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden" : ""}`}>
@@ -292,23 +320,34 @@ function WorkspaceSelector({
   if (!workspaces.length) {
     return <Link href="/workspaces/new" className={`mx-3 mb-4 flex h-10 items-center justify-between rounded-lg border border-dashed px-3 text-xs font-medium text-primary hover:bg-muted/40 ${compact ? "mx-0" : ""}`}>Create a workspace <HugeiconsIcon icon={Add01Icon} strokeWidth={1.8} className="size-4" aria-hidden="true" /></Link>
   }
+  const selected = workspaces.find((workspace) => workspace.id === selectedId)
+  const items = workspaces.map((workspace) => ({ value: workspace.id, label: workspace.name }))
+  // The two shortcut entries are not workspaces, so they navigate instead of changing the selection.
+  function choose(value: string | null) {
+    if (value === "__settings") router.push(`/workspaces/${selectedId}`)
+    else if (value === "__new") router.push("/workspaces/new")
+    else if (value) onChange(value)
+  }
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger aria-label={collapsed ? `Select workspace · ${workspaces.find((workspace) => workspace.id === selectedId)?.name ?? ""}` : "Select workspace"} title={collapsed ? workspaces.find((workspace) => workspace.id === selectedId)?.name : undefined} className={collapsed ? "mx-auto mb-4 grid size-10 shrink-0 place-items-center rounded-lg border bg-background outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring" : `mx-3 mb-4 flex h-10 min-w-0 items-center gap-2 rounded-lg border bg-background px-3 text-left text-xs font-medium outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring ${compact ? "mx-0 w-full" : "w-[calc(100%-1.5rem)]"}`}>
-        <HugeiconsIcon icon={Folder01Icon} className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-        {!collapsed && <><span className="min-w-0 flex-1 truncate">{workspaces.find((workspace) => workspace.id === selectedId)?.name ?? "Select workspace"}</span>
-        <HugeiconsIcon icon={ArrowDown01Icon} className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" /></>}
-      </DropdownMenuTrigger>
-      <DropdownMenuContent side={collapsed ? "right" : "bottom"} align="start" sideOffset={6} className="min-w-48 rounded-lg p-1.5">
-        <DropdownMenuGroup><DropdownMenuLabel>Switch workspace</DropdownMenuLabel></DropdownMenuGroup>
-        <DropdownMenuRadioGroup value={selectedId} onValueChange={onChange} aria-label="Workspaces">
-          {workspaces.map((workspace) => <DropdownMenuRadioItem key={workspace.id} value={workspace.id} className="min-w-0 py-2"><span className="truncate">{workspace.name}</span></DropdownMenuRadioItem>)}
-        </DropdownMenuRadioGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => router.push(`/workspaces/${selectedId}`)} className="gap-2 py-2"><HugeiconsIcon icon={Settings02Icon} className="size-4" aria-hidden="true" />Workspace settings</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => router.push("/workspaces/new")} className="gap-2 py-2"><HugeiconsIcon icon={Add01Icon} className="size-4" aria-hidden="true" />New workspace</DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <Select items={items} value={selectedId} onValueChange={choose}>
+      {collapsed
+        ? <Select.Trigger variant="ghost" icon={null} aria-label={`Select workspace · ${selected?.name ?? ""}`} title={selected?.name} className="mx-auto mb-3 size-11 justify-center rounded-xl border bg-background p-0">
+          <HugeiconsIcon icon={Folder01Icon} className="size-4 text-muted-foreground" aria-hidden="true" />
+        </Select.Trigger>
+        : <Select.Trigger variant="default" size="sm" aria-label="Select workspace" className={`mb-4 h-9 rounded-xl px-2.5 ${compact ? "" : "mx-3 !w-[calc(100%-1.5rem)]"}`}>
+          <HugeiconsIcon icon={Folder01Icon} className="size-4 text-muted-foreground" aria-hidden="true" />
+          <Select.Value placeholder="Select workspace" className="text-[13px] font-medium" />
+        </Select.Trigger>}
+      <Select.Content side={collapsed ? "right" : "bottom"} alignItemWithTrigger={false} className="min-w-52">
+        <Select.Group>
+          <Select.GroupLabel>Switch workspace</Select.GroupLabel>
+          {workspaces.map((workspace) => <Select.Item key={workspace.id} value={workspace.id} icon={<HugeiconsIcon icon={Folder01Icon} aria-hidden="true" />}>{workspace.name}</Select.Item>)}
+        </Select.Group>
+        <Select.Separator />
+        <Select.Item value="__settings" icon={<HugeiconsIcon icon={Settings02Icon} aria-hidden="true" />}>Workspace settings</Select.Item>
+        <Select.Item value="__new" icon={<HugeiconsIcon icon={Add01Icon} aria-hidden="true" />}>New workspace</Select.Item>
+      </Select.Content>
+    </Select>
   )
 }
 
@@ -320,16 +359,26 @@ function NavGroup({ label, items, pathname, first = false, collapsed = false }: 
     <nav aria-label={label} className="space-y-1">
       {items.map((item) => {
         const current = isNavSelected(item.href, pathname) ? "page" : undefined
-        const icon = <HugeiconsIcon icon={item.icon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />
+        const selected = isNavSelected(item.href, pathname)
+        const icon = <HugeiconsIcon icon={item.icon} strokeWidth={1.8} className={`size-4 shrink-0 ${selected ? "text-primary" : ""}`} aria-hidden="true" />
         return collapsed
           ? <Tooltip key={item.href}>
-            <TooltipTrigger render={<Link href={item.href} aria-label={item.label} aria-current={current} className={`${styles.navItem} ${styles.navItemCollapsed}`} />}>{icon}</TooltipTrigger>
+            <TooltipTrigger render={<Link href={item.href} aria-label={item.badge ? `${item.label} (${item.badge} pending)` : item.label} aria-current={current} className={`${styles.navItem} ${styles.navItemCollapsed} relative`} />}>
+              {icon}
+              {(item.badge || item.dot) ? <span aria-hidden="true" className={`absolute right-1 top-1 size-2.5 rounded-full border-2 border-card ${item.badge ? "bg-rose-500" : "bg-emerald-500"}`} /> : null}
+            </TooltipTrigger>
             <TooltipContent side="right">{item.label}</TooltipContent>
           </Tooltip>
-          : <Link key={item.href} href={item.href} aria-current={current} className={styles.navItem}>{icon}{item.label}</Link>
+          : <Link key={item.href} href={item.href} aria-current={current} className={styles.navItem}>{icon}{item.label}<NavBadge item={item} /></Link>
       })}
     </nav>
   </>
+}
+
+function NavBadge({ item }: { item: NavItem }) {
+  if (item.badge) return <span className="ml-auto min-w-5 rounded-full bg-rose-500 px-1.5 py-0.5 text-center text-[11px] font-semibold leading-none text-white" aria-label={`${item.badge} pending`}>{item.badge > 99 ? "99+" : item.badge}</span>
+  if (item.dot) return <span className="ml-auto size-2 rounded-full bg-emerald-500" role="img" aria-label="Setup incomplete" />
+  return null
 }
 
 function isNavSelected(href: string, pathname: string) {

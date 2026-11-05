@@ -8,8 +8,10 @@ import (
 
 	"github.com/justlab/justcd/services/backend/internal/core"
 	"github.com/justlab/justcd/services/backend/internal/store"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
 func TestGroupVersionResolvesCoreAndGroupedResources(t *testing.T) {
@@ -64,5 +66,27 @@ func TestCleanupFailureReportsAlreadyAppliedResource(t *testing.T) {
 				t.Fatalf("missing %q in %q", fragment, message)
 			}
 		}
+	}
+}
+
+func TestKubernetesFailureDetailExplainsPolicyRejections(t *testing.T) {
+	quota := apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "cluster-health", errors.New("failed quota: example: must specify limits.cpu for: cluster-health; requests.cpu for: cluster-health"))
+	detail := kubernetesFailureDetail(fmt.Errorf("create failed for Pod ns/cluster-health: %w", quota))
+	if !strings.HasPrefix(detail, "Forbidden: ") || !strings.Contains(detail, "must specify limits.cpu") {
+		t.Fatalf("detail = %q", detail)
+	}
+}
+
+func TestKubernetesFailureDetailNeverEchoesSubmittedValues(t *testing.T) {
+	invalid := apierrors.NewInvalid(schema.GroupKind{Kind: "Secret"}, "creds", field.ErrorList{field.Invalid(field.NewPath("data").Key("token"), "private-value", "bad value private-value")})
+	detail := kubernetesFailureDetail(invalid)
+	if strings.Contains(detail, "private-value") || !strings.Contains(detail, "data[token]") {
+		t.Fatalf("detail = %q", detail)
+	}
+	if kubernetesFailureDetail(errors.New("private-value")) != "" {
+		t.Fatal("plain errors must not produce a detail")
+	}
+	if kubernetesFailureDetail(&recreationFailure{cause: apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "x", errors.New("private-value"))}) != "" {
+		t.Fatal("recreation failures must not produce a detail")
 	}
 }

@@ -212,15 +212,20 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
     window.history.replaceState(null, "", url)
   }
 
-  const action: ActionRunner = async (work, success, after) => {
+  const action: ActionRunner = async (work, success, after, loading) => {
     setBusy(true)
+    const progress = loading ? toast.loading(loading) : null
     try {
       const result = await work()
       after?.(result)
-      toast.success(typeof success === "function" ? success(result) : success)
+      const outcome = typeof success === "function" ? success(result) : success
+      const { message, kind } = typeof outcome === "string" ? { message: outcome, kind: "success" as const } : outcome
+      if (progress) toast.finish(progress, kind, message)
+      else toast[kind](message)
       return true
     } catch (cause) {
-      toast.error(errorMessage(cause), cause)
+      if (progress) toast.finish(progress, "error", errorMessage(cause), cause)
+      else toast.error(errorMessage(cause), cause)
       return false
     } finally {
       setBusy(false)

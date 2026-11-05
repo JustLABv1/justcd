@@ -546,6 +546,8 @@ export type Operation = {
       startedAt?: string
       finishedAt?: string
       message?: string
+      /** Kubernetes' own reason for rejecting the resource, already stripped of submitted values. */
+      failureDetail?: string
     }[]
   }
   attemptCount: number

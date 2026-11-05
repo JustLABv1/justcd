@@ -3,12 +3,12 @@
   align-items: center;
   gap: 12px;
   border: 1px solid transparent;
-  border-radius: 999px;
-  padding: 10px 15px;
+  border-radius: 14px;
+  padding: 10px 12px;
   color: var(--muted-foreground);
   font-size: 13px;
   font-weight: 500;
-  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
+  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
 }
 .navItemCollapsed {
   justify-content: center;
@@ -18,10 +18,12 @@
   margin-inline: auto;
   padding: 0;
 }
+/* The current page is a raised row; its tile switches from tinted to solid colour. */
 .navItem[aria-current="page"] {
-  color: var(--primary);
-  background: color-mix(in srgb, var(--primary) 10%, var(--card));
-  border-color: color-mix(in srgb, var(--primary) 14%, transparent);
+  color: var(--foreground);
+  background: var(--background);
+  border-color: color-mix(in srgb, var(--border) 80%, transparent);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.08);
 }
 .navItem:focus-visible {
   outline: 2px solid var(--ring);

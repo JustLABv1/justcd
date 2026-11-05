@@ -206,6 +206,9 @@ func (s *Store) ApplyRepositoryApplications(ctx context.Context, repository Repo
 			if err := writeApplicationEnvironment(ctx, tx, app.ID, app.RepositoryEnvironment); err != nil {
 				return err
 			}
+			if err := writeApplicationHealthGate(ctx, tx, app.ID, app.RepositoryHealthGate); err != nil {
+				return err
+			}
 			if _, err := tx.ExecContext(ctx, `UPDATE operations SET schedule_check_at=NULL WHERE application_id=$1 AND status='queued'`, app.ID); err != nil {
 				return err
 			}

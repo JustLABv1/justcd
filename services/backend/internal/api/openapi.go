@@ -1215,6 +1215,15 @@ paths:
       summary: Show desired, managed, and read-only observed Kubernetes resources with their relationships
       responses:
         '200': { description: Resource graph with safe metadata and observation warnings }
+  /applications/{applicationID}/health-gate:
+    get:
+      summary: Post-deploy health gate and its latest check (workspace viewer)
+      description: Declared with spec.healthGate in justcd.yaml. A successful sync stays pending until the application reports Healthy or the timeout passes. Failed checks mark the GitLab deployment failed, raise an unhealthy notification and, with onFailure prepare-rollback, prepare a rollback plan that still needs owner approval.
+      parameters:
+        - { name: applicationID, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: enabled flag, the declared gate (timeoutSeconds, onFailure) and latest check (status pending, passed or failed, message, deadline, rollbackPlanId) }
+        '403': { description: Workspace access required }
   /applications/{applicationID}/environment:
     get:
       summary: GitLab environment and latest reported deployment (workspace viewer)

@@ -91,3 +91,22 @@ func TestRecordGitLabDeploymentRejectsBadInputAndHTTPFailures(t *testing.T) {
 		t.Fatalf("expected HTTP 403 error, got %v", err)
 	}
 }
+
+func TestUpdateGitLabDeployment(t *testing.T) {
+	var got string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		got = r.Method + " " + r.URL.Path + " " + r.Form.Encode()
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	if err := (Client{HTTP: server.Client()}).UpdateGitLabDeployment(context.Background(), server.URL, "g/p", "t", 42, "failed"); err != nil {
+		t.Fatal(err)
+	}
+	if got != "PUT /projects/g/p/deployments/42 status=failed" {
+		t.Fatalf("unexpected request: %q", got)
+	}
+	if (Client{}).UpdateGitLabDeployment(context.Background(), server.URL, "g/p", "t", 0, "failed") == nil || (Client{}).UpdateGitLabDeployment(context.Background(), server.URL, "g/p", "t", 1, "bogus") == nil {
+		t.Fatal("invalid updates must be rejected")
+	}
+}

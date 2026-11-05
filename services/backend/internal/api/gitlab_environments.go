@@ -86,3 +86,29 @@ func (s *Server) applicationEnvironment(w http.ResponseWriter, r *http.Request) 
 	}
 	writeJSON(w, http.StatusOK, result)
 }
+
+// applicationHealthGate returns the declared post-deploy health gate and the
+// latest check, including a prepared rollback plan when one exists.
+func (s *Server) applicationHealthGate(w http.ResponseWriter, r *http.Request) {
+	app, err := s.Store.ApplicationByID(r.Context(), r.PathValue("applicationID"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "application not found")
+		return
+	}
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "viewer") {
+		return
+	}
+	gate, err := s.Store.ApplicationHealthGate(r.Context(), app.ID)
+	if err != nil {
+		writeStoreError(w, "could not load health gate")
+		return
+	}
+	result := map[string]any{"enabled": gate != nil}
+	if gate != nil {
+		result["gate"] = gate
+		if latest, err := s.Store.LatestHealthGateCheck(r.Context(), app.ID); err == nil && latest != nil {
+			result["latest"] = latest
+		}
+	}
+	writeJSON(w, http.StatusOK, result)
+}

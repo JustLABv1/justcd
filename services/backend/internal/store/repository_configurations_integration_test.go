@@ -84,11 +84,15 @@ func testRepositoryConfigurationSafety(t *testing.T, ctx context.Context, s *Sto
 	app.SyncPolicy = "auto-safe"
 	app.ConfigurationHash = "auto-safe"
 	app.RepositoryEnvironment = ApplicationEnvironment{Name: "shop/production", Tier: "production", URL: "https://shop.example.com"}
+	app.RepositoryHealthGate = &HealthGate{OnFailure: HealthGatePrepareRollback}
 	if err := s.ApplyRepositoryApplications(ctx, repository, "policy", []Application{app}); err != nil {
 		t.Fatal(err)
 	}
 	if override, err := s.ApplicationEnvironmentOverride(ctx, originalID); err != nil || override != app.RepositoryEnvironment {
 		t.Fatalf("environment override was not stored: %+v %v", override, err)
+	}
+	if gate, err := s.ApplicationHealthGate(ctx, originalID); err != nil || gate == nil || gate.TimeoutSeconds != DefaultHealthGateTimeoutSeconds || gate.OnFailure != HealthGatePrepareRollback {
+		t.Fatalf("health gate was not stored with defaults: %+v %v", gate, err)
 	}
 	if err := s.RecordEnvironmentDeployment(ctx, EnvironmentDeployment{OperationID: "env-op-1", ApplicationID: originalID, Environment: "shop/production", Status: "failed", SHA: "a", Error: "boom"}); err != nil {
 		t.Fatal(err)
@@ -101,8 +105,12 @@ func testRepositoryConfigurationSafety(t *testing.T, ctx context.Context, s *Sto
 	}
 	app.ConfigurationHash = "environment-removed"
 	app.RepositoryEnvironment = ApplicationEnvironment{}
+	app.RepositoryHealthGate = nil
 	if err := s.ApplyRepositoryApplications(ctx, repository, "environment-removed", []Application{app}); err != nil {
 		t.Fatal(err)
+	}
+	if gate, err := s.ApplicationHealthGate(ctx, originalID); err != nil || gate != nil {
+		t.Fatalf("removed health gate remains: %+v %v", gate, err)
 	}
 	if override, err := s.ApplicationEnvironmentOverride(ctx, originalID); err != nil || !override.IsZero() {
 		t.Fatalf("removed environment override remains: %+v %v", override, err)

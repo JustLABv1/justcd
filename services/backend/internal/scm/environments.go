@@ -127,3 +127,16 @@ func (c Client) ensureGitLabEnvironment(ctx context.Context, apiURL, token, proj
 	}
 	return c.gitlabJSON(ctx, apiURL, token, http.MethodPost, project+"/environments", create, nil)
 }
+
+// UpdateGitLabDeployment moves an existing deployment to a final status.
+// GitLab only allows running to become success, failed or canceled.
+func (c Client) UpdateGitLabDeployment(ctx context.Context, apiURL, repository, token string, deploymentID int64, status string) error {
+	if deploymentID <= 0 || !gitlabDeploymentStatuses[status] {
+		return errors.New("invalid GitLab deployment update")
+	}
+	path := "/projects/" + url.PathEscape(repository) + "/deployments/" + strconv.FormatInt(deploymentID, 10)
+	if err := c.gitlabJSON(ctx, apiURL, token, http.MethodPut, path, url.Values{"status": {status}}, nil); err != nil {
+		return fmt.Errorf("could not update GitLab deployment: %w", err)
+	}
+	return nil
+}

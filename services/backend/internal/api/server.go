@@ -231,6 +231,7 @@ func (s *Server) routes() {
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}/topology", s.requireAuth(http.HandlerFunc(s.applicationTopology)))
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}/health-history", s.requireAuth(http.HandlerFunc(s.applicationHealthHistory)))
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}/environment", s.requireAuth(http.HandlerFunc(s.applicationEnvironment)))
+	s.Mux.Handle("GET /api/v1/applications/{applicationID}/health-gate", s.requireAuth(http.HandlerFunc(s.applicationHealthGate)))
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}/operations", s.requireAuth(http.HandlerFunc(s.listApplicationOperations)))
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}/sync-history", s.requireAuth(http.HandlerFunc(s.applicationSyncHistory)))
 	s.Mux.Handle("GET /api/v1/workspaces/{workspaceID}/sync-history", s.requireAuth(http.HandlerFunc(s.workspaceSyncHistory)))

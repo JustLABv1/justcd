@@ -212,6 +212,21 @@ export type ApplicationEnvironmentInfo = {
   }
 }
 
+export type ApplicationHealthGateInfo = {
+  enabled: boolean
+  gate?: { timeoutSeconds: number; onFailure: "mark-failed" | "prepare-rollback" }
+  latest?: {
+    operationId: string
+    revision?: string
+    status: "pending" | "passed" | "failed"
+    startedAt: string
+    deadline: string
+    finishedAt?: string
+    message?: string
+    rollbackPlanId?: string
+  }
+}
+
 export type RepositoryConfiguration = {
   prSettings: RepositoryPRSettings
   prError: string

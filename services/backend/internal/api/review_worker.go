@@ -276,6 +276,11 @@ func (s *Server) processReview(ctx context.Context, review store.PullRequestRevi
 			view := toPlanView(store.PlanRecord{ID: review.ID, Plan: plan, Status: "review-only", CreatedAt: time.Now().UTC()})
 			result.Plan, _ = json.Marshal(view)
 			result.Phase = "planned"
+			// In block mode violations must fail the PR check, not just the later apply.
+			if blockErr := plan.PolicyEvaluation.Authorize(); blockErr != nil {
+				result.Phase = "blocked"
+				result.Error = "pre-sync checks failed: " + strconv.Itoa(len(plan.PolicyEvaluation.Results)) + " finding(s) block deployment. See the plan for details."
+			}
 		}
 	}
 	if err := s.applyPRCommentApprovals(ctx, connection, &result, string(token)); err != nil {

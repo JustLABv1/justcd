@@ -1370,6 +1370,7 @@ type Application struct {
 	RepositoryNotifications        *ApplicationNotificationPolicy     `json:"-"`
 	RepositoryDeploymentSchedule   schedule.Policy                    `json:"-"`
 	RepositoryEnvironment          ApplicationEnvironment             `json:"-"`
+	RepositoryHealthGate           *HealthGate                        `json:"-"`
 	BranchTest                     *BranchTest                        `json:"branchTest,omitempty"`
 	ClusterName                    string                             `json:"clusterName,omitempty"`
 	CreateNamespaces               bool                               `json:"createNamespaces"`

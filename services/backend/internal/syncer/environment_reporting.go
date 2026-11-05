@@ -14,36 +14,39 @@ import (
 
 var commitSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
-// reportEnvironmentDeployment records a finished sync as a GitLab deployment.
-// It is opt-in per repository, never changes the operation's outcome, and
-// keeps the last result (including any error) for display in the UI.
-func (s *Service) reportEnvironmentDeployment(app store.Application, operationID string, plan store.PlanRecord, revision, status string) {
+// gitlabTarget is everything needed to talk to the application's GitLab project.
+type gitlabTarget struct {
+	apiURL, repository, token string
+}
+
+// gitlabEnvironmentTarget resolves the reporting target. It returns false when
+// the application is not eligible or the repository has not opted in.
+func (s *Service) gitlabEnvironmentTarget(ctx context.Context, app store.Application) (gitlabTarget, bool, error) {
 	// Branch tests deploy unmerged code; they must not appear as the real environment.
-	if app.RepositoryConfigurationID == "" || app.BranchTest != nil || plan.Plan.Decommission || len(app.Namespaces) == 0 {
-		return
+	if app.RepositoryConfigurationID == "" || app.BranchTest != nil || len(app.Namespaces) == 0 {
+		return gitlabTarget{}, false, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-	defer cancel()
 	settings, err := s.Store.EnvironmentSettings(ctx, app.RepositoryConfigurationID)
 	if err != nil || !settings.Enabled {
-		if err != nil {
-			slog.Warn("could not load GitLab environment settings", "applicationId", app.ID, "error", err)
-		}
-		return
+		return gitlabTarget{}, false, err
 	}
-	record := store.EnvironmentDeployment{OperationID: operationID, ApplicationID: app.ID, Status: status, SHA: revision}
-	deployment, err := s.gitlabDeployment(ctx, app, revision, status)
-	record.Environment = deployment.Environment
-	if err == nil {
-		record.GitLabDeploymentID, err = s.postDeployment(ctx, app, settings, deployment)
-	}
+	repo, err := s.Store.RepositoryConfigurationByID(ctx, app.RepositoryConfigurationID)
 	if err != nil {
-		record.Error = err.Error()
-		slog.Warn("could not report GitLab environment deployment", "applicationId", app.ID, "operationId", operationID, "error", err)
+		return gitlabTarget{}, false, err
 	}
-	if err := s.Store.RecordEnvironmentDeployment(ctx, record); err != nil {
-		slog.Warn("could not save GitLab environment deployment", "applicationId", app.ID, "error", err)
+	source, err := s.Store.GitSourceByID(ctx, repo.SourceID)
+	if err != nil {
+		return gitlabTarget{}, false, err
 	}
+	details, err := scm.Details(source.RepositoryURL, "gitlab", settings.APIURL)
+	if err != nil {
+		return gitlabTarget{}, true, err
+	}
+	token, err := gitops.APIToken(ctx, s.Store, s.EncryptionKey, settings.CredentialID, app.WorkspaceID)
+	if err != nil {
+		return gitlabTarget{}, true, err
+	}
+	return gitlabTarget{apiURL: details.APIURL, repository: details.Repository, token: string(token)}, true, nil
 }
 
 func (s *Service) gitlabDeployment(ctx context.Context, app store.Application, revision, status string) (scm.GitLabDeployment, error) {
@@ -56,30 +59,73 @@ func (s *Service) gitlabDeployment(ctx context.Context, app store.Application, r
 	if !commitSHA.MatchString(revision) {
 		return d, errors.New("deployment has no commit to report")
 	}
-	if commitSHA.MatchString(app.Revision) {
-		d.Ref = ""
-	} else {
+	if !commitSHA.MatchString(app.Revision) {
 		d.Ref = app.Revision
 	}
 	return d, nil
 }
 
-func (s *Service) postDeployment(ctx context.Context, app store.Application, settings store.EnvironmentSettings, d scm.GitLabDeployment) (int64, error) {
-	repo, err := s.Store.RepositoryConfigurationByID(ctx, app.RepositoryConfigurationID)
-	if err != nil {
-		return 0, err
+// reportEnvironmentDeployment records a deployment in the application's GitLab
+// environment and returns its ID (0 when nothing was recorded). It is opt-in
+// per repository, never changes the operation's outcome, and keeps the last
+// result, including any error, for display in the UI.
+func (s *Service) reportEnvironmentDeployment(app store.Application, operationID string, plan store.PlanRecord, revision, status string) int64 {
+	if plan.Plan.Decommission {
+		return 0
 	}
-	source, err := s.Store.GitSourceByID(ctx, repo.SourceID)
-	if err != nil {
-		return 0, err
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	target, enabled, err := s.gitlabEnvironmentTarget(ctx, app)
+	if !enabled && err == nil {
+		return 0
 	}
-	details, err := scm.Details(source.RepositoryURL, "gitlab", settings.APIURL)
-	if err != nil {
-		return 0, err
+	record := store.EnvironmentDeployment{OperationID: operationID, ApplicationID: app.ID, Status: status, SHA: revision}
+	var id int64
+	if err == nil {
+		var deployment scm.GitLabDeployment
+		deployment, err = s.gitlabDeployment(ctx, app, revision, status)
+		record.Environment = deployment.Environment
+		if err == nil {
+			id, err = scm.Client{}.RecordGitLabDeployment(ctx, target.apiURL, target.repository, target.token, deployment)
+			record.GitLabDeploymentID = id
+		}
 	}
-	token, err := gitops.APIToken(ctx, s.Store, s.EncryptionKey, settings.CredentialID, app.WorkspaceID)
 	if err != nil {
-		return 0, err
+		record.Error = err.Error()
+		slog.Warn("could not report GitLab environment deployment", "applicationId", app.ID, "operationId", operationID, "error", err)
 	}
-	return scm.Client{}.RecordGitLabDeployment(ctx, details.APIURL, details.Repository, string(token), d)
+	if err := s.Store.RecordEnvironmentDeployment(ctx, record); err != nil {
+		slog.Warn("could not save GitLab environment deployment", "applicationId", app.ID, "error", err)
+	}
+	return id
+}
+
+// finishEnvironmentDeployment closes a deployment opened as "running". When no
+// deployment was opened (reporting was down or off then), it records the final
+// status directly so GitLab still sees the outcome.
+func (s *Service) finishEnvironmentDeployment(app store.Application, operationID string, deploymentID int64, revision, status string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	target, enabled, err := s.gitlabEnvironmentTarget(ctx, app)
+	if !enabled && err == nil {
+		return
+	}
+	if err == nil && deploymentID == 0 {
+		s.reportEnvironmentDeployment(app, operationID, store.PlanRecord{}, revision, status)
+		return
+	}
+	record := store.EnvironmentDeployment{OperationID: operationID, ApplicationID: app.ID, Status: status, SHA: revision, GitLabDeploymentID: deploymentID}
+	if err == nil {
+		err = scm.Client{}.UpdateGitLabDeployment(ctx, target.apiURL, target.repository, target.token, deploymentID, status)
+	}
+	if err != nil {
+		record.Error = err.Error()
+		slog.Warn("could not finish GitLab environment deployment", "applicationId", app.ID, "operationId", operationID, "error", err)
+	}
+	if existing, getErr := s.Store.LatestEnvironmentDeployment(ctx, app.ID); getErr == nil && existing != nil && existing.OperationID == operationID {
+		record.Environment = existing.Environment
+	}
+	if err := s.Store.RecordEnvironmentDeployment(ctx, record); err != nil {
+		slog.Warn("could not save GitLab environment deployment", "applicationId", app.ID, "error", err)
+	}
 }

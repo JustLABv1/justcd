@@ -313,3 +313,22 @@ func TestDiscoverEnvironmentOverride(t *testing.T) {
 		t.Fatalf("expected environment validation error, got %v", err)
 	}
 }
+
+func TestDiscoverHealthGate(t *testing.T) {
+	root := t.TempDir()
+	writeDefinition(t, root, "apps/shop/justcd.yaml", validDefinition+"  healthGate:\n    onFailure: prepare-rollback\n")
+	definitions, err := Discover(root)
+	if err != nil || len(definitions) != 1 {
+		t.Fatalf("definitions=%v err=%v", definitions, err)
+	}
+	if g := definitions[0].Spec.HealthGate; g == nil || g.TimeoutSeconds != 300 || g.OnFailure != "prepare-rollback" {
+		t.Fatalf("defaults not applied: %+v", g)
+	}
+	for _, bad := range []string{"  healthGate:\n    timeoutSeconds: 5\n", "  healthGate:\n    onFailure: rollback\n"} {
+		dir := t.TempDir()
+		writeDefinition(t, dir, "apps/shop/justcd.yaml", validDefinition+bad)
+		if _, err := Discover(dir); err == nil || !strings.Contains(err.Error(), "healthGate") {
+			t.Fatalf("expected healthGate validation error for %q, got %v", bad, err)
+		}
+	}
+}

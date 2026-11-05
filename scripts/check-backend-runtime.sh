@@ -56,7 +56,7 @@ printf 'Orphan process reaping passed\n'
 
 version=$(apk list --installed libexpat | awk '$1 ~ /^libexpat-/ {sub(/^libexpat-/, "", $1); print $1}')
 test -n "$version"
-test "$(apk version -t "$version" 2.9.0-r0)" != '<'
+test "$(apk version -t "$version" 2.10.0-r0)" != '<'
 
 # The Git WebDAV helper is the binary that links to Expat.
 ldd /usr/libexec/git-core/git-http-push > /tmp/git-libraries

@@ -44,12 +44,10 @@ does not update ORAS in the separately built Helm binary.
   reports it conservatively; check source reachability before treating this
   as an application finding. The API does not import that package, and Helm
   uses `github.com/ProtonMail/go-crypto/openpgp` instead.
-- Alpine 3.24 currently supplies libexpat 2.8.5-r0, which does not fix
-  CVE-2026-77214 or CVE-2026-102633. The backend now builds a signed Expat
-  2.9.0 package from upstream source using `packaging/expat/APKBUILD`.
-  See `packaging/expat/README.md` for maintenance and removal instructions.
-  Trivy's current Alpine database misses these CVEs, so verify the installed
-  package version and confirm the resulting image digest with JFrog.
+- libexpat comes from Alpine 3.24 again (2.10.0-r0 or newer). The temporary
+  Expat 2.9.0 package that bridged the earlier CVEs has been removed; the
+  Dockerfile requires `libexpat>=2.10.0-r0` and `scripts/check-backend-runtime.sh`
+  verifies the installed version.
 
 Release builds pull base images, bypass cached package installation, and run
 `apk upgrade` to obtain available distribution fixes. Trivy blocks publishing

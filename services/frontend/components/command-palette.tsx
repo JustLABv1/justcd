@@ -9,9 +9,10 @@ import {
   Search01Icon, Settings02Icon, SidebarLeftIcon, Sun01Icon, SunMoonIcon, Task01Icon,
 } from "@hugeicons/core-free-icons"
 import { Command } from "@/components/panelui/command"
-import { IconTile } from "@/components/reui/icon-tile"
+import { NavTile, type Tone } from "@/components/nav-tile"
 import { LogoMark } from "@/components/logo"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { api } from "@/lib/api"
 import type { Application, ListResponse, Workspace } from "@/lib/types"
 
@@ -28,21 +29,7 @@ type CommandPaletteProps = {
   onboardingIncomplete: boolean
 }
 
-const tones = {
-  blue: "bg-blue-500 text-white",
-  violet: "bg-violet-500 text-white",
-  green: "bg-emerald-500 text-white",
-  amber: "bg-amber-500 text-white",
-  rose: "bg-rose-500 text-white",
-  slate: "bg-slate-600 text-white dark:bg-slate-500",
-  teal: "bg-teal-500 text-white",
-} as const
-
-/** Coloured tile that fills the palette's icon slot, so each category is recognisable at a glance. */
-const icon = (source: typeof Home01Icon, tone: keyof typeof tones = "blue") =>
-  <IconTile variant="solid" radius="default" className={`size-full rounded-lg [--icon-tile-icon-size:--spacing(4.5)] ${tones[tone]}`}>
-    <HugeiconsIcon icon={source} strokeWidth={1.8} aria-hidden="true" />
-  </IconTile>
+const icon = (source: typeof Home01Icon, tone: Tone = "blue") => <NavTile icon={source} tone={tone} />
 
 const adminSections = [
   { id: "oidc", title: "OIDC providers", keywords: ["sso", "sign-in", "groups"] },
@@ -139,16 +126,12 @@ export function CommandPalette({ open, onOpenChange, isAdmin, workspaces, worksp
   )
 }
 
-/** Sidebar/header button that opens the palette. */
-export function CommandPaletteButton({ onClick, collapsed = false, compact = false }: { onClick: () => void; collapsed?: boolean; compact?: boolean }) {
-  if (compact || collapsed) {
-    return <Button type="button" variant="ghost" size="icon" aria-label="Search and commands" aria-keyshortcuts="Control+K Meta+K" onClick={onClick}>
+/** Icon button that opens the palette; the ⌘K hint lives in its tooltip. */
+export function CommandPaletteButton({ onClick }: { onClick: () => void; collapsed?: boolean; compact?: boolean }) {
+  return <Tooltip>
+    <TooltipTrigger render={<Button type="button" variant="ghost" size="icon" aria-label="Search and commands" aria-keyshortcuts="Control+K Meta+K" onClick={onClick} />}>
       <HugeiconsIcon icon={Search01Icon} strokeWidth={1.8} className="size-4" aria-hidden="true" />
-    </Button>
-  }
-  return <Button type="button" variant="outline" aria-keyshortcuts="Control+K Meta+K" onClick={onClick} className="mx-3 mb-4 h-10 w-[calc(100%-1.5rem)] justify-start gap-2 px-3 text-xs font-normal text-muted-foreground">
-    <HugeiconsIcon icon={Search01Icon} strokeWidth={1.8} className="size-4" aria-hidden="true" />
-    Search…
-    <kbd className="ml-auto text-[11px] text-muted-foreground/70">⌘K</kbd>
-  </Button>
+    </TooltipTrigger>
+    <TooltipContent side="bottom">Search · ⌘K</TooltipContent>
+  </Tooltip>
 }

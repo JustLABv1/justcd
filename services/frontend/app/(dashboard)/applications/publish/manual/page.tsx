@@ -711,7 +711,7 @@ export default function PublishApplicationPage() {
                         "Custom CA variable (optional)",
                         "Inherited GitLab variable containing PEM certificates. Configures CI Git and build-engine trust; build stages need their own CA configuration.",
                         false,
-                        "PLAIN2_ROOT_CA"
+                        "PLATFORM_ROOT_CA"
                       )}
                       {textField(
                         "runnerTag",

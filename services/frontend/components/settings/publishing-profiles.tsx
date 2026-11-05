@@ -1073,9 +1073,9 @@ function ProfileEditor({
                 {field(
                   "caVariable",
                   "Custom CA variable",
-                  "Inherited CI variable with PEM certificates, e.g. PLAIN2_ROOT_CA.",
+                  "Inherited CI variable with PEM certificates, e.g. PLATFORM_ROOT_CA.",
                   false,
-                  "PLAIN2_ROOT_CA"
+                  "PLATFORM_ROOT_CA"
                 )}
                 {field(
                   "runnerServiceAccount",

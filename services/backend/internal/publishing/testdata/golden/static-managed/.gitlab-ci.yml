@@ -53,8 +53,8 @@ publish:
       export DOCKER_CONFIG="$(mktemp -d)"
       trap 'rm -rf "$DOCKER_CONFIG"' EXIT
       # Optional platform CA, supplied as PEM text by an inherited CI variable.
-      if [ -z "${PLAIN2_ROOT_CA:-}" ]; then
-        printf 'JustCD: configured CA variable PLAIN2_ROOT_CA is empty or unavailable. Check GitLab variable inheritance and protected-branch scope.\n' >&2
+      if [ -z "${PLATFORM_ROOT_CA:-}" ]; then
+        printf 'JustCD: configured CA variable PLATFORM_ROOT_CA is empty or unavailable. Check GitLab variable inheritance and protected-branch scope.\n' >&2
         exit 1
       fi
       ca_bundle="$DOCKER_CONFIG/ca-bundle.pem"
@@ -64,7 +64,7 @@ publish:
       done
       if [ -z "$system_ca" ]; then printf 'JustCD: builder image has no supported system CA bundle.\n' >&2; exit 1; fi
       cat "$system_ca" > "$ca_bundle"
-      printf '\n%s\n' "$PLAIN2_ROOT_CA" >> "$ca_bundle"
+      printf '\n%s\n' "$PLATFORM_ROOT_CA" >> "$ca_bundle"
       export SSL_CERT_FILE="$ca_bundle"
       export GIT_SSL_CAINFO="$ca_bundle"
       export CURL_CA_BUNDLE="$ca_bundle"

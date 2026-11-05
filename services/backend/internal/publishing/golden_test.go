@@ -22,7 +22,7 @@ func goldenCases() []goldenCase {
 	shinyRenv := []string{"app.R", "renv.lock"}
 	full := func(c *Config) {
 		c.BuildEngine = "podman"
-		c.CAVariable = "PLAIN2_ROOT_CA"
+		c.CAVariable = "PLATFORM_ROOT_CA"
 		c.RunnerTag = "ocp"
 		c.RunnerServiceAccount = "gitlab-runner-app-sa"
 		c.RunnerSCC = "gitlab-runner-scc"

@@ -566,7 +566,7 @@ is not enrolled in managed-template revision upgrades.
 
 Set **Custom CA variable** in a publishing profile or manual setup to the name of
 an inherited GitLab CI variable containing PEM certificate text, for example
-`PLAIN2_ROOT_CA`. Leave it blank for normal builder-image trust. JustCD stores the
+`PLATFORM_ROOT_CA`. Leave it blank for normal builder-image trust. JustCD stores the
 variable name, not the certificate, and does not create or overwrite that variable.
 It must be available to the generated project's protected default-branch pipeline.
 A configured but empty or unavailable variable fails with an actionable error.

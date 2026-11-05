@@ -407,15 +407,15 @@ func TestArchiveReportsEmptyAndFoldersOnly(t *testing.T) {
 
 func TestOptionalCAVariable(t *testing.T) {
 	c := config()
-	if strings.Contains(pipeline(c), "SSL_CERT_FILE") || strings.Contains(pipeline(c), "PLAIN2_ROOT_CA") {
+	if strings.Contains(pipeline(c), "SSL_CERT_FILE") || strings.Contains(pipeline(c), "PLATFORM_ROOT_CA") {
 		t.Fatal("default pipeline must not require platform CA variables")
 	}
-	c.CAVariable = "PLAIN2_ROOT_CA"
+	c.CAVariable = "PLATFORM_ROOT_CA"
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	ci := pipeline(c)
-	for _, expected := range []string{"${PLAIN2_ROOT_CA:-}", `"$PLAIN2_ROOT_CA"`, "export SSL_CERT_FILE=", "export GIT_SSL_CAINFO=", `cat "$system_ca"`, "is empty or unavailable"} {
+	for _, expected := range []string{"${PLATFORM_ROOT_CA:-}", `"$PLATFORM_ROOT_CA"`, "export SSL_CERT_FILE=", "export GIT_SSL_CAINFO=", `cat "$system_ca"`, "is empty or unavailable"} {
 		if !strings.Contains(ci, expected) {
 			t.Fatalf("missing CA configuration %q", expected)
 		}

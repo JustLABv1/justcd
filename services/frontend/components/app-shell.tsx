@@ -7,6 +7,7 @@ import styles from "./app-shell.module.css"
 import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useMemo, useState } from "react"
 import { AccountMenu } from "@/components/account-menu"
+import { CommandPalette, CommandPaletteButton } from "@/components/command-palette"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -42,6 +43,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [routeApplication, setRouteApplication] = useState<Application | null>(null)
   const [onboardingIncomplete, setOnboardingIncomplete] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
 
   useEffect(() => {
     // Restore after mount so server and client markup match.
@@ -203,6 +205,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </span>}
         </Link>
         <WorkspaceSelector workspaces={workspaces} selectedId={selectedWorkspaceId} onChange={selectWorkspace} loading={workspacesLoading} collapsed={collapsed} />
+        <div className={collapsed ? "mb-3 flex justify-center" : ""}><CommandPaletteButton collapsed={collapsed} onClick={() => setPaletteOpen(true)} /></div>
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-5">
           <NavGroup label="Delivery" items={deliveryNavigation} pathname={pathname} first collapsed={collapsed} />
           {selectedWorkspaceId && <NavGroup label="Workspace" items={workspaceNavigation} pathname={pathname} collapsed={collapsed} />}
@@ -226,13 +229,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <AccountMenu user={user} onSignOut={signOut} collapsed={collapsed} />
       </aside>
 
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} isAdmin={user.isAdmin} workspaces={workspaces} workspaceId={selectedWorkspaceId} onSelectWorkspace={selectWorkspace} onToggleSidebar={toggleSidebar} onboardingIncomplete={onboardingIncomplete} />
+
       <div className={`${collapsed ? "lg:pl-[96px]" : "lg:pl-[248px]"} transition-[padding] duration-200 motion-reduce:transition-none`}>
         <header className="flex h-14 items-center justify-between gap-4 px-5 sm:px-8 lg:hidden">
           <Link href="/" className="flex items-center gap-2">
             <LogoMark className="h-7 w-auto text-foreground" />
             <span className="font-semibold">JustCD</span>
           </Link>
-          <div className="flex items-center gap-1"><DocumentationLink compact /><AccountMenu user={user} onSignOut={signOut} compact /></div>
+          <div className="flex items-center gap-1"><CommandPaletteButton compact onClick={() => setPaletteOpen(true)} /><DocumentationLink compact /><AccountMenu user={user} onSignOut={signOut} compact /></div>
         </header>
         <div className="mx-4 mb-2 lg:hidden">
           <WorkspaceSelector workspaces={workspaces} selectedId={selectedWorkspaceId} onChange={selectWorkspace} compact loading={workspacesLoading} />

@@ -773,10 +773,14 @@ paths:
         '200': { description: Session revoked }
   /onboarding:
     get:
-      summary: Return the deterministic first-run readiness checklist (instance admin only)
-      description: Derives progress from persisted configuration, acknowledgements, and saved safe connection tests. Credential values are never returned.
+      summary: Return the guided-setup progress for one workspace (instance admin only)
+      description: Progress is scoped to the workspace given by workspaceId, or the first accessible workspace. A cluster counts as connected when its agent checked in recently or a direct connection passed its access check. Instance-wide operator checks are returned separately as system and never block the guided steps. Credential values are never returned.
+      parameters:
+        - in: query
+          name: workspaceId
+          schema: { type: string }
       responses:
-        '200': { description: Ordered readiness steps, completion count, and next required step }
+        '200': { description: Ordered guided steps, the workspace clusters with their connection state, the next required step, and separate system checks }
         '403': { description: Instance administrator role required }
   /onboarding/steps/{stepID}/complete:
     put:

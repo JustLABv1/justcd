@@ -92,7 +92,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (!user?.isAdmin) return
     let active = true
     const refresh = () => {
-      void api<OnboardingStatus>("/api/v1/onboarding")
+      void api<OnboardingStatus>(selectedWorkspaceId ? `/api/v1/onboarding?workspaceId=${encodeURIComponent(selectedWorkspaceId)}` : "/api/v1/onboarding")
         .then((status) => {
           if (active) setOnboardingIncomplete(status.total > 0 && status.completed < status.total)
         })
@@ -107,7 +107,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       active = false
       window.removeEventListener("justcd:onboarding-updated", refresh)
     }
-  }, [user?.isAdmin, pathname])
+  }, [user?.isAdmin, pathname, selectedWorkspaceId])
 
   // The workspace list is fetched once per route change and shared through state.
   useEffect(() => {

@@ -21,10 +21,16 @@ type AuditFilter struct {
 	Until       *time.Time
 	Before      int64
 	Through     int64
+	// Condition is the user-built filter tree; it is ANDed with every other field.
+	Condition *AuditCondition
+	// ActorKind narrows to "people" (any user) or "automation" (JustCD's own workers); empty means everyone.
+	ActorKind string
 }
 
-const auditSelect = `SELECT e.id,e.actor_id,COALESCE(NULLIF(u.display_name,''),u.email,''),e.action,e.resource_type,e.resource_id,e.details,e.created_at,e.workspace_id,e.resource_name,e.deployment_record
- FROM audit_events e LEFT JOIN users u ON u.id=e.actor_id
+const auditSelectHead = `SELECT e.id,e.actor_id,COALESCE(NULLIF(u.display_name,''),u.email,''),e.action,e.resource_type,e.resource_id,e.details,e.created_at,e.workspace_id,e.resource_name,e.deployment_record,COALESCE(w.name,''),COALESCE(tg.targets,'[]'::jsonb)
+ FROM audit_events e LEFT JOIN users u ON u.id=e.actor_id LEFT JOIN workspaces w ON w.id=e.workspace_id
+ LEFT JOIN LATERAL (SELECT COALESCE(NULLIF((SELECT jsonb_agg(jsonb_build_object('clusterId',COALESCE(t->>'clusterId',''),'clusterName',COALESCE(c.name,''),'namespace',COALESCE(t->>'namespace',''))) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.deployment_record->'targets')='array' THEN e.deployment_record->'targets' ELSE '[]'::jsonb END) t LEFT JOIN clusters c ON c.id=t->>'clusterId'),'[]'::jsonb),
+  (SELECT jsonb_agg(jsonb_build_object('clusterId',a.cluster_id,'clusterName',COALESCE(c.name,''),'namespace',COALESCE(b->>'namespace',''))) FROM applications a LEFT JOIN clusters c ON c.id=a.cluster_id CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(a.namespaces)='array' THEN a.namespaces ELSE '[]'::jsonb END) b WHERE e.resource_type='application' AND a.id=e.resource_id)) AS targets) tg ON TRUE
  WHERE ($1='' OR e.workspace_id=$1) AND ($2=0 OR e.id<$2) AND ($3=0 OR e.id<=$3)
  AND ($4='' OR e.resource_id=$4) AND ($5='' OR e.actor_id=$5)
  AND ($6::timestamptz IS NULL OR e.created_at >= $6) AND ($7::timestamptz IS NULL OR e.created_at < $7)
@@ -34,13 +40,21 @@ const auditSelect = `SELECT e.id,e.actor_id,COALESCE(NULLIF(u.display_name,''),u
  WHEN e.action ~ '^(user|workspace_member|oidc|oidc_provider|credential|session|mfa)\.' OR e.action LIKE '%approval_policy%' THEN 'access'
  ELSE 'changes' END=$9)
  AND ($11=0 OR e.id=$11)
+ AND ($12='' OR ($12='automation' AND e.actor_id='justcd-system') OR ($12='people' AND e.actor_id IS NOT NULL AND e.actor_id<>'justcd-system'))`
+
+const auditOrder = `
  ORDER BY e.id DESC LIMIT $10`
 
 func (s *Store) QueryAuditEvents(ctx context.Context, filter AuditFilter, limit int) ([]AuditEvent, error) {
 	if filter.Group == "" {
 		filter.Group = "all"
 	}
-	rows, err := s.DB.QueryContext(ctx, auditSelect, filter.WorkspaceID, filter.Before, filter.Through, filter.ResourceID, filter.ActorID, filter.From, filter.Until, strings.TrimSpace(filter.Query), filter.Group, limit, filter.EventID)
+	args := []any{filter.WorkspaceID, filter.Before, filter.Through, filter.ResourceID, filter.ActorID, filter.From, filter.Until, strings.TrimSpace(filter.Query), filter.Group, limit, filter.EventID, filter.ActorKind}
+	query := auditSelectHead
+	if filter.Condition != nil {
+		query += "\n AND " + buildAuditPredicate(filter.Condition, &args)
+	}
+	rows, err := s.DB.QueryContext(ctx, query+auditOrder, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -58,12 +72,15 @@ func (s *Store) QueryAuditEvents(ctx context.Context, filter AuditFilter, limit 
 
 func scanAuditEvent(rows *sql.Rows) (AuditEvent, error) {
 	var e AuditEvent
-	var deployment []byte
-	err := rows.Scan(&e.ID, &e.ActorID, &e.ActorName, &e.Action, &e.ResourceType, &e.ResourceID, &e.Details, &e.CreatedAt, &e.WorkspaceID, &e.ResourceName, &deployment)
+	var deployment, where []byte
+	err := rows.Scan(&e.ID, &e.ActorID, &e.ActorName, &e.Action, &e.ResourceType, &e.ResourceID, &e.Details, &e.CreatedAt, &e.WorkspaceID, &e.ResourceName, &deployment, &e.WorkspaceName, &where)
 	e.SchemaVersion = AuditSchemaVersion
 	e.Details = safeAuditDetails(e.Details)
 	if len(deployment) > 0 {
 		e.DeploymentRecord = json.RawMessage(deployment)
+	}
+	if len(where) > 0 {
+		_ = json.Unmarshal(where, &e.Where)
 	}
 	return e, err
 }
@@ -147,5 +164,7 @@ func AuditExportEvent(e AuditEvent) AuditEvent {
 	}
 
 	e.Details, _ = json.Marshal(safe)
+	// Resolved names are a convenience for the UI; portable evidence keeps its published shape.
+	e.WorkspaceName, e.Where = "", nil
 	return e
 }

@@ -74,3 +74,16 @@ func TestAuditUnscopedNonAdminDenied(t *testing.T) {
 		}
 	}
 }
+
+func TestParseAuditFilterActorKind(t *testing.T) {
+	for _, kind := range []string{"", "people", "automation"} {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/audit?actorKind="+kind, nil)
+		filter, err := parseAuditFilter(request)
+		if err != nil || filter.ActorKind != kind {
+			t.Fatalf("actorKind %q: filter=%#v err=%v", kind, filter, err)
+		}
+	}
+	if _, err := parseAuditFilter(httptest.NewRequest(http.MethodGet, "/api/v1/audit?actorKind=robots", nil)); err == nil {
+		t.Fatal("an unknown actorKind must be rejected")
+	}
+}

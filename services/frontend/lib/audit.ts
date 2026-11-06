@@ -38,9 +38,14 @@ export type DeploymentEvidence = {
   errorCode: string | null
 }
 
+export type AuditTarget = { clusterId: string; clusterName: string; namespace: string }
+
 export type AuditEvent = {
   schemaVersion: number
   id: number
+  workspaceName?: string
+  /** Where the change landed, with names resolved when the event was read. */
+  where?: AuditTarget[]
   actorId?: string
   actorName: string
   action: string
@@ -66,9 +71,27 @@ export function actionLabel(action: string) {
     letter.toUpperCase()
   )
 }
+export type ActorKind = "all" | "people" | "automation"
+export function isAutomation(event: AuditEvent) {
+  return event.actorId === "justcd-system"
+}
 export function actorLabel(event: AuditEvent) {
-  if (event.actorId === "justcd-system") return "JustCD automation"
+  if (isAutomation(event)) return event.actorName || "JustCD automation"
   return event.actorName || (event.actorId ? "Unknown user" : "System")
+}
+/** What kicked off an automated event, when the action name says so. */
+export function automationTrigger(event: AuditEvent) {
+  if (!isAutomation(event)) return ""
+  if (event.action.startsWith("auto_sync.")) return "Auto-sync"
+  if (event.action.startsWith("plan.")) return "Reconciliation"
+  return ""
+}
+/** The place an event happened in: workspace › cluster › namespace. */
+export function wherePath(event: AuditEvent, showWorkspace: boolean) {
+  const targets = event.where ?? []
+  const first = targets[0]
+  const path = [showWorkspace ? event.workspaceName : "", first?.clusterName, first?.namespace].filter((part): part is string => Boolean(part))
+  return { path, more: Math.max(0, targets.length - 1) }
 }
 export function eventStatus(action: string) {
   if (action.endsWith("failed"))

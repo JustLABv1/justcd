@@ -17,7 +17,15 @@ import (
 
 func parseAuditFilter(r *http.Request) (store.AuditFilter, error) {
 	q := r.URL.Query()
-	f := store.AuditFilter{WorkspaceID: q.Get("workspaceId"), Group: q.Get("group"), Query: strings.TrimSpace(q.Get("q")), ResourceID: q.Get("resourceId"), ActorID: q.Get("actorId")}
+	f := store.AuditFilter{WorkspaceID: q.Get("workspaceId"), Group: q.Get("group"), Query: strings.TrimSpace(q.Get("q")), ResourceID: q.Get("resourceId"), ActorID: q.Get("actorId"), ActorKind: q.Get("actorKind")}
+	condition, err := store.ParseAuditCondition(q.Get("filter"))
+	if err != nil {
+		return f, err
+	}
+	f.Condition = condition
+	if f.ActorKind != "" && f.ActorKind != "people" && f.ActorKind != "automation" {
+		return f, errors.New("actorKind must be people or automation")
+	}
 	if f.Group == "" {
 		f.Group = "all"
 	}

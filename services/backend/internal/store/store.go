@@ -3781,9 +3781,18 @@ func (s *Store) ListOperationsFilteredPage(ctx context.Context, applicationID st
 	return out, rows.Err()
 }
 
+// AuditTarget is where a change landed, with names resolved at read time.
+type AuditTarget struct {
+	ClusterID   string `json:"clusterId"`
+	ClusterName string `json:"clusterName"`
+	Namespace   string `json:"namespace"`
+}
+
 type AuditEvent struct {
 	SchemaVersion    int             `json:"schemaVersion"`
 	WorkspaceID      string          `json:"workspaceId"`
+	WorkspaceName    string          `json:"workspaceName,omitempty"`
+	Where            []AuditTarget   `json:"where,omitempty"`
 	ResourceName     string          `json:"resourceName"`
 	DeploymentRecord json.RawMessage `json:"deploymentRecord"`
 	ID               int64           `json:"id"`

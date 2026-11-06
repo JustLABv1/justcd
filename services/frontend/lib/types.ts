@@ -82,12 +82,28 @@ export type OnboardingStep = {
   docsHref?: string
 }
 
+export type OnboardingClusterState = "online" | "waiting" | "offline" | "revoked" | "not_enrolled" | "verified" | "partial" | "unverified" | "failed"
+export type OnboardingCluster = {
+  id: string
+  name: string
+  mode: "agent" | "direct"
+  state: OnboardingClusterState
+  message?: string
+  lastSeenAt?: string
+}
+
 export type OnboardingStatus = {
+  /** Workspace-scoped goals of the guided setup. */
   steps: OnboardingStep[]
   completed: number
   total: number
   nextStepId?: string
+  workspaceId?: string
   firstWorkspaceId?: string
+  clusters: OnboardingCluster[]
+  /** Instance-wide operator checks; they never block the guided steps. */
+  system: OnboardingStep[]
+  systemAttention: number
 }
 
 export type KubernetesPermissionCheck = {

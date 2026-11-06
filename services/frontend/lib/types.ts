@@ -302,7 +302,18 @@ export type Application = {
 
 export type ApplicationHealthStatus = "Healthy" | "Progressing" | "Degraded" | "Suspended" | "Missing" | "Unknown" | "Partial"
 export type KubernetesCondition = { type: string; status: string; reason?: string; message?: string; lastTransitionTime?: string; observedGeneration?: number }
+export type ContainerDetails = {
+  name: string
+  image: string
+  init?: boolean
+  ready?: boolean
+  restartCount?: number
+  /** running, waiting or terminated; only reported for pods. */
+  state?: string
+  reason?: string
+}
 export type ResourceHealthSummary = {
+  containers?: ContainerDetails[]
   waitingReason?: string
   terminating?: boolean
   restartCount?: number

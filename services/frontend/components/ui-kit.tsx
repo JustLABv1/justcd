@@ -107,9 +107,9 @@ export function statusTone(status: string): StatusTone {
 
 const statusBadgeVariant = { success: "success-light", destructive: "destructive-light", warning: "warning-light", neutral: "secondary" } as const
 
-export function StatusBadge({ status }: { status: string }) {
+export function StatusBadge({ status, tone }: { status: string; tone?: StatusTone }) {
   const normalized = status.toLowerCase().replaceAll("_", " ")
-  return <Badge variant={statusBadgeVariant[statusTone(status)]} radius="full" className="capitalize"><span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-current opacity-70" />{normalized}</Badge>
+  return <Badge variant={statusBadgeVariant[tone ?? statusTone(status)]} radius="full" className="capitalize"><span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-current opacity-70" />{normalized}</Badge>
 }
 
 export function EmptyState({

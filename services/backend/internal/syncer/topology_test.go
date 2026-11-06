@@ -175,3 +175,28 @@ func TestObservedOperatorSummary(t *testing.T) {
 		t.Fatalf("cluster details=%#v", details)
 	}
 }
+
+func TestObservedContainerImages(t *testing.T) {
+	pod := unstructured.Unstructured{Object: map[string]any{
+		"kind": "Pod",
+		"spec": map[string]any{
+			"initContainers": []any{map[string]any{"name": "migrate", "image": "registry.example/app-migrate:1.4.0", "args": []any{"--secret=nope"}}},
+			"containers":     []any{map[string]any{"name": "web", "image": "registry.example/app:1.4.0", "env": []any{map[string]any{"name": "TOKEN", "value": "nope"}}}},
+		},
+		"status": map[string]any{
+			"initContainerStatuses": []any{map[string]any{"name": "migrate", "ready": true, "state": map[string]any{"terminated": map[string]any{"reason": "Completed"}}}},
+			"containerStatuses":     []any{map[string]any{"name": "web", "ready": false, "restartCount": int64(4), "state": map[string]any{"waiting": map[string]any{"reason": "CrashLoopBackOff"}}}},
+		},
+	}}
+	got := observedHealthSummary(pod).Containers
+	if len(got) != 2 || got[0].Name != "migrate" || !got[0].Init || got[0].State != "terminated" || got[0].Reason != "Completed" {
+		t.Fatalf("init container = %#v", got)
+	}
+	if got[1].Image != "registry.example/app:1.4.0" || got[1].State != "waiting" || got[1].Reason != "CrashLoopBackOff" || got[1].RestartCount != 4 || got[1].Ready {
+		t.Fatalf("container = %#v", got[1])
+	}
+	deployment := unstructured.Unstructured{Object: map[string]any{"kind": "Deployment", "spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "web", "image": "registry.example/app:1.5.0"}}}}}}}
+	if images := observedHealthSummary(deployment).Containers; len(images) != 1 || images[0].Image != "registry.example/app:1.5.0" {
+		t.Fatalf("deployment containers = %#v", images)
+	}
+}

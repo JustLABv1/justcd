@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -12,6 +14,9 @@ import (
 type AccessSettings struct {
 	// LocalLoginEnabled allows email and password sign-in. Single sign-on is unaffected.
 	LocalLoginEnabled bool `json:"localLoginEnabled"`
+	// LocalRegistrationEnabled lets anyone create a password account. Such accounts stay unverified, with no
+	// workspace access, until an administrator approves them. It requires LocalLoginEnabled.
+	LocalRegistrationEnabled bool `json:"localRegistrationEnabled"`
 	// OIDCAutoProvision lets a verified single sign-on identity create its own account on first sign-in.
 	// When off, only people an administrator already added can sign in.
 	OIDCAutoProvision bool `json:"oidcAutoProvision"`
@@ -74,8 +79,8 @@ func splitDomains(joined string) []string {
 func (s *Store) InstanceSettings(ctx context.Context) (InstanceSettings, error) {
 	var settings InstanceSettings
 	var domains string
-	err := s.DB.QueryRowContext(ctx, `SELECT maintenance_enabled,local_login_enabled,oidc_auto_provision,array_to_string(oidc_allowed_domains,','),workspace_creation FROM instance_settings WHERE singleton=TRUE`).
-		Scan(&settings.MaintenanceEnabled, &settings.LocalLoginEnabled, &settings.OIDCAutoProvision, &domains, &settings.WorkspaceCreation)
+	err := s.DB.QueryRowContext(ctx, `SELECT maintenance_enabled,local_login_enabled,local_registration_enabled,oidc_auto_provision,array_to_string(oidc_allowed_domains,','),workspace_creation FROM instance_settings WHERE singleton=TRUE`).
+		Scan(&settings.MaintenanceEnabled, &settings.LocalLoginEnabled, &settings.LocalRegistrationEnabled, &settings.OIDCAutoProvision, &domains, &settings.WorkspaceCreation)
 	settings.OIDCAllowedDomains = splitDomains(domains)
 	return settings, err
 }
@@ -119,6 +124,10 @@ func (s *Store) UpdateAccessSettings(ctx context.Context, next AccessSettings, a
 	if next.WorkspaceCreation != "anyone" && next.WorkspaceCreation != "admins" {
 		return AccessSettings{}, &AccessError{"workspaceCreation must be anyone or admins"}
 	}
+	// Accounts that cannot sign in are useless, so registration follows password sign-in.
+	if next.LocalRegistrationEnabled && !next.LocalLoginEnabled {
+		return AccessSettings{}, &AccessError{"Turn on password sign-in before allowing people to register with a password."}
+	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return AccessSettings{}, err
@@ -126,8 +135,8 @@ func (s *Store) UpdateAccessSettings(ctx context.Context, next AccessSettings, a
 	defer tx.Rollback()
 	var previous AccessSettings
 	var joined string
-	if err := tx.QueryRowContext(ctx, `SELECT local_login_enabled,oidc_auto_provision,array_to_string(oidc_allowed_domains,','),workspace_creation FROM instance_settings WHERE singleton=TRUE FOR UPDATE`).
-		Scan(&previous.LocalLoginEnabled, &previous.OIDCAutoProvision, &joined, &previous.WorkspaceCreation); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT local_login_enabled,local_registration_enabled,oidc_auto_provision,array_to_string(oidc_allowed_domains,','),workspace_creation FROM instance_settings WHERE singleton=TRUE FOR UPDATE`).
+		Scan(&previous.LocalLoginEnabled, &previous.LocalRegistrationEnabled, &previous.OIDCAutoProvision, &joined, &previous.WorkspaceCreation); err != nil {
 		return AccessSettings{}, err
 	}
 	previous.OIDCAllowedDomains = splitDomains(joined)
@@ -144,6 +153,9 @@ func (s *Store) UpdateAccessSettings(ctx context.Context, next AccessSettings, a
 	if previous.LocalLoginEnabled != next.LocalLoginEnabled {
 		changes["localLoginEnabled"] = next.LocalLoginEnabled
 	}
+	if previous.LocalRegistrationEnabled != next.LocalRegistrationEnabled {
+		changes["localRegistrationEnabled"] = next.LocalRegistrationEnabled
+	}
 	if previous.OIDCAutoProvision != next.OIDCAutoProvision {
 		changes["oidcAutoProvision"] = next.OIDCAutoProvision
 	}
@@ -156,8 +168,8 @@ func (s *Store) UpdateAccessSettings(ctx context.Context, next AccessSettings, a
 	if len(changes) == 0 {
 		return previous, tx.Commit()
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE instance_settings SET local_login_enabled=$1,oidc_auto_provision=$2,oidc_allowed_domains=string_to_array($3,','),workspace_creation=$4 WHERE singleton=TRUE`,
-		next.LocalLoginEnabled, next.OIDCAutoProvision, strings.Join(next.OIDCAllowedDomains, ","), next.WorkspaceCreation); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE instance_settings SET local_login_enabled=$1,local_registration_enabled=$2,oidc_auto_provision=$3,oidc_allowed_domains=string_to_array($4,','),workspace_creation=$5 WHERE singleton=TRUE`,
+		next.LocalLoginEnabled, next.LocalRegistrationEnabled, next.OIDCAutoProvision, strings.Join(next.OIDCAllowedDomains, ","), next.WorkspaceCreation); err != nil {
 		return AccessSettings{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'instance.access_updated','instance','instance',$2::jsonb)`, actorID, mustJSON(changes)); err != nil {
@@ -186,4 +198,46 @@ func (s *Store) SetMaintenance(ctx context.Context, enabled bool, actorID string
 		return err
 	}
 	return tx.Commit()
+}
+
+// ErrEmailTaken means an account with that email address already exists.
+var ErrEmailTaken = errors.New("an account with this email address already exists")
+
+// CreateSelfRegisteredUser adds a non-administrator password account whose email address is not verified.
+func (s *Store) CreateSelfRegisteredUser(ctx context.Context, user User, passwordHash string) (User, error) {
+	user.IsAdmin, user.EmailVerified = false, false
+	err := s.DB.QueryRowContext(ctx, `INSERT INTO users(id,email,display_name,password_hash,is_admin,email_verified) VALUES($1,LOWER($2),$3,$4,FALSE,FALSE) RETURNING created_at`,
+		user.ID, user.Email, user.DisplayName, passwordHash).Scan(&user.CreatedAt)
+	var pgErr interface{ SQLState() string }
+	if errors.As(err, &pgErr) && pgErr.SQLState() == "23505" {
+		return User{}, ErrEmailTaken
+	}
+	return user, err
+}
+
+// ApproveUser records that an administrator vouches for a self-registered account.
+func (s *Store) ApproveUser(ctx context.Context, userID, actorID string) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE users SET email_verified=TRUE WHERE id=$1 AND email_verified=FALSE AND deleted_at IS NULL`, userID)
+	if err != nil {
+		return err
+	}
+	if changed, _ := result.RowsAffected(); changed == 0 {
+		return sql.ErrNoRows
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'user.approved','user',$2,'{}'::jsonb)`, actorID, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// UserEmailVerified reports whether an account may be given workspace access.
+func (s *Store) UserEmailVerified(ctx context.Context, userID string) (bool, error) {
+	var verified bool
+	err := s.DB.QueryRowContext(ctx, `SELECT email_verified FROM users WHERE id=$1 AND disabled=FALSE AND deleted_at IS NULL`, userID).Scan(&verified)
+	return verified, err
 }

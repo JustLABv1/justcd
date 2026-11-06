@@ -89,6 +89,7 @@ func (s *Server) routes() {
 	s.Mux.HandleFunc("GET /api/v1/auth/providers", s.listPublicProviders)
 	s.Mux.HandleFunc("GET /api/v1/auth/setup", s.setupStatus)
 	s.Mux.HandleFunc("POST /api/v1/auth/signup", s.signup)
+	s.Mux.HandleFunc("POST /api/v1/auth/register", s.register)
 	s.Mux.HandleFunc("POST /api/v1/auth/login", s.login)
 	s.Mux.HandleFunc("GET /api/v1/auth/oidc/{providerID}/start", s.oidcStart)
 	s.Mux.HandleFunc("GET /api/v1/auth/oidc/{providerID}/callback", s.oidcCallback)
@@ -252,6 +253,7 @@ func (s *Server) routes() {
 	s.Mux.Handle("GET /api/v1/admin/users", s.requireAuth(s.requireAdmin(http.HandlerFunc(s.listUsers))))
 	s.Mux.Handle("POST /api/v1/admin/users", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.createUser)))))
 	s.Mux.Handle("PUT /api/v1/admin/users/{userID}", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.updateUser)))))
+	s.Mux.Handle("POST /api/v1/admin/users/{userID}/approve", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.approveUser)))))
 	s.Mux.Handle("DELETE /api/v1/admin/users/{userID}", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.deleteUser)))))
 	s.Mux.Handle("GET /api/v1/admin/oidc-providers", s.requireAuth(s.requireAdmin(http.HandlerFunc(s.listOIDCProviders))))
 	s.Mux.Handle("POST /api/v1/admin/oidc-providers", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.createOIDCProvider)))))
@@ -450,6 +452,10 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	input.Name = strings.TrimSpace(input.Name)
 	if input.Name == "" || len(input.Name) > 100 {
 		writeError(w, http.StatusBadRequest, "workspace name is required and must be at most 100 characters")
+		return
+	}
+	if user := currentUser(r); !user.IsAdmin && !user.EmailVerified {
+		writeError(w, http.StatusForbidden, "your account is waiting for approval; an administrator must approve it before you can create workspaces")
 		return
 	}
 	if !currentUser(r).IsAdmin {

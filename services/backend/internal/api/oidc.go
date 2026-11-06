@@ -175,7 +175,7 @@ func (s *Server) listPublicProviders(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, "could not load login providers")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": public, "localLoginEnabled": s.localLoginAllowed(settings)})
+	writeJSON(w, http.StatusOK, map[string]any{"items": public, "localLoginEnabled": s.localLoginAllowed(settings), "registrationEnabled": settings.LocalRegistrationEnabled && s.localLoginAllowed(settings)})
 }
 
 func (s *Server) listOIDCProviders(w http.ResponseWriter, r *http.Request) {

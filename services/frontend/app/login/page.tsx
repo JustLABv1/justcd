@@ -21,6 +21,7 @@ export default function LoginPage() {
   const [providers, setProviders] = useState<OIDCProvider[]>([])
   // Assume password sign-in until the server says otherwise, so a failed lookup never hides the form.
   const [passwordLogin, setPasswordLogin] = useState(true)
+  const [registrationOpen, setRegistrationOpen] = useState(false)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [busy, setBusy] = useState(false)
@@ -32,7 +33,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     let active = true
-    const providersRequest = api<{ items: OIDCProvider[]; localLoginEnabled?: boolean }>("/api/v1/auth/providers").then((response) => { if (active) { setProviders(response.items); setPasswordLogin(response.localLoginEnabled !== false) } })
+    const providersRequest = api<{ items: OIDCProvider[]; localLoginEnabled?: boolean; registrationEnabled?: boolean }>("/api/v1/auth/providers").then((response) => { if (active) { setProviders(response.items); setPasswordLogin(response.localLoginEnabled !== false); setRegistrationOpen(response.registrationEnabled === true) } })
     const setupRequest = api<{ signupAvailable: boolean }>("/api/v1/auth/setup").then((response) => {
       if (!active) return
       if (response.signupAvailable) router.replace("/signup")
@@ -77,7 +78,7 @@ export default function LoginPage() {
       {!loadingOptions && loadError != null && <div role="alert" className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive"><span>Sign-in options could not be loaded. {errorMessage(loadError)}</span><ErrorDetailsButton error={loadError} /></div>}
       {!loadingOptions && providers.length > 0 && <div className={passwordLogin ? "mt-6" : "mt-7"}><div className="relative mb-4 text-center"><span className="relative z-10 bg-card px-3 text-xs uppercase tracking-wider text-muted-foreground">{passwordLogin ? "or continue with" : "continue with"}</span><span className="absolute inset-x-0 top-1/2 border-t" /></div><div className="space-y-2">{providers.map((provider) => <Button key={provider.id} render={<a href={`/api/v1/auth/oidc/${encodeURIComponent(provider.id)}/start`} />} nativeButton={false} variant="outline" className="h-11 w-full"><HugeiconsIcon icon={Login01Icon} strokeWidth={1.8} aria-hidden="true" />{provider.name}</Button>)}</div></div>}
 
-      <div className="mt-8 text-center text-sm leading-5 text-muted-foreground">{loadingOptions ? <Skeleton className="mx-auto h-4 w-56" /> : signupAvailable ? <Link href="/signup" className="font-medium text-primary hover:underline">Set up the first administrator</Link> : "Access is managed by your JustCD administrator. OIDC accounts need a verified email address."}</div>
+      <div className="mt-8 text-center text-sm leading-5 text-muted-foreground">{loadingOptions ? <Skeleton className="mx-auto h-4 w-56" /> : signupAvailable ? <Link href="/signup" className="font-medium text-primary hover:underline">Set up the first administrator</Link> : registrationOpen ? <>New here? <Link href="/register" className="font-medium text-primary hover:underline">Create an account</Link></> : "Access is managed by your JustCD administrator. OIDC accounts need a verified email address."}</div>
     </AuthShell>
   )
 }

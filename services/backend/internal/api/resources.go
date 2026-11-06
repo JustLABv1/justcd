@@ -146,6 +146,12 @@ func (s *Server) setWorkspaceMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "an active user and a valid workspace role are required")
 		return
 	}
+	// A self-registered account only typed its email address. Giving it access would hand the workspace to
+	// whoever registered first, so it must be approved by an administrator (or sign in through SSO) first.
+	if verified, err := s.Store.UserEmailVerified(r.Context(), input.UserID); err != nil || !verified {
+		writeError(w, http.StatusConflict, "that account has not been approved yet; ask an instance administrator to approve it, or have the person sign in with single sign-on")
+		return
+	}
 	if input.UserID == currentUser(r).ID && input.Role != "owner" {
 		writeError(w, http.StatusConflict, "you cannot demote yourself from workspace owner")
 		return

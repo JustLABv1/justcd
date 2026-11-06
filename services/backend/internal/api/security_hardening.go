@@ -178,7 +178,7 @@ func (s *Server) hardeningRequest(w http.ResponseWriter, r *http.Request) bool {
 			writeError(w, 403, "origin validation failed")
 			return false
 		}
-		if r.URL.Path == "/api/v1/auth/login" || r.URL.Path == "/api/v1/auth/signup" {
+		if r.URL.Path == "/api/v1/auth/login" || r.URL.Path == "/api/v1/auth/signup" || r.URL.Path == "/api/v1/auth/register" {
 			if !s.securityLimit(w, r, "auth-ip", remoteHost(r), 120, 15*time.Minute) {
 				return false
 			}

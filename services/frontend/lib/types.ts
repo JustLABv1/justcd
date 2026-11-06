@@ -3,6 +3,8 @@ export type User = {
   email: string
   displayName: string
   isAdmin: boolean
+  /** False for a self-registered account an administrator has not approved yet. */
+  emailVerified?: boolean
   disabled: boolean
   deletedAt?: string
   createdAt: string

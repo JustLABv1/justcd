@@ -24,7 +24,6 @@ export function AuthShell({ eyebrow, title, description, children }: { eyebrow: 
     </div>
     <div className={styles.content}>
       <section className={styles.card} aria-labelledby="auth-title">
-        <div className={styles.cardMark} aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5" /></svg></div>
         <p className={styles.eyebrow}>{eyebrow}</p>
         <h1 id="auth-title" className={styles.title}>{title}</h1>
         <p className={styles.description}>{description}</p>

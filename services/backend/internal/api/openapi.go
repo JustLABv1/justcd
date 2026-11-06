@@ -700,6 +700,37 @@ paths:
                   maintenanceEnabled: { type: boolean }
                   adminBypass: { type: boolean }
         '500': { description: Could not read instance state }
+  /auth/register:
+    post:
+      summary: Create an unverified password account (only while an administrator has opened registration)
+      description: Rate limited; honours the allowed email domains. The account can sign in but has no workspace access until an administrator approves it. Responds 403 while registration is closed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, displayName, password]
+              properties:
+                email: { type: string }
+                displayName: { type: string }
+                password: { type: string, minLength: 12, maxLength: 1024 }
+      responses:
+        '200': { description: Account created and signed in }
+        '403': { description: Registration is closed or the email domain is not allowed }
+        '409': { description: An account with this email already exists }
+        '429': { description: Too many attempts }
+  /admin/users/{userID}/approve:
+    post:
+      summary: Approve a self-registered account (instance administrators only; CSRF required)
+      parameters:
+        - in: path
+          name: userID
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Approved and audited }
+        '404': { description: No pending account with that ID }
   /admin/access-settings:
     get:
       summary: Read sign-in, registration and workspace-creation settings (instance administrators only)
@@ -719,6 +750,7 @@ paths:
               type: object
               properties:
                 localLoginEnabled: { type: boolean }
+                localRegistrationEnabled: { type: boolean, description: Let people create a password account; accounts start unverified and need administrator approval. Requires password sign-in. }
                 oidcAutoProvision: { type: boolean, description: Create an account on first single sign-on sign-in }
                 oidcAllowedDomains: { type: array, items: { type: string }, description: Email domains allowed to create accounts on first sign-in; empty allows any }
                 workspaceCreation: { type: string, enum: [anyone, admins] }

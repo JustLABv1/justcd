@@ -140,3 +140,159 @@ func TestIntegrationInstanceAccessControls(t *testing.T) {
 		t.Fatalf("a no-op save was audited: %d -> %d", before, changes)
 	}
 }
+
+func TestIntegrationLocalRegistration(t *testing.T) {
+	dsn := os.Getenv("JUSTCD_E2E_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("set JUSTCD_E2E_DATABASE_URL to a disposable PostgreSQL database")
+	}
+	db := openWorkspaceAuthorizationDB(t, dsn)
+	ctx := context.Background()
+	if _, err := db.DB.ExecContext(ctx, `INSERT INTO users(id,email,is_admin) VALUES ('reg-admin','admin@corp.example.com',TRUE),('reg-owner','owner@corp.example.com',FALSE)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB.ExecContext(ctx, `INSERT INTO workspaces(id,name) VALUES ('reg-ws','Team'); INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES ('reg-ws','reg-owner','owner')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range []string{"admin", "owner"} {
+		if err := db.CreateSession(ctx, security.HashToken(role), security.HashToken("csrf-"+role), "reg-"+role, time.Now().Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := &Server{Store: db, Mux: http.NewServeMux()}
+	server.routes()
+	call := func(method, path, cookie, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		if cookie != "" {
+			r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookie})
+			r.AddCookie(&http.Cookie{Name: csrfCookieName, Value: "csrf-" + cookie})
+			r.Header.Set("X-CSRF-Token", "csrf-"+cookie)
+		}
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, r)
+		return w
+	}
+	expect := func(step string, w *httptest.ResponseRecorder, code int) {
+		t.Helper()
+		if w.Code != code {
+			t.Fatalf("%s: status = %d (%s), want %d", step, w.Code, w.Body.String(), code)
+		}
+	}
+	const password = "correct horse battery staple"
+	register := func(email string) *httptest.ResponseRecorder {
+		return call("POST", "/api/v1/auth/register", "", `{"email":"`+email+`","displayName":"New Person","password":"`+password+`"}`)
+	}
+
+	// Closed by default.
+	expect("closed by default", register("someone@corp.example.com"), 403)
+	var providers struct {
+		RegistrationEnabled bool `json:"registrationEnabled"`
+	}
+	response := call("GET", "/api/v1/auth/providers", "", "")
+	_ = json.Unmarshal(response.Body.Bytes(), &providers)
+	if providers.RegistrationEnabled {
+		t.Fatal("the login page would offer registration while it is closed")
+	}
+
+	// Registration needs password sign-in; asking for both in one request is a contradiction.
+	expect("open", call("PUT", "/api/v1/admin/access-settings", "admin", `{"localRegistrationEnabled":true,"oidcAllowedDomains":["corp.example.com"]}`), 200)
+	expect("contradiction", call("PUT", "/api/v1/admin/access-settings", "admin", `{"localLoginEnabled":false,"localRegistrationEnabled":true}`), 409)
+	response = call("GET", "/api/v1/auth/providers", "", "")
+	_ = json.Unmarshal(response.Body.Bytes(), &providers)
+	if !providers.RegistrationEnabled {
+		t.Fatal("the login page does not offer registration while it is open")
+	}
+
+	// Rules: domain, password, duplicates.
+	expect("foreign domain", register("someone@elsewhere.test"), 403)
+	expect("weak password", call("POST", "/api/v1/auth/register", "", `{"email":"weak@corp.example.com","displayName":"W","password":"short"}`), 400)
+	expect("existing account", register("owner@corp.example.com"), 409)
+	response = register("Newbie@Corp.Example.com")
+	expect("register", response, 200)
+	var created struct {
+		User store.User `json:"user"`
+	}
+	_ = json.Unmarshal(response.Body.Bytes(), &created)
+	if created.User.IsAdmin || created.User.EmailVerified || created.User.Email != "newbie@corp.example.com" {
+		t.Fatalf("registered user = %+v", created.User)
+	}
+	var cookies []*http.Cookie
+	for _, c := range response.Result().Cookies() {
+		if c.Name == sessionCookieName {
+			cookies = append(cookies, c)
+		}
+	}
+	if len(cookies) != 1 {
+		t.Fatal("registration did not sign the person in")
+	}
+	// The new password works at the sign-in endpoint.
+	expect("sign in with the new password", call("POST", "/api/v1/auth/login", "", `{"email":"newbie@corp.example.com","password":"`+password+`"}`), 200)
+
+	// Pending accounts have no reach: no workspaces, no membership.
+	if err := db.CreateSession(ctx, security.HashToken("pending"), security.HashToken("csrf-pending"), created.User.ID, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	expect("pending cannot create a workspace", call("POST", "/api/v1/workspaces", "pending", `{"name":"Mine"}`), 403)
+	var session struct {
+		CanCreateWorkspace bool `json:"canCreateWorkspace"`
+	}
+	response = call("GET", "/api/v1/auth/session", "pending", "")
+	_ = json.Unmarshal(response.Body.Bytes(), &session)
+	if session.CanCreateWorkspace {
+		t.Fatal("the page would offer workspace creation to a pending account")
+	}
+	body := `{"email":"newbie@corp.example.com","role":"viewer"}`
+	expect("owner cannot add a pending account", call("POST", "/api/v1/workspaces/reg-ws/members", "owner", body), 409)
+
+	// Only administrators approve, and only pending accounts.
+	expect("owner cannot approve", call("POST", "/api/v1/admin/users/"+created.User.ID+"/approve", "owner", ""), 403)
+	expect("admin approves", call("POST", "/api/v1/admin/users/"+created.User.ID+"/approve", "admin", ""), 200)
+	expect("nothing left to approve", call("POST", "/api/v1/admin/users/"+created.User.ID+"/approve", "admin", ""), 404)
+	expect("owner can now add the account", call("POST", "/api/v1/workspaces/reg-ws/members", "owner", body), 200)
+	expect("approved accounts create workspaces", call("POST", "/api/v1/workspaces", "pending", `{"name":"Mine"}`), 201)
+
+	// Takeover: someone registers an address they do not own; its real owner then arrives through SSO.
+	if _, err := db.DB.ExecContext(ctx, `INSERT INTO oidc_providers(id,name,issuer,client_id,client_secret_cipher,redirect_url,enabled) VALUES ('idp','IdP','https://idp.example.invalid','c','\x00','https://x.invalid/cb',TRUE)`); err != nil {
+		t.Fatal(err)
+	}
+	expect("squatter registers the victim's address", register("victim@corp.example.com"), 200)
+	var squatterID string
+	if err := db.DB.QueryRowContext(ctx, `SELECT id FROM users WHERE email='victim@corp.example.com'`).Scan(&squatterID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateSession(ctx, security.HashToken("squatter"), security.HashToken("csrf-squatter"), squatterID, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB.ExecContext(ctx, `INSERT INTO user_mfa(user_id,secret_cipher,enabled) VALUES ($1,'\x00',TRUE)`, squatterID); err != nil {
+		t.Fatal(err)
+	}
+	user, err := db.ResolveOIDCUser(ctx, "idp", "sub-victim", "victim@corp.example.com", "Victim", nil)
+	if err != nil || user.ID != squatterID {
+		t.Fatalf("the real owner must end up with the account: %+v %v", user, err)
+	}
+	var hash *string
+	var verified bool
+	var sessions, mfa, reclaimed int
+	if err := db.DB.QueryRowContext(ctx, `SELECT password_hash,email_verified FROM users WHERE id=$1`, squatterID).Scan(&hash, &verified); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE user_id=$1`, squatterID).Scan(&sessions)
+	_ = db.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM user_mfa WHERE user_id=$1`, squatterID).Scan(&mfa)
+	_ = db.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE action='user.registration_reclaimed' AND resource_id=$1`, squatterID).Scan(&reclaimed)
+	if hash != nil || !verified || sessions != 0 || mfa != 0 || reclaimed != 1 {
+		t.Fatalf("the squatter kept a way in: password=%v verified=%v sessions=%d mfa=%d audited=%d", hash != nil, verified, sessions, mfa, reclaimed)
+	}
+	expect("the squatter's password no longer works", call("POST", "/api/v1/auth/login", "", `{"email":"victim@corp.example.com","password":"`+password+`"}`), 401)
+
+	// Turning off password sign-in closes registration too (an SSO administrator must exist first).
+	if _, err := db.DB.ExecContext(ctx, `INSERT INTO oidc_identities(provider_id,subject,user_id) VALUES ('idp','sub-admin','reg-admin')`); err != nil {
+		t.Fatal(err)
+	}
+	expect("turn off password sign-in", call("PUT", "/api/v1/admin/access-settings", "admin", `{"localLoginEnabled":false}`), 200)
+	expect("registration closed with it", register("late@corp.example.com"), 403)
+	settings, err := db.InstanceSettings(ctx)
+	if err != nil || settings.LocalRegistrationEnabled {
+		t.Fatalf("registration stayed open: %+v %v", settings, err)
+	}
+}

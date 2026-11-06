@@ -109,13 +109,16 @@ func (s *Store) Migrate(ctx context.Context) error {
 }
 
 type User struct {
-	ID          string     `json:"id"`
-	Email       string     `json:"email"`
-	DisplayName string     `json:"displayName"`
-	IsAdmin     bool       `json:"isAdmin"`
-	Disabled    bool       `json:"disabled"`
-	DeletedAt   *time.Time `json:"deletedAt,omitempty"`
-	CreatedAt   time.Time  `json:"createdAt"`
+	ID          string `json:"id"`
+	Email       string `json:"email"`
+	DisplayName string `json:"displayName"`
+	IsAdmin     bool   `json:"isAdmin"`
+	// EmailVerified is false for self-registered accounts until an administrator approves them or the owner
+	// of the address signs in through single sign-on.
+	EmailVerified bool       `json:"emailVerified"`
+	Disabled      bool       `json:"disabled"`
+	DeletedAt     *time.Time `json:"deletedAt,omitempty"`
+	CreatedAt     time.Time  `json:"createdAt"`
 }
 
 type Session struct {
@@ -183,15 +186,15 @@ func (s *Store) UserCount(ctx context.Context) (int, error) {
 func (s *Store) UserByEmail(ctx context.Context, email string) (User, string, error) {
 	var user User
 	var passwordHash sql.NullString
-	err := s.DB.QueryRowContext(ctx, `SELECT id,email,display_name,is_admin,created_at,password_hash FROM users WHERE LOWER(email)=LOWER($1) AND disabled=FALSE AND deleted_at IS NULL`, email).
-		Scan(&user.ID, &user.Email, &user.DisplayName, &user.IsAdmin, &user.CreatedAt, &passwordHash)
+	err := s.DB.QueryRowContext(ctx, `SELECT id,email,display_name,is_admin,created_at,password_hash,email_verified FROM users WHERE LOWER(email)=LOWER($1) AND disabled=FALSE AND deleted_at IS NULL`, email).
+		Scan(&user.ID, &user.Email, &user.DisplayName, &user.IsAdmin, &user.CreatedAt, &passwordHash, &user.EmailVerified)
 	return user, passwordHash.String, err
 }
 
 func (s *Store) UserByID(ctx context.Context, id string) (User, error) {
 	var user User
-	err := s.DB.QueryRowContext(ctx, `SELECT id,email,display_name,is_admin,created_at FROM users WHERE id=$1 AND disabled=FALSE AND deleted_at IS NULL`, id).
-		Scan(&user.ID, &user.Email, &user.DisplayName, &user.IsAdmin, &user.CreatedAt)
+	err := s.DB.QueryRowContext(ctx, `SELECT id,email,display_name,is_admin,created_at,email_verified FROM users WHERE id=$1 AND disabled=FALSE AND deleted_at IS NULL`, id).
+		Scan(&user.ID, &user.Email, &user.DisplayName, &user.IsAdmin, &user.CreatedAt, &user.EmailVerified)
 	return user, err
 }
 
@@ -330,6 +333,21 @@ func oidcMaySignUp(ctx context.Context, tx *sql.Tx, email string) error {
 	return CheckEmailDomain(email, splitDomains(joined))
 }
 
+// reclaimUnverifiedAccount hands a self-registered account to the person who just proved the email address:
+// the password, every session and any two-factor enrolment the registrant set up are removed.
+func reclaimUnverifiedAccount(ctx context.Context, tx *sql.Tx, userID string) error {
+	for _, statement := range []string{
+		`UPDATE users SET password_hash=NULL,email_verified=TRUE WHERE id=$1`,
+		`DELETE FROM sessions WHERE user_id=$1`,
+		`DELETE FROM user_mfa WHERE user_id=$1`,
+	} {
+		if _, err := tx.ExecContext(ctx, statement, userID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // CheckEmailDomain reports ErrOIDCDomainNotAllowed unless the allow list is empty or names the email's domain.
 func CheckEmailDomain(email string, allowed []string) error {
 	if len(allowed) == 0 {
@@ -355,10 +373,11 @@ func (s *Store) ResolveOIDCUser(ctx context.Context, providerID, subject, email,
 	}
 	defer tx.Rollback()
 	var user User
-	created, linked := false, false
+	created, linked, reclaimed := false, false, false
 	err = tx.QueryRowContext(ctx, `SELECT u.id,u.email,u.display_name,u.is_admin,u.created_at FROM oidc_identities i JOIN users u ON u.id=i.user_id WHERE i.provider_id=$1 AND i.subject=$2 AND u.disabled=FALSE AND u.deleted_at IS NULL`, providerID, subject).Scan(&user.ID, &user.Email, &user.DisplayName, &user.IsAdmin, &user.CreatedAt)
 	if err == sql.ErrNoRows {
-		err = tx.QueryRowContext(ctx, `SELECT id,email,display_name,is_admin,created_at FROM users WHERE LOWER(email)=LOWER($1) AND disabled=FALSE AND deleted_at IS NULL`, email).Scan(&user.ID, &user.Email, &user.DisplayName, &user.IsAdmin, &user.CreatedAt)
+		var unverified bool
+		err = tx.QueryRowContext(ctx, `SELECT id,email,display_name,is_admin,created_at,NOT email_verified FROM users WHERE LOWER(email)=LOWER($1) AND disabled=FALSE AND deleted_at IS NULL FOR UPDATE`, email).Scan(&user.ID, &user.Email, &user.DisplayName, &user.IsAdmin, &user.CreatedAt, &unverified)
 		if err == sql.ErrNoRows {
 			if err := oidcMaySignUp(ctx, tx, email); err != nil {
 				return User{}, err
@@ -373,6 +392,15 @@ func (s *Store) ResolveOIDCUser(ctx context.Context, providerID, subject, email,
 			}
 		} else if err != nil {
 			return User{}, err
+		}
+		if err == nil && unverified {
+			// The identity provider has verified this email address, so its real owner is signing in. Whoever
+			// self-registered it first only ever typed the address; lock them out of the account they could
+			// otherwise keep through the password they chose.
+			if err := reclaimUnverifiedAccount(ctx, tx, user.ID); err != nil {
+				return User{}, err
+			}
+			reclaimed = true
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO oidc_identities(provider_id,subject,user_id) VALUES($1,$2,$3)`, providerID, subject, user.ID); err != nil {
 			return User{}, err
@@ -420,6 +448,11 @@ func (s *Store) ResolveOIDCUser(ctx context.Context, providerID, subject, email,
 			return User{}, err
 		}
 	} else if linked {
+		if reclaimed {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'user.registration_reclaimed','user',$1,jsonb_build_object('providerId',$2::text))`, user.ID, providerID); err != nil {
+				return User{}, err
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,details) VALUES($1,'user.oidc_linked','user',$1,jsonb_build_object('providerId',$2::text))`, user.ID, providerID); err != nil {
 			return User{}, err
 		}
@@ -448,7 +481,7 @@ func (s *Store) CreateUser(ctx context.Context, user User, passwordHash string) 
 }
 
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,email,display_name,is_admin,disabled,deleted_at,created_at FROM users WHERE id <> 'justcd-system' ORDER BY deleted_at NULLS FIRST, email`)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,email,display_name,is_admin,disabled,deleted_at,created_at,email_verified FROM users WHERE id <> 'justcd-system' ORDER BY deleted_at NULLS FIRST, email`)
 	if err != nil {
 		return nil, err
 	}
@@ -457,7 +490,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	for rows.Next() {
 		var u User
 		var deletedAt sql.NullTime
-		if err := rows.Scan(&u.ID, &u.Email, &u.DisplayName, &u.IsAdmin, &u.Disabled, &deletedAt, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.DisplayName, &u.IsAdmin, &u.Disabled, &deletedAt, &u.CreatedAt, &u.EmailVerified); err != nil {
 			return nil, err
 		}
 		if deletedAt.Valid {

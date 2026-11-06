@@ -16,6 +16,7 @@ import { LoadErrorNotice, SectionSkeleton } from "./shared"
 
 export type AccessSettings = {
   localLoginEnabled: boolean
+  localRegistrationEnabled: boolean
   oidcAutoProvision: boolean
   oidcAllowedDomains: string[]
   workspaceCreation: "anyone" | "admins"
@@ -24,7 +25,7 @@ export type AccessSettings = {
   readiness: { enabledProviders: number; ssoAdmins: number }
 }
 
-type Patch = Partial<Pick<AccessSettings, "localLoginEnabled" | "oidcAutoProvision" | "oidcAllowedDomains" | "workspaceCreation">>
+type Patch = Partial<Pick<AccessSettings, "localLoginEnabled" | "localRegistrationEnabled" | "oidcAutoProvision" | "oidcAllowedDomains" | "workspaceCreation">>
 
 /** Why password sign-in cannot be turned off yet, or "" when it can. Mirrors the server's check. */
 export function lockoutReason(readiness: AccessSettings["readiness"]) {
@@ -99,8 +100,17 @@ export function AccessPanel() {
       </SettingsGroup>
     </SettingsSection>
 
-    <SettingsSection title="Registration" description="Who can get an account. There is no public sign-up: local accounts are created by administrators under Platform users.">
+    <SettingsSection title="Registration" description="Who can get an account. Administrators can always create local accounts under Platform users.">
       <SettingsGroup>
+        <SettingsRow
+          label="Let people register with a password"
+          description={settings.localLoginEnabled
+            ? settings.localRegistrationEnabled
+              ? "The sign-in page offers \"Create an account\". New accounts have no access until you approve them under Platform users, because their email address is not verified. Allowed email domains apply."
+              : "Off: only administrators create password accounts. Turn on to show a registration page on the sign-in screen."
+            : "Turn on password sign-in first. Registration creates password accounts."}
+          action={<Switch checked={settings.localRegistrationEnabled} disabled={busy || !settings.localLoginEnabled} aria-label="Let people register with a password" onCheckedChange={(value) => attempt({ localRegistrationEnabled: value }, value ? "Registration is open. New accounts wait for your approval." : "Registration is closed.")} />}
+        />
         <SettingsRow
           label="Create accounts on first single sign-on sign-in"
           description={settings.oidcAutoProvision ? "Anyone who signs in through an enabled provider with a verified email address gets an account. Workspace access still depends on group mapping or an invitation." : "Only people you have already added can sign in. A new identity is refused, with a message to ask an administrator."}
@@ -109,11 +119,11 @@ export function AccessPanel() {
         <div className="space-y-3 px-5 py-4">
           <div className="space-y-1">
             <h3 className="text-sm font-medium">Allowed email domains</h3>
-            <p className="text-sm leading-5 text-muted-foreground">{settings.oidcAutoProvision ? "Limit automatic account creation to these domains. Leave empty to allow any domain. Accounts that already exist are never affected." : "Only used when accounts are created on first sign-in."}</p>
+            <p className="text-sm leading-5 text-muted-foreground">Limit self-service account creation, by registration or first single sign-on sign-in, to these domains. Leave empty to allow any domain. Accounts that already exist are never affected.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Input aria-label="Allowed email domains" className="min-w-64 flex-1" placeholder="example.com, corp.example.org" value={domainText} disabled={busy || !settings.oidcAutoProvision} onChange={(event) => setDomainText(event.target.value)} />
-            <Button type="button" size="sm" disabled={busy || !domainsChanged || !settings.oidcAutoProvision} onClick={() => attempt({ oidcAllowedDomains: domains }, domains.length ? "Allowed domains saved." : "Any email domain may create an account.")}>Save domains</Button>
+            <Input aria-label="Allowed email domains" className="min-w-64 flex-1" placeholder="example.com, corp.example.org" value={domainText} disabled={busy} onChange={(event) => setDomainText(event.target.value)} />
+            <Button type="button" size="sm" disabled={busy || !domainsChanged} onClick={() => attempt({ oidcAllowedDomains: domains }, domains.length ? "Allowed domains saved." : "Any email domain may create an account.")}>Save domains</Button>
           </div>
           {settings.oidcAllowedDomains.length > 0 && <div className="flex flex-wrap gap-1.5" aria-label="Saved domains">{settings.oidcAllowedDomains.map((domain) => <Badge key={domain} size="xs" radius="full" variant="outline">{domain}</Badge>)}</div>}
         </div>

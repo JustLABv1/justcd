@@ -8,6 +8,7 @@ import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useMemo, useState } from "react"
 import { AccountMenu } from "@/components/account-menu"
 import { CommandPalette, CommandPaletteButton } from "@/components/command-palette"
+import { PendingApproval } from "@/components/pending-approval"
 import { Select } from "@/components/panelui/select"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -219,6 +220,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </main>
     )
+  }
+
+  // A self-registered account nobody has approved yet gets a holding page instead of an app it cannot use.
+  // Account security stays reachable so the person can still manage their own sign-in.
+  if (user.emailVerified === false && !user.isAdmin && !pathname.startsWith("/settings/security")) {
+    return <PendingApproval user={user} onSignOut={() => void signOut()} onApproved={(session) => { setUser(session.user); setCanCreateWorkspace(session.canCreateWorkspace !== false) }} />
   }
 
   return (

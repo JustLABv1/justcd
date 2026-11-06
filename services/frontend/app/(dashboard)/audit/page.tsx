@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { Suspense, useEffect, useMemo, useRef, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
   Download01Icon,
@@ -26,6 +27,7 @@ import { useToast } from "@/components/toast-provider"
 import { api } from "@/lib/api"
 import { useWorkspaceSelection } from "@/hooks/workspace-selection"
 import {
+  type AuditAccess,
   type AuditEvent,
   type AuditResponse,
   type EventFilter,
@@ -39,6 +41,14 @@ const filters: { id: EventFilter; label: string }[] = [
 ]
 
 export default function AuditPage() {
+  return (
+    <Suspense fallback={null}>
+      <AuditPageContent />
+    </Suspense>
+  )
+}
+
+function AuditPageContent() {
   const toast = useToast()
   const { isAdmin, workspaces, workspaceId } = useWorkspaceSelection()
   const [events, setEvents] = useState<AuditEvent[]>([])
@@ -47,12 +57,14 @@ export default function AuditPage() {
   const [query, setQuery] = useState("")
   const [search, setSearch] = useState("")
   const [workspaceChoice, setWorkspace] = useState<string | null>(null)
-  const workspace = workspaceChoice ?? (isAdmin ? "" : workspaceId)
+  const requestedWorkspace = useSearchParams().get("workspaceId") ?? ""
+  const workspace = workspaceChoice ?? (workspaces.some((item) => item.id === requestedWorkspace) ? requestedWorkspace : isAdmin ? "" : workspaceId)
   const [resource, setResource] = useState("")
   const [conditions, setConditions] = useState<FilterQuery>(() => createFilterQuery())
   const advanced = serializeAuditFilter(conditions)
   const filterFields = useMemo(() => auditFilterFields(workspaces), [workspaces])
   const [hasMore, setHasMore] = useState(false)
+  const [access, setAccess] = useState<AuditAccess | null>(null)
   const [loadedKey, setLoadedKey] = useState("")
   const pagination = useRef<AbortController | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -62,7 +74,9 @@ export default function AuditPage() {
   const [retention, setRetention] = useState("0")
   const [saving, setSaving] = useState(false)
   const [retentionLoading, setRetentionLoading] = useState(false)
-  const params = new URLSearchParams({ group: filter })
+  const visibleFilters = filters.filter((item) => item.id === "all" || !access || access.groups.includes(item.id))
+  const tabAllowed = visibleFilters.some((item) => item.id === filter)
+  const params = new URLSearchParams({ group: tabAllowed ? filter : "all" })
   if (search) params.set("q", search)
   if (workspace) params.set("workspaceId", workspace)
   if (resource) params.set("resourceId", resource)
@@ -99,6 +113,7 @@ export default function AuditPage() {
         setError(null)
         setEvents(result.items)
         setHasMore(result.hasMore)
+        if (result.access) setAccess(result.access)
       })
       .catch((cause) => {
         if (!controller.signal.aborted) {
@@ -190,6 +205,8 @@ export default function AuditPage() {
               <HugeiconsIcon icon={Refresh01Icon} />
               Refresh
             </Button>
+            {access?.canExport !== false && (
+              <>
             <Button
               variant="outline"
               disabled={loading || !scopeAvailable}
@@ -215,14 +232,23 @@ export default function AuditPage() {
               <HugeiconsIcon icon={Download01Icon} />
               Export JSON
             </Button>
+              </>
+            )}
           </>
         }
       />
       {error !== null && <ErrorNotice error={error} />}
+      {access?.scope === "workspace" && access.role !== "owner" && (
+        <p role="note" className="mb-4 rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+          {access.role === "deployer"
+            ? "As a deployer you see deployment and configuration activity. Workspace owners also see access and security events and can export audit evidence."
+            : "As a viewer you see deployment activity. Workspace owners and deployers can see more, and owners can export audit evidence."}
+        </p>
+      )}
       <div className="mb-4 space-y-3 rounded-xl border bg-card p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <ToggleGroup
-            value={[filter]}
+            value={[tabAllowed ? filter : "all"]}
             onValueChange={(next) => {
               if (next[0]) setFilter(next[0] as EventFilter)
             }}
@@ -230,7 +256,7 @@ export default function AuditPage() {
             className="flex-wrap"
             disabled={loadingMore}
           >
-            {filters.map((item) => (
+            {visibleFilters.map((item) => (
               <ToggleGroupItem key={item.id} value={item.id}>
                 {item.label}
               </ToggleGroupItem>

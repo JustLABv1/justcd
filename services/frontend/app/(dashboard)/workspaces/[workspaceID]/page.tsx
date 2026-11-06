@@ -8,7 +8,7 @@ import { Suspense, useEffect, useState } from "react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { SectionSkeleton } from "@/components/settings/shared"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Delete02Icon, UserAdd01Icon } from "@hugeicons/core-free-icons"
+import { Audit01Icon, Delete02Icon, UserAdd01Icon } from "@hugeicons/core-free-icons"
 import { RowActions } from "@/components/action-menu"
 import { Badge } from "@/components/reui/badge"
 import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
@@ -123,7 +123,7 @@ function WorkspaceSettingsPage() {
 
   const roleItems = [{ value: "viewer", label: "Viewer" }, { value: "deployer", label: "Deployer" }, { value: "owner", label: "Owner" }]
   return <>
-    <PageHeading title="Workspace settings" description={`Manage ${workspace.name} · ${workspace.description || "Members, deployment policies, and notifications."}`} />
+    <PageHeading title="Workspace settings" description={`Manage ${workspace.name} · ${workspace.description || "Members, deployment policies, and notifications."}`} actions={<Button variant="outline" render={<Link href={`/audit?workspaceId=${encodeURIComponent(workspaceID)}`} />} nativeButton={false}><HugeiconsIcon icon={Audit01Icon} strokeWidth={1.8} aria-hidden="true" />Audit trail</Button>} />
     {!isOwner && <p className="mb-5 text-sm text-muted-foreground">Workspace owners manage general settings, deployment policies, and notifications. You can view members and their roles here.</p>}
     {deletionPlans.length > 0 && <div role="status" className="mb-5 rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm"><p className="font-medium">Deletion plans are ready for review.</p><p className="mt-1 text-sm text-muted-foreground">Approve and apply each application plan. Once all managed resources are gone, choose “Delete workspace” again to remove the workspace record.</p><ul className="mt-3 space-y-1">{deletionPlans.map((item) => <li key={item.applicationId}><Link href={`/applications/${item.applicationId}?tab=changes`} className="font-medium underline underline-offset-4">{item.applicationName} · {item.managedResources} resources</Link></li>)}</ul></div>}
     <Tabs value={activeTab} onValueChange={(value) => selectTab(String(value))}>

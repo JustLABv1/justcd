@@ -87,3 +87,34 @@ func TestParseAuditFilterActorKind(t *testing.T) {
 		t.Fatal("an unknown actorKind must be rejected")
 	}
 }
+
+func TestAuditAccessByRole(t *testing.T) {
+	tests := []struct {
+		name      string
+		admin     bool
+		role      string
+		groups    []string
+		canExport bool
+		scope     string
+	}{
+		{"instance administrator", true, "", []string{"deployments", "changes", "access"}, true, "instance"},
+		{"workspace owner", false, "owner", []string{"deployments", "changes", "access"}, true, "workspace"},
+		{"workspace deployer", false, "deployer", []string{"deployments", "changes"}, false, "workspace"},
+		{"workspace viewer", false, "viewer", []string{"deployments"}, false, "workspace"},
+		{"unknown role is treated as a viewer", false, "", []string{"deployments"}, false, "workspace"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			access := auditAccessFor(test.admin, test.role)
+			if strings.Join(access.Groups, ",") != strings.Join(test.groups, ",") || access.CanExport != test.canExport || access.Scope != test.scope {
+				t.Fatalf("access = %#v", access)
+			}
+		})
+	}
+	if groups := auditAccessFor(false, "owner").restrictedGroups(); groups != nil {
+		t.Fatalf("an owner reads every category, so the query must not be restricted: %v", groups)
+	}
+	if groups := auditAccessFor(false, "viewer").restrictedGroups(); len(groups) != 1 || groups[0] != "deployments" {
+		t.Fatalf("viewer groups = %v", groups)
+	}
+}

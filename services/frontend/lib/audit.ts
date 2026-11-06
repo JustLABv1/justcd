@@ -57,7 +57,9 @@ export type AuditEvent = {
   deploymentRecord: DeploymentEvidence | null
   createdAt: string
 }
-export type AuditResponse = { items: AuditEvent[]; hasMore: boolean }
+/** What the signed-in user may read; the server enforces it, the page only reflects it. */
+export type AuditAccess = { scope: "instance" | "workspace"; role?: "owner" | "deployer" | "viewer"; groups: string[]; canExport: boolean }
+export type AuditResponse = { items: AuditEvent[]; hasMore: boolean; access?: AuditAccess }
 export type EventFilter = "all" | "changes" | "deployments" | "access"
 export function words(value: string) {
   return value

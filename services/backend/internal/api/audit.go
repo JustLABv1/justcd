@@ -66,16 +66,63 @@ func parseAuditFilter(r *http.Request) (store.AuditFilter, error) {
 	}
 	return f, nil
 }
-func (s *Server) authorizeAudit(w http.ResponseWriter, r *http.Request, workspace string) bool {
-	if currentUser(r).IsAdmin {
-		return true
+
+// auditAccess is what the caller may read, derived from their role. It is returned to the page
+// so the UI can match what the server enforces; the server never trusts the UI for this.
+type auditAccess struct {
+	Scope string `json:"scope"` // instance or workspace
+	Role  string `json:"role,omitempty"`
+	// Groups are the event categories the caller can read: deployments, changes and access.
+	Groups    []string `json:"groups"`
+	CanExport bool     `json:"canExport"`
+}
+
+var allAuditGroups = []string{"deployments", "changes", "access"}
+
+// auditAccessFor applies the role policy: administrators see the instance, owners see all of a
+// workspace and may export it, deployers see deployments and configuration, viewers see deployments.
+func auditAccessFor(isAdmin bool, role string) auditAccess {
+	switch {
+	case isAdmin:
+		return auditAccess{Scope: "instance", Groups: allAuditGroups, CanExport: true}
+	case role == "owner":
+		return auditAccess{Scope: "workspace", Role: role, Groups: allAuditGroups, CanExport: true}
+	case role == "deployer":
+		return auditAccess{Scope: "workspace", Role: role, Groups: []string{"deployments", "changes"}}
+	default:
+		return auditAccess{Scope: "workspace", Role: "viewer", Groups: []string{"deployments"}}
+	}
+}
+
+// authorizeAudit resolves the caller's audit access for a workspace, writing the error response if there is none.
+func (s *Server) authorizeAudit(w http.ResponseWriter, r *http.Request, workspace string) (auditAccess, bool) {
+	user := currentUser(r)
+	if user.IsAdmin {
+		return auditAccessFor(true, ""), true
 	}
 	if workspace == "" {
 		writeError(w, http.StatusForbidden, "instance administrator role or workspaceId is required")
-		return false
+		return auditAccess{}, false
 	}
-	return s.requireWorkspaceRole(w, r, workspace, "viewer")
+	if !s.requireWorkspaceRole(w, r, workspace, "viewer") {
+		return auditAccess{}, false
+	}
+	role, err := s.Store.WorkspaceRole(r.Context(), user, workspace)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "workspace access denied")
+		return auditAccess{}, false
+	}
+	return auditAccessFor(false, role), true
 }
+
+// restrictedGroups is nil when every category is readable, so the query adds no extra condition.
+func (a auditAccess) restrictedGroups() []string {
+	if len(a.Groups) == len(allAuditGroups) {
+		return nil
+	}
+	return a.Groups
+}
+
 func safeAuditView(e store.AuditEvent) store.AuditEvent {
 	var details map[string]any
 	if json.Unmarshal(e.Details, &details) == nil {
@@ -91,9 +138,11 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err.Error())
 		return
 	}
-	if !s.authorizeAudit(w, r, f.WorkspaceID) {
+	access, ok := s.authorizeAudit(w, r, f.WorkspaceID)
+	if !ok {
 		return
 	}
+	f.AllowedGroups = access.restrictedGroups()
 	items, err := s.Store.QueryAuditEvents(r.Context(), f, 51)
 	if err != nil {
 		writeStoreError(w, "could not load audit events")
@@ -106,7 +155,7 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 	for i := range items {
 		items[i] = safeAuditView(items[i])
 	}
-	writeJSON(w, 200, map[string]any{"schemaVersion": store.AuditSchemaVersion, "items": items, "hasMore": more})
+	writeJSON(w, 200, map[string]any{"schemaVersion": store.AuditSchemaVersion, "items": items, "hasMore": more, "access": access})
 }
 func (s *Server) auditDetail(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("eventID"), 10, 64)
@@ -114,13 +163,21 @@ func (s *Server) auditDetail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid event ID")
 		return
 	}
-	e, err := s.Store.AuditEventByID(r.Context(), id)
+	e, err := s.Store.AuditEventByID(r.Context(), id, nil)
 	if err != nil {
 		writeError(w, 404, "audit event not found")
 		return
 	}
-	if !s.authorizeAudit(w, r, e.WorkspaceID) {
+	access, ok := s.authorizeAudit(w, r, e.WorkspaceID)
+	if !ok {
 		return
+	}
+	// An event in a category the role may not read looks exactly like a missing one.
+	if restricted := access.restrictedGroups(); restricted != nil {
+		if _, err := s.Store.AuditEventByID(r.Context(), id, restricted); err != nil {
+			writeError(w, 404, "audit event not found")
+			return
+		}
 	}
 	writeJSON(w, 200, safeAuditView(e))
 }
@@ -154,9 +211,15 @@ func (s *Server) exportAudit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err.Error())
 		return
 	}
-	if !s.authorizeAudit(w, r, f.WorkspaceID) {
+	access, ok := s.authorizeAudit(w, r, f.WorkspaceID)
+	if !ok {
 		return
 	}
+	if !access.CanExport {
+		writeError(w, http.StatusForbidden, "exporting audit evidence requires the workspace owner role")
+		return
+	}
+	f.AllowedGroups = access.restrictedGroups()
 	format := r.URL.Query().Get("format")
 	if format == "" {
 		format = "json"

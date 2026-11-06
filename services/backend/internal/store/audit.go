@@ -21,11 +21,19 @@ type AuditFilter struct {
 	Until       *time.Time
 	Before      int64
 	Through     int64
+	// AllowedGroups limits which event categories (deployments, changes, access) may be returned; nil allows all.
+	AllowedGroups []string
 	// Condition is the user-built filter tree; it is ANDed with every other field.
 	Condition *AuditCondition
 	// ActorKind narrows to "people" (any user) or "automation" (JustCD's own workers); empty means everyone.
 	ActorKind string
 }
+
+// auditCategory buckets an event into the groups the audit page filters and role policies use.
+const auditCategory = `CASE
+ WHEN e.action ~ '^(sync|rollback|auto_sync|plan|deployment)\.' OR e.action ~ '(decommission|rollback|resource_adopted)' THEN 'deployments'
+ WHEN e.action ~ '^(user|workspace_member|oidc|oidc_provider|credential|session|mfa)\.' OR e.action LIKE '%approval_policy%' THEN 'access'
+ ELSE 'changes' END`
 
 const auditSelectHead = `SELECT e.id,e.actor_id,COALESCE(NULLIF(u.display_name,''),u.email,''),e.action,e.resource_type,e.resource_id,e.details,e.created_at,e.workspace_id,e.resource_name,e.deployment_record,COALESCE(w.name,''),COALESCE(tg.targets,'[]'::jsonb)
  FROM audit_events e LEFT JOIN users u ON u.id=e.actor_id LEFT JOIN workspaces w ON w.id=e.workspace_id
@@ -35,11 +43,9 @@ const auditSelectHead = `SELECT e.id,e.actor_id,COALESCE(NULLIF(u.display_name,'
  AND ($4='' OR e.resource_id=$4) AND ($5='' OR e.actor_id=$5)
  AND ($6::timestamptz IS NULL OR e.created_at >= $6) AND ($7::timestamptz IS NULL OR e.created_at < $7)
  AND ($8='' OR strpos(lower(concat_ws(' ',e.id::text,e.action,replace(replace(e.action,'_',' '),'.',' '),e.resource_type,e.resource_id,e.resource_name,u.display_name,u.email,e.actor_id)),lower($8))>0)
- AND ($9='all' OR CASE
- WHEN e.action ~ '^(sync|rollback|auto_sync|plan|deployment)\.' OR e.action ~ '(decommission|rollback|resource_adopted)' THEN 'deployments'
- WHEN e.action ~ '^(user|workspace_member|oidc|oidc_provider|credential|session|mfa)\.' OR e.action LIKE '%approval_policy%' THEN 'access'
- ELSE 'changes' END=$9)
+ AND ($9='all' OR ` + auditCategory + `=$9)
  AND ($11=0 OR e.id=$11)
+ AND ($13='' OR ` + auditCategory + ` = ANY(string_to_array($13,',')))
  AND ($12='' OR ($12='automation' AND e.actor_id='justcd-system') OR ($12='people' AND e.actor_id IS NOT NULL AND e.actor_id<>'justcd-system'))`
 
 const auditOrder = `
@@ -49,7 +55,7 @@ func (s *Store) QueryAuditEvents(ctx context.Context, filter AuditFilter, limit 
 	if filter.Group == "" {
 		filter.Group = "all"
 	}
-	args := []any{filter.WorkspaceID, filter.Before, filter.Through, filter.ResourceID, filter.ActorID, filter.From, filter.Until, strings.TrimSpace(filter.Query), filter.Group, limit, filter.EventID, filter.ActorKind}
+	args := []any{filter.WorkspaceID, filter.Before, filter.Through, filter.ResourceID, filter.ActorID, filter.From, filter.Until, strings.TrimSpace(filter.Query), filter.Group, limit, filter.EventID, filter.ActorKind, strings.Join(filter.AllowedGroups, ",")}
 	query := auditSelectHead
 	if filter.Condition != nil {
 		query += "\n AND " + buildAuditPredicate(filter.Condition, &args)
@@ -85,8 +91,9 @@ func scanAuditEvent(rows *sql.Rows) (AuditEvent, error) {
 	return e, err
 }
 
-func (s *Store) AuditEventByID(ctx context.Context, id int64) (AuditEvent, error) {
-	items, err := s.QueryAuditEvents(ctx, AuditFilter{Before: id + 1}, 1)
+// AuditEventByID loads one event. When allowed is non-nil, events outside those categories read as missing.
+func (s *Store) AuditEventByID(ctx context.Context, id int64, allowed []string) (AuditEvent, error) {
+	items, err := s.QueryAuditEvents(ctx, AuditFilter{EventID: id, AllowedGroups: allowed}, 1)
 	if err != nil {
 		return AuditEvent{}, err
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -103,5 +104,52 @@ func TestAuditConditionQueryRunsAgainstPostgres(t *testing.T) {
 		if _, err := store.QueryAuditEvents(context.Background(), AuditFilter{Condition: parseFilter(t, raw)}, 5); err != nil {
 			t.Fatalf("query failed for %s: %v", raw, err)
 		}
+	}
+}
+
+// A role's category limit must hold in SQL, for the list and for a single event.
+func TestAuditAllowedGroupsAgainstPostgres(t *testing.T) {
+	dsn := os.Getenv("JUSTCD_E2E_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("set JUSTCD_E2E_DATABASE_URL to run the audit access policy against PostgreSQL")
+	}
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store := &Store{DB: db}
+	deployments := regexp.MustCompile(`^(sync|rollback|auto_sync|plan|deployment)\.|(decommission|rollback|resource_adopted)`)
+	access := regexp.MustCompile(`^(user|workspace_member|oidc|oidc_provider|credential|session|mfa)\.|approval_policy`)
+	ctx := context.Background()
+
+	viewer, err := store.QueryAuditEvents(ctx, AuditFilter{AllowedGroups: []string{"deployments"}}, 300)
+	if err != nil || len(viewer) == 0 {
+		t.Fatalf("viewer events = %d, err = %v", len(viewer), err)
+	}
+	for _, e := range viewer {
+		if !deployments.MatchString(e.Action) {
+			t.Fatalf("a deployments-only role was shown %q", e.Action)
+		}
+	}
+	deployer, err := store.QueryAuditEvents(ctx, AuditFilter{AllowedGroups: []string{"deployments", "changes"}}, 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range deployer {
+		if access.MatchString(e.Action) {
+			t.Fatalf("a deployer was shown the access event %q", e.Action)
+		}
+	}
+	// A hidden event must read as missing, even when asked for by ID.
+	hidden, err := store.QueryAuditEvents(ctx, AuditFilter{Group: "access"}, 1)
+	if err != nil || len(hidden) == 0 {
+		t.Skip("no access events in this database to test against")
+	}
+	if _, err := store.AuditEventByID(ctx, hidden[0].ID, []string{"deployments"}); err == nil {
+		t.Fatal("an access event was readable by a deployments-only role")
+	}
+	if _, err := store.AuditEventByID(ctx, hidden[0].ID, nil); err != nil {
+		t.Fatalf("an unrestricted read must still work: %v", err)
 	}
 }

@@ -778,7 +778,7 @@ export default function ApplicationDetailPage() {
     </>} />
     <BackgroundTaskStatus tasks={backgroundTasks.tasks} operations={operations} error={backgroundTasks.error} onRefresh={() => void backgroundTasks.refresh()} />
     {error != null && <ErrorNotice error={error} />}
-    {application && <AttentionBar application={application} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} plansError={plansError} retryingPlans={retryingPlans} onRetryPlans={() => void retryPlans()}
+    {application && <AttentionBar application={application} latestOperation={latestOperation} canDeploy={canDeploy} onRetryReconciliation={() => void retryReconciliation()} onViewActivity={activeTab === "activity" ? undefined : () => selectTab("activity")} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} plansError={plansError} retryingPlans={retryingPlans} onRetryPlans={() => void retryPlans()}
         conflictCount={ownershipConflict ? ownershipConflicts.length : 0} onReviewConflicts={() => setConflictOpen(true)}
         namespaceMismatch={namespaceMismatch} kustomizeNamespace={kustomization?.namespace} onReviewNamespaceSetting={() => selectTab("settings")}
         onCancelDecommission={() => void cancelDecommission()}

@@ -56,7 +56,15 @@ Workspace owners configure deployment guardrails in workspace settings or with
 }
 ```
 
-All five built-in checks are enabled by default: `privileged-containers`
+Eight built-in checks are enabled by default. Three of them are pre-sync
+format checks that need no cluster or network access and run on every plan,
+including pull request reviews: `invalid-schema` (unknown or mistyped fields in
+built-in Kubernetes resources, the same check `kubeconform` performs for core
+kinds), `invalid-metadata` (names and labels that break Kubernetes naming rules),
+and `selector-mismatch` (a Deployment, StatefulSet, DaemonSet, ReplicaSet, or Job
+selector that does not match its pod template labels). Custom resources have no
+local schema; the cluster rejects invalid ones during its dry-run. Findings name
+fields and types, never values. The other five checks are: `privileged-containers`
 (privileged containers and host network/PID/IPC access), `mutable-image-tags`
 (images must use a SHA-256 digest), `missing-resource-limits` (positive CPU and
 memory limits on regular and init containers), `public-services` (LoadBalancer,
@@ -74,6 +82,10 @@ running operations recheck the policy before starting each resource step.
 A resource step already started can finish, and completed changes remain applied.
 Deletion-only plans evaluate no desired resources so remediation by deletion
 remains possible.
+
+Pull request comments list the findings under **Pre-sync checks**. For a
+review-only pull request in `block` mode, findings fail the PR check (the
+"blocked" state) so a broken manifest is caught before merge, not at deploy time.
 
 Plan API responses expose `plan.policyEvaluation` with the configuration digest,
 mode, and findings (resource, rule, evidence, remediation). These fields are bound

@@ -195,6 +195,8 @@ Existing manual applications are never implicitly adopted or overwritten.
 | `spec.destination.cluster` | Required existing cluster name or ID |
 | `spec.destination.namespace` | Required namespace already bound to the workspace |
 | `spec.ignoreResources` | Optional list of whole-resource exclusions; defaults to empty |
+| `spec.environment` | Optional GitLab environment `name`, `tier`, and `url`; see [GitLab environments](#gitlab-environments) |
+| `spec.healthGate` | Optional post-deploy verification; see [Post-deploy health gate](#post-deploy-health-gate) |
 | `spec.syncPolicy` | `manual` (default), `auto-safe`, or `auto` |
 | `spec.pollSeconds` | Application drift-check interval, 30–86400; defaults to 300 |
 
@@ -670,6 +672,71 @@ Use owner-only `POST /api/v1/operations/{id}/schedule-override` with
 require the normal CSRF token. Operations expose `waitingReasons`,
 `nextAllowedAt`, `scheduleDeferred`, `scheduleOverrideReason`, and
 `scheduleOverrideActorId`.
+
+## GitLab environments
+
+For repositories hosted on GitLab, JustCD can record every finished sync as a
+deployment in a [GitLab environment](https://docs.gitlab.com/ee/ci/environments/),
+so each application shows its latest deployment, commit, and status alongside
+your pipelines. This is off by default.
+
+An owner enables it per discovery branch with **GitLab environments** in the
+repository row menu, choosing an HTTPS Git credential whose token has the `api`
+scope and at least the Developer role on the project. It works independently of
+pull request handling and commit statuses.
+
+Each application is reported to an environment named `cluster/namespace`, for
+example `production/shop`. GitLab groups names containing `/` into folders.
+Declare `spec.environment` to choose the name, tier, or link instead. Every
+field is optional and falls back to the derived value:
+
+```yaml
+spec:
+  environment:
+    name: shop/production
+    tier: production # production, staging, testing, development, or other
+    url: https://shop.example.com
+```
+
+After a successful sync or rollback JustCD records a `success` deployment for
+the synced commit; a failed sync records `failed`. Cancelled operations,
+decommissions, and branch tests are not reported. JustCD creates the environment on first use and
+keeps its tier and URL in step with `justcd.yaml`. Reporting never changes the
+outcome of a sync: a GitLab error is shown on the application overview and
+logged. Applications created by pull request previews are not reported.
+
+The API exposes `GET` and owner-only `PUT`
+`/api/v1/repository-configurations/{id}/environment-settings` and
+`GET /api/v1/applications/{id}/environment`.
+
+## Post-deploy health gate
+
+A successful sync only means Kubernetes accepted the manifests. Declare
+`spec.healthGate` to also require that the application becomes healthy:
+
+```yaml
+spec:
+  healthGate:
+    timeoutSeconds: 300 # 30–3600, default 300
+    onFailure: mark-failed # or prepare-rollback
+```
+
+After each successful sync JustCD watches the application's runtime health.
+The first `Healthy` observation, at least 15 seconds after the sync, passes the
+gate. If the application is not `Healthy` when the timeout ends, the gate fails.
+A newer sync or a rollback replaces a pending check.
+
+With [GitLab environments](#gitlab-environments) enabled, the GitLab deployment
+shows as `running` while the gate verifies it and then becomes `success` or
+`failed`. A failed gate also writes a `health_gate.failed` audit event and
+raises the application's `unhealthy` notification.
+
+`onFailure: prepare-rollback` additionally builds the normal reviewed rollback
+plan to the previous successful deployment. JustCD never applies it by itself:
+rollbacks always require owner approval, and a failing health check does not
+bypass that. The plan expires after 15 minutes; rebuild it from the Activity tab
+if needed. Gates are Git-managed and appear on the application overview.
+Read them with `GET /api/v1/applications/{id}/health-gate`.
 
 ## Notification routing
 

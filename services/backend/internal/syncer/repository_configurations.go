@@ -173,7 +173,7 @@ func (s *Service) ResolveRepositoryDefinition(ctx context.Context, repository st
 		HelmReleaseName: definition.Spec.Source.ReleaseName, HelmValuesFiles: definition.Spec.Source.ValuesFiles, HelmValuesYAML: definition.Spec.Source.ValuesYAML,
 		KustomizeHelmEnabled: definition.Spec.Source.KustomizeHelmEnabled, KustomizeNamespaceOverride: definition.Spec.Source.KustomizeNamespaceOverride,
 		CreateNamespaces: definition.Spec.Destination.CreateNamespaces, ClusterID: clusterID, Namespaces: []store.NamespaceBinding{binding}, SyncPolicy: definition.Spec.SyncPolicy, PollSeconds: definition.Spec.PollSeconds, RetryPolicy: store.DefaultRetryPolicy(),
-		RepositoryDeploymentSchedule: definition.Spec.DeploymentSchedule, RepositoryPullRequests: definition.Spec.PullRequests, RepositoryConfigurationID: repository.ID, ConfigurationPath: definition.File, ConfigurationHash: definition.Hash,
+		RepositoryDeploymentSchedule: definition.Spec.DeploymentSchedule, RepositoryEnvironment: environmentOverride(definition.Spec.Environment), RepositoryHealthGate: definition.Spec.HealthGate, RepositoryPullRequests: definition.Spec.PullRequests, RepositoryConfigurationID: repository.ID, ConfigurationPath: definition.File, ConfigurationHash: definition.Hash,
 	}
 	if n := definition.Spec.Notifications; n != nil {
 		policy := store.ApplicationNotificationPolicy{Mode: n.Mode, DestinationIDs: []string{}, Events: n.Events, MinimumSeverity: n.MinimumSeverity}
@@ -211,4 +211,11 @@ func (s *Service) ResolveRepositoryDefinition(ctx context.Context, repository st
 		}
 	}
 	return app, nil
+}
+
+func environmentOverride(e *store.ApplicationEnvironment) store.ApplicationEnvironment {
+	if e == nil {
+		return store.ApplicationEnvironment{}
+	}
+	return *e
 }

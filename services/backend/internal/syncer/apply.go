@@ -216,6 +216,7 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		operation.TerminalReason = decision.TerminalReason
 		now := time.Now().UTC()
 		operation.FinishedAt = &now
+		s.reportEnvironmentDeployment(app, operationID, record, record.Plan.Revision, "failed")
 		return operation, cause
 	}
 	if actorID != systemActorID {
@@ -521,6 +522,12 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 	operation.Message = message
 	now := time.Now().UTC()
 	operation.FinishedAt = &now
+	if record.Plan.Rollback != nil {
+		s.supersedeHealthGates(app)
+		s.reportEnvironmentDeployment(app, operationID, record, lastSyncedRevision, "success")
+	} else if !record.Plan.Decommission && !s.startHealthGate(app, operationID, record, lastSyncedRevision) {
+		s.reportEnvironmentDeployment(app, operationID, record, lastSyncedRevision, "success")
+	}
 	return operation, nil
 }
 

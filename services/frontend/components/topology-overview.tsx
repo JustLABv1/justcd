@@ -68,13 +68,13 @@ export function TopologyOverview({ graph, selectedId, onSelect, query, mode, isC
             const state = stateFor(node)
             const note = isConflict(node) ? "Owned elsewhere" : state === "unknown" || state === "observed" ? toneFor(node).includes("text-destructive") ? healthFor(node) : "" : syncLabels[state]
             return <li key={node.id}>
-              <Button type="button" variant={selectedId === node.id ? "secondary" : "ghost"} aria-pressed={selectedId === node.id} className="h-auto w-full justify-start gap-3 rounded-none px-4 py-2 text-left whitespace-normal focus-visible:ring-inset" onClick={() => onSelect(node.id)}>
-                <HugeiconsIcon icon={iconFor(node.identity.kind)} strokeWidth={1.6} className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <Button type="button" variant={selectedId === node.id ? "secondary" : "ghost"} aria-pressed={selectedId === node.id} className="h-auto w-full items-start justify-start gap-3 rounded-none px-4 py-2 text-left whitespace-normal focus-visible:ring-inset" onClick={() => onSelect(node.id)}>
+                <HugeiconsIcon icon={iconFor(node.identity.kind)} strokeWidth={1.6} className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-medium break-all">{node.identity.name}</span>
                   <span className="block text-xs text-muted-foreground">{node.identity.kind}</span>
+                  {note && <span title={note} className={`mt-0.5 block text-xs break-words line-clamp-3 ${toneFor(node).includes("text-destructive") || isConflict(node) ? "text-destructive" : "text-muted-foreground"}`}>{note}</span>}
                 </span>
-                {note && <span className={`shrink-0 text-xs ${toneFor(node).includes("text-destructive") || isConflict(node) ? "text-destructive" : "text-muted-foreground"}`}>{note}</span>}
               </Button>
             </li>
           })}

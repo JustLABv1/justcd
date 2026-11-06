@@ -192,6 +192,41 @@ export type RepositoryPRSettings = {
   profile: { enabled: boolean; confirmShared: boolean; namespacePrefix?: string; hostSuffix?: string; maxActive: number; maxLifetimeHours: number; quotaCpu?: string; quotaMemory?: string; databaseStrategy?: string; approvalActors: Record<string, string> }
 }
 
+export type EnvironmentSettings = {
+  enabled: boolean
+  credentialId: string
+  apiUrl?: string
+}
+
+export type ApplicationEnvironmentInfo = {
+  reporting: boolean
+  environment?: { name: string; tier: string; url?: string }
+  declared?: boolean
+  latestDeployment?: {
+    environment: string
+    status: "success" | "failed" | "running" | "canceled"
+    gitlabDeploymentId?: number
+    sha?: string
+    error?: string
+    reportedAt: string
+  }
+}
+
+export type ApplicationHealthGateInfo = {
+  enabled: boolean
+  gate?: { timeoutSeconds: number; onFailure: "mark-failed" | "prepare-rollback" }
+  latest?: {
+    operationId: string
+    revision?: string
+    status: "pending" | "passed" | "failed"
+    startedAt: string
+    deadline: string
+    finishedAt?: string
+    message?: string
+    rollbackPlanId?: string
+  }
+}
+
 export type RepositoryConfiguration = {
   prSettings: RepositoryPRSettings
   prError: string

@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Disclosure } from "@/components/ui/collapsible"
 import { Input } from "@/components/ui/input"
 import { FormField } from "@/components/ui-kit"
-import type { Application } from "@/lib/types"
+import type { Application, Operation } from "@/lib/types"
 
 type Tone = "destructive" | "warning" | "info"
 
@@ -63,8 +63,12 @@ function IssueGroup({ application, issues, canApprove, onConfigureExclusion, aiA
  * check failures, load errors, ownership conflicts, namespace mismatch, deletion in progress and paused auto-sync.
  * Each row is a short summary with at most one primary action.
  */
-export function AttentionBar({ application, canApprove, busy, hasPendingOperation, pendingAction, plansError, retryingPlans, onRetryPlans, conflictCount, onReviewConflicts, namespaceMismatch, kustomizeNamespace, onReviewNamespaceSetting, onCancelDecommission, onConfigureExclusion, aiAction, resumeRevision, onResumeRevisionChange, onKeepPin, onResume }: {
+export function AttentionBar({ application, canApprove, busy, hasPendingOperation, pendingAction, plansError, retryingPlans, onRetryPlans, conflictCount, onReviewConflicts, namespaceMismatch, kustomizeNamespace, onReviewNamespaceSetting, onCancelDecommission, onConfigureExclusion, aiAction, resumeRevision, onResumeRevisionChange, onKeepPin, onResume, latestOperation, canDeploy, onRetryReconciliation, onViewActivity }: {
   application: Application
+  latestOperation?: Operation
+  canDeploy: boolean
+  onRetryReconciliation: () => void
+  onViewActivity?: () => void
   canApprove: boolean
   busy: boolean
   hasPendingOperation: boolean
@@ -89,12 +93,20 @@ export function AttentionBar({ application, canApprove, busy, hasPendingOperatio
   const issues = (application.statusIssues ?? []).filter((issue) => !(conflictCount > 0 && issue.code === "kubernetes.ownership_conflict"))
   const paused = Boolean(application.autoSyncPaused && !application.branchTest)
   const mismatch = namespaceMismatch && !application.kustomizeNamespaceOverride
-  if (!issues.length && plansError == null && !conflictCount && !mismatch && !application.decommissioning && !paused) return null
+  const stalled = Boolean(application.retryTerminalReason || application.retryNextAt)
+  const failedSync = latestOperation?.status === "failed" ? latestOperation : undefined
+  if (!issues.length && plansError == null && !conflictCount && !mismatch && !application.decommissioning && !paused && !stalled && !failedSync) return null
   const resumeBlocked = busy || hasPendingOperation
   return <section aria-label="Needs attention" className="mb-5 overflow-hidden rounded-xl border bg-card">
     <ul className="divide-y">
       {issues.length === 1 && <StatusIssueRow application={application} issue={issues[0]} canApprove={canApprove} onConfigureExclusion={onConfigureExclusion} extraActions={aiAction} />}
       {issues.length > 1 && <IssueGroup application={application} issues={issues} canApprove={canApprove} onConfigureExclusion={onConfigureExclusion} aiAction={aiAction} />}
+      {(stalled || failedSync) && <AttentionRow alert tone="destructive" icon={Alert02Icon} title={application.retryTerminalReason ? "Auto-sync stopped" : application.retryNextAt ? "Sync failed, retry scheduled" : "Last sync failed"} actions={<>
+        {canDeploy && !application.decommissioning && <Button size="sm" variant="outline" loading={pendingAction === "retry-reconciliation"} disabled={resumeBlocked} onClick={onRetryReconciliation}>Retry now</Button>}
+        {onViewActivity && <Button size="sm" variant="ghost" onClick={onViewActivity}>View activity</Button>}
+      </>}>
+        <p className="mt-0.5 text-sm text-muted-foreground">{failedSync?.message || (application.retryTerminalReason ? `Automatic retries ended: ${application.retryTerminalReason.replaceAll("_", " ")}.` : "The last sync did not complete.")}{application.retryNextAt && !application.retryTerminalReason ? ` Next automatic attempt: ${new Date(application.retryNextAt).toLocaleString()}.` : ""}{application.retryLastErrorCode ? ` (${application.retryLastErrorCode})` : ""}</p>
+      </AttentionRow>}
       {plansError != null && <AttentionRow alert tone="destructive" icon={Alert02Icon} title="Plans could not be loaded." actions={<>
         <Button size="sm" loading={retryingPlans} onClick={onRetryPlans}>Retry</Button>
         <ErrorDetailsButton error={plansError} />

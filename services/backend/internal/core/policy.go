@@ -33,7 +33,7 @@ type PolicyEvaluation struct {
 	Results      []PolicyResult `json:"results"`
 }
 
-var BuiltinPolicyRules = []string{"privileged-containers", "mutable-image-tags", "missing-resource-limits", "public-services", "forbidden-namespaces"}
+var BuiltinPolicyRules = []string{"privileged-containers", "mutable-image-tags", "missing-resource-limits", "public-services", "forbidden-namespaces", "invalid-schema", "invalid-metadata", "selector-mismatch"}
 
 func NormalizePolicyConfig(c PolicyConfig) (PolicyConfig, error) {
 	if c.Mode == "" {
@@ -126,6 +126,9 @@ func (BuiltinPolicyEngine) Evaluate(config PolicyConfig, resources []Resource) (
 		var manifest map[string]any
 		if err := json.Unmarshal(r.Manifest, &manifest); err != nil || manifest == nil {
 			return PolicyEvaluation{}, errors.New("policy evaluation requires a valid desired resource manifest")
+		}
+		for _, finding := range checkResourceSchema(r, manifest) {
+			add(finding.rule, finding.evidence, finding.remediation)
 		}
 		spec := object(manifest, "spec")
 		if r.Identity.Kind == "Service" && r.Identity.APIVersion == "v1" {

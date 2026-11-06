@@ -134,6 +134,7 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	if err := idToken.Claims(&raw); err == nil {
 		groups, err = validOIDCClaim(raw[provider.GroupsClaim])
 		if err != nil {
+			s.Logger.Warn("OIDC group claim rejected", "providerId", providerID, "claim", provider.GroupsClaim, "reason", err.Error(), "jsonType", jsonKind(raw[provider.GroupsClaim]))
 			writeError(w, http.StatusUnauthorized, "OIDC group claim has an invalid format")
 			return
 		}
@@ -321,11 +322,19 @@ func (s *Server) addOIDCGroupRole(w http.ResponseWriter, r *http.Request) {
 
 func validOIDCClaim(raw json.RawMessage) ([]string, error) {
 	var values []string
-	if len(raw) == 0 {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
 		return values, nil
 	}
-	if err := json.Unmarshal(raw, &values); err != nil {
-		return nil, errors.New("OIDC group claim must be an array of strings")
+	if strings.HasPrefix(trimmed, `"`) {
+		// Some providers send a lone group as a string instead of a one-item array.
+		var single string
+		if err := json.Unmarshal(raw, &single); err != nil {
+			return nil, errors.New("OIDC group claim is not a valid string")
+		}
+		values = []string{single}
+	} else if err := json.Unmarshal(raw, &values); err != nil {
+		return nil, errors.New("OIDC group claim must be a string or an array of strings")
 	}
 	if len(values) > 200 {
 		return nil, errors.New("OIDC group claim contains too many entries")
@@ -336,4 +345,23 @@ func validOIDCClaim(raw json.RawMessage) ([]string, error) {
 		}
 	}
 	return values, nil
+}
+
+// jsonKind names the JSON type of a raw value for diagnostics without exposing its content.
+func jsonKind(raw json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(raw))
+	switch {
+	case trimmed == "":
+		return "missing"
+	case trimmed == "null":
+		return "null"
+	case strings.HasPrefix(trimmed, "["):
+		return "array"
+	case strings.HasPrefix(trimmed, "{"):
+		return "object"
+	case strings.HasPrefix(trimmed, `"`):
+		return "string"
+	default:
+		return "scalar"
+	}
 }

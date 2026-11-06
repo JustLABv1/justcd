@@ -83,7 +83,40 @@ func testRepositoryConfigurationSafety(t *testing.T, ctx context.Context, s *Sto
 	app.CreateNamespaces = false
 	app.SyncPolicy = "auto-safe"
 	app.ConfigurationHash = "auto-safe"
+	app.RepositoryEnvironment = ApplicationEnvironment{Name: "shop/production", Tier: "production", URL: "https://shop.example.com"}
+	app.RepositoryHealthGate = &HealthGate{OnFailure: HealthGatePrepareRollback}
 	if err := s.ApplyRepositoryApplications(ctx, repository, "policy", []Application{app}); err != nil {
+		t.Fatal(err)
+	}
+	if override, err := s.ApplicationEnvironmentOverride(ctx, originalID); err != nil || override != app.RepositoryEnvironment {
+		t.Fatalf("environment override was not stored: %+v %v", override, err)
+	}
+	if gate, err := s.ApplicationHealthGate(ctx, originalID); err != nil || gate == nil || gate.TimeoutSeconds != DefaultHealthGateTimeoutSeconds || gate.OnFailure != HealthGatePrepareRollback {
+		t.Fatalf("health gate was not stored with defaults: %+v %v", gate, err)
+	}
+	if err := s.RecordEnvironmentDeployment(ctx, EnvironmentDeployment{OperationID: "env-op-1", ApplicationID: originalID, Environment: "shop/production", Status: "failed", SHA: "a", Error: "boom"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordEnvironmentDeployment(ctx, EnvironmentDeployment{OperationID: "env-op-1", ApplicationID: originalID, Environment: "shop/production", GitLabDeploymentID: 12, Status: "success", SHA: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if latest, err := s.LatestEnvironmentDeployment(ctx, originalID); err != nil || latest == nil || latest.Status != "success" || latest.GitLabDeploymentID != 12 || latest.Error != "" {
+		t.Fatalf("latest environment deployment: %+v %v", latest, err)
+	}
+	app.ConfigurationHash = "environment-removed"
+	app.RepositoryEnvironment = ApplicationEnvironment{}
+	app.RepositoryHealthGate = nil
+	if err := s.ApplyRepositoryApplications(ctx, repository, "environment-removed", []Application{app}); err != nil {
+		t.Fatal(err)
+	}
+	if gate, err := s.ApplicationHealthGate(ctx, originalID); err != nil || gate != nil {
+		t.Fatalf("removed health gate remains: %+v %v", gate, err)
+	}
+	if override, err := s.ApplicationEnvironmentOverride(ctx, originalID); err != nil || !override.IsZero() {
+		t.Fatalf("removed environment override remains: %+v %v", override, err)
+	}
+	app.ConfigurationHash = "auto-safe-2"
+	if err := s.ApplyRepositoryApplications(ctx, repository, "policy-2", []Application{app}); err != nil {
 		t.Fatal(err)
 	}
 	resource := core.Resource{Identity: core.Identity{ClusterID: app.ClusterID, APIVersion: "v1", Kind: "ConfigMap", Namespace: "default", Name: "adoption-policy-test"}, UID: "policy-uid", ResourceVersion: "1", Manifest: []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"adoption-policy-test"}}`)}

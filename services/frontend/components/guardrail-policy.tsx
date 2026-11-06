@@ -21,6 +21,9 @@ const rules = [
   ["missing-resource-limits", "Missing CPU or memory limits"],
   ["public-services", "Public services"],
   ["forbidden-namespaces", "Forbidden namespaces"],
+  ["invalid-schema", "Unknown or mistyped fields in built-in Kubernetes resources"],
+  ["invalid-metadata", "Invalid resource names and labels"],
+  ["selector-mismatch", "Workload selectors that do not match pod labels"],
 ] as const
 
 export function GuardrailPolicyPanel({ workspaceId }: { workspaceId: string }) {

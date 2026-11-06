@@ -38,3 +38,11 @@ test("synced delivery explains runtime attention without implying pending Git ch
   assert.equal(applicationAttentionReason({ ...app, autoSyncPaused: true }), "Reconciliation paused")
   assert.equal(applicationAttentionReason({ health: "synced", healthCondition: { status: "Healthy" } }), null)
 })
+
+test("stalled reconciliation needs attention and explains why", () => {
+  const app = { health: "synced", healthCondition: { status: "Healthy" }, retryTerminalReason: "max_attempts" }
+  assert.equal(needsAttention(app), true)
+  assert.equal(isApplicationHealthy(app), false)
+  assert.equal(applicationAttentionReason(app), "Auto-sync stopped · retries exhausted")
+  assert.equal(applicationAttentionReason({ ...app, retryTerminalReason: undefined, retryNextAt: "2026-11-06T15:00:00Z" }), "Sync failed · retry scheduled")
+})

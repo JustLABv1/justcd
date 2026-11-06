@@ -125,6 +125,7 @@ func prPlanComment(review store.PullRequestReview, view planView, target string)
 		counts[change.Kind]++
 	}
 	fmt.Fprintf(&body, "**Changes:** %d create · %d update · %d delete\n\n", counts[core.Create], counts[core.Update], counts[core.Delete])
+	body.WriteString(preSyncChecksComment(view.Plan.PolicyEvaluation))
 	body.WriteString("<details>\n<summary>Deployment plan details</summary>\n\n")
 	fmt.Fprintf(&body, "Plan: `%s`\n\nDigest: `%s`\n\n", html.EscapeString(view.ID), html.EscapeString(view.Plan.Digest))
 	for i, change := range view.Plan.Changes {
@@ -144,5 +145,31 @@ func prPlanComment(review store.PullRequestReview, view planView, target string)
 	} else {
 		body.WriteString("\nAutomatic deployment is allowed by the deployment policy.\n")
 	}
+	return body.String()
+}
+
+// preSyncChecksComment summarizes guardrail and schema findings. Evidence names
+// fields, never values, but is escaped because it is rendered as Markdown/HTML.
+func preSyncChecksComment(evaluation *core.PolicyEvaluation) string {
+	if evaluation == nil {
+		return ""
+	}
+	if len(evaluation.Results) == 0 {
+		return "**Pre-sync checks:** passed\n\n"
+	}
+	var body strings.Builder
+	outcome := "reported"
+	if evaluation.Mode == "block" {
+		outcome = "block deployment"
+	}
+	fmt.Fprintf(&body, "**Pre-sync checks:** %d finding(s) %s\n\n<details>\n<summary>Findings</summary>\n\n", len(evaluation.Results), outcome)
+	for i, result := range evaluation.Results {
+		if i >= 30 {
+			fmt.Fprintf(&body, "\n… %d more findings in JustCD.\n", len(evaluation.Results)-30)
+			break
+		}
+		fmt.Fprintf(&body, "- `%s` — `%s` `%s/%s`: %s\n", html.EscapeString(result.Rule), html.EscapeString(result.Resource.Kind), html.EscapeString(result.Resource.Namespace), html.EscapeString(result.Resource.Name), html.EscapeString(result.Evidence))
+	}
+	body.WriteString("\n</details>\n\n")
 	return body.String()
 }

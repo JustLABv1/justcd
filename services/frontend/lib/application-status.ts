@@ -1,7 +1,12 @@
 import type { Application, PlanRecord } from "./types"
 
+/** Automatic reconciliation failed: retries are scheduled or have been exhausted. */
+export function reconciliationStalled(app: Application) {
+  return !app.decommissioning && Boolean(app.retryTerminalReason || app.retryNextAt)
+}
+
 export function needsAttention(app: Application) {
-  return Boolean(app.configurationMissing) || app.autoSyncPaused || [
+  return Boolean(app.configurationMissing) || app.autoSyncPaused || reconciliationStalled(app) || [
     "out_of_sync",
     "deletion_pending",
     "degraded",
@@ -18,13 +23,15 @@ export function needsAttention(app: Application) {
 }
 
 export function isApplicationHealthy(app: Application) {
-  return !app.configurationMissing && !app.autoSyncPaused && app.health === "synced" && app.healthCondition?.status === "Healthy"
+  return !app.configurationMissing && !app.autoSyncPaused && !reconciliationStalled(app) && app.health === "synced" && app.healthCondition?.status === "Healthy"
 }
 
 
 export function applicationAttentionReason(app: Application): string | null {
   if (app.configurationMissing) return app.health === "decommissioned" ? "Removed from Git · decommissioned" : "Removed from Git · deletion review required"
   if (app.autoSyncPaused) return "Reconciliation paused"
+  if (app.retryTerminalReason) return "Auto-sync stopped · retries exhausted"
+  if (app.retryNextAt) return "Sync failed · retry scheduled"
   const condition = app.healthCondition
   if (condition && ["Progressing", "Degraded", "Suspended", "Missing", "Unknown", "Partial"].includes(condition.status)) {
     return `Runtime ${condition.status.toLowerCase()}${condition.message ? `: ${condition.message}` : ""}`
@@ -72,6 +79,8 @@ export function deriveApplicationStatus(
     reliable && observed && runtimeStatus !== "Unknown" && `Runtime ${runtimeStatus.toLowerCase()}`,
     !reliable && !blocked && "Runtime not observed",
     paused && "Auto-sync paused",
+    !paused && application.retryTerminalReason && "Auto-sync stopped",
+    !paused && !application.retryTerminalReason && application.retryNextAt && "Sync retrying",
   ].filter((part): part is string => Boolean(part))
   return {
     sync: application.health,

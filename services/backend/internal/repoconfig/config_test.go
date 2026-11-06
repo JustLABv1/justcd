@@ -296,3 +296,39 @@ func TestDiscoverCreateNamespaceAlias(t *testing.T) {
 	}
 
 }
+
+func TestDiscoverEnvironmentOverride(t *testing.T) {
+	root := t.TempDir()
+	writeDefinition(t, root, "apps/shop/justcd.yaml", validDefinition+"  environment:\n    name: shop/production\n    tier: production\n    url: https://shop.example.com\n")
+	definitions, err := Discover(root)
+	if err != nil || len(definitions) != 1 {
+		t.Fatalf("definitions=%v err=%v", definitions, err)
+	}
+	if e := definitions[0].Spec.Environment; e == nil || e.Name != "shop/production" || e.Tier != "production" || e.URL != "https://shop.example.com" {
+		t.Fatalf("unexpected environment: %+v", e)
+	}
+	bad := t.TempDir()
+	writeDefinition(t, bad, "apps/shop/justcd.yaml", validDefinition+"  environment:\n    tier: prod\n")
+	if _, err := Discover(bad); err == nil || !strings.Contains(err.Error(), "environment") {
+		t.Fatalf("expected environment validation error, got %v", err)
+	}
+}
+
+func TestDiscoverHealthGate(t *testing.T) {
+	root := t.TempDir()
+	writeDefinition(t, root, "apps/shop/justcd.yaml", validDefinition+"  healthGate:\n    onFailure: prepare-rollback\n")
+	definitions, err := Discover(root)
+	if err != nil || len(definitions) != 1 {
+		t.Fatalf("definitions=%v err=%v", definitions, err)
+	}
+	if g := definitions[0].Spec.HealthGate; g == nil || g.TimeoutSeconds != 300 || g.OnFailure != "prepare-rollback" {
+		t.Fatalf("defaults not applied: %+v", g)
+	}
+	for _, bad := range []string{"  healthGate:\n    timeoutSeconds: 5\n", "  healthGate:\n    onFailure: rollback\n"} {
+		dir := t.TempDir()
+		writeDefinition(t, dir, "apps/shop/justcd.yaml", validDefinition+bad)
+		if _, err := Discover(dir); err == nil || !strings.Contains(err.Error(), "healthGate") {
+			t.Fatalf("expected healthGate validation error for %q, got %v", bad, err)
+		}
+	}
+}

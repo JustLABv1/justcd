@@ -16,8 +16,10 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { FormSelect } from "@/components/ui/form-select"
 import { Filters } from "@/components/reui/filters/filters"
-import { createFilterQuery, flattenFilterConditions } from "@/components/reui/filters/filters-query"
-import type { FilterField, FilterQuery } from "@/components/reui/filters/filters-types"
+import { createFilterQuery } from "@/components/reui/filters/filters-query"
+import { applicationFilterFieldIds, applicationFilterFields, readApplicationField } from "@/components/application-filter-fields"
+import { countActiveConditions, matchesFilterQuery } from "@/lib/filter-eval"
+import type { FilterQuery } from "@/components/reui/filters/filters-types"
 import { DataGridList, type GridColumn } from "@/components/data-grid-table"
 import { ActionMenu, RowActions, type ActionItem } from "@/components/action-menu"
 import { Badge } from "@/components/reui/badge"
@@ -327,13 +329,8 @@ export function ApplicationCollection({
   }, [available, clusterStatuses, now])
 
   const labelKeys = [...new Set([...available.flatMap(app => Object.keys(app.labels ?? {})), ...(labelKey ? [labelKey] : [])])].sort()
-  const filterFields: FilterField[] = [
-    ...(workspaces ? [{ id: "workspace", label: "Workspace", type: "select" as const, options: workspaces.map((item) => ({ value: item.id, label: item.name })), operators: [{ value: "is", label: "is" }] }] : []),
-    { id: "namespace", label: "Namespace", type: "select", options: [...new Set(available.flatMap((app) => app.namespaces.map((item) => item.namespace)))].sort().map((value) => ({ value, label: value })), operators: [{ value: "is", label: "is" }] },
-    { id: "reconciliation", label: "Reconciliation", type: "select", options: [{ value: "paused", label: "Paused" }, { value: "active", label: "Active" }], operators: [{ value: "is", label: "is" }] },
-    { id: "renderer", label: "Renderer", type: "select", options: [{ value: "yaml", label: "Plain YAML / JSON" }, { value: "helm", label: "Helm" }, { value: "kustomize", label: "Kustomize" }], operators: [{ value: "is", label: "is" }] },
-  ]
-  const conditions = flattenFilterConditions(filterQuery)
+  const filterFields = useMemo(() => applicationFilterFields(available, workspaces), [available, workspaces])
+  const activeConditions = countActiveConditions(filterQuery, applicationFilterFieldIds)
   const counts = {
     all: available.length,
     favorites: available.filter(app => favoriteIds.includes(app.id)).length,
@@ -354,18 +351,7 @@ export function ApplicationCollection({
         matchesStatus &&
         (!favoritesOnly || favoriteIds.includes(app.id)) &&
         (!clusterFilter || app.clusterId === clusterFilter) &&
-        conditions.every((condition) => {
-          const rawValue = String(condition.values[0] ?? "")
-          const value = rawValue.toLowerCase()
-          if (!value) return true
-          switch (condition.field) {
-            case "workspace": return app.workspaceId === rawValue
-            case "namespace": return app.namespaces.some((item) => item.namespace.toLowerCase() === value)
-            case "reconciliation": return value === "paused" ? app.autoSyncPaused : !app.autoSyncPaused
-            case "renderer": return app.renderer === value
-            default: return true
-          }
-        }) &&
+        (!activeConditions || matchesFilterQuery(filterQuery, (field) => readApplicationField(app, field))) &&
         `${app.name} ${app.workspaceName ?? ""} ${app.clusterName ?? ""} ${app.clusterId} ${app.namespaces.map((item) => item.namespace).join(" ")} ${app.revision} ${Object.entries(app.labels ?? {}).map(([key, value]) => `${key} ${value} ${key}=${value}`).join(" ")} ${app.autoSyncPaused ? "reconciliation paused disabled" : "reconciliation active"}`
           .toLowerCase()
           .includes(query.trim().toLowerCase())
@@ -387,7 +373,7 @@ export function ApplicationCollection({
   }, [visible, groupBy, labelKey, clusters])
 
   const canManageApp = (app: WorkspaceApplication) => workspaceRole === "owner" || Boolean(workspaces?.some((workspace) => workspace.id === app.workspaceId && workspace.role === "owner"))
-  const filtering = Boolean(query.trim() || clusterFilter || conditions.length || filter !== "all" || favoritesOnly)
+  const filtering = Boolean(query.trim() || clusterFilter || activeConditions > 0 || filter !== "all" || favoritesOnly)
   const defaultOpen = (bucket: ApplicationBucket<WorkspaceApplication>) =>
     groupBy === "none" || filtering || buckets.length === 1 || (groupBy === "status" ? bucket.key !== "synced" : bucket.applications.some(needsAttention) || (clusters.get(bucket.key)?.health.level ?? "healthy") !== "healthy")
   const resetFilters = () => { setQuery(""); setFilter("all"); setClusterFilter(""); setFilterQuery(createFilterQuery()); setFavoritesOnly(false) }
@@ -529,7 +515,7 @@ export function ApplicationCollection({
             value={clusterFilter}
             onValueChange={setClusterFilter}
           />}
-          <Filters fields={filterFields} query={filterQuery} onQueryChange={setFilterQuery} size="sm" className="min-w-40 flex-[1_1_12rem]" />
+          <Filters variant="advanced" advancedMode="popover" advancedAlign="start" fields={filterFields} query={filterQuery} onQueryChange={setFilterQuery} size="sm" />
           <FormSelect
             ariaLabel="Group applications"
             value={groupBy}

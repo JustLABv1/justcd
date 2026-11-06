@@ -1,6 +1,6 @@
 import type { FilterNode, FilterQuery } from "@/components/reui/filters/filters-types"
 
-import { parseLocalDateTime } from "./audit-datetime.ts"
+import { parseLocalDateTime } from "./filter-datetime.ts"
 
 type WireNode = { type: "group"; combinator: "and" | "or"; rules: WireNode[] } | { type: "rule"; field: string; operator: string; value?: unknown; negated?: boolean }
 

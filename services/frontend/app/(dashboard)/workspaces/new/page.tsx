@@ -6,7 +6,8 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { FormField, PageHeading, Panel } from "@/components/ui-kit"
+import { EmptyState, FormField, PageHeading, Panel } from "@/components/ui-kit"
+import { useWorkspaceSelection } from "@/hooks/workspace-selection"
 import { useToast } from "@/components/toast-provider"
 import { apiPost, errorMessage } from "@/lib/api"
 import type { Workspace } from "@/lib/types"
@@ -17,6 +18,7 @@ export default function NewWorkspacePage() {
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [busy, setBusy] = useState(false)
+  const { canCreateWorkspace } = useWorkspaceSelection()
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true)
     try {
@@ -25,6 +27,7 @@ export default function NewWorkspacePage() {
       router.push(`/workspaces/${workspace.id}/git-sources/new`)
     } catch (cause) { toast.error(errorMessage(cause), cause) } finally { setBusy(false) }
   }
+  if (!canCreateWorkspace) return <EmptyState title="Workspace creation is limited to administrators" description="Ask an instance administrator to create a workspace for your team or to add you to an existing one." href="/workspaces" action="View workspaces" />
   return <>
     <PageHeading title="Create workspace" description="A workspace groups your connections, applications, and members." />
     <div className="max-w-2xl"><Panel><form className="space-y-5 p-5" onSubmit={submit}>

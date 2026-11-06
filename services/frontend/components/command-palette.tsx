@@ -22,6 +22,7 @@ type CommandPaletteProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   isAdmin: boolean
+  canCreateWorkspace?: boolean
   workspaces: Workspace[]
   workspaceId: string
   onSelectWorkspace: (id: string) => void
@@ -39,7 +40,7 @@ const adminSections = [
 ]
 
 /** Global ⌘K launcher: jump to pages, applications and workspaces, or start common actions. */
-export function CommandPalette({ open, onOpenChange, isAdmin, workspaces, workspaceId, onSelectWorkspace, onToggleSidebar, onboardingIncomplete }: CommandPaletteProps) {
+export function CommandPalette({ open, onOpenChange, isAdmin, canCreateWorkspace = true, workspaces, workspaceId, onSelectWorkspace, onToggleSidebar, onboardingIncomplete }: CommandPaletteProps) {
   const router = useRouter()
   const { setTheme } = useTheme()
   const [applications, setApplications] = useState<PaletteApplication[]>([])
@@ -95,7 +96,7 @@ export function CommandPalette({ open, onOpenChange, isAdmin, workspaces, worksp
           <Command.Group heading="Create">
             <Command.Item icon={icon(Add01Icon, "green")} kind="Action" keywords={["create", "deploy", "add"]} onSelect={go("/applications/new")}>New application</Command.Item>
             <Command.Item icon={icon(Rocket01Icon, "green")} kind="Action" keywords={["template", "publish", "build"]} onSelect={go("/applications/publish")}>Publish from a template</Command.Item>
-            <Command.Item icon={icon(Add01Icon, "green")} kind="Action" keywords={["create", "team"]} onSelect={go("/workspaces/new")}>New workspace</Command.Item>
+            {canCreateWorkspace && <Command.Item icon={icon(Add01Icon, "green")} kind="Action" keywords={["create", "team"]} onSelect={go("/workspaces/new")}>New workspace</Command.Item>}
             {workspaceId && <Command.Item icon={icon(Link01Icon, "green")} kind="Action" keywords={["kubernetes", "connect", "add"]} onSelect={go(`/workspaces/${scoped(workspaceId)}/clusters/new`)}>Connect cluster</Command.Item>}
             {workspaceId && <Command.Item icon={icon(Link01Icon, "green")} kind="Action" keywords={["repository", "github", "gitlab", "connect", "add"]} onSelect={go(`/workspaces/${scoped(workspaceId)}/git-sources/new`)}>Connect Git source</Command.Item>}
           </Command.Group>

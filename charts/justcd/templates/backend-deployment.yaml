@@ -109,6 +109,8 @@ spec:
               value: {{ .Values.cookieSecure | quote }}
             - name: JUSTCD_SESSION_LIFETIME
               value: {{ .Values.sessionLifetime | quote }}
+            - name: JUSTCD_FORCE_LOCAL_LOGIN
+              value: {{ .Values.forceLocalLogin | default false | quote }}
             - name: JUSTCD_PUBLISH_MAX_ARCHIVE_MIB
               value: {{ .Values.backend.publishing.maxArchiveMiB | quote }}
             - name: JUSTCD_PUBLISH_MAX_EXPANDED_MIB

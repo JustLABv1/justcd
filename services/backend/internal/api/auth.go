@@ -64,6 +64,15 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	settings, settingsErr := s.Store.InstanceSettings(r.Context())
+	if settingsErr != nil {
+		writeStoreError(w, "could not check sign-in settings")
+		return
+	}
+	if !s.localLoginAllowed(settings) {
+		writeError(w, http.StatusForbidden, "password sign-in is turned off on this instance; use single sign-on")
+		return
+	}
 	// Account limits avoid locking every user behind the shared frontend proxy.
 	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
 	if len(input.Email) > 320 || input.Email == "" {
@@ -147,7 +156,17 @@ func writeSessionError(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) session(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"user": currentUser(r)})
+	user := currentUser(r)
+	// The page uses this to hide "New workspace" when the instance restricts it; the create endpoint enforces it.
+	canCreateWorkspace := user.IsAdmin
+	if !canCreateWorkspace {
+		if settings, err := s.Store.InstanceSettings(r.Context()); err == nil {
+			canCreateWorkspace = settings.WorkspaceCreation == "anyone"
+		} else {
+			canCreateWorkspace = true
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"user": user, "canCreateWorkspace": canCreateWorkspace})
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {

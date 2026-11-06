@@ -20,6 +20,7 @@ import { NamespacePanel } from "@/components/settings/namespace-panel"
 import { OIDCPanel } from "@/components/settings/oidc-panel"
 import { PlatformUsersPanel } from "@/components/settings/users-panel"
 import { AIPanel } from "@/components/settings/ai-panel"
+import { AccessPanel } from "@/components/settings/access-panel"
 import { MaintenancePanel } from "@/components/settings/maintenance-panel"
 import { LoadErrorNotice, SectionSkeleton, type ActionRunner } from "@/components/settings/shared"
 import type {
@@ -38,7 +39,7 @@ const workspaceSections = ["git-sources", "clusters", "namespaces", "credentials
 const navGroups = [
   { title: "Instance", ids: ["maintenance", "ai"] },
   { title: "Delivery", ids: ["git-sources", "clusters", "namespaces"] },
-  { title: "Security & access", ids: ["credentials", "shares", "oidc", "users"] },
+  { title: "Security & access", ids: ["credentials", "shares", "access", "oidc", "users"] },
 ]
 
 type LoadKind = "base" | "scope" | "bindings" | "providers"
@@ -56,6 +57,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
     { id: "namespaces", title: "Namespace access", description: "Namespaces this workspace can deploy to" },
     { id: "credentials", title: "Credentials", description: "Encrypted Git and Kubernetes secrets" },
     { id: "shares", title: "Sharing", description: "Review connection offers and workspace access" },
+    { id: "access", title: "Sign-in & access", description: "Sign-in methods, registration and who can create workspaces", adminOnly: true },
     { id: "oidc", title: "OIDC providers", description: "Organization sign-in and group mapping", adminOnly: true },
     { id: "users", title: "Platform users", description: "Accounts and access on this JustCD instance", adminOnly: true },
     { id: "ai", title: "AI", description: "LiteLLM connection and model settings", adminOnly: true },
@@ -217,7 +219,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
   }
 
   const landingTarget = !workspaceScoped && !section && user?.isAdmin
-    ? ["maintenance", "ai", "oidc", "users"].find(Boolean)
+    ? "maintenance"
     : undefined
   useEffect(() => {
     if (landingTarget) router.replace(`/settings/${landingTarget}`)
@@ -301,6 +303,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
         <div className="settings-content min-w-0">
                 {section === "ai" && user?.isAdmin && <AIPanel />}
                 {section === "maintenance" && user?.isAdmin && <MaintenancePanel />}
+                {section === "access" && user?.isAdmin && <AccessPanel />}
                 {workspaceScoped && workspace && scopeLoading && <SectionSkeleton label="Loading workspace connections" />}
                 {workspaceScoped && workspace && section === "credentials" && !scopeLoading && (
                   <CredentialPanel

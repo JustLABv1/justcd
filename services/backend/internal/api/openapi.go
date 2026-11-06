@@ -700,11 +700,36 @@ paths:
                   maintenanceEnabled: { type: boolean }
                   adminBypass: { type: boolean }
         '500': { description: Could not read instance state }
+  /admin/access-settings:
+    get:
+      summary: Read sign-in, registration and workspace-creation settings (instance administrators only)
+      description: Includes whether password sign-in can be turned off safely (an enabled provider and an administrator who has used it) and whether JUSTCD_FORCE_LOCAL_LOGIN is overriding the setting.
+      responses:
+        '200': { description: Access settings and readiness }
+        '401': { description: Authentication required }
+        '403': { description: Instance administrator role required }
+    put:
+      summary: Change any subset of the access settings (instance administrators only; CSRF required)
+      description: Turning off password sign-in is refused with 409 unless at least one single sign-on provider is enabled and an active administrator has signed in through one. Domains are normalised; an unchanged save is not audited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                localLoginEnabled: { type: boolean }
+                oidcAutoProvision: { type: boolean, description: Create an account on first single sign-on sign-in }
+                oidcAllowedDomains: { type: array, items: { type: string }, description: Email domains allowed to create accounts on first sign-in; empty allows any }
+                workspaceCreation: { type: string, enum: [anyone, admins] }
+      responses:
+        '200': { description: Updated and audited access settings }
+        '409': { description: Rejected, for example because it would lock everyone out }
   /admin/instance-settings:
     get:
       summary: Read instance maintenance settings (instance administrators only)
       responses:
-        '200': { description: Instance settings including maintenanceEnabled }
+        '200': { description: Instance settings including maintenanceEnabled and the access settings }
         '401': { description: Authentication required }
         '403': { description: Instance administrator role required }
     put:

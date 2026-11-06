@@ -6,6 +6,7 @@
     "migrate-to-managed-credentials",
     "production-operations",
     "security-hardening",
+    "sign-in-and-access",
     "observability",
     "audit-compliance",
     "operation-progress"

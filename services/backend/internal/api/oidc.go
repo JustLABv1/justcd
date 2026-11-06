@@ -140,6 +140,10 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	user, err := s.Store.ResolveOIDCUser(ctx, provider.ID, claims.Subject, strings.ToLower(claims.Email), claims.Name, groups)
+	if errors.Is(err, store.ErrOIDCSignupDisabled) || errors.Is(err, store.ErrOIDCDomainNotAllowed) {
+		writeError(w, http.StatusForbidden, err.Error()+"; ask an instance administrator to add you")
+		return
+	}
 	if err != nil {
 		s.Logger.Error("OIDC user mapping failed", "providerId", providerID, "error", err)
 		writeStoreError(w, "could not provision OIDC identity")
@@ -166,7 +170,12 @@ func (s *Server) listPublicProviders(w http.ResponseWriter, r *http.Request) {
 			public = append(public, map[string]string{"id": p.ID, "name": p.Name})
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": public})
+	settings, err := s.Store.InstanceSettings(r.Context())
+	if err != nil {
+		writeStoreError(w, "could not load login providers")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": public, "localLoginEnabled": s.localLoginAllowed(settings)})
 }
 
 func (s *Server) listOIDCProviders(w http.ResponseWriter, r *http.Request) {

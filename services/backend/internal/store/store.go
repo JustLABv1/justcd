@@ -310,6 +310,44 @@ func (s *Store) ConsumeOIDCState(ctx context.Context, stateHash []byte) (OIDCSta
 	return out, tx.Commit()
 }
 
+// ErrOIDCSignupDisabled means the instance does not create accounts on first single sign-on sign-in.
+var ErrOIDCSignupDisabled = errors.New("new accounts are not created automatically on this instance")
+
+// ErrOIDCDomainNotAllowed means the email domain is not on the instance's allow list for new accounts.
+var ErrOIDCDomainNotAllowed = errors.New("this email domain may not create an account on this instance")
+
+// oidcMaySignUp applies the instance's registration policy to a person with no account yet.
+// Existing accounts, including ones an administrator created, are never subject to it.
+func oidcMaySignUp(ctx context.Context, tx *sql.Tx, email string) error {
+	var auto bool
+	var joined string
+	if err := tx.QueryRowContext(ctx, `SELECT oidc_auto_provision,array_to_string(oidc_allowed_domains,',') FROM instance_settings WHERE singleton=TRUE`).Scan(&auto, &joined); err != nil {
+		return err
+	}
+	if !auto {
+		return ErrOIDCSignupDisabled
+	}
+	return CheckEmailDomain(email, splitDomains(joined))
+}
+
+// CheckEmailDomain reports ErrOIDCDomainNotAllowed unless the allow list is empty or names the email's domain.
+func CheckEmailDomain(email string, allowed []string) error {
+	if len(allowed) == 0 {
+		return nil
+	}
+	at := strings.LastIndex(email, "@")
+	if at < 0 {
+		return ErrOIDCDomainNotAllowed
+	}
+	domain := strings.ToLower(email[at+1:])
+	for _, item := range allowed {
+		if domain == item {
+			return nil
+		}
+	}
+	return ErrOIDCDomainNotAllowed
+}
+
 func (s *Store) ResolveOIDCUser(ctx context.Context, providerID, subject, email, displayName string, groups []string) (User, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -322,6 +360,9 @@ func (s *Store) ResolveOIDCUser(ctx context.Context, providerID, subject, email,
 	if err == sql.ErrNoRows {
 		err = tx.QueryRowContext(ctx, `SELECT id,email,display_name,is_admin,created_at FROM users WHERE LOWER(email)=LOWER($1) AND disabled=FALSE AND deleted_at IS NULL`, email).Scan(&user.ID, &user.Email, &user.DisplayName, &user.IsAdmin, &user.CreatedAt)
 		if err == sql.ErrNoRows {
+			if err := oidcMaySignUp(ctx, tx, email); err != nil {
+				return User{}, err
+			}
 			user.ID = NewID()
 			user.Email = email
 			user.DisplayName = displayName

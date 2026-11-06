@@ -50,7 +50,11 @@ func TestIntegrationAuditCompliance(t *testing.T) {
 		handler(w, r)
 		return w
 	}
-	for _, user := range []string{"audit-owner", "audit-viewer"} {
+	// Exporting audit evidence is a workspace-owner capability; a viewer may read but not export.
+	if w := request(server.exportAudit, "audit-viewer", "/?workspaceId=audit-a&format=json", ""); w.Code != 403 {
+		t.Fatalf("a viewer exported audit evidence: %d %s", w.Code, w.Body)
+	}
+	for _, user := range []string{"audit-owner"} {
 		w := request(server.exportAudit, user, "/?workspaceId=audit-a&format=json", "")
 		if w.Code != 200 {
 			t.Fatalf("%s denied: %d %s", user, w.Code, w.Body)
@@ -88,8 +92,15 @@ func TestIntegrationAuditCompliance(t *testing.T) {
 	if w := request(server.exportAudit, "audit-outsider", "/?workspaceId=audit-a", ""); w.Code != 403 {
 		t.Fatalf("outsider allowed: %d", w.Code)
 	}
+	// A viewer reads deployment activity only: configuration events are not visible to them.
+	if w := request(server.listAudit, "audit-viewer", "/?workspaceId=audit-a&group=changes", ""); w.Code != 200 || strings.Contains(w.Body.String(), "workspace.updated") {
+		t.Fatalf("a viewer saw configuration events: %d %s", w.Code, w.Body)
+	}
+	if w := request(server.listAudit, "audit-viewer", "/?workspaceId=audit-a&group=deployments", ""); w.Code != 200 || !strings.Contains(w.Body.String(), "sync.succeeded") || strings.Contains(w.Body.String(), "workspace.updated") {
+		t.Fatalf("a viewer's deployment view is wrong: %d %s", w.Code, w.Body)
+	}
 	// Both list pagination and exports honor the same group, query and resource.
-	w := request(server.listAudit, "audit-viewer", "/?workspaceId=audit-a&group=changes&q=workspace", "")
+	w := request(server.listAudit, "audit-owner", "/?workspaceId=audit-a&group=changes&q=workspace", "")
 	var page struct {
 		Items   []store.AuditEvent `json:"items"`
 		HasMore bool               `json:"hasMore"`
@@ -101,11 +112,11 @@ func TestIntegrationAuditCompliance(t *testing.T) {
 		t.Fatalf("bad page: %s", w.Body)
 	}
 	before := page.Items[49].ID
-	w = request(server.listAudit, "audit-viewer", fmt.Sprintf("/?workspaceId=audit-a&before=%d", before), "")
+	w = request(server.listAudit, "audit-owner", fmt.Sprintf("/?workspaceId=audit-a&before=%d", before), "")
 	if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil || page.Items[0].ID >= before {
 		t.Fatalf("bad cursor: %s %v", w.Body, err)
 	}
-	w = request(server.exportAudit, "audit-viewer", "/?workspaceId=audit-a&group=deployments&resourceId=audit-app&format=csv", "")
+	w = request(server.exportAudit, "audit-owner", "/?workspaceId=audit-a&group=deployments&resourceId=audit-app&format=csv", "")
 	rows, err := csv.NewReader(w.Body).ReadAll()
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("filtered CSV %d %v %s", len(rows), err, w.Body)
@@ -117,7 +128,7 @@ func TestIntegrationAuditCompliance(t *testing.T) {
 	if err := db.DB.QueryRowContext(ctx, `SELECT id FROM audit_events WHERE action='sync.succeeded'`).Scan(&eventID); err != nil {
 		t.Fatal(err)
 	}
-	w = request(server.exportAudit, "audit-viewer", "/?workspaceId=audit-a&eventId="+strconv.FormatInt(eventID, 10), "")
+	w = request(server.exportAudit, "audit-owner", "/?workspaceId=audit-a&eventId="+strconv.FormatInt(eventID, 10), "")
 	var single struct {
 		Items []store.AuditEvent `json:"items"`
 	}
@@ -128,7 +139,7 @@ func TestIntegrationAuditCompliance(t *testing.T) {
 	if _, err := db.DB.ExecContext(ctx, `DELETE FROM applications WHERE id='audit-app'`); err != nil {
 		t.Fatal(err)
 	}
-	e, err := db.AuditEventByID(ctx, eventID)
+	e, err := db.AuditEventByID(ctx, eventID, nil)
 	if err != nil || !strings.Contains(string(e.DeploymentRecord), "digest-123") || e.WorkspaceID != "audit-a" {
 		t.Fatalf("lost deleted application evidence: %+v %v", e, err)
 	}
@@ -136,7 +147,7 @@ func TestIntegrationAuditCompliance(t *testing.T) {
 	if err := db.DeleteAdminUser(ctx, "audit-deleted"); err != nil {
 		t.Fatal(err)
 	}
-	w = request(server.exportAudit, "audit-viewer", "/?workspaceId=audit-a&actorId=audit-deleted", "")
+	w = request(server.exportAudit, "audit-owner", "/?workspaceId=audit-a&actorId=audit-deleted", "")
 	if strings.Contains(w.Body.String(), "Former Name") || !strings.Contains(w.Body.String(), "Deleted user") || !strings.Contains(w.Body.String(), "audit-deleted") {
 		t.Fatalf("actor history: %s", w.Body)
 	}

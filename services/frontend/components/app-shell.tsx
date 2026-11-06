@@ -40,6 +40,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [workspacesLoading, setWorkspacesLoading] = useState(true)
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("")
+  // Instance policy: set false when only administrators may create workspaces and this user is not one.
+  const [canCreateWorkspace, setCanCreateWorkspace] = useState(true)
   const [routeApplication, setRouteApplication] = useState<Application | null>(null)
   const [onboardingIncomplete, setOnboardingIncomplete] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
@@ -73,9 +75,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let active = true
-    api<{ user: User }>("/api/v1/auth/session")
+    api<{ user: User; canCreateWorkspace?: boolean }>("/api/v1/auth/session")
       .then((response) => {
-        if (active) setUser(response.user)
+        if (!active) return
+        setUser(response.user)
+        setCanCreateWorkspace(response.canCreateWorkspace !== false)
       })
       .catch((cause) => {
         if (!active) return
@@ -227,7 +231,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </Link>
           {!collapsed && <CommandPaletteButton onClick={() => setPaletteOpen(true)} />}
         </div>
-        <WorkspaceSelector workspaces={workspaces} selectedId={selectedWorkspaceId} onChange={selectWorkspace} loading={workspacesLoading} collapsed={collapsed} />
+        <WorkspaceSelector workspaces={workspaces} selectedId={selectedWorkspaceId} onChange={selectWorkspace} loading={workspacesLoading} collapsed={collapsed} canCreate={canCreateWorkspace} />
         {collapsed && <div className="mb-3 flex justify-center"><CommandPaletteButton collapsed onClick={() => setPaletteOpen(true)} /></div>}
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-5">
           <NavGroup label="Delivery" items={delivery} pathname={pathname} first collapsed={collapsed} />
@@ -252,7 +256,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <AccountMenu user={user} onSignOut={signOut} collapsed={collapsed} />
       </aside>
 
-      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} isAdmin={user.isAdmin} workspaces={workspaces} workspaceId={selectedWorkspaceId} onSelectWorkspace={selectWorkspace} onToggleSidebar={toggleSidebar} onboardingIncomplete={onboardingIncomplete} />
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} isAdmin={user.isAdmin} canCreateWorkspace={canCreateWorkspace} workspaces={workspaces} workspaceId={selectedWorkspaceId} onSelectWorkspace={selectWorkspace} onToggleSidebar={toggleSidebar} onboardingIncomplete={onboardingIncomplete} />
 
       <div className={`${collapsed ? "lg:pl-[96px]" : "lg:pl-[248px]"} transition-[padding] duration-200 motion-reduce:transition-none`}>
         <header className="flex h-14 items-center justify-between gap-4 px-5 sm:px-8 lg:hidden">
@@ -263,7 +267,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-1"><CommandPaletteButton compact onClick={() => setPaletteOpen(true)} /><DocumentationLink compact /><AccountMenu user={user} onSignOut={signOut} compact /></div>
         </header>
         <div className="mx-4 mb-2 lg:hidden">
-          <WorkspaceSelector workspaces={workspaces} selectedId={selectedWorkspaceId} onChange={selectWorkspace} compact loading={workspacesLoading} />
+          <WorkspaceSelector workspaces={workspaces} selectedId={selectedWorkspaceId} onChange={selectWorkspace} compact loading={workspacesLoading} canCreate={canCreateWorkspace} />
           {selectedWorkspaceId && <div className="grid grid-cols-2 gap-2">
             {workspaceNavigation.map((item) => <Link key={item.href} className={buttonVariants({ variant: isNavSelected(item.href, pathname) ? "secondary" : "outline", className: "min-w-0 h-auto justify-start py-2 text-left" })} aria-current={isNavSelected(item.href, pathname) ? "page" : undefined} href={item.href}>
               <HugeiconsIcon icon={item.icon} className="size-4" aria-hidden="true" /><span className="min-w-0 whitespace-normal">{item.label}</span>
@@ -287,7 +291,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </li>)}
             </ol>
           </nav>}
-          <WorkspaceSelectionProvider value={{ isAdmin: user.isAdmin, workspaces, workspaceId: selectedWorkspaceId, workspace: workspaces.find((item) => item.id === selectedWorkspaceId) ?? null, selectWorkspace }}>
+          <WorkspaceSelectionProvider value={{ isAdmin: user.isAdmin, canCreateWorkspace, workspaces, workspaceId: selectedWorkspaceId, workspace: workspaces.find((item) => item.id === selectedWorkspaceId) ?? null, selectWorkspace }}>
             {children}
           </WorkspaceSelectionProvider>
         </main>
@@ -303,6 +307,7 @@ function WorkspaceSelector({
   loading = false,
   compact = false,
   collapsed = false,
+  canCreate = true,
 }: {
   workspaces: Workspace[]
   selectedId: string
@@ -310,12 +315,17 @@ function WorkspaceSelector({
   loading?: boolean
   compact?: boolean
   collapsed?: boolean
+  canCreate?: boolean
 }) {
   const router = useRouter()
   if (loading && collapsed) return <div role="status" className="mx-auto mb-4 size-10 animate-pulse rounded-lg border bg-muted/40 motion-reduce:animate-none" />
+  if (!loading && !workspaces.length && collapsed && !canCreate) return <span role="note" aria-label="No workspaces yet" title="Ask an administrator to add you to a workspace" className="mx-auto mb-4 grid size-10 place-items-center rounded-lg border border-dashed text-muted-foreground">?</span>
   if (!loading && !workspaces.length && collapsed) return <Link href="/workspaces/new" aria-label="Create a workspace" title="Create a workspace" className="mx-auto mb-4 grid size-10 place-items-center rounded-lg border border-dashed text-primary hover:bg-muted/40"><HugeiconsIcon icon={Add01Icon} strokeWidth={1.8} className="size-4" aria-hidden="true" /></Link>
   if (loading) {
     return <div role="status" className={`mx-3 mb-4 h-10 animate-pulse rounded-lg border bg-muted/40 motion-reduce:animate-none ${compact ? "mx-0" : ""}`} />
+  }
+  if (!workspaces.length && !canCreate) {
+    return <p role="note" className={`mx-3 mb-4 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground ${compact ? "mx-0" : ""}`}>No workspaces yet. Ask an administrator to add you to one.</p>
   }
   if (!workspaces.length) {
     return <Link href="/workspaces/new" className={`mx-3 mb-4 flex h-10 items-center justify-between rounded-lg border border-dashed px-3 text-xs font-medium text-primary hover:bg-muted/40 ${compact ? "mx-0" : ""}`}>Create a workspace <HugeiconsIcon icon={Add01Icon} strokeWidth={1.8} className="size-4" aria-hidden="true" /></Link>
@@ -345,7 +355,7 @@ function WorkspaceSelector({
         </Select.Group>
         <Select.Separator />
         <Select.Item value="__settings" icon={<HugeiconsIcon icon={Settings02Icon} aria-hidden="true" />}>Workspace settings</Select.Item>
-        <Select.Item value="__new" icon={<HugeiconsIcon icon={Add01Icon} aria-hidden="true" />}>New workspace</Select.Item>
+        {canCreate && <Select.Item value="__new" icon={<HugeiconsIcon icon={Add01Icon} aria-hidden="true" />}>New workspace</Select.Item>}
       </Select.Content>
     </Select>
   )
@@ -416,7 +426,7 @@ function pageCrumbs(pathname: string, workspace: Workspace | null, application: 
   }
   if (parts[0] === "settings" && parts[1] === "security") return [{ label: "Account security" }]
   if (parts[0] === "settings") {
-    const section = { "git-sources": "Git sources", clusters: "Clusters", namespaces: "Namespace access", credentials: "Credentials", ai: "AI", oidc: "OIDC providers", users: "Local users" }[parts[1] as "git-sources"]
+    const section = { "git-sources": "Git sources", clusters: "Clusters", namespaces: "Namespace access", credentials: "Credentials", ai: "AI", maintenance: "Maintenance", access: "Sign-in & access", oidc: "OIDC providers", users: "Platform users" }[parts[1] as "git-sources"]
     return parts[1] ? [{ label: "Instance settings", href: "/settings" }, { label: section ?? "Section" }] : [{ label: "Instance settings" }]
   }
   if (parts[0] === "onboarding") return [{ label: "Get started" }]

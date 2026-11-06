@@ -3,7 +3,9 @@ import { useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { FormField, Panel, PageHeading } from "@/components/ui-kit"
+import { FormField } from "@/components/ui-kit"
+import { ScopeBadge, SettingsLayout } from "@/components/settings/layout"
+import { SettingsPanel } from "@/components/settings/settings-section"
 import { api, apiPost, errorMessage } from "@/lib/api"
 type Session = {
   id: string
@@ -57,11 +59,11 @@ export function AccountSecurity() {
     }
   }
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
-      <PageHeading
-        title="Account security"
-        description="Manage your sign-in sessions and two-factor authentication."
-      />
+    <SettingsLayout
+      title="Account security"
+      description="Manage your sign-in sessions and two-factor authentication."
+      scope={<ScopeBadge scope="account" />}
+    >
       {error && (
         <p role="alert" className="text-sm text-destructive">
           {error}
@@ -79,7 +81,7 @@ export function AccountSecurity() {
           {notice}
         </p>
       )}
-      <Panel
+      <SettingsPanel
         title="Active sessions"
         description="Revoking a session signs that device out."
       >
@@ -124,8 +126,8 @@ export function AccountSecurity() {
             </div>
           ))}
         </div>
-      </Panel>
-      <Panel
+      </SettingsPanel>
+      <SettingsPanel
         title="Two-factor authentication"
         description="Use an authenticator app and keep recovery codes somewhere safe."
       >
@@ -276,7 +278,7 @@ export function AccountSecurity() {
             </>
           )}
         </div>
-      </Panel>
-    </div>
+      </SettingsPanel>
+    </SettingsLayout>
   )
 }

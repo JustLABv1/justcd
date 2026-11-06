@@ -6,10 +6,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Checkbox } from "@/components/ui/checkbox"
-import { FormField, Panel } from "@/components/ui-kit"
+import { FormField } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
 import { SectionSkeleton } from "./shared"
+import { SettingsPanel } from "@/components/settings/settings-section"
 
 type Settings = {
   enabled: boolean
@@ -94,7 +95,7 @@ export function AIPanel() {
     setDirty(true)
   }
   return (
-    <Panel
+    <SettingsPanel
       title="AI connection"
       description="Connect your own LiteLLM instance or an OpenAI-compatible gateway."
     >
@@ -219,7 +220,7 @@ export function AIPanel() {
           </Button>
         </div>
       </form>
-    </Panel>
+    </SettingsPanel>
   )
 }
 
@@ -264,7 +265,7 @@ export function WorkspaceAIPolicy({ workspaceId }: { workspaceId: string }) {
     }
   }
   return (
-    <Panel
+    <SettingsPanel
       title="Workspace AI access"
       description="Choose whether workspace members can send deployment context to the instance AI connection."
     >
@@ -335,6 +336,6 @@ export function WorkspaceAIPolicy({ workspaceId }: { workspaceId: string }) {
           </>
         )}
       </div>
-    </Panel>
+    </SettingsPanel>
   )
 }

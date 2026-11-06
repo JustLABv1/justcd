@@ -7,6 +7,8 @@ publicUrl: ""
 docsUrl: ""
 cookieSecure: true
 sessionLifetime: 12h
+# Recovery only: keeps password sign-in available even if an administrator turned it off in the UI.
+forceLocalLogin: false
 
 imagePullSecrets: []
 

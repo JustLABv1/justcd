@@ -343,18 +343,25 @@ func observedHealthSummary(object unstructured.Unstructured) apphealth.ResourceD
 			details.CurrentInstances = nestedInt64(object.Object, "status", "instances")
 		}
 	case "Deployment", "StatefulSet":
+		details.Containers = templateContainers(object.Object, "spec", "template", "spec")
 		details.DesiredReplicas = nestedInt64(object.Object, "spec", "replicas")
 		details.ReadyReplicas = nestedInt64(object.Object, "status", "readyReplicas")
 		details.UpdatedReplicas = nestedInt64(object.Object, "status", "updatedReplicas")
 		details.AvailableReplicas = nestedInt64(object.Object, "status", "availableReplicas")
 	case "DaemonSet":
+		details.Containers = templateContainers(object.Object, "spec", "template", "spec")
 		details.DesiredScheduled = nestedInt64(object.Object, "status", "desiredNumberScheduled")
 		details.NumberScheduled = nestedInt64(object.Object, "status", "currentNumberScheduled")
 		details.UpdatedScheduled = nestedInt64(object.Object, "status", "updatedNumberScheduled")
 		details.NumberReady = nestedInt64(object.Object, "status", "numberReady")
 		details.NumberAvailable = nestedInt64(object.Object, "status", "numberAvailable")
 		details.NumberMisscheduled = nestedInt64(object.Object, "status", "numberMisscheduled")
+	case "ReplicaSet":
+		details.Containers = templateContainers(object.Object, "spec", "template", "spec")
+	case "CronJob":
+		details.Containers = templateContainers(object.Object, "spec", "jobTemplate", "spec", "template", "spec")
 	case "Job":
+		details.Containers = templateContainers(object.Object, "spec", "template", "spec")
 		details.Completions = nestedInt64(object.Object, "spec", "completions")
 		details.Active = nestedInt64(object.Object, "status", "active")
 		details.Succeeded = nestedInt64(object.Object, "status", "succeeded")
@@ -365,6 +372,7 @@ func observedHealthSummary(object unstructured.Unstructured) apphealth.ResourceD
 		details.Terminating = object.GetDeletionTimestamp() != nil
 		containers, _, _ := unstructured.NestedSlice(object.Object, "spec", "containers")
 		details.TotalContainers = len(containers)
+		details.Containers = podContainers(object.Object)
 		for _, field := range []string{"initContainerStatuses", "containerStatuses"} {
 			statuses, _, _ := unstructured.NestedSlice(object.Object, "status", field)
 			for _, raw := range statuses {
@@ -385,6 +393,56 @@ func observedHealthSummary(object unstructured.Unstructured) apphealth.ResourceD
 		}
 	}
 	return details
+}
+
+const maxContainers = 32
+
+// templateContainers lists the images a workload's pod template asks for.
+func templateContainers(object map[string]any, podSpecPath ...string) []apphealth.ContainerDetails {
+	var result []apphealth.ContainerDetails
+	for _, field := range []string{"initContainers", "containers"} {
+		items, _, _ := unstructured.NestedSlice(object, append(append([]string{}, podSpecPath...), field)...)
+		for _, raw := range items {
+			spec, ok := raw.(map[string]any)
+			if !ok || len(result) >= maxContainers {
+				continue
+			}
+			name, _ := spec["name"].(string)
+			image, _ := spec["image"].(string)
+			result = append(result, apphealth.ContainerDetails{Name: boundedStatusText(name, 128), Image: boundedStatusText(image, 512), Init: field == "initContainers"})
+		}
+	}
+	return result
+}
+
+// podContainers joins each container's declared image with its observed status.
+func podContainers(object map[string]any) []apphealth.ContainerDetails {
+	result := templateContainers(object, "spec")
+	for _, field := range []string{"initContainerStatuses", "containerStatuses"} {
+		statuses, _, _ := unstructured.NestedSlice(object, "status", field)
+		for _, raw := range statuses {
+			status, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, _ := status["name"].(string)
+			for i := range result {
+				if result[i].Name != boundedStatusText(name, 128) || result[i].Init != (field == "initContainerStatuses") {
+					continue
+				}
+				result[i].Ready, _, _ = unstructured.NestedBool(status, "ready")
+				result[i].RestartCount, _, _ = unstructured.NestedInt64(status, "restartCount")
+				for _, state := range []string{"running", "waiting", "terminated"} {
+					if _, found, _ := unstructured.NestedMap(status, "state", state); found {
+						result[i].State = state
+						reason, _, _ := unstructured.NestedString(status, "state", state, "reason")
+						result[i].Reason = boundedStatusText(reason, 256)
+					}
+				}
+			}
+		}
+	}
+	return result
 }
 
 func nestedInt64(object map[string]any, fields ...string) *int64 {

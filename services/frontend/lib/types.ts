@@ -3,6 +3,8 @@ export type User = {
   email: string
   displayName: string
   isAdmin: boolean
+  /** False for a self-registered account an administrator has not approved yet. */
+  emailVerified?: boolean
   disabled: boolean
   deletedAt?: string
   createdAt: string
@@ -82,12 +84,28 @@ export type OnboardingStep = {
   docsHref?: string
 }
 
+export type OnboardingClusterState = "online" | "waiting" | "offline" | "revoked" | "not_enrolled" | "verified" | "partial" | "unverified" | "failed"
+export type OnboardingCluster = {
+  id: string
+  name: string
+  mode: "agent" | "direct"
+  state: OnboardingClusterState
+  message?: string
+  lastSeenAt?: string
+}
+
 export type OnboardingStatus = {
+  /** Workspace-scoped goals of the guided setup. */
   steps: OnboardingStep[]
   completed: number
   total: number
   nextStepId?: string
+  workspaceId?: string
   firstWorkspaceId?: string
+  clusters: OnboardingCluster[]
+  /** Instance-wide operator checks; they never block the guided steps. */
+  system: OnboardingStep[]
+  systemAttention: number
 }
 
 export type KubernetesPermissionCheck = {
@@ -302,7 +320,18 @@ export type Application = {
 
 export type ApplicationHealthStatus = "Healthy" | "Progressing" | "Degraded" | "Suspended" | "Missing" | "Unknown" | "Partial"
 export type KubernetesCondition = { type: string; status: string; reason?: string; message?: string; lastTransitionTime?: string; observedGeneration?: number }
+export type ContainerDetails = {
+  name: string
+  image: string
+  init?: boolean
+  ready?: boolean
+  restartCount?: number
+  /** running, waiting or terminated; only reported for pods. */
+  state?: string
+  reason?: string
+}
 export type ResourceHealthSummary = {
+  containers?: ContainerDetails[]
   waitingReason?: string
   terminating?: boolean
   restartCount?: number

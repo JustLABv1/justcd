@@ -20,6 +20,9 @@ type Config struct {
 	PublicURL           string
 	SessionCookieSecure bool
 	SessionLifetime     time.Duration
+	// ForceLocalLogin keeps password sign-in available whatever the instance setting says. It is the
+	// recovery path if single sign-on breaks after password sign-in was turned off.
+	ForceLocalLogin     bool
 	ShutdownGracePeriod time.Duration
 	FrontendURL         string
 	Observability       Observability
@@ -66,6 +69,10 @@ func Load() (Config, error) {
 		return Config{}, errors.New("JUSTCD_SESSION_LIFETIME must be between one minute and seven days")
 	}
 	cfg.SessionLifetime = lifetime
+	cfg.ForceLocalLogin, err = boolValue("JUSTCD_FORCE_LOCAL_LOGIN", false)
+	if err != nil {
+		return Config{}, err
+	}
 	cfg.ShutdownGracePeriod, err = time.ParseDuration(value("JUSTCD_SHUTDOWN_GRACE_PERIOD", "30s"))
 	if err != nil || cfg.ShutdownGracePeriod < time.Second || cfg.ShutdownGracePeriod > 10*time.Minute {
 		return Config{}, errors.New("JUSTCD_SHUTDOWN_GRACE_PERIOD must be between one second and ten minutes")

@@ -28,6 +28,7 @@ import {
   valueText,
   words,
   type AuditEvent,
+  type AuditTarget,
   type DeploymentEvidence,
 } from "@/lib/audit"
 
@@ -55,7 +56,7 @@ function Facts({ values }: { values: [string, unknown][] }) {
   )
 }
 
-function DeploymentDetails({ evidence }: { evidence: DeploymentEvidence }) {
+function DeploymentDetails({ evidence, where }: { evidence: DeploymentEvidence; where?: AuditTarget[] }) {
   return (
     <div className="space-y-8">
       <p className="text-sm leading-6 text-muted-foreground">
@@ -83,6 +84,7 @@ function DeploymentDetails({ evidence }: { evidence: DeploymentEvidence }) {
           <div key={index} className="rounded-lg border p-4">
             <Facts
               values={[
+                ["Cluster", where?.find((item) => item.clusterId === target.clusterId)?.clusterName || target.clusterId],
                 ["Cluster ID", target.clusterId],
                 [
                   "Namespace",
@@ -342,7 +344,12 @@ export function AuditDetailPanel({
                         ],
                         ["Resource type", event.resourceType],
                         ["Resource ID", event.resourceId],
+                        ["Workspace", event.workspaceName || (event.workspaceId ? event.workspaceId : "Instance")],
                         ["Workspace ID", event.workspaceId || "Instance"],
+                        ...(event.where ?? []).flatMap((target, index): [string, unknown][] => [
+                          [`Cluster${event.where!.length > 1 ? ` ${index + 1}` : ""}`, target.clusterName || target.clusterId],
+                          ...(target.namespace ? [[`Namespace${event.where!.length > 1 ? ` ${index + 1}` : ""}`, target.namespace] as [string, unknown]] : []),
+                        ]),
                       ]}
                     />
                     {event.resourceType === "application" && (
@@ -392,7 +399,7 @@ export function AuditDetailPanel({
                 </TabsContent>
                 <TabsContent value="deployment">
                   {event.deploymentRecord && (
-                    <DeploymentDetails evidence={event.deploymentRecord} />
+                    <DeploymentDetails evidence={event.deploymentRecord} where={event.where} />
                   )}
                 </TabsContent>
                 <TabsContent value="raw">

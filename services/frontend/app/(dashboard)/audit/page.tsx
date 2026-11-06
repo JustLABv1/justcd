@@ -1,14 +1,20 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { Suspense, useEffect, useMemo, useRef, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
-  ArrowRight01Icon,
   Download01Icon,
   Refresh01Icon,
 } from "@hugeicons/core-free-icons"
 import { Badge } from "@/components/reui/badge"
 import { AuditDetailPanel } from "@/components/audit-detail-panel"
+import { AuditColumnHeader, AuditRow } from "@/components/audit-row"
+import { auditFilterFields } from "@/components/audit-filter-fields"
+import { Filters } from "@/components/reui/filters/filters"
+import { createFilterQuery } from "@/components/reui/filters/filters-query"
+import type { FilterQuery } from "@/components/reui/filters/filters-types"
+import { serializeAuditFilter } from "@/lib/audit-filter"
 import { Button } from "@/components/ui/button"
 import { FormSelect } from "@/components/ui/form-select"
 import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
@@ -21,11 +27,7 @@ import { useToast } from "@/components/toast-provider"
 import { api } from "@/lib/api"
 import { useWorkspaceSelection } from "@/hooks/workspace-selection"
 import {
-  actionLabel,
-  actorLabel,
-  dateLabel,
-  eventStatus,
-  words,
+  type AuditAccess,
   type AuditEvent,
   type AuditResponse,
   type EventFilter,
@@ -39,6 +41,14 @@ const filters: { id: EventFilter; label: string }[] = [
 ]
 
 export default function AuditPage() {
+  return (
+    <Suspense fallback={null}>
+      <AuditPageContent />
+    </Suspense>
+  )
+}
+
+function AuditPageContent() {
   const toast = useToast()
   const { isAdmin, workspaces, workspaceId } = useWorkspaceSelection()
   const [events, setEvents] = useState<AuditEvent[]>([])
@@ -47,9 +57,14 @@ export default function AuditPage() {
   const [query, setQuery] = useState("")
   const [search, setSearch] = useState("")
   const [workspaceChoice, setWorkspace] = useState<string | null>(null)
-  const workspace = workspaceChoice ?? (isAdmin ? "" : workspaceId)
+  const requestedWorkspace = useSearchParams().get("workspaceId") ?? ""
+  const workspace = workspaceChoice ?? (workspaces.some((item) => item.id === requestedWorkspace) ? requestedWorkspace : isAdmin ? "" : workspaceId)
   const [resource, setResource] = useState("")
+  const [conditions, setConditions] = useState<FilterQuery>(() => createFilterQuery())
+  const advanced = serializeAuditFilter(conditions)
+  const filterFields = useMemo(() => auditFilterFields(workspaces), [workspaces])
   const [hasMore, setHasMore] = useState(false)
+  const [access, setAccess] = useState<AuditAccess | null>(null)
   const [loadedKey, setLoadedKey] = useState("")
   const pagination = useRef<AbortController | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -59,10 +74,13 @@ export default function AuditPage() {
   const [retention, setRetention] = useState("0")
   const [saving, setSaving] = useState(false)
   const [retentionLoading, setRetentionLoading] = useState(false)
-  const params = new URLSearchParams({ group: filter })
+  const visibleFilters = filters.filter((item) => item.id === "all" || !access || access.groups.includes(item.id))
+  const tabAllowed = visibleFilters.some((item) => item.id === filter)
+  const params = new URLSearchParams({ group: tabAllowed ? filter : "all" })
   if (search) params.set("q", search)
   if (workspace) params.set("workspaceId", workspace)
   if (resource) params.set("resourceId", resource)
+  if (advanced) params.set("filter", advanced)
   const filterKey = params.toString()
   const requestKey = `${filterKey}|${version}`
   const scopeAvailable = isAdmin || !!workspace
@@ -95,6 +113,7 @@ export default function AuditPage() {
         setError(null)
         setEvents(result.items)
         setHasMore(result.hasMore)
+        if (result.access) setAccess(result.access)
       })
       .catch((cause) => {
         if (!controller.signal.aborted) {
@@ -186,6 +205,8 @@ export default function AuditPage() {
               <HugeiconsIcon icon={Refresh01Icon} />
               Refresh
             </Button>
+            {access?.canExport !== false && (
+              <>
             <Button
               variant="outline"
               disabled={loading || !scopeAvailable}
@@ -211,14 +232,23 @@ export default function AuditPage() {
               <HugeiconsIcon icon={Download01Icon} />
               Export JSON
             </Button>
+              </>
+            )}
           </>
         }
       />
       {error !== null && <ErrorNotice error={error} />}
-      <div className="mb-4 space-y-4 rounded-xl border bg-card p-4 sm:p-5">
+      {access?.scope === "workspace" && access.role !== "owner" && (
+        <p role="note" className="mb-4 rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+          {access.role === "deployer"
+            ? "As a deployer you see deployment and configuration activity. Workspace owners also see access and security events and can export audit evidence."
+            : "As a viewer you see deployment activity. Workspace owners and deployers can see more, and owners can export audit evidence."}
+        </p>
+      )}
+      <div className="mb-4 space-y-3 rounded-xl border bg-card p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <ToggleGroup
-            value={[filter]}
+            value={[tabAllowed ? filter : "all"]}
             onValueChange={(next) => {
               if (next[0]) setFilter(next[0] as EventFilter)
             }}
@@ -226,7 +256,7 @@ export default function AuditPage() {
             className="flex-wrap"
             disabled={loadingMore}
           >
-            {filters.map((item) => (
+            {visibleFilters.map((item) => (
               <ToggleGroupItem key={item.id} value={item.id}>
                 {item.label}
               </ToggleGroupItem>
@@ -242,46 +272,44 @@ export default function AuditPage() {
             onChange={(event) => setQuery(event.target.value)}
           />
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-            <div className="w-full sm:w-64">
-              <FormSelect
-                value={workspace}
-                onValueChange={setWorkspace}
-                items={workspaces.map((item) => ({
-                  value: item.id,
-                  label: item.name,
-                }))}
-                emptyOption={
-                  isAdmin ? "All workspaces (administrators)" : undefined
-                }
-                ariaLabel="Audit workspace"
-                disabled={loadingMore}
-              />
-            </div>
-            {workspace &&
-              (isAdmin ||
-                workspaces.find((item) => item.id === workspace)?.role ===
-                  "owner") && (
-                <Button variant="ghost" onClick={() => void openRetention()}>
-                  Retention settings
-                </Button>
-              )}
-            {resource && (
-              <Button
-                variant="outline"
-                disabled={loadingMore}
-                onClick={() => setResource("")}
-              >
-                Clear resource filter
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="w-full sm:w-60">
+            <FormSelect
+              value={workspace}
+              onValueChange={setWorkspace}
+              items={workspaces.map((item) => ({
+                value: item.id,
+                label: item.name,
+              }))}
+              emptyOption={
+                isAdmin ? "All workspaces" : undefined
+              }
+              ariaLabel="Audit workspace"
+              disabled={loadingMore}
+            />
+          </div>
+          <Filters variant="advanced" advancedMode="popover" advancedAlign="start" fields={filterFields} query={conditions} onQueryChange={setConditions} size="sm" disabled={loadingMore} />
+          {workspace &&
+            (isAdmin ||
+              workspaces.find((item) => item.id === workspace)?.role ===
+                "owner") && (
+              <Button variant="ghost" onClick={() => void openRetention()}>
+                Retention settings
               </Button>
             )}
-          </div>
-          <p className="text-xs text-muted-foreground">
+          {resource && (
+            <Button
+              variant="outline"
+              disabled={loadingMore}
+              onClick={() => setResource("")}
+            >
+              Clear resource filter
+            </Button>
+          )}
+          <p className="ml-auto text-xs text-muted-foreground">
             {loading
               ? "Loading…"
-              : `${events.length} events loaded${hasMore ? " · More available" : ""}`}{" "}
-            · Exports include all matches
+              : `${events.length} events loaded${hasMore ? " · More available" : ""}`}
           </p>
         </div>
       </div>
@@ -296,6 +324,7 @@ export default function AuditPage() {
             Newest first · Local time
           </span>
         </div>
+        <AuditColumnHeader />
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
           {loading ? (
             <div
@@ -312,66 +341,7 @@ export default function AuditPage() {
             </div>
           ) : events.length ? (
             <div className="divide-y">
-              {events.map((event) => {
-                const status = eventStatus(event.action)
-                return (
-                  <Button
-                    key={event.id}
-                    variant="ghost"
-                    onClick={() => setSelected(event)}
-                    aria-label={`View event ${event.id}: ${actionLabel(event.action)} by ${actorLabel(event)} at ${dateLabel(event.createdAt)}`}
-                    className="h-auto w-full justify-start gap-4 rounded-none px-5 py-4 text-left whitespace-normal sm:px-6"
-                  >
-                    <span
-                      className="grid size-9 shrink-0 place-items-center rounded-full border bg-muted/30 font-mono text-xs text-muted-foreground"
-                      aria-hidden="true"
-                    >
-                      {actorLabel(event).slice(0, 2).toUpperCase()}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-medium">
-                          {actionLabel(event.action)}
-                        </span>
-                        {status && (
-                          <Badge variant={status.variant}>{status.label}</Badge>
-                        )}
-                      </span>
-                      <span className="mt-1.5 block truncate text-xs font-normal text-muted-foreground">
-                        {actorLabel(event)}
-                        <span className="mx-2">·</span>
-                        {event.resourceName || words(event.resourceType)}
-                        <span className="mx-2">·</span>
-                        <span className="font-mono">
-                          {event.resourceId || "Instance"}
-                        </span>
-                      </span>
-                      <span className="mt-1.5 block text-xs font-normal text-muted-foreground sm:hidden">
-                        <time dateTime={event.createdAt}>
-                          {dateLabel(event.createdAt)}
-                        </time>
-                      </span>
-                      {typeof event.details?.message === "string" && (
-                        <span className="mt-2 line-clamp-1 block text-xs font-normal text-muted-foreground">
-                          {event.details.message}
-                        </span>
-                      )}
-                    </span>
-                    <span className="hidden shrink-0 text-right text-xs font-normal text-muted-foreground sm:block">
-                      <time dateTime={event.createdAt}>
-                        {dateLabel(event.createdAt)}
-                      </time>
-                      <span className="mt-1.5 block font-mono">
-                        EVT-{event.id}
-                      </span>
-                    </span>
-                    <HugeiconsIcon
-                      icon={ArrowRight01Icon}
-                      className="size-4 shrink-0 text-muted-foreground"
-                    />
-                  </Button>
-                )
-              })}
+              {events.map((event) => <AuditRow key={event.id} event={event} showWorkspace={!workspace} onSelect={setSelected} />)}
             </div>
           ) : (
             <EmptyState

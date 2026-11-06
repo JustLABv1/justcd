@@ -8,11 +8,11 @@ import { IconStack } from "@/components/reui/icon-stack"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ErrorDetailsButton } from "@/components/error-details"
-import { Panel } from "@/components/ui-kit"
 import type { ActionItem } from "@/components/action-menu"
 import { useToast } from "@/components/toast-provider"
 import { apiDelete, errorMessage } from "@/lib/api"
 import type { Credential } from "@/lib/types"
+import { SettingsPanel } from "./settings-section"
 
 /**
  * Runs an async mutation, reports the outcome with a toast and resolves to
@@ -132,7 +132,7 @@ export function InventoryPanel({ title, description, count, action, toolbar, chi
   children: ReactNode
 }) {
   return (
-    <Panel
+    <SettingsPanel
       title={title}
       surface={surface}
       description={description}
@@ -146,7 +146,7 @@ export function InventoryPanel({ title, description, count, action, toolbar, chi
     >
       {toolbar && <div className="border-b px-5 py-3">{toolbar}</div>}
       {children}
-    </Panel>
+    </SettingsPanel>
   )
 }
 

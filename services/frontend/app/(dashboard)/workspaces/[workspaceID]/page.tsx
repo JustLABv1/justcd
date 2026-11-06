@@ -5,10 +5,9 @@ import { WorkspaceAIPolicy } from "@/components/settings/ai-panel"
 import Link from "next/link"
 import { useParams, useRouter, useSearchParams } from "next/navigation"
 import { Suspense, useEffect, useState } from "react"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { SectionSkeleton } from "@/components/settings/shared"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Delete02Icon, UserAdd01Icon } from "@hugeicons/core-free-icons"
+import { Audit01Icon, Delete02Icon, UserAdd01Icon } from "@hugeicons/core-free-icons"
 import { RowActions } from "@/components/action-menu"
 import { Badge } from "@/components/reui/badge"
 import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
@@ -18,7 +17,9 @@ import { Input } from "@/components/ui/input"
 import { PublishingProfiles } from "@/components/settings/publishing-profiles"
 import { WorkspaceSettings } from "@/components/workspace-settings"
 import { ErrorNotice } from "@/components/workspace-ui"
-import { EmptyState, FormField, PageHeading, Panel } from "@/components/ui-kit"
+import { EmptyState, FormField } from "@/components/ui-kit"
+import { ScopeBadge, SettingsLayout, SettingsNotice, type SettingsNavGroup } from "@/components/settings/layout"
+import { SettingsPanel } from "@/components/settings/settings-section"
 import { useToast } from "@/components/toast-provider"
 import { api, apiPost, errorMessage } from "@/lib/api"
 import type { ListResponse, Workspace, WorkspaceMember } from "@/lib/types"
@@ -55,12 +56,6 @@ function WorkspaceSettingsPage() {
       router.replace(workspace.role === "viewer" ? `/workspaces/${workspaceID}?tab=members` : `/workspaces/${workspaceID}/connections/git-sources`)
     }
   }, [requestedTab, workspace, workspaceID, loadedWorkspaceId, router])
-
-  function selectTab(value: string) {
-    const url = new URL(window.location.href)
-    url.searchParams.set("tab", value)
-    window.history.pushState(null, "", url)
-  }
 
   useEffect(() => {
     let active = true
@@ -122,22 +117,34 @@ function WorkspaceSettingsPage() {
   if (!workspace) return <EmptyState title="Workspace unavailable" description="Choose a workspace you have access to." href="/workspaces" action="View workspaces" />
 
   const roleItems = [{ value: "viewer", label: "Viewer" }, { value: "deployer", label: "Deployer" }, { value: "owner", label: "Owner" }]
-  return <>
-    <PageHeading title="Workspace settings" description={`Manage ${workspace.name} · ${workspace.description || "Members, deployment policies, and notifications."}`} />
-    {!isOwner && <p className="mb-5 text-sm text-muted-foreground">Workspace owners manage general settings, deployment policies, and notifications. You can view members and their roles here.</p>}
-    {deletionPlans.length > 0 && <div role="status" className="mb-5 rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm"><p className="font-medium">Deletion plans are ready for review.</p><p className="mt-1 text-sm text-muted-foreground">Approve and apply each application plan. Once all managed resources are gone, choose “Delete workspace” again to remove the workspace record.</p><ul className="mt-3 space-y-1">{deletionPlans.map((item) => <li key={item.applicationId}><Link href={`/applications/${item.applicationId}?tab=changes`} className="font-medium underline underline-offset-4">{item.applicationName} · {item.managedResources} resources</Link></li>)}</ul></div>}
-    <Tabs value={activeTab} onValueChange={(value) => selectTab(String(value))}>
-        <TabsList variant="line" aria-label="Workspace settings sections" layout="responsive" className="sticky top-0 z-10 bg-background">
-          {isOwner && <TabsTrigger value="general">General</TabsTrigger>}
-          <TabsTrigger value="ai">AI</TabsTrigger>
-          <TabsTrigger value="members">Members &amp; access <Badge size="xs" variant="secondary">{members.length}</Badge></TabsTrigger>
-          {isOwner && <TabsTrigger value="publishing">Publishing profiles</TabsTrigger>}
-          {isOwner && <TabsTrigger value="policies">Deployment policies</TabsTrigger>}
-          {isOwner && <TabsTrigger value="notifications">Notifications</TabsTrigger>}
-        </TabsList>
-      {isOwner && <TabsContent value="publishing"><PublishingProfiles key={workspaceID} workspaceId={workspaceID} /></TabsContent>}
-      <TabsContent value="ai" className="space-y-5">{isOwner && <WorkspaceAIPolicy key={workspaceID} workspaceId={workspaceID} />}<AIAssistant presentation="inline" key={`chat-${workspaceID}`} workspaceId={workspaceID} /></TabsContent>
-      <TabsContent value="members" className="min-w-0">
+  const navGroups: SettingsNavGroup[] = [
+    { label: "Workspace", items: [
+      ...(isOwner ? [{ id: "general", label: "General", href: `/workspaces/${workspaceID}?tab=general` }] : []),
+      { id: "members", label: "Members & access", href: `/workspaces/${workspaceID}?tab=members`, badge: <Badge size="xs" variant="secondary">{members.length}</Badge> },
+    ] },
+    ...(isOwner ? [{ label: "Delivery", items: [
+      { id: "publishing", label: "Publishing profiles", href: `/workspaces/${workspaceID}?tab=publishing` },
+      { id: "policies", label: "Deployment policies", href: `/workspaces/${workspaceID}?tab=policies` },
+      { id: "notifications", label: "Notifications", href: `/workspaces/${workspaceID}?tab=notifications` },
+    ] }] : []),
+    { label: "Assistant", items: [{ id: "ai", label: "AI", href: `/workspaces/${workspaceID}?tab=ai` }] },
+  ]
+
+  return <SettingsLayout
+    title="Workspace settings"
+    description={`Manage ${workspace.name} · ${workspace.description || "Members, deployment policies, and notifications."}`}
+    scope={<ScopeBadge scope="workspace" name={workspace.name} />}
+    actions={<Button variant="outline" render={<Link href={`/audit?workspaceId=${encodeURIComponent(workspaceID)}`} />} nativeButton={false}><HugeiconsIcon icon={Audit01Icon} strokeWidth={1.8} aria-hidden="true" />Audit trail</Button>}
+    nav={navGroups}
+    activeId={activeTab}
+    navLabel="Workspace settings sections"
+  >
+      {!isOwner && <SettingsNotice>Workspace owners manage general settings, deployment policies, and notifications. You can view members and their roles here.</SettingsNotice>}
+    {deletionPlans.length > 0 && <div role="status" className="rounded-xl border border-warning/40 bg-warning/10 p-4 text-sm"><p className="font-medium">Deletion plans are ready for review.</p><p className="mt-1 text-sm text-muted-foreground">Approve and apply each application plan. Once all managed resources are gone, choose “Delete workspace” again to remove the workspace record.</p><ul className="mt-3 space-y-1">{deletionPlans.map((item) => <li key={item.applicationId}><Link href={`/applications/${item.applicationId}?tab=changes`} className="font-medium underline underline-offset-4">{item.applicationName} · {item.managedResources} resources</Link></li>)}</ul></div>}
+
+    {isOwner && activeTab === "publishing" && <PublishingProfiles key={workspaceID} workspaceId={workspaceID} />}
+    {activeTab === "ai" && <div className="space-y-6">{isOwner && <WorkspaceAIPolicy key={workspaceID} workspaceId={workspaceID} />}<AIAssistant presentation="inline" key={`chat-${workspaceID}`} workspaceId={workspaceID} /></div>}
+    {activeTab === "members" && <div className="min-w-0">
         <AppDialog open={memberOpen} onOpenChange={setMemberOpen} busy={memberBusy} size="md" title="Add member" description="Give a teammate access to this workspace.">
           <form className="space-y-4" onSubmit={addMember}>
             <FormField label="User email" htmlFor="member-email" hint="They must have signed in to JustCD at least once."><Input id="member-email" type="email" placeholder="teammate@example.com" value={memberEmail} onChange={(event) => setMemberEmail(event.target.value)} required /></FormField>
@@ -145,7 +152,7 @@ function WorkspaceSettingsPage() {
             <DialogFooter><DialogCancel disabled={memberBusy} /><Button type="submit" loading={memberBusy} loadingText="Adding member…">Add member</Button></DialogFooter>
           </form>
         </AppDialog>
-        <Panel title="Members" description="Users with access to this workspace" action={isOwner ? <Button size="sm" onClick={() => { setMemberEmail(""); setMemberRole("viewer"); setMemberOpen(true) }}><HugeiconsIcon icon={UserAdd01Icon} strokeWidth={1.8} aria-hidden="true" />Add member</Button> : undefined}>
+        <SettingsPanel title="Members" description="Users with access to this workspace" action={isOwner ? <Button size="sm" onClick={() => { setMemberEmail(""); setMemberRole("viewer"); setMemberOpen(true) }}><HugeiconsIcon icon={UserAdd01Icon} strokeWidth={1.8} aria-hidden="true" />Add member</Button> : undefined}>
           {members.length ? <ul className="divide-y">{members.map((member) => {
             const name = member.displayName || member.email
             return <li key={member.id} className="flex flex-wrap items-center gap-3 px-5 py-3">
@@ -159,11 +166,8 @@ function WorkspaceSettingsPage() {
                 : <span className="text-sm capitalize text-muted-foreground">{member.role}</span>}
             </li>
           })}</ul> : <EmptyState title="No additional members yet" description={isOwner ? "The workspace owner is the only member so far. Use “Add member” to invite a teammate." : "The workspace owner is the only member so far."} />}
-        </Panel>
-      </TabsContent>
-      {isOwner && (["general", "policies", "notifications"] as const).map((section) => <TabsContent key={section} value={section}>
-        <WorkspaceSettings key={`${workspace.id}:${section}`} workspace={workspace} members={members} section={section} onUpdated={setWorkspace} onDelete={deleteWorkspace} />
-      </TabsContent>)}
-    </Tabs>
-  </>
+        </SettingsPanel>
+      </div>}
+    {isOwner && (activeTab === "general" || activeTab === "policies" || activeTab === "notifications") && <WorkspaceSettings key={`${workspace.id}:${activeTab}`} workspace={workspace} members={members} section={activeTab} onUpdated={setWorkspace} onDelete={deleteWorkspace} />}
+  </SettingsLayout>
 }

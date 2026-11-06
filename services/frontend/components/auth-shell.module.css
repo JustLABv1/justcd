@@ -23,8 +23,6 @@
 .plane:nth-child(3) { background-color: color-mix(in srgb, var(--primary) 6%, var(--background)); }
 .content { position: relative; display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; padding: 36px 20px 90px; }
 .card { width: 100%; max-width: 440px; padding: 32px; border: 1px solid var(--border); border-radius: 20px; background: var(--card); box-shadow: 0 32px 100px -28px rgb(0 0 0 / .3), 0 4px 16px -8px rgb(0 0 0 / .12); }
-.cardMark { display: grid; place-items: center; width: 44px; height: 44px; margin: 0 auto 24px; color: var(--primary); background: color-mix(in srgb, var(--primary) 9%, var(--card)); border: 1px solid color-mix(in srgb, var(--primary) 18%, transparent); border-radius: 13px; }
-.cardMark svg { width: 23px; height: 23px; }
 .eyebrow { text-align: center; color: var(--primary); font-size: 10px; font-weight: 600; letter-spacing: .15em; text-transform: uppercase; }
 .title { margin-top: 8px; text-align: center; font-size: 26px; line-height: 1.25; font-weight: 600; letter-spacing: -.9px; text-wrap: balance; }
 .description { margin: 12px auto 0; text-align: center; font-size: 13px; line-height: 1.7; color: var(--muted-foreground); text-wrap: pretty; }

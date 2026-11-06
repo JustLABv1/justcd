@@ -8,7 +8,7 @@ import { ApprovalRuleEditor } from "@/components/approval-rule-editor"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
 import { DeploymentSchedulePanel } from "@/components/deployment-schedule"
 import { Badge } from "@/components/reui/badge"
-import { SettingsGroup, SettingsRow, SettingsSection } from "@/components/settings/settings-section"
+import { SettingsDangerZone, SettingsGroup, SettingsRow, SettingsSection } from "@/components/settings/settings-section"
 import { useToast } from "@/components/toast-provider"
 import { Button } from "@/components/ui/button"
 import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
@@ -107,16 +107,14 @@ export function WorkspaceSettings({ workspace, members, section, onUpdated, onDe
 
     {section === "notifications" && <NotificationSettings workspaceId={workspace.id} />}
 
-    {section === "general" && <SettingsSection title="Delete workspace" description="Permanently remove this workspace from JustCD.">
-      <SettingsGroup>
+    {section === "general" && <SettingsDangerZone description="Permanently remove this workspace from JustCD.">
         <SettingsRow label="Delete this workspace" description="Removes applications and workspace connections. This cannot be undone." action={
           <ConfirmDisclosure trigger="Delete workspace" title={`Delete ${workspace.name}?`} description="Choose what happens to resources managed by applications in this workspace. This cannot be undone in JustCD." confirmLabel="Delete workspace" onConfirm={() => onDelete(deletePolicy)}>
             <FormField label="Managed cluster resources" htmlFor="workspace-delete-policy"><FormSelect id="workspace-delete-policy" value={deletePolicy} onValueChange={setDeletePolicy} items={[{ value: "keep", label: "Keep resources in Kubernetes" }, { value: "delete", label: "Delete resources through reviewed plans" }]} /></FormField>
             {deletePolicy === "delete" && <p className="mt-2 text-sm text-muted-foreground">JustCD prepares deletion plans for each application with managed resources. The workspace is removed only after all plans have been approved, applied, and the inventory is empty.</p>}
           </ConfirmDisclosure>
         } />
-      </SettingsGroup>
-    </SettingsSection>}
+    </SettingsDangerZone>}
 
     <AppDialog open={profileOpen} onOpenChange={setProfileOpen} busy={profileBusy} size="md" title="Edit workspace details" description="Give your workspace a recognizable name and a short description.">
       <form className="space-y-4" onSubmit={saveProfile}>

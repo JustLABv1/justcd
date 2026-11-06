@@ -30,6 +30,19 @@ type KubernetesCondition struct {
 	LastTransitionTime *time.Time `json:"lastTransitionTime,omitempty"`
 }
 
+// ContainerDetails is the bounded, non-secret view of one container: its image
+// reference and runtime state, never its arguments, environment or mounts.
+type ContainerDetails struct {
+	Name         string `json:"name"`
+	Image        string `json:"image"`
+	Init         bool   `json:"init,omitempty"`
+	Ready        bool   `json:"ready,omitempty"`
+	RestartCount int64  `json:"restartCount,omitempty"`
+	// State is running, waiting or terminated; Reason is Kubernetes' own reason when it gives one.
+	State  string `json:"state,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
 // ResourceDetails contains only bounded, non-secret status fields copied from
 // Kubernetes. It intentionally does not retain the unstructured Status object.
 type ResourceDetails struct {
@@ -61,6 +74,7 @@ type ResourceDetails struct {
 	FailureReason            string                `json:"failureReason,omitempty"`
 	FailureMessage           string                `json:"failureMessage,omitempty"`
 	Conditions               []KubernetesCondition `json:"conditions,omitempty"`
+	Containers               []ContainerDetails    `json:"containers,omitempty"`
 }
 
 type Observation struct {

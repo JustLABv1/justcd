@@ -11,7 +11,6 @@ import {
   SettingsGroup,
   SettingsSection,
 } from "@/components/settings/settings-section"
-import { FramePanel } from "@/components/reui/frame"
 import { api, errorMessage } from "@/lib/api"
 import type { GuardrailPolicy, Plan } from "@/lib/types"
 
@@ -92,7 +91,7 @@ export function GuardrailPolicyPanel({ workspaceId }: { workspaceId: string }) {
       )}
       {config && (
         <SettingsGroup>
-          <FramePanel>
+          <div className="p-4 sm:p-5">
             <form
               onSubmit={save}
               className="space-y-4"
@@ -178,7 +177,7 @@ export function GuardrailPolicyPanel({ workspaceId }: { workspaceId: string }) {
                 )}
               </div>
             </form>
-          </FramePanel>
+          </div>
         </SettingsGroup>
       )}
     </SettingsSection>

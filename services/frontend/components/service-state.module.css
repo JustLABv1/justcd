@@ -42,6 +42,34 @@
 .signalRing { position: absolute; border: 1px solid color-mix(in oklch,var(--primary) 35%,transparent); border-radius: 50%; width: 170px; height: 170px; left: calc(50% - 85px); top: 67px; animation: signal 6s cubic-bezier(.2,0,.4,1) infinite; }
 .signalRing:nth-of-type(4) { animation-delay: -2s; }.signalRing:nth-of-type(5) { animation-delay: -4s; }
 .signalDot { position: absolute; width: 7px; height: 7px; border-radius: 50%; background: var(--primary); top: 62px; left: 90px; animation: blink 3s ease infinite; }
+.pass { position: absolute; width: 214px; height: 132px; left: calc(50% - 107px); top: 52px; padding: 16px; overflow: hidden; border: 1px solid color-mix(in oklch,var(--scene-accent) 40%,var(--border)); border-radius: 18px; background: linear-gradient(135deg,var(--card),color-mix(in oklch,var(--scene-accent) 9%,var(--card))); box-shadow: 0 14px 40px color-mix(in oklch,var(--scene-accent) 14%,transparent), 0 2px 10px color-mix(in oklch,var(--foreground) 8%,transparent); animation: float 6s cubic-bezier(.45,0,.55,1) infinite; }
+.passTop { display: flex; align-items: center; gap: 12px; }
+.passAvatar { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 50%; border: 1px solid color-mix(in oklch,var(--scene-accent) 45%,var(--border)); background: color-mix(in oklch,var(--scene-accent) 12%,var(--card)); color: var(--scene-accent); font-size: 14px; font-weight: 650; letter-spacing: .5px; }
+.passName { flex: 1; }
+.passName i, .passLines i { display: block; height: 4px; border-radius: 2px; background: var(--border); }
+.passName i:first-child { width: 78%; margin-bottom: 7px; background: color-mix(in oklch,var(--foreground) 22%,var(--border)); }
+.passName i:last-child { width: 52%; }
+.passStatus { width: 8px; height: 8px; border-radius: 50%; background: var(--warning); box-shadow: 0 0 0 4px color-mix(in oklch,var(--warning) 16%,transparent); animation: blink 2s ease infinite; }
+.passLines { margin-top: 22px; }
+.passLines i { margin-bottom: 9px; }
+.passLines i:nth-child(1) { width: 100%; }.passLines i:nth-child(2) { width: 82%; }.passLines i:nth-child(3) { width: 64%; }
+.passScan { position: absolute; left: 0; right: 0; top: 0; height: 36px; background: linear-gradient(180deg,transparent,color-mix(in oklch,var(--scene-accent) 24%,transparent) 70%,color-mix(in oklch,var(--scene-accent) 55%,transparent) 99%,transparent); animation: scan 3.6s cubic-bezier(.45,0,.55,1) infinite; }
+.passRing { position: absolute; border: 1px solid color-mix(in oklch,var(--scene-accent) 35%,transparent); border-radius: 26px; width: 214px; height: 132px; left: calc(50% - 107px); top: 52px; animation: passPulse 5s cubic-bezier(.2,0,.4,1) infinite; }
+.passRingTwo { animation-delay: -2.5s; }
+.rail { position: absolute; left: calc(50% - 150px); width: 300px; bottom: 44px; display: flex; justify-content: space-between; margin: 0; padding: 0; list-style: none; font: 9px var(--font-code); letter-spacing: 1.4px; text-transform: uppercase; color: var(--muted-foreground); }
+.rail::before { content: ""; position: absolute; left: 22px; right: 22px; top: 8px; height: 1px; background: linear-gradient(90deg,var(--scene-accent) 0 38%,var(--border) 62%); }
+.rail li { position: relative; display: flex; flex-direction: column; align-items: center; gap: 9px; width: 64px; }
+.rail li > span { display: grid; place-items: center; width: 17px; height: 17px; border-radius: 50%; border: 1px solid var(--border); background: var(--background); font-size: 9px; }
+.railDone { color: var(--foreground); }
+.railDone > span { background: var(--scene-accent) !important; border-color: var(--scene-accent) !important; color: var(--background); }
+.railActive { color: var(--foreground); }
+.railActive > span { border-color: var(--scene-accent) !important; box-shadow: 0 0 0 4px color-mix(in oklch,var(--scene-accent) 18%,transparent); animation: railPulse 2.4s ease infinite; }
+.railActive > span::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--scene-accent); }
+.account { margin-top: 12px; font-size: 12px; color: var(--muted-foreground); }
+.account strong { font-weight: 600; color: var(--foreground); }
+@keyframes scan { 0% { transform: translateY(-40px); } 100% { transform: translateY(140px); } }
+@keyframes passPulse { 0% { transform: scale(1); opacity: 0; } 15% { opacity: .6; } 100% { transform: scale(1.5); opacity: 0; } }
+@keyframes railPulse { 0%,100% { box-shadow: 0 0 0 3px color-mix(in oklch,var(--scene-accent) 12%,transparent); } 50% { box-shadow: 0 0 0 7px color-mix(in oklch,var(--scene-accent) 0%,transparent); } }
 @keyframes arrive { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 @keyframes float { 0%,100% { transform: translateY(-5px); } 50% { transform: translateY(5px); } }
 @keyframes satellite { 0%,100% { transform: translateY(0) rotate(-12deg); } 50% { transform: translateY(-14px) rotate(3deg); } }
@@ -50,4 +78,4 @@
 @keyframes blink { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
 @keyframes signal { 0% { transform: scale(.8); opacity: 0; } 15% { opacity: .7; } 100% { transform: scale(2); opacity: 0; } }
 @media (max-width: 480px) { .header { padding: 20px 24px; }.artwork { height: 285px; margin-bottom: 20px; }.footer { flex-direction: column; align-items: center; gap: 8px; }.copy h1 { letter-spacing: -1px; }.orbit { width: 290px; left: calc(50% - 145px); }.orbitTwo { width: 250px; left: calc(50% - 125px); }.satellite { right: 12px; }.content { padding-inline: 20px; } }
-@media (prefers-reduced-motion: reduce) { .scene *, .scene *::after { animation: none !important; }.signalRing { opacity: .35; }.signalRing:nth-of-type(4) { transform: scale(1.35); }.signalRing:nth-of-type(5) { transform: scale(1.7); } }
+@media (prefers-reduced-motion: reduce) { .scene *, .scene *::after { animation: none !important; }.signalRing { opacity: .35; }.passRing { opacity: .25; }.signalRing:nth-of-type(4) { transform: scale(1.35); }.signalRing:nth-of-type(5) { transform: scale(1.7); } }

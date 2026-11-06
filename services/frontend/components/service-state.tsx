@@ -8,7 +8,7 @@ import { LogoMark } from "@/components/logo"
 import { ThemePicker } from "@/components/theme-picker"
 import styles from "./service-state.module.css"
 
-export type ServiceState = "maintenance" | "not-found" | "offline"
+export type ServiceState = "maintenance" | "not-found" | "offline" | "pending-approval"
 
 const content = {
   maintenance: {
@@ -25,6 +25,13 @@ const content = {
       "We couldn’t find the page you’re looking for. The link may have changed, or the page may no longer exist.",
     caption: "Let’s get you back into orbit",
   },
+  "pending-approval": {
+    code: "Access pending",
+    title: "Awaiting approval.",
+    description:
+      "An instance administrator needs to approve your account. This page continues on its own as soon as they do.",
+    caption: "Reviewing your access",
+  },
   offline: {
     code: "Connection interrupted",
     title: "Waiting for a signal.",
@@ -34,7 +41,12 @@ const content = {
   },
 }
 
-function StateArtwork({ state }: { state: ServiceState }) {
+function initials(name: string) {
+  const parts = name.replace(/@.*$/, "").split(/[\s._-]+/).filter(Boolean)
+  return (parts.length > 1 ? parts[0][0] + parts[1][0] : (parts[0] ?? "?").slice(0, 2)).toUpperCase()
+}
+
+function StateArtwork({ state, account }: { state: ServiceState; account?: { name: string; email: string } }) {
   return (
     <div className={`${styles.artwork} ${styles[state]}`} aria-hidden="true">
       <div className={styles.halo} />
@@ -54,6 +66,42 @@ function StateArtwork({ state }: { state: ServiceState }) {
           <div className={styles.satellite}>
             <LogoMark className="size-7" />
           </div>
+        </>
+      ) : state === "pending-approval" ? (
+        <>
+          <div className={styles.passRing} />
+          <div className={`${styles.passRing} ${styles.passRingTwo}`} />
+          <div className={styles.pass}>
+            <div className={styles.passTop}>
+              <span className={styles.passAvatar}>{initials(account?.name ?? "")}</span>
+              <span className={styles.passName}>
+                <i />
+                <i />
+              </span>
+              <span className={styles.passStatus} />
+            </div>
+            <div className={styles.passLines}>
+              <i />
+              <i />
+              <i />
+            </div>
+            <span className={styles.passScan} />
+          </div>
+          <ol className={styles.rail}>
+            <li className={styles.railDone}>
+              <span>✓</span>
+              Requested
+            </li>
+            <li className={styles.railActive}>
+              <span />
+              In review
+            </li>
+            <li>
+              <span />
+              Access
+            </li>
+          </ol>
+          <div className={styles.coordinates}>ACCESS / IN REVIEW</div>
         </>
       ) : state === "maintenance" ? (
         <>
@@ -102,9 +150,17 @@ function StateArtwork({ state }: { state: ServiceState }) {
 export function ServiceStatePage({
   state,
   onRecover,
+  account,
+  recheck,
+  onSignOut,
 }: {
   state: ServiceState
   onRecover?: () => void
+  /** Pending approval only: who is waiting. */
+  account?: { name: string; email: string }
+  /** Pending approval only: resolves true once access was granted (the caller then moves on). */
+  recheck?: () => Promise<boolean>
+  onSignOut?: () => void
 }) {
   const router = useRouter()
   const [checking, setChecking] = useState(false)
@@ -114,6 +170,15 @@ export function ServiceStatePage({
   const checkConnection = useCallback(
     async (manual = false, signal?: AbortSignal) => {
       if (manual) setChecking(true)
+      if (recheck) {
+        try {
+          const granted = await recheck()
+          if (!granted && manual) setMessage("Not approved yet. We’ll keep checking automatically.")
+        } finally {
+          if (manual) setChecking(false)
+        }
+        return
+      }
       try {
         const response = await fetch("/api/service-status", {
           cache: "no-store",
@@ -140,11 +205,11 @@ export function ServiceStatePage({
         if (manual) setChecking(false)
       }
     },
-    [onRecover, router]
+    [onRecover, recheck, router]
   )
 
   useEffect(() => {
-    if (state === "not-found" || onRecover) return
+    if (state === "not-found" || (onRecover && !recheck)) return
     const controller = new AbortController()
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible")
@@ -154,7 +219,7 @@ export function ServiceStatePage({
       window.clearInterval(timer)
       controller.abort()
     }
-  }, [state, checkConnection, onRecover])
+  }, [state, checkConnection, onRecover, recheck])
 
   return (
     <main className={styles.scene}>
@@ -166,7 +231,7 @@ export function ServiceStatePage({
         <ThemePicker />
       </header>
       <section className={styles.content} aria-labelledby="service-state-title">
-        <StateArtwork state={state} />
+        <StateArtwork state={state} account={account} />
         <div className={styles.copy}>
           <p className={styles.eyebrow}>
             <span />
@@ -174,6 +239,11 @@ export function ServiceStatePage({
           </p>
           <h1 id="service-state-title">{copy.title}</h1>
           <p className={styles.description}>{copy.description}</p>
+          {state === "pending-approval" && account && (
+            <p className={styles.account}>
+              Signed in as <strong>{account.email}</strong>
+            </p>
+          )}
           <div className={styles.actions}>
             {state === "not-found" ? (
               <>
@@ -188,6 +258,18 @@ export function ServiceStatePage({
                   }
                 >
                   Go back
+                </Button>
+              </>
+            ) : state === "pending-approval" ? (
+              <>
+                <Button size="lg" onClick={() => void checkConnection(true)} loading={checking} loadingText="Checking…">
+                  Check again <span aria-hidden="true">↗</span>
+                </Button>
+                <Button size="lg" variant="outline" onClick={onSignOut}>
+                  Sign out
+                </Button>
+                <Button size="lg" variant="ghost" nativeButton={false} render={<Link href="/settings/security" />}>
+                  Account security
                 </Button>
               </>
             ) : (
@@ -216,7 +298,7 @@ export function ServiceStatePage({
           )}
           <p role="status" className={styles.feedback}>
             {message ||
-              (state === "offline"
+              (state === "offline" || state === "pending-approval"
                 ? "Automatically checking every 15 seconds"
                 : "")}
           </p>

@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input"
 import { RowActions, type ActionItem } from "@/components/action-menu"
 import { ConnectionRow, FormField, SwitchField } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
+import { useWorkspaceSelection } from "@/hooks/workspace-selection"
 import { api, apiPost } from "@/lib/api"
 import type { ListResponse, User } from "@/lib/types"
 import {
@@ -34,6 +35,7 @@ export function PlatformUsersPanel({
   action: ActionRunner
 }) {
   const toast = useToast()
+  const { refreshPendingAccounts } = useWorkspaceSelection()
   const [users, setUsers] = useState<User[]>([])
   const [createOpen, setCreateOpen] = useState(false)
   const [editing, setEditing] = useState<User | null>(null)
@@ -55,14 +57,23 @@ export function PlatformUsersPanel({
   useEffect(() => {
     let active = true
     api<ListResponse<User>>("/api/v1/admin/users")
-      .then((result) => { if (active) setUsers(result.items) })
+      .then((result) => { if (active) { setUsers(result.items); refreshPendingAccounts() } })
       .catch((cause) => { if (active) setUsersError(cause) })
       .finally(() => { if (active) setUsersLoading(false) })
     return () => { active = false }
-  }, [])
+  }, [refreshPendingAccounts])
 
   function replaceUser(updated: User) {
     setUsers((items) => items.map((item) => (item.id === updated.id ? updated : item)))
+    refreshPendingAccounts()
+  }
+
+  async function approve(user: User) {
+    await action(
+      () => api<{ approved: boolean }>(`/api/v1/admin/users/${encodeURIComponent(user.id)}/approve`, { method: "POST", body: "{}" }),
+      "Account approved. It can now be added to workspaces and create its own.",
+      () => replaceUser({ ...user, emailVerified: true })
+    )
   }
 
   async function toggleLock(user: User) {
@@ -114,7 +125,9 @@ export function PlatformUsersPanel({
               const self = user.id === currentUserId
               const rowBusy = busy || mutatingUserId !== null
               const label = user.displayName || user.email
+              const pending = user.emailVerified === false && !deleted
               const items: ActionItem[] = [
+                ...(pending ? [{ label: "Approve account", onSelect: () => void approve(user), disabled: rowBusy } satisfies ActionItem] : []),
                 { label: "Edit", onSelect: () => setEditing(user), disabled: rowBusy },
                 self
                   ? { label: "Lock (not available for your own account)", disabled: true }
@@ -141,6 +154,7 @@ export function PlatformUsersPanel({
                     <>
                       <Badge variant="outline" radius="full">{user.isAdmin ? "Instance admin" : "User"}</Badge>
                       {deleted ? <Badge variant="destructive-light" radius="full">Deleted</Badge> : user.disabled ? <Badge variant="warning-light" radius="full">Locked</Badge> : null}
+                      {pending && <Badge variant="warning-light" radius="full">Awaiting approval</Badge>}
                       {self && !deleted && <Badge variant="info-light" radius="full">You</Badge>}
                     </>
                   }

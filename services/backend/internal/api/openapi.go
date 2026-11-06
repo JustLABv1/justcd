@@ -700,11 +700,68 @@ paths:
                   maintenanceEnabled: { type: boolean }
                   adminBypass: { type: boolean }
         '500': { description: Could not read instance state }
+  /auth/register:
+    post:
+      summary: Create an unverified password account (only while an administrator has opened registration)
+      description: Rate limited; honours the allowed email domains. The account can sign in but has no workspace access until an administrator approves it. Responds 403 while registration is closed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, displayName, password]
+              properties:
+                email: { type: string }
+                displayName: { type: string }
+                password: { type: string, minLength: 12, maxLength: 1024 }
+      responses:
+        '200': { description: Account created and signed in }
+        '403': { description: Registration is closed or the email domain is not allowed }
+        '409': { description: An account with this email already exists }
+        '429': { description: Too many attempts }
+  /admin/users/{userID}/approve:
+    post:
+      summary: Approve a self-registered account (instance administrators only; CSRF required)
+      parameters:
+        - in: path
+          name: userID
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Approved and audited }
+        '404': { description: No pending account with that ID }
+  /admin/access-settings:
+    get:
+      summary: Read sign-in, registration and workspace-creation settings (instance administrators only)
+      description: Includes whether password sign-in can be turned off safely (an enabled provider and an administrator who has used it) and whether JUSTCD_FORCE_LOCAL_LOGIN is overriding the setting.
+      responses:
+        '200': { description: Access settings and readiness }
+        '401': { description: Authentication required }
+        '403': { description: Instance administrator role required }
+    put:
+      summary: Change any subset of the access settings (instance administrators only; CSRF required)
+      description: Turning off password sign-in is refused with 409 unless at least one single sign-on provider is enabled and an active administrator has signed in through one. Domains are normalised; an unchanged save is not audited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                localLoginEnabled: { type: boolean }
+                localRegistrationEnabled: { type: boolean, description: Let people create a password account; accounts start unverified and need administrator approval. Requires password sign-in. }
+                oidcAutoProvision: { type: boolean, description: Create an account on first single sign-on sign-in }
+                oidcAllowedDomains: { type: array, items: { type: string }, description: Email domains allowed to create accounts on first sign-in; empty allows any }
+                workspaceCreation: { type: string, enum: [anyone, admins] }
+      responses:
+        '200': { description: Updated and audited access settings }
+        '409': { description: Rejected, for example because it would lock everyone out }
   /admin/instance-settings:
     get:
       summary: Read instance maintenance settings (instance administrators only)
       responses:
-        '200': { description: Instance settings including maintenanceEnabled }
+        '200': { description: Instance settings including maintenanceEnabled and the access settings }
         '401': { description: Authentication required }
         '403': { description: Instance administrator role required }
     put:
@@ -773,10 +830,14 @@ paths:
         '200': { description: Session revoked }
   /onboarding:
     get:
-      summary: Return the deterministic first-run readiness checklist (instance admin only)
-      description: Derives progress from persisted configuration, acknowledgements, and saved safe connection tests. Credential values are never returned.
+      summary: Return the guided-setup progress for one workspace (instance admin only)
+      description: Progress is scoped to the workspace given by workspaceId, or the first accessible workspace. A cluster counts as connected when its agent checked in recently or a direct connection passed its access check. Instance-wide operator checks are returned separately as system and never block the guided steps. Credential values are never returned.
+      parameters:
+        - in: query
+          name: workspaceId
+          schema: { type: string }
       responses:
-        '200': { description: Ordered readiness steps, completion count, and next required step }
+        '200': { description: Ordered guided steps, the workspace clusters with their connection state, the next required step, and separate system checks }
         '403': { description: Instance administrator role required }
   /onboarding/steps/{stepID}/complete:
     put:

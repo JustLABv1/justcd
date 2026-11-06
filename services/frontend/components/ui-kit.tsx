@@ -107,9 +107,9 @@ export function statusTone(status: string): StatusTone {
 
 const statusBadgeVariant = { success: "success-light", destructive: "destructive-light", warning: "warning-light", neutral: "secondary" } as const
 
-export function StatusBadge({ status }: { status: string }) {
+export function StatusBadge({ status, tone }: { status: string; tone?: StatusTone }) {
   const normalized = status.toLowerCase().replaceAll("_", " ")
-  return <Badge variant={statusBadgeVariant[statusTone(status)]} radius="full" className="capitalize"><span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-current opacity-70" />{normalized}</Badge>
+  return <Badge variant={statusBadgeVariant[tone ?? statusTone(status)]} radius="full" className="capitalize"><span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-current opacity-70" />{normalized}</Badge>
 }
 
 export function EmptyState({
@@ -170,16 +170,6 @@ export function ConnectionRow({ icon, title, subtitle, badges, meta, actions, ch
       </div>
       {children && <div className="mt-3">{children}</div>}
     </li>
-  )
-}
-
-/** Separated destructive area for deleting a resource. */
-export function DangerZone({ title = "Danger zone", description, children }: { title?: string; description?: string; children: ReactNode }) {
-  return (
-    <section className="rounded-xl border border-destructive/30 bg-destructive/5">
-      <div className="border-b border-destructive/20 px-5 py-3"><h2 className="text-sm font-semibold text-destructive">{title}</h2>{description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}</div>
-      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">{children}</div>
-    </section>
   )
 }
 

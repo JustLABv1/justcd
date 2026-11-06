@@ -8,13 +8,14 @@ import { Disclosure } from "@/components/ui/collapsible"
 import { FormSelect } from "@/components/ui/form-select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/reui/badge"
-import { FormField, Panel } from "@/components/ui-kit"
+import { FormField } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { api, apiPost } from "@/lib/api"
 import { reviewTextRows, type ReviewRow } from "@/lib/line-diff"
 import { PublishingServicesPicker } from "@/components/applications/publishing-services"
 import type { ServiceCatalog, ServiceSelection } from "@/lib/publishing"
 import type { PublishingProfile } from "@/lib/publishing"
+import { SettingsPanel } from "@/components/settings/settings-section"
 
 export type TemplateVersionMeta = {
   version: number
@@ -213,7 +214,7 @@ export function TemplateEditor({
     )
   return (
     <div className="space-y-5">
-      <Panel
+      <SettingsPanel
         title={`${detail.template.custom ? "Edit" : "Customize"} ${detail.template.name}`}
         description="Edit the files JustCD generates for this application template. Saving creates a new immutable version; profiles choose which version to use."
         action={
@@ -504,9 +505,9 @@ export function TemplateEditor({
             </ul>
           </Disclosure>
         </div>
-      </Panel>
+      </SettingsPanel>
       {error != null && <ErrorNotice error={error} />}
-      <Panel title="Save as a new version">
+      <SettingsPanel title="Save as a new version">
         <div className="flex flex-wrap items-end gap-4 p-5">
           <div className="min-w-64 flex-1">
             <FormField
@@ -546,7 +547,7 @@ export function TemplateEditor({
           longer publishes the image digest). Existing applications keep their
           version until their profile upgrade is reviewed.
         </p>
-      </Panel>
+      </SettingsPanel>
     </div>
   )
 }

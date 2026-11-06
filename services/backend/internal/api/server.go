@@ -68,6 +68,8 @@ func (s *Server) routes() {
 	s.Mux.HandleFunc("GET /api/v1/service-status", s.serviceStatus)
 	s.Mux.Handle("GET /api/v1/admin/instance-settings", s.requireAuth(s.requireAdmin(http.HandlerFunc(s.getInstanceSettings))))
 	s.Mux.Handle("PUT /api/v1/admin/instance-settings", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.updateInstanceSettings)))))
+	s.Mux.Handle("GET /api/v1/admin/access-settings", s.requireAuth(s.requireAdmin(http.HandlerFunc(s.getAccessSettings))))
+	s.Mux.Handle("PUT /api/v1/admin/access-settings", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.updateAccessSettings)))))
 	s.Mux.Handle("GET /api/v1/tasks", s.requireAuth(http.HandlerFunc(s.listBackgroundTasks)))
 	s.Mux.Handle("GET /api/v1/tasks/{taskID}", s.requireAuth(http.HandlerFunc(s.getBackgroundTask)))
 	s.Mux.HandleFunc("POST /api/v1/agents/enroll", s.agentEnroll)
@@ -87,6 +89,7 @@ func (s *Server) routes() {
 	s.Mux.HandleFunc("GET /api/v1/auth/providers", s.listPublicProviders)
 	s.Mux.HandleFunc("GET /api/v1/auth/setup", s.setupStatus)
 	s.Mux.HandleFunc("POST /api/v1/auth/signup", s.signup)
+	s.Mux.HandleFunc("POST /api/v1/auth/register", s.register)
 	s.Mux.HandleFunc("POST /api/v1/auth/login", s.login)
 	s.Mux.HandleFunc("GET /api/v1/auth/oidc/{providerID}/start", s.oidcStart)
 	s.Mux.HandleFunc("GET /api/v1/auth/oidc/{providerID}/callback", s.oidcCallback)
@@ -250,6 +253,7 @@ func (s *Server) routes() {
 	s.Mux.Handle("GET /api/v1/admin/users", s.requireAuth(s.requireAdmin(http.HandlerFunc(s.listUsers))))
 	s.Mux.Handle("POST /api/v1/admin/users", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.createUser)))))
 	s.Mux.Handle("PUT /api/v1/admin/users/{userID}", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.updateUser)))))
+	s.Mux.Handle("POST /api/v1/admin/users/{userID}/approve", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.approveUser)))))
 	s.Mux.Handle("DELETE /api/v1/admin/users/{userID}", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.deleteUser)))))
 	s.Mux.Handle("GET /api/v1/admin/oidc-providers", s.requireAuth(s.requireAdmin(http.HandlerFunc(s.listOIDCProviders))))
 	s.Mux.Handle("POST /api/v1/admin/oidc-providers", s.requireAuth(s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.createOIDCProvider)))))
@@ -449,6 +453,21 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	if input.Name == "" || len(input.Name) > 100 {
 		writeError(w, http.StatusBadRequest, "workspace name is required and must be at most 100 characters")
 		return
+	}
+	if user := currentUser(r); !user.IsAdmin && !user.EmailVerified {
+		writeError(w, http.StatusForbidden, "your account is waiting for approval; an administrator must approve it before you can create workspaces")
+		return
+	}
+	if !currentUser(r).IsAdmin {
+		settings, err := s.Store.InstanceSettings(r.Context())
+		if err != nil {
+			writeStoreError(w, "could not check workspace creation policy")
+			return
+		}
+		if settings.WorkspaceCreation == "admins" {
+			writeError(w, http.StatusForbidden, "only instance administrators can create workspaces on this instance")
+			return
+		}
 	}
 	workspace := store.Workspace{ID: store.NewID(), Name: input.Name, Description: strings.TrimSpace(input.Description), ApprovalPolicy: store.DefaultApprovalPolicy()}
 	user := currentUser(r)

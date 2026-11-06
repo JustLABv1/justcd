@@ -7,12 +7,13 @@ import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import {
   SettingsGroup,
   SettingsRow,
+  SettingsSection,
 } from "@/components/settings/settings-section"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { FormSelect } from "@/components/ui/form-select"
 import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
-import { FormField, Panel } from "@/components/ui-kit"
+import { FormField } from "@/components/ui-kit"
 import {
   notificationEvents,
   type Destination,
@@ -110,11 +111,11 @@ export function ApplicationNotificationSettings({
     ) ?? []
   return (
     <>
-      <Panel
+      <SettingsSection
         title="Notifications"
         description="Set this application's destinations, events and severity independently of workspace defaults."
       >
-        <div className="space-y-3 p-5">
+        <div className="space-y-3">
           {data?.managedByGit && (
             <Alert
               role="note"
@@ -211,7 +212,7 @@ export function ApplicationNotificationSettings({
             </p>
           )}
         </div>
-      </Panel>
+      </SettingsSection>
       <AppDialog
         open={open}
         onOpenChange={setOpen}

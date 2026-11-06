@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from "react"
 import { Switch } from "@/components/ui/switch"
-import { Panel } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
 import { api, errorMessage } from "@/lib/api"
 import { LoadErrorNotice, SectionSkeleton } from "./shared"
+import { SettingsPanel } from "@/components/settings/settings-section"
 
 type Settings = { maintenanceEnabled: boolean }
 
@@ -62,7 +62,7 @@ export function MaintenancePanel() {
   if (!settings)
     return <SectionSkeleton rows={2} label="Loading maintenance settings" />
   return (
-    <Panel
+    <SettingsPanel
       title="Maintenance mode"
       description="Temporarily restrict access while you work on this instance."
     >
@@ -100,6 +100,6 @@ export function MaintenancePanel() {
           API access; administrators can still sign in.
         </p>
       </div>
-    </Panel>
+    </SettingsPanel>
   )
 }

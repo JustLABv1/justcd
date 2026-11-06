@@ -10,7 +10,7 @@ import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { RowActions } from "@/components/action-menu"
-import { ConnectionRow, FormField, Panel } from "@/components/ui-kit"
+import { ConnectionRow, FormField } from "@/components/ui-kit"
 import { WorkspaceIcon } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
 import { api, apiPost } from "@/lib/api"
@@ -24,6 +24,7 @@ import {
   useSaving,
   type ActionRunner,
 } from "@/components/settings/shared"
+import { SettingsPanel } from "@/components/settings/settings-section"
 
 const secretFields: Record<Credential["kind"], { first: string; firstKey: string; second?: string; secondKey?: string }> = {
   "git-ssh": { first: "Private key", firstKey: "privateKey", second: "Pinned host keys", secondKey: "knownHosts" },
@@ -135,7 +136,7 @@ export function CredentialPanel({
           />
         )}
       </InventoryPanel>
-      <Panel>
+      <SettingsPanel>
         <div className="flex flex-col justify-between gap-3 px-5 py-4 sm:flex-row sm:items-center">
           <div className="min-w-0">
             <h2 className="text-sm font-semibold">Secrets stay on the server</h2>
@@ -149,7 +150,7 @@ export function CredentialPanel({
             Encrypted
           </Badge>
         </div>
-      </Panel>
+      </SettingsPanel>
       {createOpen && (
         <CredentialDialog
           workspace={workspace}

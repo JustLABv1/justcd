@@ -8,7 +8,7 @@ import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
 import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { FormField, Panel } from "@/components/ui-kit"
+import { FormField } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { api, apiPost } from "@/lib/api"
 import type { TemplateLayoutRule } from "@/components/applications/template-catalog"
@@ -17,6 +17,7 @@ import {
   versionLabel,
   type TemplateVersionMeta,
 } from "./template-editor"
+import { SettingsPanel } from "@/components/settings/settings-section"
 
 export type TemplateSummary = {
   template: {
@@ -158,7 +159,7 @@ export function TemplateLibrary({
 
   return (
     <>
-      <Panel
+      <SettingsPanel
         title="Application templates"
         description="The files JustCD generates for each application type: Dockerfile, build pipeline and Kubernetes manifest. Customize them for your platform, or create your own template; every save is a new, immutable version that profiles can select."
         action={
@@ -270,7 +271,7 @@ export function TemplateLibrary({
             <ErrorNotice error={error} />
           </div>
         )}
-      </Panel>
+      </SettingsPanel>
       {mode && (
         <TemplateDialog
           key={

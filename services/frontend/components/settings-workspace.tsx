@@ -4,15 +4,14 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import Link from "next/link"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { ArrowLeft01Icon, ArrowRight01Icon, PlusSignIcon } from "@hugeicons/core-free-icons"
-import { WorkspaceIcon } from "@/components/workspace-ui"
+import { PlusSignIcon } from "@hugeicons/core-free-icons"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { EmptyState, PageHeading, Panel } from "@/components/ui-kit"
+import { EmptyState } from "@/components/ui-kit"
+import { ScopeBadge, SettingsLayout, type SettingsNavGroup } from "@/components/settings/layout"
 import { useToast } from "@/components/toast-provider"
 import { api, errorMessage } from "@/lib/api"
 import { workspaceConnectionSections } from "@/components/connections/sections"
-import { ConnectionTabs } from "@/components/connections/tabs"
 import { WorkspaceConnectionShares } from "@/components/workspace-connection-shares"
 import { ClusterPanel } from "@/components/settings/cluster-panel"
 import { CredentialPanel } from "@/components/settings/credential-panel"
@@ -43,21 +42,6 @@ const navGroups = [
 ]
 
 type LoadKind = "base" | "scope" | "bindings" | "providers"
-
-/** One notice used on the instance settings landing and on every instance section. */
-function InstanceNotice() {
-  return (
-    <Panel className="mb-6">
-      <div className="flex items-start gap-3 p-4">
-        <WorkspaceIcon name="shield" className="mt-0.5 size-5 shrink-0 text-primary" />
-        <div>
-          <p className="text-sm font-semibold">Instance settings</p>
-          <p className="mt-1 text-sm text-muted-foreground">These settings apply to the whole instance and every workspace on it.</p>
-        </div>
-      </div>
-    </Panel>
-  )
-}
 
 export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixedWorkspaceId?: string; sectionOverride?: string }) {
   const router = useRouter()
@@ -232,6 +216,13 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
     }
   }
 
+  const landingTarget = !workspaceScoped && !section && user?.isAdmin
+    ? ["maintenance", "ai", "oidc", "users"].find(Boolean)
+    : undefined
+  useEffect(() => {
+    if (landingTarget) router.replace(`/settings/${landingTarget}`)
+  }, [landingTarget, router])
+
   if (!workspaceScoped && workspaceSections.includes(section)) {
     return (
       <div role="status" aria-label="Opening workspace connections">
@@ -278,86 +269,36 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
   const adminVisibleSections = visibleSections.filter((item) => !item.adminOnly || user?.isAdmin)
   const providersPending = section === "oidc" && !providersLoaded && errors.providers === undefined
 
-  const content = (loading && !sectionError ? (
-        <SectionSkeleton rows={section ? 3 : 2} label="Loading settings" />
-      ) : sectionError ? (
-        <LoadErrorNotice error={errors[sectionError.kind]} title={sectionError.title} onRetry={() => retry(sectionError.kind)} />
-      ) : section && !current ? (
-        <EmptyState title="Section not found" description="Choose a section to continue." href={workspaceScoped ? `/workspaces/${fixedWorkspaceId}/connections` : "/settings"} action={workspaceScoped ? "View connections" : "View settings"} />
+  const navGroupsForArea: SettingsNavGroup[] = workspaceScoped && fixedWorkspaceId
+    ? [
+        { label: "Delivery", items: workspaceConnectionSections.filter((item) => item.id === "git-sources" || item.id === "clusters").map((item) => ({ id: item.id, label: item.title, href: `/workspaces/${fixedWorkspaceId}/connections/${item.id}` })) },
+        { label: "Security & access", items: workspaceConnectionSections.filter((item) => item.id === "credentials" || item.id === "shares").map((item) => ({ id: item.id, label: item.title, href: `/workspaces/${fixedWorkspaceId}/connections/${item.id}` })) },
+      ]
+    : navGroups
+        .map((group) => ({ label: group.title, items: adminVisibleSections.filter((item) => group.ids.includes(item.id)).map((item) => ({ id: item.id, label: item.title, href: sectionHref(item.id) })) }))
+        .filter((group) => group.items.length > 0)
+  const firstInstanceSection = !workspaceScoped && user?.isAdmin ? adminVisibleSections[0]?.id : undefined
+
+  const body = loading && !sectionError ? (
+    <SectionSkeleton rows={3} label="Loading settings" />
+  ) : sectionError ? (
+    <LoadErrorNotice error={errors[sectionError.kind]} title={sectionError.title} onRetry={() => retry(sectionError.kind)} />
+  ) : section && !current ? (
+    <EmptyState title="Section not found" description="Choose a section to continue." href={workspaceScoped ? `/workspaces/${fixedWorkspaceId}/connections` : "/settings"} action={workspaceScoped ? "View connections" : "View settings"} />
+  ) : (
+    <>
+      {current?.adminOnly && !user?.isAdmin && (
+        <EmptyState title="Administrator access required" description="Only instance administrators can manage maintenance, sign-in providers, and local accounts." href="/settings" action="Back to settings" />
+      )}
+      {workspaceScoped && !workspace && (
+        <EmptyState title="Workspace unavailable" description="You need workspace access to manage its connections." href="/workspaces" action="View workspaces" />
+      )}
+      {!section && !user?.isAdmin ? (
+        <EmptyState title="Administrator access required" description="Instance settings are available to administrators. Workspace connections live on each workspace page." href="/workspaces" action="View workspaces" />
+      ) : !section ? (
+        <SectionSkeleton rows={2} label="Opening settings" />
       ) : (
-        <div className={current && !workspaceScoped ? "grid items-start gap-8 lg:grid-cols-[200px_minmax(0,1fr)]" : ""}>
-          {current && !workspaceScoped && (
-            <nav
-              aria-label="Settings sections"
-              className="flex min-w-0 items-center gap-2 overflow-x-auto rounded-xl border bg-card p-2 pr-10 [mask-image:linear-gradient(to_right,black_calc(100%-2.5rem),transparent)] lg:sticky lg:top-24 lg:block lg:overflow-visible lg:pr-2 lg:[mask-image:none]"
-            >
-              <Link
-                href="/settings"
-                className="flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-3 text-sm font-medium whitespace-nowrap text-muted-foreground hover:bg-muted lg:mb-2 lg:border-b"
-              >
-                <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={2} className="size-4" aria-hidden="true" />
-                All settings
-              </Link>
-              {navGroups
-                .filter((group) => group.ids.some((id) => adminVisibleSections.some((item) => item.id === id)))
-                .map((group) => (
-                  <div key={group.title} className="flex shrink-0 items-center gap-2 lg:mb-2 lg:block">
-                    <p className="px-2 text-sm font-semibold whitespace-nowrap text-muted-foreground lg:px-3 lg:py-2 lg:tracking-wider lg:uppercase">{group.title}</p>
-                    {adminVisibleSections
-                      .filter((item) => group.ids.includes(item.id))
-                      .map((item) => (
-                        <Link
-                          key={item.id}
-                          href={sectionHref(item.id)}
-                          aria-current={section === item.id ? "page" : undefined}
-                          className={`block shrink-0 rounded-lg px-3 py-2.5 text-sm font-medium whitespace-nowrap transition-colors lg:mb-1 ${section === item.id ? "bg-primary/10 text-primary" : "bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground"}`}
-                        >
-                          {item.title}
-                        </Link>
-                      ))}
-                  </div>
-                ))}
-            </nav>
-          )}
-          <div className="min-w-0">
-            {current?.adminOnly && user?.isAdmin && <InstanceNotice />}
-            {current?.adminOnly && !user?.isAdmin && (
-              <EmptyState
-                title="Administrator access required"
-                description="Only instance administrators can manage maintenance, sign-in providers, and local accounts."
-                href="/settings"
-                action="Back to settings"
-              />
-            )}
-            {workspaceScoped && !workspace && (
-              <EmptyState title="Workspace unavailable" description="You need workspace access to manage its connections." href="/workspaces" action="View workspaces" />
-            )}
-            {!section && !user?.isAdmin ? (
-              <EmptyState title="Administrator access required" description="Instance settings are available to administrators. Workspace connections live on each workspace page." href="/workspaces" action="View workspaces" />
-            ) : !section ? (
-              <>
-                <InstanceNotice />
-                <Panel title="Instance administration" description="Manage maintenance, sign-in, and user access." className="overflow-hidden">
-                  <ul className="divide-y">
-                    {adminVisibleSections.map((item) => (
-                      <li key={item.id}>
-                        <Link href={sectionHref(item.id)} className="group flex items-center gap-4 px-5 py-4 outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
-                          <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
-                            <WorkspaceIcon name="shield" className="size-4" />
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <h3 className="text-sm font-medium group-hover:text-primary">{item.title}</h3>
-                            <p className="mt-0.5 text-sm text-muted-foreground">{item.description}</p>
-                          </span>
-                          <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} aria-hidden="true" className="size-4 shrink-0 text-muted-foreground group-hover:text-primary" />
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                </Panel>
-              </>
-            ) : (
-              <div className="settings-content min-w-0">
+        <div className="settings-content min-w-0">
                 {section === "ai" && user?.isAdmin && <AIPanel />}
                 {section === "maintenance" && user?.isAdmin && <MaintenancePanel />}
                 {workspaceScoped && workspace && scopeLoading && <SectionSkeleton label="Loading workspace connections" />}
@@ -446,26 +387,22 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
                   />
                 )}
                 {section === "users" && user?.isAdmin && <PlatformUsersPanel currentUserId={user.id} busy={busy} action={action} />}
-              </div>
-            )}
-          </div>
         </div>
-      ))
+      )}
+    </>
+  )
 
   return (
-    <>
-      <PageHeading
-        title={workspaceScoped ? "Connections" : current?.title ?? "Instance settings"}
-        description={
-          workspaceScoped
-            ? `${workspace?.name ?? "Workspace"} · Repositories, Kubernetes access, credentials, and sharing.`
-            : current?.description ?? "Access, maintenance, and accounts for the JustCD instance."
-        }
-        actions={workspaceScoped ? undefined : headerAction}
-      />
-      {workspaceScoped && fixedWorkspaceId ? <ConnectionTabs workspaceId={fixedWorkspaceId} section={section}>
-        <Panel surface="flat" title={current?.title} description={workspaceConnectionSections.find((item) => item.id === section)?.description} action={headerAction}>{content}</Panel>
-      </ConnectionTabs> : content}
-    </>
+    <SettingsLayout
+      title={workspaceScoped ? "Connections" : "Instance settings"}
+      description={workspaceScoped ? "Repositories, Kubernetes access, credentials and sharing for this workspace." : "Maintenance, sign-in, accounts and AI for the whole JustCD instance."}
+      scope={<ScopeBadge scope={workspaceScoped ? "workspace" : "instance"} name={workspace?.name} />}
+      nav={navGroupsForArea}
+      activeId={section || firstInstanceSection || ""}
+      navLabel={workspaceScoped ? "Connection sections" : "Instance settings sections"}
+      actions={headerAction}
+    >
+      {body}
+    </SettingsLayout>
   )
 }

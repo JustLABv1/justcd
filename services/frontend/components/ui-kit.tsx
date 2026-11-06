@@ -173,16 +173,6 @@ export function ConnectionRow({ icon, title, subtitle, badges, meta, actions, ch
   )
 }
 
-/** Separated destructive area for deleting a resource. */
-export function DangerZone({ title = "Danger zone", description, children }: { title?: string; description?: string; children: ReactNode }) {
-  return (
-    <section className="rounded-xl border border-destructive/30 bg-destructive/5">
-      <div className="border-b border-destructive/20 px-5 py-3"><h2 className="text-sm font-semibold text-destructive">{title}</h2>{description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}</div>
-      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">{children}</div>
-    </section>
-  )
-}
-
 /** Bordered checkbox with a title and optional help text; the whole card toggles. */
 export function CheckboxCard({ checked, onCheckedChange, title, description, disabled, id }: {
   checked: boolean

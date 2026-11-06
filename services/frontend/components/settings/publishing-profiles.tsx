@@ -12,7 +12,7 @@ import { FormSelect } from "@/components/ui/form-select"
 import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
 import { Badge } from "@/components/reui/badge"
 import { FeatureCard } from "@/components/feature-card"
-import { FormField, Panel, SwitchField } from "@/components/ui-kit"
+import { FormField, SwitchField } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { api, apiPost } from "@/lib/api"
 import {
@@ -27,6 +27,7 @@ import {
 } from "@/lib/publishing"
 import type { ApplicationTemplate } from "@/components/applications/template-catalog"
 import type { Cluster, ListResponse, NamespaceBinding } from "@/lib/types"
+import { SettingsPanel } from "@/components/settings/settings-section"
 
 const emptySettings: PublishingProfileSettings = {
   templateId: "shiny",
@@ -175,7 +176,7 @@ export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
     )
   return (
     <div className="space-y-5">
-      <Panel
+      <SettingsPanel
         title="Publishing profiles"
         description="Configure infrastructure once. Workspace deployers can publish apps without handling GitLab, registry, or cluster credentials."
         action={
@@ -256,7 +257,7 @@ export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
             ))}
           </div>
         )}
-      </Panel>
+      </SettingsPanel>
       <TemplateLibrary
         workspaceId={workspaceId}
         templates={templates}
@@ -570,7 +571,7 @@ function ProfileEditor({
   ].filter(Boolean) as string[]
   return (
     <form onSubmit={save} className="space-y-5">
-      <Panel
+      <SettingsPanel
         title={profile ? `Edit ${profile.name}` : copyFrom ? `Copy ${copyFrom.name}` : "Create publishing profile"}
         description={copyFrom ? "Review the copied settings and give the profile a new name. The copy starts disabled; enable it when ready. Credentials are copied securely when saved." : "Choose the approved build and destination. Secret values are encrypted and never returned to the browser."}
       >
@@ -613,9 +614,9 @@ function ProfileEditor({
               : "Saving build settings publishes an immutable profile version. Name changes and credential rotation do not create one."}
           </p>
         </fieldset>
-      </Panel>
+      </SettingsPanel>
       <fieldset disabled={busy} className="min-w-0 space-y-5">
-        <Panel
+        <SettingsPanel
           title="Destination"
           description="Where applications of this profile are deployed."
         >
@@ -776,9 +777,9 @@ function ProfileEditor({
               false
             )}
           </div>
-        </Panel>
+        </SettingsPanel>
         <PublishingServicesEditor value={settings.serviceCatalog ?? ""} onChange={serviceCatalog => patch({ serviceCatalog })} />
-        <Panel
+        <SettingsPanel
           title="Build and credentials"
           description="Select a card to review or change its settings. Secret values are encrypted and never returned to the browser."
         >
@@ -962,8 +963,8 @@ function ProfileEditor({
               </div>
             </FeatureCard>
           </div>
-        </Panel>
-        <Panel
+        </SettingsPanel>
+        <SettingsPanel
           title="Advanced settings"
           description="Most profiles do not need these. Cards with values show a Configured badge."
         >
@@ -1149,7 +1150,7 @@ function ProfileEditor({
               </FeatureCard>
             )}
           </div>
-        </Panel>
+        </SettingsPanel>
       </fieldset>
       {error != null && <ErrorNotice error={error} />}
       <div className="flex justify-between gap-3">

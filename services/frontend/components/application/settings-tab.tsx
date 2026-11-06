@@ -13,7 +13,8 @@ import { FormSelect } from "@/components/ui/form-select"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
-import { DangerZone, FormField, Panel, SwitchField } from "@/components/ui-kit"
+import { FormField, SwitchField } from "@/components/ui-kit"
+import { SettingsDangerZone, SettingsPanel, SettingsRow } from "@/components/settings/settings-section"
 import { errorMessage } from "@/lib/api"
 import type { Application, IgnoreRule, IgnoreSelector } from "@/lib/types"
 
@@ -42,7 +43,7 @@ function RenderSettings({ application, kustomization, kustomizationError, canApp
   }
   const locked = Boolean(application.repositoryConfigurationId) || !canApprove || busy || hasPendingOperation
   const dirty = helm !== application.kustomizeHelmEnabled || namespaceOverride !== application.kustomizeNamespaceOverride
-  return <Panel title="Render settings" description={application.applicationGroupId ? "Kustomize settings are shared by this deployment group." : "Control how Kustomize builds this application's manifests."}>
+  return <SettingsPanel title="Render settings" description={application.applicationGroupId ? "Kustomize settings are shared by this deployment group." : "Control how Kustomize builds this application's manifests."}>
     <div className="space-y-4 p-5">
       <div className="rounded-lg border bg-muted/30 p-3 text-sm"><p className="font-medium">Namespace from Git</p><p className="mt-1 font-mono text-muted-foreground">{kustomization ? kustomization.namespace || "Not set in kustomization" : kustomizationError ? errorMessage(kustomizationError) : "Checking kustomization…"}</p>{kustomizationError != null && <div className="mt-2"><ErrorDetailsButton error={kustomizationError} /></div>}<p className="mt-1 text-muted-foreground">JustCD target: {application.namespaces.map((binding) => binding.namespace).join(", ")}</p></div>
       {application.applicationGroupId
@@ -55,7 +56,7 @@ function RenderSettings({ application, kustomization, kustomizationError, canApp
           {canApprove && !application.repositoryConfigurationId && <Button size="sm" loading={saving} loadingText="Saving settings…" disabled={busy || hasPendingOperation || !dirty} onClick={() => void onSave({ kustomizeHelmEnabled: helm, kustomizeNamespaceOverride: namespaceOverride })}>Save changes</Button>}
         </>}
     </div>
-  </Panel>
+  </SettingsPanel>
 }
 
 export function SettingsTab({ application, kustomization, kustomizationError, canApprove, busy, hasPendingOperation, pendingAction, rulesLoading, ignoreRules, ignoreSelectors, managedResourceCount, deletionApprovalCount, prefill, onSaveRenderSettings, onAddIgnore, onRemoveRule, onRemoveSelector, onDeleteApplication, onCancelDecommission }: {
@@ -114,10 +115,10 @@ export function SettingsTab({ application, kustomization, kustomizationError, ca
     if (saved) { setIgnoreReason(""); setIgnoreName("") }
   }
 
-  return <div className="space-y-5">
+  return <div className="space-y-8">
     {canApprove && <ApplicationNotificationSettings key={application.id} applicationId={application.id} workspaceId={application.workspaceId} />}
     {application.renderer === "kustomize" && <RenderSettings application={application} kustomization={kustomization} kustomizationError={kustomizationError} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} saving={pendingAction === "render-settings"} onSave={onSaveRenderSettings} />}
-    <Panel title="Ignored resources" description="Exclude an exact resource, an entire Kubernetes kind, or resources with a label. Exclusions apply before cluster discovery and live reads.">
+    <SettingsPanel title="Ignored resources" description="Exclude an exact resource, an entire Kubernetes kind, or resources with a label. Exclusions apply before cluster discovery and live reads.">
       {application.repositoryConfigurationId && <p className="px-5 pt-5 text-sm text-muted-foreground">Define Git-managed exclusions in <code>spec.ignoreResources</code> in <code>{application.configurationPath}</code>. Additional manual exclusions remain available below. <a href="/docs/guides/repository-applications#ignored-resources" target="_blank" rel="noreferrer" className="underline underline-offset-4">File format and examples</a></p>}
       <div className="space-y-5 p-5">
         {canApprove && <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -146,16 +147,15 @@ export function SettingsTab({ application, kustomization, kustomizationError, ca
             </li>)}
           </ul>}
       </div>
-    </Panel>
-    {canApprove && <DangerZone title="Delete application" description="Choose whether JustCD keeps or removes the resources it manages.">
-      <p className="min-w-0 flex-1 text-sm text-muted-foreground">{`${managedResourceCount} managed resource${managedResourceCount === 1 ? "" : "s"} currently recorded.`} Keeping them removes ownership tracking from JustCD.{application.decommissioning ? " Deletion is already in progress." : ""}</p>
-      <div className="flex flex-wrap items-center gap-2">
+    </SettingsPanel>
+    {canApprove && <SettingsDangerZone description="Choose whether JustCD keeps or removes the resources it manages.">
+      <SettingsRow label="Delete this application" description={<>{`${managedResourceCount} managed resource${managedResourceCount === 1 ? "" : "s"} currently recorded.`} Keeping them removes ownership tracking from JustCD.{application.decommissioning ? " Deletion is already in progress." : ""}</>} action={<div className="flex flex-wrap items-center gap-2">
         {application.decommissioning && <Button type="button" size="sm" variant="outline" disabled={busy || hasPendingOperation} onClick={onCancelDecommission}>Cancel deletion</Button>}
         <ConfirmDisclosure trigger="Delete application" title={`Delete ${application.name}?`} description="Removing this application from JustCD cannot be undone. Choose what happens to its managed Kubernetes resources." confirmLabel={`Delete ${application.name}`} busyLabel="Deleting…" onConfirm={() => onDeleteApplication(deletePolicy)} disabled={busy || hasPendingOperation}>
           <FormField label="Managed cluster resources" htmlFor="application-delete-policy"><FormSelect id="application-delete-policy" value={deletePolicy} onValueChange={setDeletePolicy} items={[{ value: "keep", label: "Keep resources in Kubernetes" }, { value: "delete", label: "Delete resources through a reviewed plan" }]} /></FormField>
           {deletePolicy === "delete" && managedResourceCount > 0 && <p className="mt-2 text-sm text-muted-foreground">A deletion plan must receive {deletionApprovalCount} approval{deletionApprovalCount === 1 ? "" : "s"} from eligible workspace members before the resources can be removed.</p>}
         </ConfirmDisclosure>
-      </div>
-    </DangerZone>}
+      </div>} />
+    </SettingsDangerZone>}
   </div>
 }

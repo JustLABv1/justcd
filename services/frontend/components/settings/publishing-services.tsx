@@ -7,12 +7,13 @@ import { Badge } from "@/components/reui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FormSelect } from "@/components/ui/form-select"
-import { FormField, Panel, SwitchField } from "@/components/ui-kit"
+import { FormField, SwitchField } from "@/components/ui-kit"
 import type {
   DatabasePlan,
   ServiceCatalog,
   VaultSecretBinding,
 } from "@/lib/publishing"
+import { SettingsPanel } from "@/components/settings/settings-section"
 
 const defaultDatabase: DatabasePlan = {
   name: "PostgreSQL",
@@ -83,7 +84,7 @@ export function PublishingServicesEditor({
   )
   return (
     <div className="space-y-5">
-      <Panel
+      <SettingsPanel
         title="Optional application services"
         description="Offer a StackGres database and approved Vault secrets. Turn a service on, then select its card to configure it. Secret values never enter Git."
       >
@@ -355,8 +356,8 @@ export function PublishingServicesEditor({
             )}
           </FeatureCard>
         </div>
-      </Panel>
-      <Panel
+      </SettingsPanel>
+      <SettingsPanel
         title="Vault secrets"
         description="Approve Vault locations once; users switch them on by name. Requires Vault Secrets Operator and an authorized VaultAuth."
         action={
@@ -594,7 +595,7 @@ export function PublishingServicesEditor({
             </FeatureCard>
           ))}
         </div>
-      </Panel>
+      </SettingsPanel>
     </div>
   )
 }

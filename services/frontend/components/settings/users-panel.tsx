@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input"
 import { RowActions, type ActionItem } from "@/components/action-menu"
 import { ConnectionRow, FormField, SwitchField } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
+import { useWorkspaceSelection } from "@/hooks/workspace-selection"
 import { api, apiPost } from "@/lib/api"
 import type { ListResponse, User } from "@/lib/types"
 import {
@@ -34,6 +35,7 @@ export function PlatformUsersPanel({
   action: ActionRunner
 }) {
   const toast = useToast()
+  const { refreshPendingAccounts } = useWorkspaceSelection()
   const [users, setUsers] = useState<User[]>([])
   const [createOpen, setCreateOpen] = useState(false)
   const [editing, setEditing] = useState<User | null>(null)
@@ -55,14 +57,15 @@ export function PlatformUsersPanel({
   useEffect(() => {
     let active = true
     api<ListResponse<User>>("/api/v1/admin/users")
-      .then((result) => { if (active) setUsers(result.items) })
+      .then((result) => { if (active) { setUsers(result.items); refreshPendingAccounts() } })
       .catch((cause) => { if (active) setUsersError(cause) })
       .finally(() => { if (active) setUsersLoading(false) })
     return () => { active = false }
-  }, [])
+  }, [refreshPendingAccounts])
 
   function replaceUser(updated: User) {
     setUsers((items) => items.map((item) => (item.id === updated.id ? updated : item)))
+    refreshPendingAccounts()
   }
 
   async function approve(user: User) {

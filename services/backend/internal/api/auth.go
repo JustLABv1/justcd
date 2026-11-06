@@ -167,7 +167,14 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 			canCreateWorkspace = true
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user": user, "canCreateWorkspace": canCreateWorkspace})
+	response := map[string]any{"user": user, "canCreateWorkspace": canCreateWorkspace}
+	if user.IsAdmin {
+		// Lets the shell show that someone is waiting; a failure only hides the indicator.
+		if n, err := s.Store.CountPendingAccounts(r.Context()); err == nil {
+			response["pendingAccountApprovals"] = n
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {

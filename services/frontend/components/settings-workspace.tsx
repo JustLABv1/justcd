@@ -8,6 +8,7 @@ import { PlusSignIcon } from "@hugeicons/core-free-icons"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState } from "@/components/ui-kit"
+import { Badge } from "@/components/reui/badge"
 import { ScopeBadge, SettingsLayout, type SettingsNavGroup } from "@/components/settings/layout"
 import { useToast } from "@/components/toast-provider"
 import { api, errorMessage } from "@/lib/api"
@@ -18,6 +19,7 @@ import { CredentialPanel } from "@/components/settings/credential-panel"
 import { GitSourcePanel } from "@/components/settings/git-source-panel"
 import { NamespacePanel } from "@/components/settings/namespace-panel"
 import { OIDCPanel } from "@/components/settings/oidc-panel"
+import { useWorkspaceSelection } from "@/hooks/workspace-selection"
 import { PlatformUsersPanel } from "@/components/settings/users-panel"
 import { AIPanel } from "@/components/settings/ai-panel"
 import { AccessPanel } from "@/components/settings/access-panel"
@@ -66,6 +68,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
   const visibleSections = sections.filter((item) => workspaceScoped ? workspaceSections.includes(item.id) : !workspaceSections.includes(item.id))
   const current = visibleSections.find((item) => item.id === section)
   const sectionHref = (id: string) => workspaceScoped ? `/workspaces/${fixedWorkspaceId}/connections/${id}` : `/settings/${id}`
+  const { pendingAccounts } = useWorkspaceSelection()
   const [user, setUser] = useState<User | null>(null)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [workspaceId, setWorkspaceId] = useState("")
@@ -277,7 +280,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
         { label: "Security & access", items: workspaceConnectionSections.filter((item) => item.id === "credentials" || item.id === "shares").map((item) => ({ id: item.id, label: item.title, href: `/workspaces/${fixedWorkspaceId}/connections/${item.id}` })) },
       ]
     : navGroups
-        .map((group) => ({ label: group.title, items: adminVisibleSections.filter((item) => group.ids.includes(item.id)).map((item) => ({ id: item.id, label: item.title, href: sectionHref(item.id) })) }))
+        .map((group) => ({ label: group.title, items: adminVisibleSections.filter((item) => group.ids.includes(item.id)).map((item) => ({ id: item.id, label: item.title, href: sectionHref(item.id), badge: item.id === "users" && pendingAccounts > 0 ? <Badge variant="warning-light" radius="full">{pendingAccounts}</Badge> : undefined })) }))
         .filter((group) => group.items.length > 0)
   const firstInstanceSection = !workspaceScoped && user?.isAdmin ? adminVisibleSections[0]?.id : undefined
 

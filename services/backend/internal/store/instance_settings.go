@@ -241,3 +241,10 @@ func (s *Store) UserEmailVerified(ctx context.Context, userID string) (bool, err
 	err := s.DB.QueryRowContext(ctx, `SELECT email_verified FROM users WHERE id=$1 AND disabled=FALSE AND deleted_at IS NULL`, userID).Scan(&verified)
 	return verified, err
 }
+
+// CountPendingAccounts counts self-registered accounts waiting for an administrator's approval.
+func (s *Store) CountPendingAccounts(ctx context.Context) (int, error) {
+	var n int
+	err := s.DB.QueryRowContext(ctx, `SELECT count(*) FROM users WHERE id <> 'justcd-system' AND email_verified = false AND deleted_at IS NULL AND disabled = false`).Scan(&n)
+	return n, err
+}

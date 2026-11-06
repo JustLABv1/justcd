@@ -5,7 +5,7 @@ import { LogoMark } from "@/components/logo"
 import Link from "next/link"
 import styles from "./app-shell.module.css"
 import { usePathname, useRouter } from "next/navigation"
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { AccountMenu } from "@/components/account-menu"
 import { CommandPalette, CommandPaletteButton } from "@/components/command-palette"
 import { PendingApproval } from "@/components/pending-approval"
@@ -48,6 +48,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [pendingApprovals, setPendingApprovals] = useState(0)
+  const [pendingAccounts, setPendingAccounts] = useState(0)
 
   useEffect(() => {
     // Restore after mount so server and client markup match.
@@ -76,10 +77,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let active = true
-    api<{ user: User; canCreateWorkspace?: boolean }>("/api/v1/auth/session")
+    api<{ user: User; canCreateWorkspace?: boolean; pendingAccountApprovals?: number }>("/api/v1/auth/session")
       .then((response) => {
         if (!active) return
         setUser(response.user)
+        setPendingAccounts(response.pendingAccountApprovals ?? 0)
         setCanCreateWorkspace(response.canCreateWorkspace !== false)
       })
       .catch((cause) => {
@@ -192,6 +194,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const crumbs = pageCrumbs(pathname, routeWorkspace, routeApplication)
   const showAdmin = user?.isAdmin ?? false
 
+  const isAdminUser = user?.isAdmin === true
+  const refreshPendingAccounts = useCallback(() => {
+    api<{ pendingAccountApprovals?: number }>("/api/v1/auth/session")
+      .then((response) => setPendingAccounts(response.pendingAccountApprovals ?? 0))
+      .catch(() => {})
+  }, [])
+  useEffect(() => {
+    if (!isAdminUser) return
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") refreshPendingAccounts()
+    }, 60000)
+    return () => window.clearInterval(timer)
+  }, [isAdminUser, refreshPendingAccounts])
+
   async function signOut() {
     try {
       await apiPost("/api/v1/auth/logout")
@@ -205,7 +221,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     { href: `/workspaces/${selectedWorkspaceId}`, label: "Workspace settings", icon: Settings02Icon },
     ...(!user?.isAdmin ? [{ href: "/audit", label: "Audit trail", icon: Audit01Icon }] : []),
   ]
-  const administration = adminNavigation.filter((item) => item.href !== "/onboarding" || onboardingIncomplete).map((item) => item.href === "/onboarding" ? { ...item, dot: true } : item)
+  const administration = adminNavigation.filter((item) => item.href !== "/onboarding" || onboardingIncomplete).map((item) => item.href === "/onboarding" ? { ...item, dot: true } : item.href === "/settings" ? { ...item, badge: pendingAccounts } : item)
   const delivery = deliveryNavigation.map((item) => item.href === "/approvals" ? { ...item, badge: pendingApprovals } : item)
   const mobileGroups = [
     { label: "Delivery", items: delivery },
@@ -298,7 +314,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </li>)}
             </ol>
           </nav>}
-          <WorkspaceSelectionProvider value={{ isAdmin: user.isAdmin, canCreateWorkspace, workspaces, workspaceId: selectedWorkspaceId, workspace: workspaces.find((item) => item.id === selectedWorkspaceId) ?? null, selectWorkspace }}>
+          <WorkspaceSelectionProvider value={{ isAdmin: user.isAdmin, canCreateWorkspace, pendingAccounts, refreshPendingAccounts, workspaces, workspaceId: selectedWorkspaceId, workspace: workspaces.find((item) => item.id === selectedWorkspaceId) ?? null, selectWorkspace }}>
             {children}
           </WorkspaceSelectionProvider>
         </main>

@@ -7,6 +7,9 @@ type WorkspaceSelection = {
   isAdmin: boolean
   /** False when the instance reserves workspace creation for administrators and this user is not one. */
   canCreateWorkspace: boolean
+  /** Self-registered accounts waiting for approval (administrators only). */
+  pendingAccounts: number
+  refreshPendingAccounts: () => void
   workspaces: Workspace[]
   workspaceId: string
   workspace: Workspace | null

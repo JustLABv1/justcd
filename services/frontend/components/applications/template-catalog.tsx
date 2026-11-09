@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
-  ArrowRight01Icon,
   CodeIcon,
   Globe02Icon,
   Search01Icon,
@@ -11,10 +10,12 @@ import {
 import { api } from "@/lib/api"
 import { templatesUrl } from "@/lib/publishing"
 import { ErrorNotice } from "@/components/workspace-ui"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { Alert } from "@/components/panelui/alert"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
+import { Frame } from "@/components/panelui/frame"
+import { Input } from "@/components/panelui/input"
+import { Tabs } from "@/components/panelui/tabs"
 
 export type TemplateLayoutRule = { message?: string; anyOf: string[][] }
 
@@ -93,8 +94,11 @@ export function TemplateGlyph({
 
 export function TemplateCatalog({
   onSelect,
+  aside,
 }: {
   onSelect: (template: ApplicationTemplate) => void
+  /** Shown beside the page title, for example a link to manage publishing profiles. */
+  aside?: React.ReactNode
 }) {
   const [templates, setTemplates] = useState<ApplicationTemplate[]>([])
   const [error, setError] = useState<unknown>(null)
@@ -130,153 +134,80 @@ export function TemplateCatalog({
         .toLowerCase()
         .includes(search.trim().toLowerCase())
   )
+  const categories = [
+    "All",
+    ...Array.from(new Set(["R", "Python", "Geospatial", "Websites", ...templates.map((template) => template.category)])),
+  ]
   return (
-    <div className="space-y-4 pb-5">
-      <header className="space-y-2">
-        <h1 className="text-2xl font-medium tracking-tight">
-          Choose an app template
-        </h1>
-        <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-          Your application, ready for your platform. Pick a template to set up
-          its repository, build, and deployment.
-        </p>
-      </header>
-      <div className="space-y-4">
-        <div className="relative max-w-xl">
-          <HugeiconsIcon
-            icon={Search01Icon}
-            aria-hidden="true"
-            className="pointer-events-none absolute top-1/2 left-3.5 z-10 size-4 -translate-y-1/2 text-muted-foreground"
-            strokeWidth={1.7}
-          />
-          <Input
-            aria-label="Search templates"
-            placeholder="Search templates…"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            className="h-10 rounded-xl border-border bg-card pr-4 pl-10 text-sm shadow-none focus-visible:ring-2 dark:border-transparent dark:bg-muted/50"
-          />
-        </div>
-        <ToggleGroup
-          aria-label="Template category"
-          value={[category]}
-          onValueChange={(next) => {
-            if (next[0]) setCategory(next[0])
-          }}
-          className="max-w-full gap-2 overflow-x-auto rounded-none border-0 bg-transparent p-0"
-        >
-          {[
-            "All",
-            ...Array.from(
-              new Set([
-                "R",
-                "Python",
-                "Geospatial",
-                "Websites",
-                ...templates.map((template) => template.category),
-              ])
-            ),
-          ].map((value) => (
-            <ToggleGroupItem
-              key={value}
-              value={value}
-              className="h-8 rounded-lg px-3.5 text-sm font-medium"
-            >
-              {value}
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
-      </div>
-      {error != null && <ErrorNotice error={error} />}
-      {loading && (
-        <p role="status" className="text-sm text-muted-foreground">
-          Loading templates…
-        </p>
-      )}
-      <div
-        className="grid gap-4 md:grid-cols-2 lg:grid-cols-3"
-        aria-label="Application templates"
-      >
-        {visible.map((template) => (
-          <Button
-            key={template.id}
-            type="button"
-            variant="ghost"
-            onClick={() => onSelect(template)}
-            aria-label={`Use ${template.name} template`}
-            className="group h-auto min-h-32 w-full items-start justify-start gap-3.5 rounded-2xl border-border bg-card p-5 text-left whitespace-normal transition-colors duration-150 hover:bg-accent focus-visible:ring-2 dark:border-transparent dark:bg-muted/45 dark:hover:bg-muted/75"
-          >
-            <TemplateGlyph template={template} />
-            <span className="min-w-0 flex-1 space-y-2">
-              <span className="flex items-center justify-between gap-3">
-                <span className="text-base font-medium tracking-tight">
-                  {template.name}
-                  {template.custom && (
-                    <Badge
-                      size="sm"
-                      radius="full"
-                      variant="outline"
-                      className="ml-2 align-middle"
-                    >
-                      Custom
-                    </Badge>
-                  )}
-                </span>
-                <HugeiconsIcon
-                  icon={ArrowRight01Icon}
-                  className="size-4 text-muted-foreground transition-colors group-hover:text-foreground"
-                  strokeWidth={1.8}
-                />
-              </span>
-              <span className="line-clamp-2 text-[13px] leading-5 font-normal text-muted-foreground">
-                {template.description}
-              </span>
-              <span className="block pt-0.5 text-xs font-normal text-muted-foreground">
-                {template.detail}
-              </span>
-            </span>
-          </Button>
-        ))}
-      </div>
-      {!loading && !error && !visible.length && (
-        <div
-          role="status"
-          className="rounded-3xl border border-border bg-card px-6 py-12 text-center dark:bg-muted/40"
-        >
-          <p className="font-medium">No templates found</p>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Try another search or category.
+    <div className="space-y-5 pb-5">
+      <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+        <div className="min-w-0 flex-1 basis-72">
+          <h1 className="text-2xl font-semibold tracking-tight">Choose an app template</h1>
+          <p className="mt-1.5 max-w-2xl text-sm leading-6 text-muted-foreground">
+            Pick a runtime and JustCD sets up the repository, build and deployment for you.
           </p>
-          <Button
-            type="button"
-            variant="outline"
-            className="mt-5"
-            onClick={() => {
-              setSearch("")
-              setCategory("All")
-            }}
-          >
-            Clear filters
-          </Button>
+        </div>
+        {aside}
+      </header>
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="max-w-full overflow-x-auto">
+          <Tabs variant="segmented" value={category} onValueChange={(next) => { if (typeof next === "string") setCategory(next) }}>
+            <Tabs.List aria-label="Template category">
+              {categories.map((value) => <Tabs.Trigger key={value} value={value}>{value}</Tabs.Trigger>)}
+            </Tabs.List>
+          </Tabs>
+        </div>
+        <Input.Group className="w-full sm:w-72">
+          <Input.Addon><HugeiconsIcon icon={Search01Icon} aria-hidden="true" strokeWidth={1.7} /></Input.Addon>
+          <Input aria-label="Search templates" placeholder="Search templates…" value={search} onChange={(event) => setSearch(event.target.value)} />
+        </Input.Group>
+      </div>
+
+      {error != null && <ErrorNotice error={error} />}
+      {loading && <p role="status" className="text-sm text-muted-foreground">Loading templates…</p>}
+
+      {visible.length > 0 && (
+        <Frame>
+          <Frame.Header>
+            <Frame.Title as="h2">{category === "All" ? "All templates" : category}</Frame.Title>
+            <Frame.Description>{visible.length} {visible.length === 1 ? "template" : "templates"}</Frame.Description>
+          </Frame.Header>
+          <Frame.Panel aria-label="Application templates">
+            {visible.map((template) => (
+              <Frame.Row key={template.id} chevron onClick={() => onSelect(template)} aria-label={`Use ${template.name} template`} className="items-start gap-4 py-4">
+                <Frame.Media><TemplateGlyph template={template} /></Frame.Media>
+                <Frame.Content className="gap-1">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <Frame.Title as="p">{template.name}</Frame.Title>
+                    {template.custom && <Badge size="sm" variant="outline">Custom</Badge>}
+                  </span>
+                  <Frame.Description className="whitespace-normal">{template.description}</Frame.Description>
+                  <span className="text-xs text-muted-foreground">{template.detail}</span>
+                </Frame.Content>
+              </Frame.Row>
+            ))}
+          </Frame.Panel>
+        </Frame>
+      )}
+
+      {!loading && !error && !visible.length && (
+        <div role="status" className="rounded-2xl border border-dashed px-6 py-12 text-center">
+          <p className="font-medium">No templates found</p>
+          <p className="mt-2 text-sm text-muted-foreground">Try another search or category.</p>
+          <Button type="button" variant="outline" className="mt-5" onClick={() => { setSearch(""); setCategory("All") }}>Clear filters</Button>
         </div>
       )}
       {error != null && (
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => {
-            setLoading(true)
-            setReload((current) => current + 1)
-          }}
-        >
-          Retry loading templates
-        </Button>
+        <Button type="button" variant="outline" onClick={() => { setLoading(true); setReload((current) => current + 1) }}>Retry loading templates</Button>
       )}
-      <p className="text-sm leading-6 text-muted-foreground">
-        Create a new GitLab project from your application ZIP, or reuse an
-        existing repository and build. Your platform’s credentials and
-        deployment approval rules stay in control.
-      </p>
+
+      <Alert tone="info" variant="plain">
+        <Alert.Icon />
+        <Alert.Description>
+          Create a new GitLab project from your application ZIP, or reuse an existing repository and build. Your platform’s credentials and deployment approval rules stay in control.
+        </Alert.Description>
+      </Alert>
     </div>
   )
 }

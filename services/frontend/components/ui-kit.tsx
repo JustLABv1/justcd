@@ -4,7 +4,7 @@ import { HugeiconsIcon } from "@hugeicons/react"
 import { Layers01Icon } from "@hugeicons/core-free-icons"
 import { IconStack } from "@/components/reui/icon-stack"
 import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/panelui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Switch } from "@/components/ui/switch"
 
@@ -141,7 +141,7 @@ export function EmptyState({
 export { FormField } from "@/components/form-field"
 
 export function InlineLink({ href, children }: { href: string; children: ReactNode }) {
-  return <Link href={href} className="text-sm font-medium text-primary hover:underline">{children}</Link>
+  return <Button render={<Link href={href} />} nativeButton={false} variant="ghost" size="sm" className="-mx-2 text-primary hover:text-primary">{children}</Button>
 }
 
 /** A single list entry for connection-style inventories (credentials, clusters, Git sources, …). */

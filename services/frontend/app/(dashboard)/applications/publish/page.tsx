@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { ArrowLeft01Icon } from "@hugeicons/core-free-icons"
+import { ArrowLeft01Icon, ArrowRight01Icon, LinkSquare02Icon, Settings02Icon } from "@hugeicons/core-free-icons"
 import {
   TemplateCatalog,
   TemplateGlyph,
@@ -20,9 +20,9 @@ import {
   PublishingCard,
   PublishingField,
 } from "@/components/applications/publishing-fields"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { FormSelect } from "@/components/ui/form-select"
+import { Button } from "@/components/panelui/button"
+import { Input } from "@/components/panelui/input"
+import { PanelSelect } from "@/components/applications/panel-wizard"
 import { Disclosure } from "@/components/ui/collapsible"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { usePublishingDraft } from "@/hooks/use-publishing-draft"
@@ -197,12 +197,15 @@ export default function PublishApplicationPage() {
   }
   const management =
     workspace?.role === "owner" ? (
-      <Link
-        className="text-sm font-medium text-primary hover:underline"
-        href={`/workspaces/${workspaceId}?tab=publishing`}
+      <Button
+        variant="outline"
+        size="sm"
+        nativeButton={false}
+        render={<Link href={`/workspaces/${workspaceId}?tab=publishing`} />}
       >
-        Manage publishing profiles →
-      </Link>
+        <HugeiconsIcon icon={Settings02Icon} strokeWidth={1.8} aria-hidden="true" />
+        Manage publishing profiles
+      </Button>
     ) : null
   if (result)
     return (
@@ -234,20 +237,14 @@ export default function PublishApplicationPage() {
             </div>
           )}
           <div className="flex flex-wrap gap-4">
-            <Link
-              className="text-sm font-medium text-primary hover:underline"
-              href={`/applications/${result.applicationId}`}
-            >
-              Open application in JustCD →
-            </Link>
-            <a
-              className="text-sm text-primary hover:underline"
-              href={result.pipelineUrl}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Follow build progress →
-            </a>
+            <Button nativeButton={false} render={<Link href={`/applications/${result.applicationId}`} />}>
+              Open application in JustCD
+              <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={1.8} aria-hidden="true" />
+            </Button>
+            <Button variant="outline" nativeButton={false} render={<a href={result.pipelineUrl} target="_blank" rel="noreferrer" />}>
+              Follow build progress
+              <HugeiconsIcon icon={LinkSquare02Icon} strokeWidth={1.8} aria-hidden="true" />
+            </Button>
           </div>
         </div>
       </div>
@@ -261,6 +258,7 @@ export default function PublishApplicationPage() {
           <PublishingDraftNotice draft={draft} />
         )}
         <TemplateCatalog
+          aside={management}
           onSelect={(next) => {
             setMethod(null)
             setTemplate(next)
@@ -273,7 +271,6 @@ export default function PublishApplicationPage() {
             setError(null)
           }}
         />
-        {management}
       </div>
     )
   const manualURL = `/applications/publish/manual?workspaceId=${encodeURIComponent(workspaceId)}&templateId=${encodeURIComponent(template.id)}`
@@ -458,7 +455,7 @@ export default function PublishApplicationPage() {
                   : "Choose shared build and deployment settings configured by your administrator. This does not select an existing app."
               }
             >
-              <FormSelect
+              <PanelSelect
                 id="publish-profile"
                 value={profile?.id ?? ""}
                 onValueChange={(id) => { setProfileId(id); setServiceSelection(""); setDatabasePassword("") }}
@@ -622,11 +619,10 @@ export default function PublishApplicationPage() {
               <Button
                 type="submit"
                 loading={busy}
-                loadingText="Preparing your app…"
                 disabled={!file || !archiveValid || !profile || !workspaceId || loading}
                 className="h-10 px-5"
               >
-                Publish app
+                {busy ? "Preparing your app…" : "Publish app"}
               </Button>
             </div>
           </div>

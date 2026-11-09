@@ -6,9 +6,9 @@ import { HugeiconsIcon } from "@hugeicons/react"
 import { AiMagicIcon } from "@hugeicons/core-free-icons"
 import { api, errorMessage } from "@/lib/api"
 import { ago } from "@/lib/relative-time"
-import { Button } from "@/components/ui/button"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { Panel } from "@/components/ui-kit"
+import { Button } from "@/components/panelui/button"
+import { Frame } from "@/components/panelui/frame"
+import { Tabs } from "@/components/panelui/tabs"
 import type { Digest } from "@/lib/types"
 
 const sectionLabel = { deployed: "Deployed", failed: "Failed", attention: "Needs attention", waiting: "Waiting for you" } as const
@@ -50,24 +50,28 @@ export function WorkspaceDigest({ workspaceId }: { workspaceId: string }) {
     .map((section) => [section, digest?.items.filter((item) => item.section === section) ?? []] as const)
     .filter(([, items]) => items.length > 0)
   return (
-    <Panel
-      title="Activity digest"
-      description={`What shipped, what failed and what needs a decision in the last ${window}.`}
-      action={
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <ToggleGroup aria-label="Digest period" value={[period]} onValueChange={(next) => { if (next[0] === "day" || next[0] === "week") setPeriod(next[0]) }}>
-            <ToggleGroupItem value="day">24 hours</ToggleGroupItem>
-            <ToggleGroupItem value="week">7 days</ToggleGroupItem>
-          </ToggleGroup>
-          {digest?.available && (
-            <Button type="button" size="sm" variant="outline" loading={busy} loadingText="Writing…" onClick={() => void generate()}>
-              <HugeiconsIcon icon={AiMagicIcon} strokeWidth={1.8} aria-hidden="true" className="text-primary" />
-              {digest.source === "ai" ? "Refresh" : "Write with AI"}
-            </Button>
-          )}
-        </div>
-      }
-    >
+    <Frame variant="plain">
+      <Frame.Header>
+        <Frame.Title as="h2">Activity digest</Frame.Title>
+        <Frame.Description>{`What shipped, what failed and what needs a decision in the last ${window}.`}</Frame.Description>
+        <Frame.Action>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Tabs value={period} onValueChange={(next) => { if (next === "day" || next === "week") setPeriod(next) }}>
+              <Tabs.List aria-label="Digest period">
+                <Tabs.Trigger value="day">24 hours</Tabs.Trigger>
+                <Tabs.Trigger value="week">7 days</Tabs.Trigger>
+              </Tabs.List>
+            </Tabs>
+            {digest?.available && (
+              <Button type="button" size="sm" variant="outline" loading={busy} onClick={() => void generate()}>
+                <HugeiconsIcon icon={AiMagicIcon} strokeWidth={1.8} aria-hidden="true" className="text-primary" />
+                {busy ? "Writing…" : digest.source === "ai" ? "Refresh" : "Write with AI"}
+              </Button>
+            )}
+          </div>
+        </Frame.Action>
+      </Frame.Header>
+      <Frame.Panel>
       <div className="space-y-4 p-5">
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         {!digest && !error && <p role="status" className="text-sm text-muted-foreground">Loading digest…</p>}
@@ -117,6 +121,7 @@ export function WorkspaceDigest({ workspaceId }: { workspaceId: string }) {
           </>
         )}
       </div>
-    </Panel>
+    </Frame.Panel>
+    </Frame>
   )
 }

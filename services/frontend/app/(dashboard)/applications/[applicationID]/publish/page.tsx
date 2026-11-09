@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/panelui/button"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import { Spinner } from "@/components/ui/spinner"
 import { Input } from "@/components/ui/input"
@@ -167,24 +167,16 @@ export default function PublishVersionPage() {
           description="The running application keeps its current version until the new release is built and applied."
         >
           <div className="space-y-4 p-5">
-            <a
-              className="font-medium text-primary hover:underline"
-              href={pipeline}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Follow GitLab pipeline →
-            </a>
+            <Button variant="outline" nativeButton={false} render={<a href={pipeline} target="_blank" rel="noreferrer" />}>
+              Follow GitLab pipeline
+            </Button>
             <p className="text-sm text-muted-foreground">
               After the build succeeds, review and apply the new deployment plan
               in JustCD.
             </p>
-            <Link
-              className="font-medium text-primary hover:underline"
-              href={`/applications/${applicationID}`}
-            >
-              Open application →
-            </Link>
+            <Button nativeButton={false} render={<Link href={`/applications/${applicationID}`} />}>
+              Open application
+            </Button>
           </div>
         </Panel>
       ) : (
@@ -272,14 +264,9 @@ export default function PublishVersionPage() {
               <Button
                 type="submit"
                 loading={busy}
-                loadingText={
-                  uploadPercent < 100
-                    ? `Uploading source · ${uploadPercent}%`
-                    : "Preparing build…"
-                }
                 disabled={!file || !archiveValid || !confirmed}
               >
-                Upload and build version
+                {busy ? (uploadPercent < 100 ? `Uploading source · ${uploadPercent}%` : "Preparing build…") : "Upload and build version"}
               </Button>
             </fieldset>
           </Panel>

@@ -2,15 +2,15 @@
 
 import { useId } from "react"
 import { Bar, BarChart, XAxis, YAxis } from "recharts"
-import { Card } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/panelui/button"
+import { Frame } from "@/components/panelui/frame"
+import { Tabs } from "@/components/panelui/tabs"
 import {
   ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ErrorDetailsButton } from "@/components/error-details"
 import { summarizeSyncHistory } from "@/lib/sync-history"
@@ -77,52 +77,39 @@ export function SyncHistoryChartView({
     return `${start.toLocaleString()} – ${end.toLocaleTimeString()}`
   }
   return (
-    <Card className="min-w-0 gap-4 border p-5 ring-0">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="space-y-1">
-          <h2 className="text-sm font-semibold">Sync activity</h2>
-          <p className="text-xs text-muted-foreground" aria-live="polite">
-            {result.loading
-              ? "Loading sync history…"
-              : result.error
-                ? "Sync history unavailable"
-                : totals && totals.total > 0
-                  ? `${totals.total} runs in the last ${label}${totals.successRate == null ? "" : ` · ${totals.successRate.toFixed(1)}% succeeded`}`
-                  : ""}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-4">
-          {totals?.total !== 0 && <ul
-            aria-label="Run outcomes"
-            className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground"
-          >
-            {outcomes.map((outcome) => (
-              <li key={outcome} className="inline-flex items-center gap-1.5">
-                <span
-                  className="size-1.5 rounded-full"
-                  style={{ background: config[outcome].color }}
-                  aria-hidden="true"
-                />
-                {config[outcome].label}
-              </li>
-            ))}
-          </ul>}
-          <ToggleGroup
-            aria-label="Sync history period"
-            value={[range]}
-            onValueChange={(values) => {
-              if (values[0] === "24h" || values[0] === "7d") setRange(values[0])
-            }}
-          >
-            <ToggleGroupItem value="24h" aria-label="Last 24 hours">
-              24 hours
-            </ToggleGroupItem>
-            <ToggleGroupItem value="7d" aria-label="Last 7 days">
-              7 days
-            </ToggleGroupItem>
-          </ToggleGroup>
-        </div>
-      </div>
+    <Frame variant="plain" className="min-w-0">
+      <Frame.Header>
+        <Frame.Title as="h2">Sync activity</Frame.Title>
+        <Frame.Description aria-live="polite">
+          {result.loading
+            ? "Loading sync history…"
+            : result.error
+              ? "Sync history unavailable"
+              : totals && totals.total > 0
+                ? `${totals.total} runs in the last ${label}${totals.successRate == null ? "" : ` · ${totals.successRate.toFixed(1)}% succeeded`}`
+                : ""}
+        </Frame.Description>
+        <Frame.Action>
+          <Tabs value={range} onValueChange={(value) => { if (value === "24h" || value === "7d") setRange(value) }} aria-label="Sync history period">
+            <Tabs.List aria-label="Sync history period">
+              <Tabs.Trigger value="24h">24 hours</Tabs.Trigger>
+              <Tabs.Trigger value="7d">7 days</Tabs.Trigger>
+            </Tabs.List>
+          </Tabs>
+        </Frame.Action>
+      </Frame.Header>
+      <Frame.Panel>
+      <div className="space-y-4 p-5">
+      {totals?.total !== 0 && (
+        <ul aria-label="Run outcomes" className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          {outcomes.map((outcome) => (
+            <li key={outcome} className="inline-flex items-center gap-1.5">
+              <span className="size-1.5 rounded-full" style={{ background: config[outcome].color }} aria-hidden="true" />
+              {config[outcome].label}
+            </li>
+          ))}
+        </ul>
+      )}
       {result.loading ? (
         <Skeleton className="h-56 w-full motion-reduce:animate-none" />
       ) : result.error ? (
@@ -235,7 +222,8 @@ export function SyncHistoryChartView({
           </Button>
         )}
       </div>
-
-    </Card>
+      </div>
+      </Frame.Panel>
+    </Frame>
   )
 }

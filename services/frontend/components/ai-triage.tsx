@@ -1,18 +1,14 @@
 "use client"
 
-import Link from "next/link"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Alert02Icon, AiMagicIcon, ArrowRight01Icon, InformationCircleIcon } from "@hugeicons/core-free-icons"
+import { Alert02Icon, AiMagicIcon, InformationCircleIcon } from "@hugeicons/core-free-icons"
 import { api, errorMessage } from "@/lib/api"
 import { ago } from "@/lib/relative-time"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/panelui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import type { Triage, TriageItem, TriageSeverity } from "@/lib/types"
+import type { Triage } from "@/lib/types"
 
-const severityLabel: Record<TriageSeverity, string> = { critical: "Critical", high: "High", medium: "Medium", low: "Low" }
-const severityVariant = { critical: "destructive-light", high: "warning-light", medium: "info-light", low: "success-light" } as const
 const stageLabel: Record<string, string> = { collecting: "Collecting evidence", analyzing: "Ranking with AI", saving: "Saving result" }
 
 /** Loads the workspace triage and keeps it fresh: fast polling while a run is active, slow polling otherwise. */
@@ -95,58 +91,11 @@ export function TriageStatus({ triage, starting, onRun }: { triage: Triage | nul
         </PopoverContent>
       </Popover>
       {triage.available && triage.attentionCount > 0 && (
-        <Button type="button" variant="outline" size="sm" loading={running} loadingText="Ranking…" onClick={onRun}>
+        <Button type="button" variant="outline" size="sm" loading={running} onClick={onRun}>
           <HugeiconsIcon icon={AiMagicIcon} strokeWidth={1.8} aria-hidden="true" className="text-primary" />
-          {triage.source === "ai" ? "Re-rank" : "Rank with AI"}
+          {running ? "Ranking…" : triage.source === "ai" ? "Re-rank" : "Rank with AI"}
         </Button>
       )}
     </div>
-  )
-}
-
-export function TriageList({ triage, limit = 5, attentionHref }: { triage: Triage; limit?: number; attentionHref: string }) {
-  const items = triage.items.slice(0, limit)
-  return (
-    <>
-      {triage.source === "ai" && triage.summary && triage.items.length > 1 && (
-        <p className="flex items-start gap-2 border-b bg-muted/30 px-5 py-3 text-sm">
-          <HugeiconsIcon icon={AiMagicIcon} strokeWidth={1.8} aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-primary" />
-          <span>{triage.summary}</span>
-        </p>
-      )}
-      <ol aria-label="Applications ranked by priority" className="divide-y">
-        {items.map((item, index) => <TriageRow key={item.applicationId} item={item} rank={index + 1} />)}
-      </ol>
-      {triage.items.length > limit && (
-        <p className="border-t px-5 py-3 text-sm text-muted-foreground">
-          +{triage.items.length - limit} more · <Link href={attentionHref} className="text-primary underline underline-offset-4">View all</Link>
-        </p>
-      )}
-      {triage.source === "ai" && triage.limitations.length > 0 && (
-        <p className="border-t px-5 py-2 text-xs text-muted-foreground">{triage.limitations[0]}</p>
-      )}
-    </>
-  )
-}
-
-function TriageRow({ item, rank }: { item: TriageItem; rank: number }) {
-  const href = `/applications/${item.applicationId}${item.actionTab && item.actionTab !== "overview" ? `?tab=${item.actionTab}` : ""}`
-  return (
-    <li>
-      <Link href={href} className="flex items-start gap-3 px-5 py-4 transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none">
-        <span aria-hidden="true" className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-muted text-xs font-medium text-muted-foreground">{rank}</span>
-        <span className="min-w-0 flex-1 space-y-1">
-          <span className="flex flex-wrap items-center gap-2">
-            <span className="truncate text-sm font-medium">{item.applicationName}</span>
-            <Badge size="sm" radius="full" variant={severityVariant[item.severity]}>{severityLabel[item.severity]}</Badge>
-          </span>
-          <span className="block text-sm">{item.headline.replace(new RegExp(`^${item.applicationName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:\\-–—]\\s*`, "i"), "")}</span>
-          <span className="block text-sm text-muted-foreground">{item.impact}</span>
-          <span className="block text-sm"><span className="text-muted-foreground">Next: </span>{item.action}</span>
-          {item.facts && item.facts.length > 0 && <span className="block text-xs text-muted-foreground">{item.facts.slice(0, 2).join(" · ")}</span>}
-        </span>
-        <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={1.8} aria-hidden="true" className="mt-1 size-4 shrink-0 text-muted-foreground" />
-      </Link>
-    </li>
   )
 }

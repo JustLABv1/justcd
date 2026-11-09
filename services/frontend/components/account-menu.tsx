@@ -14,8 +14,8 @@ export function AccountMenu({ user, onSignOut, compact = false, collapsed = fals
   const name = user.displayName || user.email
   return <DropdownMenu>
     <DropdownMenuTrigger aria-label={collapsed ? `Account menu · ${name}` : "Account menu"} title={collapsed ? name : undefined} className={compact || collapsed
-      ? `grid size-9 shrink-0 place-items-center rounded-full border bg-card text-xs font-semibold uppercase outline-none focus-visible:ring-2 focus-visible:ring-ring ${collapsed ? "mx-auto mb-3" : ""}`
-      : "mx-3 mb-3 flex shrink-0 items-center gap-2 rounded-2xl bg-muted/50 p-2.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"}>
+      ? `grid size-9 shrink-0 place-items-center rounded-full border bg-card text-xs font-semibold uppercase outline-none focus-visible:ring-2 focus-visible:ring-ring ${collapsed ? "mx-auto" : ""}`
+      : "flex w-full shrink-0 items-center gap-2 rounded-2xl bg-muted/50 p-2.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"}>
       {compact || collapsed ? name.slice(0, 2) : <>
         <span className="grid size-9 shrink-0 place-items-center rounded-full border border-border/60 bg-background text-xs font-semibold uppercase">{name.slice(0, 2)}</span>
         <span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{name}</span><span className="mt-0.5 block truncate text-xs text-muted-foreground">{user.isAdmin ? "Administrator" : user.email}</span></span>

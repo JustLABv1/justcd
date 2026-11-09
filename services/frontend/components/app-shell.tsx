@@ -9,14 +9,14 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { AccountMenu } from "@/components/account-menu"
 import { CommandPalette, CommandPaletteButton } from "@/components/command-palette"
 import { PendingApproval } from "@/components/pending-approval"
+import { NavRail } from "@/components/panelui/nav-rail"
 import { Select } from "@/components/panelui/select"
 import { Button, buttonVariants } from "@/components/ui/button"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { APIError, api, apiPost, errorMessage } from "@/lib/api"
 import { WorkspaceSelectionProvider } from "@/hooks/workspace-selection"
 import type { Application, ListResponse, OnboardingStatus, Workspace, User } from "@/lib/types"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Home01Icon, Folder01Icon, Layers01Icon, Task01Icon, Settings02Icon, Audit01Icon, Link01Icon, Add01Icon, Rocket01Icon, SidebarLeftIcon, SidebarRightIcon } from "@hugeicons/core-free-icons"
+import { Home01Icon, Folder01Icon, Layers01Icon, Task01Icon, Settings02Icon, Audit01Icon, Link01Icon, Add01Icon, Rocket01Icon, Search01Icon, BookOpen01Icon } from "@hugeicons/core-free-icons"
 
 type NavItem = { href: string; label: string; icon: typeof Home01Icon; badge?: number; dot?: boolean }
 
@@ -56,6 +56,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       try { if (window.localStorage.getItem("justcd.sidebarCollapsed") === "1") setCollapsed(true) } catch { /* storage unavailable */ }
     })
   }, [])
+  function setSidebarCollapsed(next: boolean) {
+    setCollapsed(next)
+    try { window.localStorage.setItem("justcd.sidebarCollapsed", next ? "1" : "0") } catch { /* storage unavailable */ }
+  }
   function toggleSidebar() {
     setCollapsed((previous) => {
       const next = !previous
@@ -245,43 +249,47 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="min-h-svh overflow-x-clip bg-muted text-foreground dark:bg-background">
-      <aside aria-label="Sidebar" className={`fixed bottom-3 left-3 top-3 z-20 hidden ${collapsed ? "w-[72px]" : "w-[224px]"} flex-col overflow-hidden transition-[width] duration-200 motion-reduce:transition-none rounded-[24px] border border-border/70 bg-card shadow-[0_8px_32px_-16px_rgb(0_0_0_/_0.2)] lg:flex`}>
-        <div className={`flex shrink-0 items-center ${collapsed ? "justify-center pb-4 pt-6" : "justify-between gap-2 py-6 pl-5 pr-3"}`}>
-                  <Link href="/" aria-label="JustCD home" className={`flex min-w-0 items-center gap-3 ${collapsed ? "justify-center" : ""}`}>
-          <LogoMark className="h-9 w-auto shrink-0 text-foreground" />
-          {!collapsed && <span className="text-[15px] font-semibold tracking-tight">JustCD</span>}
-        </Link>
-          {!collapsed && <CommandPaletteButton onClick={() => setPaletteOpen(true)} />}
-        </div>
+    <div className="min-h-svh overflow-x-clip bg-muted text-foreground dark:bg-[oklch(0.17_0_0)]">
+      <NavRail
+        aria-label="Sidebar"
+        collapsed={collapsed}
+        onCollapsedChange={setSidebarCollapsed}
+        expandedWidth={224}
+        collapsedWidth={72}
+        className="fixed bottom-3 left-3 top-3 z-20 hidden h-auto rounded-[24px] border border-border/70 bg-card p-3 shadow-[0_8px_32px_-16px_rgb(0_0_0_/_0.2)] dark:bg-card lg:flex not-data-collapsed:overflow-y-auto"
+      >
+        <NavRail.Header className="pb-3 pt-1">
+          <NavRail.Brand href="/" label="JustCD home" icon={<LogoMark className="h-5 w-auto text-current" />}>JustCD</NavRail.Brand>
+          <NavRail.Trigger expandLabel="Expand sidebar" collapseLabel="Collapse sidebar" aria-keyshortcuts="Control+B Meta+B" title="Toggle sidebar · Ctrl/⌘ B" />
+        </NavRail.Header>
         <WorkspaceSelector workspaces={workspaces} selectedId={selectedWorkspaceId} onChange={selectWorkspace} loading={workspacesLoading} collapsed={collapsed} canCreate={canCreateWorkspace} />
-        {collapsed && <div className="mb-3 flex justify-center"><CommandPaletteButton collapsed onClick={() => setPaletteOpen(true)} /></div>}
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-5">
-          <NavGroup label="Delivery" items={delivery} pathname={pathname} first collapsed={collapsed} />
-          {selectedWorkspaceId && <NavGroup label="Workspace" items={workspaceNavigation} pathname={pathname} collapsed={collapsed} />}
-          {user.isAdmin && <NavGroup label="Administration" items={administration} pathname={pathname} collapsed={collapsed} />}
-        </div>
-        <div className="space-y-1 px-3 pb-2">
-          <DocumentationLink collapsed={collapsed} />
-          {collapsed
-            ? <Tooltip>
-              <TooltipTrigger render={<button type="button" aria-label="Expand sidebar" aria-expanded={false} aria-keyshortcuts="Control+B Meta+B" onClick={toggleSidebar} className={`${styles.navItem} ${styles.navItemCollapsed} cursor-pointer`} />}>
-                <HugeiconsIcon icon={SidebarRightIcon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />
-              </TooltipTrigger>
-              <TooltipContent side="right">Expand sidebar · Ctrl/⌘ B</TooltipContent>
-            </Tooltip>
-            : <button type="button" aria-expanded aria-keyshortcuts="Control+B Meta+B" onClick={toggleSidebar} className={`${styles.navItem} w-full cursor-pointer`}>
-              <HugeiconsIcon icon={SidebarLeftIcon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />
-              Collapse
-              <kbd className="ml-auto text-[11px] font-medium text-muted-foreground/70">⌘B</kbd>
-            </button>}
-        </div>
-        <AccountMenu user={user} onSignOut={signOut} collapsed={collapsed} />
-      </aside>
+        <NavRail.Item icon={<HugeiconsIcon icon={Search01Icon} strokeWidth={1.8} aria-hidden="true" />} label="Search and commands" aria-keyshortcuts="Control+K Meta+K" onClick={() => setPaletteOpen(true)} className="text-start">
+          Search <kbd className="float-end text-[11px] font-medium text-muted-foreground/70">⌘K</kbd>
+        </NavRail.Item>
+        <RailGroup label="Delivery" items={delivery} pathname={pathname} />
+        {selectedWorkspaceId && <RailGroup label="Workspace" items={workspaceNavigation} pathname={pathname} />}
+        {user.isAdmin && <RailGroup label="Administration" items={administration} pathname={pathname} />}
+        <NavRail.Footer className="gap-1 pt-3">
+          <NavRail.Item href="/docs" target="_blank" rel="noopener noreferrer" icon={<HugeiconsIcon icon={BookOpen01Icon} strokeWidth={1.8} aria-hidden="true" />} label="Documentation (opens in a new tab)">Documentation</NavRail.Item>
+          <AccountMenu user={user} onSignOut={signOut} collapsed={collapsed} />
+        </NavRail.Footer>
+      </NavRail>
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} isAdmin={user.isAdmin} canCreateWorkspace={canCreateWorkspace} workspaces={workspaces} workspaceId={selectedWorkspaceId} onSelectWorkspace={selectWorkspace} onToggleSidebar={toggleSidebar} onboardingIncomplete={onboardingIncomplete} />
 
-      <div className={`${collapsed ? "lg:pl-[96px]" : "lg:pl-[248px]"} transition-[padding] duration-200 motion-reduce:transition-none`}>
+      <div className={`${collapsed ? "lg:pl-[96px]" : "lg:pl-[248px]"} transition-[padding] duration-200 motion-reduce:transition-none lg:py-3 lg:pr-3`}>
+      <div className="lg:min-h-[calc(100svh-1.5rem)] lg:rounded-[24px] lg:border lg:border-border/70 lg:bg-card lg:shadow-[0_8px_32px_-16px_rgb(0_0_0_/_0.2)]">
+        <div className="hidden h-[52px] items-center justify-between gap-4 border-b px-8 lg:flex">
+          <nav aria-label="Breadcrumb" className="min-w-0 text-sm">
+            <ol className="flex min-w-0 items-center gap-x-2">
+              {crumbs.map((crumb, index) => <li key={`top-${crumb.label}-${index}`} className="flex min-w-0 items-center gap-2">
+                {index > 0 && <span aria-hidden="true" className="text-muted-foreground/50">/</span>}
+                {crumb.href ? <Link href={crumb.href} className="truncate text-muted-foreground transition-colors hover:text-foreground">{crumb.label}</Link> : <span aria-current="page" className="truncate font-medium">{crumb.label}</span>}
+              </li>)}
+            </ol>
+          </nav>
+          <div className="flex shrink-0 items-center gap-1"><CommandPaletteButton onClick={() => setPaletteOpen(true)} /></div>
+        </div>
         <header className="flex h-14 items-center justify-between gap-4 px-5 sm:px-8 lg:hidden">
           <Link href="/" className="flex items-center gap-2">
             <LogoMark className="h-7 w-auto text-foreground" />
@@ -305,8 +313,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {group.items.map((item) => <Link key={item.href} href={item.href} aria-current={isNavSelected(item.href, pathname) ? "page" : undefined} className={`${styles.navItem} shrink-0 !py-1.5 !text-xs`}><HugeiconsIcon icon={item.icon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />{item.label}<NavBadge item={item} /></Link>)}
           </div>)}
         </nav>
-        <main style={{ paddingBottom: "calc(2rem + var(--toast-clearance, 0px))" }} className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") && !pathname.endsWith("/publish") ? "max-w-none" : "max-w-[1440px]"} px-5 pb-7 pt-5 sm:px-8 sm:pb-8 sm:pt-6 lg:pt-9 ${pathname === "/audit" ? "lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden" : ""}`}>
-          {crumbs.length > 1 && <nav aria-label="Breadcrumb" className="mb-4 shrink-0 text-sm">
+        <main style={{ paddingBottom: "calc(2rem + var(--toast-clearance, 0px))" }} className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") && !pathname.endsWith("/publish") ? "max-w-none" : "max-w-[1440px]"} px-5 pb-7 pt-5 sm:px-8 sm:pb-8 sm:pt-6 lg:pt-7 ${pathname === "/audit" ? "lg:flex lg:h-[calc(100dvh-1.5rem-52px)] lg:flex-col lg:overflow-hidden" : ""}`}>
+          {crumbs.length > 1 && <nav aria-label="Breadcrumb" className="mb-4 shrink-0 text-sm lg:hidden">
             <ol className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               {crumbs.map((crumb, index) => <li key={`${crumb.label}-${index}`} className="flex min-w-0 max-w-full items-center gap-2">
                 {index > 0 && <span aria-hidden="true" className="text-muted-foreground/50">/</span>}
@@ -318,6 +326,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {children}
           </WorkspaceSelectionProvider>
         </main>
+      </div>
       </div>
     </div>
   )
@@ -341,17 +350,17 @@ function WorkspaceSelector({
   canCreate?: boolean
 }) {
   const router = useRouter()
-  if (loading && collapsed) return <div role="status" className="mx-auto mb-4 size-10 animate-pulse rounded-lg border bg-muted/40 motion-reduce:animate-none" />
-  if (!loading && !workspaces.length && collapsed && !canCreate) return <span role="note" aria-label="No workspaces yet" title="Ask an administrator to add you to a workspace" className="mx-auto mb-4 grid size-10 place-items-center rounded-lg border border-dashed text-muted-foreground">?</span>
-  if (!loading && !workspaces.length && collapsed) return <Link href="/workspaces/new" aria-label="Create a workspace" title="Create a workspace" className="mx-auto mb-4 grid size-10 place-items-center rounded-lg border border-dashed text-primary hover:bg-muted/40"><HugeiconsIcon icon={Add01Icon} strokeWidth={1.8} className="size-4" aria-hidden="true" /></Link>
+  if (loading && collapsed) return <div role="status" className="mx-auto mb-2 size-10 animate-pulse rounded-lg border bg-muted/40 motion-reduce:animate-none" />
+  if (!loading && !workspaces.length && collapsed && !canCreate) return <span role="note" aria-label="No workspaces yet" title="Ask an administrator to add you to a workspace" className="mx-auto mb-2 grid size-10 place-items-center rounded-lg border border-dashed text-muted-foreground">?</span>
+  if (!loading && !workspaces.length && collapsed) return <Link href="/workspaces/new" aria-label="Create a workspace" title="Create a workspace" className="mx-auto mb-2 grid size-10 place-items-center rounded-lg border border-dashed text-primary hover:bg-muted/40"><HugeiconsIcon icon={Add01Icon} strokeWidth={1.8} className="size-4" aria-hidden="true" /></Link>
   if (loading) {
-    return <div role="status" className={`mx-3 mb-4 h-10 animate-pulse rounded-lg border bg-muted/40 motion-reduce:animate-none ${compact ? "mx-0" : ""}`} />
+    return <div role="status" className={`mb-2 h-10 animate-pulse rounded-lg border bg-muted/40 motion-reduce:animate-none ${compact ? "mb-4" : ""}`} />
   }
   if (!workspaces.length && !canCreate) {
-    return <p role="note" className={`mx-3 mb-4 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground ${compact ? "mx-0" : ""}`}>No workspaces yet. Ask an administrator to add you to one.</p>
+    return <p role="note" className={`mb-2 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground ${compact ? "mb-4" : ""}`}>No workspaces yet. Ask an administrator to add you to one.</p>
   }
   if (!workspaces.length) {
-    return <Link href="/workspaces/new" className={`mx-3 mb-4 flex h-10 items-center justify-between rounded-lg border border-dashed px-3 text-xs font-medium text-primary hover:bg-muted/40 ${compact ? "mx-0" : ""}`}>Create a workspace <HugeiconsIcon icon={Add01Icon} strokeWidth={1.8} className="size-4" aria-hidden="true" /></Link>
+    return <Link href="/workspaces/new" className={`mb-2 flex h-10 items-center justify-between rounded-lg border border-dashed px-3 text-xs font-medium text-primary hover:bg-muted/40 ${compact ? "mb-4" : ""}`}>Create a workspace <HugeiconsIcon icon={Add01Icon} strokeWidth={1.8} className="size-4" aria-hidden="true" /></Link>
   }
   const selected = workspaces.find((workspace) => workspace.id === selectedId)
   const items = workspaces.map((workspace) => ({ value: workspace.id, label: workspace.name }))
@@ -364,10 +373,10 @@ function WorkspaceSelector({
   return (
     <Select items={items} value={selectedId} onValueChange={choose}>
       {collapsed
-        ? <Select.Trigger variant="ghost" icon={null} aria-label={`Select workspace · ${selected?.name ?? ""}`} title={selected?.name} className="mx-auto mb-3 size-11 justify-center rounded-xl border bg-background p-0">
+        ? <Select.Trigger variant="ghost" icon={null} aria-label={`Select workspace · ${selected?.name ?? ""}`} title={selected?.name} className="mx-auto mb-2 size-10 justify-center rounded-xl border bg-background p-0">
           <HugeiconsIcon icon={Folder01Icon} className="size-4 text-muted-foreground" aria-hidden="true" />
         </Select.Trigger>
-        : <Select.Trigger variant="default" size="sm" aria-label="Select workspace" className={`mb-4 h-9 rounded-xl px-2.5 ${compact ? "" : "mx-3 !w-[calc(100%-1.5rem)]"}`}>
+        : <Select.Trigger variant="default" size="sm" aria-label="Select workspace" className={`h-9 rounded-xl px-2.5 ${compact ? "mb-4" : "mb-2 !w-full"}`}>
           <HugeiconsIcon icon={Folder01Icon} className="size-4 text-muted-foreground" aria-hidden="true" />
           <Select.Value placeholder="Select workspace" className="text-[13px] font-medium" />
         </Select.Trigger>}
@@ -384,28 +393,20 @@ function WorkspaceSelector({
   )
 }
 
-function NavGroup({ label, items, pathname, first = false, collapsed = false }: { label: string; items: NavItem[]; pathname: string; first?: boolean; collapsed?: boolean }) {
-  return <>
-    {collapsed
-      ? !first && <div aria-hidden="true" className="mx-3 my-3 border-t" />
-      : <p className={`px-4 pb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground ${first ? "" : "pt-7"}`}>{label}</p>}
-    <nav aria-label={label} className="space-y-1">
-      {items.map((item) => {
-        const current = isNavSelected(item.href, pathname) ? "page" : undefined
-        const selected = isNavSelected(item.href, pathname)
-        const icon = <HugeiconsIcon icon={item.icon} strokeWidth={1.8} className={`size-4 shrink-0 ${selected ? "text-primary" : ""}`} aria-hidden="true" />
-        return collapsed
-          ? <Tooltip key={item.href}>
-            <TooltipTrigger render={<Link href={item.href} aria-label={item.badge ? `${item.label} (${item.badge} pending)` : item.label} aria-current={current} className={`${styles.navItem} ${styles.navItemCollapsed} relative`} />}>
-              {icon}
-              {(item.badge || item.dot) ? <span aria-hidden="true" className={`absolute right-1 top-1 size-2.5 rounded-full border-2 border-card ${item.badge ? "bg-rose-500" : "bg-emerald-500"}`} /> : null}
-            </TooltipTrigger>
-            <TooltipContent side="right">{item.label}</TooltipContent>
-          </Tooltip>
-          : <Link key={item.href} href={item.href} aria-current={current} className={styles.navItem}>{icon}{item.label}<NavBadge item={item} /></Link>
-      })}
-    </nav>
-  </>
+function RailGroup({ label, items, pathname }: { label: string; items: NavItem[]; pathname: string }) {
+  return <NavRail.Group label={label}>
+    {items.map((item) => <NavRail.Item
+      key={item.href}
+      href={item.href}
+      render={<Link href={item.href} />}
+      active={isNavSelected(item.href, pathname)}
+      icon={<HugeiconsIcon icon={item.icon} strokeWidth={1.8} aria-hidden="true" />}
+      label={item.badge ? `${item.label} (${item.badge} pending)` : item.label}
+    >
+      {item.label}
+      {item.badge ? <NavRail.Badge aria-label={`${item.badge} pending`}>{item.badge > 99 ? "99+" : item.badge}</NavRail.Badge> : item.dot ? <NavRail.Badge aria-label="Setup incomplete">!</NavRail.Badge> : null}
+    </NavRail.Item>)}
+  </NavRail.Group>
 }
 
 function NavBadge({ item }: { item: NavItem }) {

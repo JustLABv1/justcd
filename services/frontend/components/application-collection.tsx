@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { ProfileVersionBadge } from "@/components/applications/profile-version-notice"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { StarIcon, Tag01Icon, ViewIcon as SavedViewIcon, Tick02Icon, Add01Icon } from "@hugeicons/core-free-icons"
+import { SlidersHorizontalIcon, StarIcon, Tag01Icon, ViewIcon as SavedViewIcon, Tick02Icon, Add01Icon } from "@hugeicons/core-free-icons"
 import { ApplicationLabelsDialog } from "@/components/application-labels-dialog"
 import { ConnectionDialog } from "@/components/connection-dialog"
 import { DialogCancel, DialogFooter } from "@/components/ui/dialog"
@@ -12,9 +12,15 @@ import { applicationViewSignature } from "@/lib/application-views"
 import type { ApplicationPreferences, ApplicationSavedView, ApplicationViewConfig } from "@/lib/application-views"
 import { useRouter } from "next/navigation"
 import { useEffect, useMemo, useState, type ReactNode } from "react"
-import { Input } from "@/components/ui/input"
-import { Button } from "@/components/ui/button"
-import { FormSelect } from "@/components/ui/form-select"
+import { Alert } from "@/components/panelui/alert"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
+import { Input } from "@/components/panelui/input"
+import { Tabs } from "@/components/panelui/tabs"
+import { Chip } from "@/components/panelui/chip"
+import { Menu } from "@/components/panelui/menu"
+import { PanelSelect } from "@/components/applications/panel-wizard"
+import { StatusPill } from "@/components/overview/overview-parts"
 import { Filters } from "@/components/reui/filters/filters"
 import { createFilterQuery } from "@/components/reui/filters/filters-query"
 import { applicationFilterFieldIds, applicationFilterFields, readApplicationField } from "@/components/application-filter-fields"
@@ -22,12 +28,10 @@ import { countActiveConditions, matchesFilterQuery } from "@/lib/filter-eval"
 import type { FilterQuery } from "@/components/reui/filters/filters-types"
 import { DataGridList, type GridColumn } from "@/components/data-grid-table"
 import { ActionMenu, RowActions, type ActionItem } from "@/components/action-menu"
-import { Badge } from "@/components/reui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { ApplicationClusterFilter } from "@/components/application-cluster-filter"
-import { ToggleGroup, ToggleGroupItem, ToggleGroupCount } from "@/components/ui/toggle-group"
 import { Delete02Icon, Edit02Icon, ViewIcon } from "@hugeicons/core-free-icons"
-import { EmptyState, StatusBadge } from "@/components/ui-kit"
+import { EmptyState } from "@/components/ui-kit"
 import { WorkspaceIcon, CollectionSkeleton } from "@/components/workspace-ui"
 import { tone } from "@/components/health-tone"
 import { useToast } from "@/components/toast-provider"
@@ -72,7 +76,7 @@ function ApplicationActions({ app, canManage, onDeleted, onEditLabels }: { app: 
         confirmLabel: "Delete application",
         onConfirm: remove,
         children: <>
-          <FormSelect ariaLabel={`Managed cluster resources for ${app.name}`} value={policy} onValueChange={setPolicy} items={[{ value: "keep", label: "Keep resources in Kubernetes" }, { value: "delete", label: "Delete through a reviewed plan" }]} />
+          <PanelSelect ariaLabel={`Managed cluster resources for ${app.name}`} value={policy} onValueChange={setPolicy} items={[{ value: "keep", label: "Keep resources in Kubernetes" }, { value: "delete", label: "Delete through a reviewed plan" }]} />
           {policy === "delete" && <p className="mt-2 text-sm text-muted-foreground">Resources are not deleted immediately. Review and approve the deletion plan on the application page.</p>}
         </>,
       },
@@ -93,6 +97,9 @@ const levelRank: Record<HealthLevel, number> = { critical: 0, warning: 1, unknow
 function summaryLabels(app: WorkspaceApplication) {
   return Object.entries(app.labels ?? {}).filter(([key]) => key !== "justcd.io/published" && key !== "justcd.io/publishing-profile").sort(([a], [b]) => a.localeCompare(b))
 }
+
+const groupLabels: Record<GroupMode, string> = { cluster: "Cluster", namespace: "Namespace", status: "Status", label: "Label", none: "No grouping" }
+const sortLabels: Record<string, string> = { attention: "Attention first", name: "Name A–Z", newest: "Newest first" }
 
 const rendererLabel = { helm: "Helm", kustomize: "Kustomize", yaml: "Plain YAML" } as const
 
@@ -120,7 +127,7 @@ export function ApplicationCard({
   const reason = reasonFor(app, blockedBy)
   const stalled = isCheckStalled(app, now)
   return (
-    <article className={`flex min-w-0 flex-col rounded-xl border bg-card p-4 ${blockedBy ? "border-dashed opacity-75" : ""}`}>
+    <article className={`flex min-w-0 flex-col rounded-2xl border p-4 transition-shadow hover:shadow-md ${blockedBy ? "border-dashed bg-card opacity-75" : reason && !reason.blocked ? "border-warning/40 bg-warning/5" : "bg-card"}`}>
       <header className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="truncate text-base font-semibold tracking-tight" title={app.name}>
@@ -134,13 +141,13 @@ export function ApplicationCard({
         <div className="flex shrink-0 items-center gap-1">{onFavorite && <FavoriteButton name={app.name} favorite={Boolean(favorite)} busy={favoriteBusy} onClick={onFavorite} />}<ApplicationActions app={app} canManage={Boolean(canManage)} onDeleted={onDeleted} onEditLabels={onEditLabels} /></div>
       </header>
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
-        <span title="Delivery state" className="inline-flex"><StatusBadge status={app.health} /></span>
-        <span title="Runtime state" className="inline-flex"><StatusBadge status={app.healthCondition?.status ?? "Unknown"} /></span>
-        {app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}
+        <span title="Delivery state" className="inline-flex"><StatusPill status={app.health} /></span>
+        <span title="Runtime state" className="inline-flex"><StatusPill status={app.healthCondition?.status ?? "Unknown"} /></span>
+        {app.autoSyncPaused && <StatusPill status="Reconciliation paused" />}
         <ProfileVersionBadge application={app} />
-        {app.configurationMissing && <Badge variant="destructive-light" radius="full">Definition missing</Badge>}
+        {app.configurationMissing && <Badge variant="destructive" size="sm">Definition missing</Badge>}
       </div>
-      {labels.length > 0 && <div aria-label="Application labels" className="mt-2 flex flex-wrap gap-1">{labels.map(([key, value]) => <Badge key={key} variant="outline" className="max-w-full truncate text-xs" title={`${key}=${value}`}>{key}{value && <>: {value}</>}</Badge>)}</div>}
+      {labels.length > 0 && <div aria-label="Application labels" className="mt-2 flex flex-wrap gap-1">{labels.map(([key, value]) => <Badge key={key} variant="outline" size="sm" className="max-w-full truncate" title={`${key}=${value}`}>{key}{value && <>: {value}</>}</Badge>)}</div>}
       {reason && (
         <p className={`mt-2 line-clamp-2 text-sm ${reason.blocked ? "text-muted-foreground" : "text-warning-foreground dark:text-warning"}`} title={app.statusIssues?.map((issue) => issue.summary).join("\n") || reason.text}>
           {reason.text}{app.statusIssues?.length > 0 && !reason.blocked && <> · <span className="text-muted-foreground">{checkSources(app)} check failed</span></>}
@@ -428,10 +435,10 @@ export function ApplicationCollection({
         return (
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center gap-1.5">
-              <StatusBadge status={app.health} /><StatusBadge status={app.healthCondition?.status ?? "Unknown"} />
-              {app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}
+              <StatusPill status={app.health} /><StatusPill status={app.healthCondition?.status ?? "Unknown"} />
+              {app.autoSyncPaused && <StatusPill status="Reconciliation paused" />}
               <ProfileVersionBadge application={app} />
-              {app.configurationMissing && <Badge variant="destructive-light" radius="full">Definition missing</Badge>}
+              {app.configurationMissing && <Badge variant="destructive" size="sm">Definition missing</Badge>}
             </div>
             {reason && <p className="line-clamp-2 text-xs text-muted-foreground" title={reason.text}>{reason.text}</p>}
           </div>
@@ -473,7 +480,7 @@ export function ApplicationCollection({
     if (groupBy === "none") return <div key={bucket.key}>{body}</div>
     const open = openGroups[bucket.key] ?? defaultOpen(bucket)
     return (
-      <Collapsible key={bucket.key} open={open} onOpenChange={(next) => setOpenGroups((current) => ({ ...current, [bucket.key]: next }))} className={`rounded-xl border bg-card/40 ${health && health.level !== "healthy" ? tone[health.level].border : ""}`}>
+      <Collapsible key={bucket.key} open={open} onOpenChange={(next) => setOpenGroups((current) => ({ ...current, [bucket.key]: next }))} className={`rounded-2xl border bg-card/40 ${health && health.level !== "healthy" ? tone[health.level].border : ""}`}>
         <CollapsibleTrigger className="w-full justify-between gap-3 px-4 py-3">
           <GroupHeader label={bucket.label} bucket={bucket} mode={groupBy} health={health} open={open} />
         </CollapsibleTrigger>
@@ -486,70 +493,81 @@ export function ApplicationCollection({
     <>
       {renderHeader?.(viewMenu)}
       <div>
-      {preferencesError && <div role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warning/30 p-3 text-sm"><p>Favorites and saved views could not be loaded.</p><Button variant="outline" size="sm" onClick={() => setPreferencesVersion(current => current + 1)}>Retry preferences</Button></div>}
+      {preferencesError && <Alert tone="warning" className="mb-3"><Alert.Icon /><Alert.Title>Favorites and saved views could not be loaded.</Alert.Title><Alert.Actions><Button variant="outline" size="sm" onClick={() => setPreferencesVersion(current => current + 1)}>Retry</Button></Alert.Actions></Alert>}
       <ConnectionDialog open={saveDialog} onOpenChange={setSaveDialog} title="Save application view" description="Save your grouping, filters, sort order and layout. This view is personal and will reopen when you return." busy={viewBusy} size="sm">
         <form className="space-y-4" onSubmit={event => { event.preventDefault(); void saveView(true) }}><FormField label="View name" htmlFor="application-view-name"><Input id="application-view-name" value={viewName} maxLength={80} placeholder="Production by team" autoFocus required disabled={viewBusy} onChange={event => setViewName(event.target.value)} /></FormField>{viewError && <p role="alert" className="text-sm text-destructive">{viewError}</p>}<DialogFooter><DialogCancel disabled={viewBusy} /><Button type="submit" loading={viewBusy} disabled={!viewName.trim()}>Save view</Button></DialogFooter></form>
       </ConnectionDialog>
       {editingLabels && <ApplicationLabelsDialog key={editingLabels.id} application={editingLabels} onClose={() => setEditingLabels(null)} onSaved={labels => onApplicationUpdated?.({ ...editingLabels, labels })} />}
-      <section aria-label="Filter applications" className="mb-3 rounded-xl border bg-card">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3 sm:px-5">
+      <section aria-label="Filter applications" className="mb-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="max-w-full overflow-x-auto">
-          <ToggleGroup className="w-max" aria-label="Filter by health" value={[filter]} onValueChange={(value) => { if (value[0]) setFilter(value[0]) }}>
-            {([["all", "All apps"], ["attention", "Needs attention"], ["synced", "In sync"], ["other", "Other"], ["paused", "Reconciliation paused"]] as const).map(([value, label]) => (
-              <ToggleGroupItem key={value} value={value}>
-                {label}
-                <ToggleGroupCount>{counts[value]}</ToggleGroupCount>
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
+            <Tabs variant="segmented" value={filter} onValueChange={(value) => { if (typeof value === "string") setFilter(value) }}>
+              <Tabs.List aria-label="Filter by health">
+                {([["all", "All apps"], ["attention", "Needs attention"], ["synced", "In sync"], ["other", "Other"], ["paused", "Reconciliation paused"]] as const)
+                  // Empty buckets are noise; keep them only while they are the active filter.
+                  .filter(([value]) => value === "all" || value === "attention" || counts[value] > 0 || filter === value)
+                  .map(([value, label]) => (
+                    <Tabs.Trigger key={value} value={value}>{label} <Tabs.Badge>{counts[value]}</Tabs.Badge></Tabs.Trigger>
+                  ))}
+              </Tabs.List>
+            </Tabs>
           </div>
-          <Button variant={favoritesOnly ? "secondary" : "ghost"} size="sm" aria-pressed={favoritesOnly} disabled={!preferencesReady} onClick={() => setFavoritesOnly(current => !current)}><HugeiconsIcon icon={StarIcon} aria-hidden="true" className={favoritesOnly ? "fill-current" : ""} />Favorites <span className="tabular-nums">{counts.favorites}</span></Button>
+          <Chip pressed={favoritesOnly} onPressedChange={setFavoritesOnly} disabled={!preferencesReady} className="gap-1.5">
+            {/* The chip draws its own tick while pressed, so the star only shows while it is off. */}
+            {!favoritesOnly && <HugeiconsIcon icon={StarIcon} aria-hidden="true" className="size-3.5" />}
+            Favorites{counts.favorites > 0 && <span className="tabular-nums"> {counts.favorites}</span>}
+          </Chip>
         </div>
-        <div className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5">
-          <div className="relative w-full min-w-0 sm:w-auto sm:min-w-56 sm:flex-1 lg:max-w-sm">
-            <WorkspaceIcon name="search" className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted-foreground" />
-            <Input aria-label="Search applications" placeholder="Search applications, labels, clusters…" value={query} onChange={(event) => setQuery(event.target.value)} className="h-9 bg-background pl-9" />
-          </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Input.Group className="w-full min-w-0 sm:w-auto sm:min-w-56 sm:flex-1 lg:max-w-md">
+            <Input.Addon><WorkspaceIcon name="search" className="size-4" /></Input.Addon>
+            <Input aria-label="Search applications" placeholder="Search applications, labels, clusters…" value={query} onChange={(event) => setQuery(event.target.value)} />
+          </Input.Group>
           {clusters.size > 1 && <ApplicationClusterFilter
             clusters={[...clusters.values()].sort((a, b) => levelRank[a.health.level] - levelRank[b.health.level] || a.name.localeCompare(b.name))}
             value={clusterFilter}
             onValueChange={setClusterFilter}
           />}
           <Filters variant="advanced" advancedMode="popover" advancedAlign="start" fields={filterFields} query={filterQuery} onQueryChange={setFilterQuery} size="sm" />
-          <FormSelect
-            ariaLabel="Group applications"
-            value={groupBy}
-            onValueChange={(value) => { setGroupBy(value as GroupMode); setOpenGroups({}); if (value === "label" && !labelKey) setLabelKey(labelKeys[0] ?? "") }}
-            className="w-44 shrink-0"
-            items={[
-              { value: "cluster", label: "Group: Cluster" },
-              { value: "namespace", label: "Group: Namespace" },
-              { value: "status", label: "Group: Status" },
-              { value: "label", label: "Group: Label" },
-              { value: "none", label: "No grouping" },
-            ]}
-          />
-          {groupBy === "label" && <FormSelect ariaLabel="Group by label key" value={labelKey} onValueChange={value => { setLabelKey(value); setOpenGroups({}) }} placeholder="Choose a label key" className="w-44" items={labelKeys.map(key => ({ value: key, label: key }))} />}
-          <FormSelect
-            ariaLabel="Sort applications"
-            value={sort}
-            onValueChange={setSort}
-            className="w-40 shrink-0"
-            items={[
-              { value: "attention", label: "Attention first" },
-              { value: "name", label: "Name A–Z" },
-              { value: "newest", label: "Newest first" },
-            ]}
-          />
+          <div className="ml-auto flex items-center gap-2">
+            <Menu>
+              <Menu.Trigger render={<Button type="button" variant="outline" aria-label="Group and sort" />}>
+                <HugeiconsIcon icon={SlidersHorizontalIcon} strokeWidth={1.8} aria-hidden="true" />
+                <span className="hidden sm:inline">{groupLabels[groupBy]} · {sortLabels[sort]}</span>
+              </Menu.Trigger>
+              <Menu.Content align="end" className="min-w-56">
+                <Menu.Group>
+                  <Menu.GroupLabel>Group by</Menu.GroupLabel>
+                  <Menu.RadioGroup value={groupBy} onValueChange={(value) => { setGroupBy(value as GroupMode); setOpenGroups({}); if (value === "label" && !labelKey) setLabelKey(labelKeys[0] ?? "") }}>
+                    {(Object.keys(groupLabels) as GroupMode[]).map((value) => <Menu.RadioItem key={value} value={value}>{groupLabels[value]}</Menu.RadioItem>)}
+                  </Menu.RadioGroup>
+                </Menu.Group>
+                {groupBy === "label" && <Menu.Group>
+                  <Menu.Separator />
+                  <Menu.GroupLabel>Label key</Menu.GroupLabel>
+                  <Menu.RadioGroup value={labelKey} onValueChange={(value) => { setLabelKey(String(value)); setOpenGroups({}) }}>
+                    {labelKeys.map((key) => <Menu.RadioItem key={key} value={key}>{key}</Menu.RadioItem>)}
+                  </Menu.RadioGroup>
+                </Menu.Group>}
+                <Menu.Separator />
+                <Menu.Group>
+                  <Menu.GroupLabel>Sort by</Menu.GroupLabel>
+                  <Menu.RadioGroup value={sort} onValueChange={(value) => setSort(String(value))}>
+                    {Object.entries(sortLabels).map(([value, label]) => <Menu.RadioItem key={value} value={value}>{label}</Menu.RadioItem>)}
+                  </Menu.RadioGroup>
+                </Menu.Group>
+              </Menu.Content>
+            </Menu>
+            <Tabs value={view} onValueChange={(value) => { if (value === "cards" || value === "list") setView(value) }}>
+              <Tabs.List aria-label="Application view">
+                <Tabs.Trigger value="cards">Cards</Tabs.Trigger>
+                <Tabs.Trigger value="list">List</Tabs.Trigger>
+              </Tabs.List>
+            </Tabs>
+          </div>
         </div>
+        {(filtering || buckets.length > 1) && <p role="status" className="px-1 text-sm text-muted-foreground">Showing {visible.length} of {available.length} applications{buckets.length > 1 && groupBy !== "none" ? ` in ${buckets.length} groups` : ""}</p>}
       </section>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-1">
-        <p role="status" className="text-sm text-muted-foreground">Showing {visible.length} of {available.length} applications{buckets.length > 1 && groupBy !== "none" ? ` in ${buckets.length} groups` : ""}</p>
-        <ToggleGroup aria-label="Application view" value={[view]} onValueChange={(value) => { if (value[0]) setView(value[0] as "cards" | "list") }}>
-          <ToggleGroupItem value="cards">Cards</ToggleGroupItem>
-          <ToggleGroupItem value="list">List</ToggleGroupItem>
-        </ToggleGroup>
-      </div>
       {visible.length ? (
         <div className="space-y-3">{buckets.map(renderBucket)}</div>
       ) : (

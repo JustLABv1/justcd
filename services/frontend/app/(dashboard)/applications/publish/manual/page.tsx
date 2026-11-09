@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/panelui/button"
 import { Input } from "@/components/ui/input"
 import { PublishingServicesEditor } from "@/components/settings/publishing-services"
 import { ArchiveUpload } from "@/components/applications/archive-upload"
@@ -406,12 +406,9 @@ export default function PublishApplicationPage() {
               Review and apply the plan to make the app available. Before the
               first successful build, no deployment manifest exists.
             </p>
-            <Link
-              href={`/applications/${result.applicationId}`}
-              className="font-medium text-primary hover:underline"
-            >
-              Open application →
-            </Link>
+            <Button className="self-start" nativeButton={false} render={<Link href={`/applications/${result.applicationId}`} />}>
+              Open application
+            </Button>
           </div>
         </Panel>
       </>
@@ -1156,10 +1153,9 @@ export default function PublishApplicationPage() {
                 <Button
                   type="submit"
                   loading={busy}
-                  loadingText="Creating repository and pipeline…"
                   disabled={!acknowledged}
                 >
-                  Create and build app
+                  {busy ? "Creating repository and pipeline…" : "Create and build app"}
                 </Button>
               }
             />

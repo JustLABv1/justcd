@@ -1,7 +1,7 @@
 import type { ReactNode } from "react"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Card, CardContent } from "@/components/ui/card"
-import { FormField } from "@/components/ui-kit"
+import { Card } from "@/components/panelui/card"
+import { Checkbox } from "@/components/panelui/checkbox"
+import { PanelField } from "@/components/applications/panel-wizard"
 
 const publishingControlStyles =
   "[&_[data-slot=input]]:h-10 [&_[data-slot=input]]:rounded-xl [&_[data-slot=input]]:border [&_[data-slot=input]]:border-input dark:[&_[data-slot=input]]:border-0 [&_[data-slot=input]]:bg-background [&_[data-slot=input]]:px-4 [&_[data-slot=input]]:shadow-none [&_[data-slot=select-trigger]]:h-10 [&_[data-slot=select-trigger]]:rounded-xl [&_[data-slot=select-trigger]]:border [&_[data-slot=select-trigger]]:border-input dark:[&_[data-slot=select-trigger]]:border-0 [&_[data-slot=select-trigger]]:bg-background [&_[data-slot=select-trigger]]:px-4"
@@ -16,14 +16,10 @@ export function PublishingCard({
   contentClassName?: string
 }) {
   return (
-    <Card
-      className={`h-full rounded-2xl bg-card py-4 ring-1 ring-border dark:bg-muted/45 dark:ring-0 ${className}`}
-    >
-      <CardContent
-        className={`px-4 ${publishingControlStyles} ${contentClassName}`}
-      >
+    <Card className={`h-full ${className}`}>
+      <Card.Content className={`${publishingControlStyles} ${contentClassName}`}>
         {children}
-      </CardContent>
+      </Card.Content>
     </Card>
   )
 }
@@ -43,13 +39,10 @@ export function PublishingField({
   className?: string
 }) {
   return (
-    <PublishingCard
-      className={className}
-      contentClassName="[&_label]:mb-2 [&_label]:text-sm [&_label]:font-medium [&_p]:mt-2 [&_p]:text-xs [&_p]:leading-5"
-    >
-      <FormField label={label} htmlFor={htmlFor} hint={hint}>
+    <PublishingCard className={className}>
+      <PanelField label={label} htmlFor={htmlFor} hint={hint}>
         {children}
-      </FormField>
+      </PanelField>
     </PublishingCard>
   )
 }

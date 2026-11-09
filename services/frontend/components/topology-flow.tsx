@@ -78,7 +78,7 @@ export function TopologyFlow(props: Props) {
     return <Button key={node.id} type="button" variant={selectedId === node.id ? "secondary" : "outline"} aria-pressed={selectedId === node.id} className="h-auto w-full items-start justify-start gap-2.5 px-3 py-2 text-left whitespace-normal" onClick={() => onSelect(node.id)}>
       <HugeiconsIcon icon={iconFor(node.identity.kind)} strokeWidth={1.6} className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1.5"><i aria-hidden="true" className={`size-2 shrink-0 rounded-full ${signalDot[runtimeSignal(node)]}`} /><span className="text-sm font-medium break-all">{node.identity.name}</span></span>
+        <span className="flex items-center gap-1.5"><i aria-hidden="true" className={`size-2 shrink-0 rounded-full ${signalDot[runtimeSignal(node)]}`} /><span className="min-w-0 text-sm font-medium break-words">{node.identity.name}</span></span>
         <span className="block text-xs text-muted-foreground">{node.identity.kind}{stateFor(node) !== "unknown" && stateFor(node) !== "observed" && ` · ${syncLabels[stateFor(node)]}`}</span>
         <span className={`block text-xs break-words line-clamp-2 ${bad ? "text-destructive" : "text-muted-foreground"}`}>{isConflict(node) ? "Owned elsewhere" : healthFor(node)}</span>
       </span>
@@ -125,7 +125,7 @@ export function TopologyFlow(props: Props) {
         </button>
         <p className={`text-xs ${bad ? "text-destructive" : "text-muted-foreground"}`}>{summary ?? healthFor(workload)}{stateFor(workload) !== "unknown" && stateFor(workload) !== "observed" && ` · ${syncLabels[stateFor(workload)]}`}</p>
       </header>
-      <div className="grid gap-3 p-4 @3xl:grid-cols-[minmax(0,13rem)_auto_minmax(0,13rem)_auto_minmax(0,1fr)] @3xl:items-start">
+      <div className="grid gap-3 p-4 @3xl:grid-cols-[minmax(13rem,24rem)_auto_minmax(13rem,24rem)_auto_minmax(0,1fr)] @3xl:items-start">
         <Lane label="Traffic">{row.traffic.length ? row.traffic.map(chip) : <Placeholder>No ingress or route</Placeholder>}</Lane>
         <Arrow />
         <Lane label="Service">{row.services.length ? row.services.map(chip) : <Placeholder>No service selects these pods</Placeholder>}</Lane>
@@ -149,7 +149,7 @@ export function TopologyFlow(props: Props) {
     {rows.map(flowRow)}
     {other.length > 0 && <section aria-label="Other resources" className="min-w-0 rounded-xl border bg-card">
       <header className="border-b px-4 py-3"><h3 className="text-sm font-semibold">Other resources</h3><p className="mt-0.5 text-xs text-muted-foreground">Not attached to a workload.</p></header>
-      <div className="grid gap-2 p-4 [grid-template-columns:repeat(auto-fill,minmax(220px,1fr))]">{other.map(chip)}</div>
+      <div className="grid gap-2 p-4 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">{other.map(chip)}</div>
     </section>}
   </div>
 }

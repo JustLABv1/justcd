@@ -56,7 +56,13 @@ func statusIssue(stage string, err error, at time.Time) store.ApplicationStatusI
 	}
 	var renderer *render.RendererError
 	if errors.As(err, &renderer) {
-		return store.ApplicationStatusIssue{Source: "render", Code: renderer.ErrorCode(), Summary: renderer.Error(), Remediation: "Check the renderer configuration and backend logs for the command failure, correct the manifests or renderer dependencies, then build a fresh plan.", ObservedAt: at}
+		issue := store.ApplicationStatusIssue{Source: "render", Code: renderer.ErrorCode(), Summary: renderer.Error(), Remediation: "Correct the manifests or renderer dependencies reported in the renderer output, then build a fresh plan.", ObservedAt: at}
+		if output := observability.RedactDiagnostic(renderer.Output()); output != "" {
+			issue.Causes = []store.ApplicationStatusCause{{Reason: "renderer_output", Message: output}}
+		} else {
+			issue.Remediation = "Check the renderer configuration and backend logs for the command failure, correct the manifests or renderer dependencies, then build a fresh plan."
+		}
+		return issue
 	}
 	var fetch *gitops.FetchError
 	if errors.As(err, &fetch) {

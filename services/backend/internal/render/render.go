@@ -71,8 +71,8 @@ func (e *RendererError) Retryable() bool   { return e.retryable }
 func (e *RendererError) ErrorCode() string { return e.code }
 
 // LogDiagnostic is consumed by the redacting log handler, including through
-// wrapped plan errors. Keep stderr out of Error(), API responses and persisted
-// application status; it may contain sensitive chart or manifest content.
+// wrapped plan errors. Error() stays generic; user-visible stderr goes through Output()
+// and must be redacted first.
 func (e *RendererError) LogDiagnostic() string {
 	if e.commandError == nil {
 		return ""
@@ -82,6 +82,21 @@ func (e *RendererError) LogDiagnostic() string {
 		diagnostic += ": " + stderr
 	}
 	return diagnostic
+}
+
+// Output returns the trailing renderer stderr for display to users. Callers
+// must redact it before persisting or returning it.
+func (e *RendererError) Output() string {
+	output := strings.TrimSpace(e.stderr)
+	const maxBytes = 2000
+	if len(output) > maxBytes {
+		output = output[len(output)-maxBytes:]
+		if i := strings.IndexByte(output, '\n'); i >= 0 {
+			output = output[i+1:]
+		}
+		output = "…\n" + strings.ToValidUTF8(output, "")
+	}
+	return output
 }
 
 func Render(ctx context.Context, opts Options) ([]core.Resource, error) {

@@ -36,6 +36,10 @@ func (e StartupError) message() string {
 	return redactErrorMessage(e.Err.Error())
 }
 
+// RedactDiagnostic applies the log redaction rules to text that is shown to
+// users, such as renderer output.
+func RedactDiagnostic(message string) string { return redactErrorMessage(message) }
+
 func redactErrorMessage(message string) string {
 	// Redact before truncating so a length limit cannot cut a credential or key
 	// in half and leave its prefix in the log.

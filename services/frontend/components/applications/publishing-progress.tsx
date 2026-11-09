@@ -3,6 +3,15 @@ import { useEffect, useState } from "react"
 import { Badge } from "@/components/reui/badge"
 import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
+import {
+  Timeline,
+  TimelineContent,
+  TimelineHeader,
+  TimelineIndicator,
+  TimelineItem,
+  TimelineSeparator,
+  TimelineTitle,
+} from "@/components/reui/timeline"
 
 import type { Publication } from "@/lib/publishing-status"
 
@@ -25,11 +34,18 @@ const buildStates: Record<string, { state: StepState; detail: string }> = {
   build_canceled: { state: "failed", detail: "The pipeline was canceled." },
   build_canceling: { state: "failed", detail: "The pipeline was canceled." },
 }
-const dot: Record<StepState, string> = {
-  done: "bg-success",
-  active: "bg-primary animate-pulse",
-  failed: "bg-destructive",
-  waiting: "bg-muted-foreground/40",
+const indicator: Record<StepState, string> = {
+  done: "!border-success bg-success",
+  active: "!border-primary bg-primary animate-pulse",
+  failed: "!border-destructive bg-destructive",
+  waiting: "!border-muted-foreground/40 bg-background",
+}
+// The connector below a step takes that step's colour so the line never mixes hues with the dots.
+const connector: Record<StepState, string> = {
+  done: "!bg-success/60",
+  active: "!bg-border",
+  failed: "!bg-border",
+  waiting: "!bg-border",
 }
 const stateLabel: Record<StepState, string> = {
   done: "Done",
@@ -160,6 +176,8 @@ export function PublishingProgress({
     )
 
   const list = steps(publication)
+  // Connectors fill up to the first step that is not yet done.
+  const current = list.findIndex((step) => step.state !== "done") + 1 || list.length
   return (
     <section
       aria-label="Publishing progress"
@@ -184,21 +202,30 @@ export function PublishingProgress({
           </Button>
         )}
       </div>
-      <ol className="space-y-4 p-5">
-        {list.map((step) => (
-          <li key={step.label} className="flex flex-wrap items-start gap-3">
-            <span
-              aria-hidden="true"
-              className={`mt-1.5 size-2.5 shrink-0 rounded-full ${dot[step.state]}`}
-            />
+      <Timeline
+        render={<ol />}
+        value={current}
+        className="p-5 ps-9"
+      >
+        {list.map((step, index) => (
+          <TimelineItem
+            key={step.label}
+            step={index + 1}
+            render={<li />}
+            className="flex-row flex-wrap items-start gap-3"
+          >
+            {index < list.length - 1 && <TimelineSeparator className={connector[step.state]} />}
+            <TimelineIndicator className={indicator[step.state]} />
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">
-                {step.label}{" "}
-                <span className="sr-only">: {stateLabel[step.state]}</span>
-              </p>
-              <p className="text-xs leading-5 text-muted-foreground">
+              <TimelineHeader>
+                <TimelineTitle>
+                  {step.label}{" "}
+                  <span className="sr-only">: {stateLabel[step.state]}</span>
+                </TimelineTitle>
+              </TimelineHeader>
+              <TimelineContent className="text-xs leading-5">
                 {step.detail}
-              </p>
+              </TimelineContent>
             </div>
             {step.label === "Review and apply" && step.state === "active" && (
               <Button
@@ -215,9 +242,9 @@ export function PublishingProgress({
                 {stateLabel[step.state]}
               </Badge>
             )}
-          </li>
+          </TimelineItem>
         ))}
-      </ol>
+      </Timeline>
       {publication.completionError && (
         <p
           role="alert"

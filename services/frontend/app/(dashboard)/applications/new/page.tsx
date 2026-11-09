@@ -143,7 +143,7 @@ export default function NewApplicationPage() {
   return <>
     <PageHeading title="New application" description="Point JustCD at a Git revision and a repository path. We’ll render, diff, and review the changes before they reach Kubernetes." />
     <div ref={errorRef}>{error != null && <ErrorNotice error={error} />}</div>
-    <form className="max-w-4xl space-y-5" onSubmit={submit} noValidate>
+    <form className="w-full space-y-5" onSubmit={submit} noValidate>
       <Wizard step={wizard.step} onStepChange={wizard.setStep} idPrefix="new-app" steps={[
         { title: "Source", content: <Panel title="Source" description="Select the workspace repository and the Git revision to render."><div className="grid min-w-0 gap-4 p-5 sm:grid-cols-2 [&>*]:min-w-0">
           <div className="space-y-2">

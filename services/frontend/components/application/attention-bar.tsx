@@ -20,11 +20,13 @@ const toneClass: Record<Tone, string> = {
   info: "text-muted-foreground",
 }
 
-function AttentionRow({ tone, icon, title, children, actions, alert = false }: { tone: Tone; icon: IconSvgElement; title: ReactNode; children?: ReactNode; actions?: ReactNode; alert?: boolean }) {
-  return <li role={alert ? "alert" : "status"} className={`flex flex-wrap gap-x-3 gap-y-2 px-4 py-3 ${children ? "items-start" : "items-center"}`}>
-    <HugeiconsIcon icon={icon} strokeWidth={2} aria-hidden="true" className={`${children ? "mt-0.5" : ""} size-4 shrink-0 ${toneClass[tone]}`} />
+function AttentionRow({ tone, icon, title, detail, children, actions, alert = false }: { tone: Tone; icon: IconSvgElement; title: ReactNode; detail?: string; children?: ReactNode; actions?: ReactNode; alert?: boolean }) {
+  const hasBody = Boolean(children || detail)
+  return <li role={alert ? "alert" : "status"} className={`flex flex-wrap gap-x-3 gap-y-2 px-4 py-3 ${hasBody ? "items-start" : "items-center"}`}>
+    <HugeiconsIcon icon={icon} strokeWidth={2} aria-hidden="true" className={`${hasBody ? "mt-0.5" : ""} size-4 shrink-0 ${toneClass[tone]}`} />
     <div className="min-w-0 flex-1">
       <p className="text-sm font-medium">{title}</p>
+      {detail && <pre className="mt-2 max-h-48 overflow-auto rounded-md border bg-muted/40 p-2 text-xs leading-5 whitespace-pre-wrap break-words" aria-label="Renderer output">{detail}</pre>}
       {children}
     </div>
     {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
@@ -36,8 +38,9 @@ type Issue = Application["statusIssues"][number]
 function StatusIssueRow({ application, issue, canApprove, onConfigureExclusion, extraActions }: { application: Application; issue: Issue; canApprove: boolean; onConfigureExclusion: (issue: Issue) => void; extraActions?: ReactNode }) {
   const [open, setOpen] = useState(false)
   const diagnostics = { name: "ApplicationCheckFailed", message: issue.summary, applicationId: application.id, checkedAt: application.lastCheckedAt, issues: [issue] }
+  const rendererOutput = issue.causes?.find((cause) => cause.reason === "renderer_output")?.message
   const configurable = issue.code === "kubernetes.permission_denied" && canApprove
-  return <AttentionRow alert tone="destructive" icon={Alert02Icon} title={issue.summary} actions={configurable
+  return <AttentionRow alert tone="destructive" icon={Alert02Icon} title={issue.summary} detail={rendererOutput} actions={configurable
     ? <>
       {extraActions}
       <Button size="sm" variant="outline" onClick={() => onConfigureExclusion(issue)}>Configure exclusion</Button>

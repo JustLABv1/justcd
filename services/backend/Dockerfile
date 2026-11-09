@@ -15,7 +15,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/justcd-api .
 
-FROM alpine:3.24.3 AS runtime
+FROM alpine:3.24.4 AS runtime
 # Alpine 3.24 supplies the patched Expat; the minimum version keeps a stale mirror from installing an older one.
 RUN apk upgrade --no-cache \
     && apk add --no-cache ca-certificates git openssh-client tini 'libexpat>=2.10.0-r0'

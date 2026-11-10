@@ -3,8 +3,8 @@ import { PublishingSection } from "./publishing-fields"
 import { FeatureCard } from "@/components/feature-card"
 import { FormField } from "@/components/ui-kit"
 import { Disclosure } from "@/components/ui/collapsible"
-import { Input } from "@/components/ui/input"
-import { Button } from "@/components/ui/button"
+import { Input } from "@/components/panelui/input"
+import { Button } from "@/components/panelui/button"
 import type { ServiceOptions, ServiceSelection } from "@/lib/publishing"
 
 const dbVariables = ["DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD"]

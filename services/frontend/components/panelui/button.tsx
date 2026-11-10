@@ -52,6 +52,8 @@ export interface ButtonProps extends ComponentProps<'button'> {
   shape?: 'default' | 'pill';
   /** Shows a spinner over the label, sets `aria-busy` and stops presses, keeping the width. */
   loading?: boolean;
+  /** Optional progress label announced while loading; the visual label keeps its width. */
+  loadingText?: string;
   /**
    * An element to draw the button as, such as `<a href="/" />` or a router's
    * link, or a function of the props and state that returns one. It takes the
@@ -89,6 +91,7 @@ function ButtonRoot({
   size,
   shape,
   loading = false,
+  loadingText,
   disabled,
   type = 'button',
   className,
@@ -105,6 +108,7 @@ function ButtonRoot({
       data-slot="button"
       data-variant={variant ?? 'default'}
       aria-busy={loading || undefined}
+      aria-label={loading && loadingText ? loadingText : props['aria-label']}
       disabled={disabled || loading}
       focusableWhenDisabled={loading}
       nativeButton={native}

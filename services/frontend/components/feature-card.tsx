@@ -3,9 +3,11 @@
 import { useState, type ReactNode } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Edit02Icon } from "@hugeicons/core-free-icons"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { Switch } from "@/components/ui/switch"
+import { Badge } from "@/components/panelui/badge"
+import { Card } from "@/components/panelui/card"
+import { SheetBody } from "@/components/panelui/sheet"
+import { Button } from "@/components/panelui/button"
+import { Checkbox } from "@/components/panelui/checkbox"
 import {
   Sheet,
   SheetClose,
@@ -14,10 +16,10 @@ import {
   SheetFooter,
   SheetHeader,
   SheetTitle,
-} from "@/components/ui/sheet"
+} from "@/components/panelui/sheet"
 
 /**
- * A compact setting: title, one-line summary, optional on/off switch and an
+ * A compact setting: title, one-line summary, optional checkbox saved with the form and an
  * edit icon. Selecting the card (or the icon) opens a side sheet with the
  * detailed controls, which keeps the surrounding page short.
  *
@@ -68,47 +70,45 @@ export function FeatureCard({
   const configurable = children != null && active
   const label = typeof title === "string" ? title : "setting"
   const body = (
-    <>
+    <span className="block min-w-0 w-full">
       <span className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-medium">{title}</span>
         {attention && (
-          <Badge size="sm" radius="full" variant="warning-light">
+          <Badge size="sm"  variant="warning">
             {attention}
           </Badge>
         )}
         {!attention && configured && (
-          <Badge size="sm" radius="full" variant="info-light">
+          <Badge size="sm"  variant="info">
             Configured
           </Badge>
         )}
       </span>
       {description && (
-        <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+        <span className="mt-1 block text-xs font-normal leading-5 text-muted-foreground">
           {description}
         </span>
       )}
       {active && summary && (
-        <span className="mt-2 block truncate text-xs text-foreground/80">
+        <span className="mt-2 block truncate text-xs font-normal text-foreground/80">
           {summary}
         </span>
       )}
-    </>
+    </span>
   )
   return (
-    <div
-      data-slot="feature-card"
-      className={`flex items-start gap-3 rounded-2xl p-4 ring-1 ring-border transition-colors dark:bg-muted/45 dark:ring-0 ${active ? "bg-card" : "bg-muted/20"} ${configurable ? "hover:bg-muted/40" : ""}`}
-    >
+    <Card size="sm" data-slot="feature-card" className={`min-w-0 ${active ? "bg-card" : "bg-muted/20"}`}>
+      <Card.Content className="flex items-start gap-3">
       {configurable ? (
-        <button
+        <Button variant="ghost"
           type="button"
           onClick={() => setOpen(true)}
           aria-haspopup="dialog"
           aria-label={`Configure ${label}`}
-          className="min-w-0 flex-1 rounded-md text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          className="h-auto min-w-0 flex-1 justify-start p-0 text-left whitespace-normal outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           {body}
-        </button>
+        </Button>
       ) : (
         <div className="min-w-0 flex-1">{body}</div>
       )}
@@ -125,7 +125,7 @@ export function FeatureCard({
           </Button>
         )}
         {enabled !== undefined && (
-          <Switch
+          <Checkbox
             id={id}
             checked={enabled}
             disabled={switchDisabled}
@@ -139,24 +139,23 @@ export function FeatureCard({
         )}
       </div>
       {configurable && (
-        <Sheet open={open} onOpenChange={setOpen}>
-          <SheetContent className="gap-0 data-[side=right]:w-full motion-reduce:transition-none sm:my-3 sm:mr-3 sm:rounded-xl sm:border sm:data-[side=right]:h-[calc(100%-1.5rem)] data-[side=right]:sm:max-w-xl">
-            <SheetHeader className="shrink-0 border-b p-5 pr-12">
+        <Sheet side="right" open={open} onOpenChange={setOpen}>
+          <SheetContent className="w-full max-w-xl">
+            <SheetHeader className="shrink-0">
               <SheetTitle>{sheetTitle ?? label}</SheetTitle>
               {sheetDescription && (
                 <SheetDescription>{sheetDescription}</SheetDescription>
               )}
             </SheetHeader>
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
-              {children}
-            </div>
-            <SheetFooter className="shrink-0 flex-row justify-between gap-2 border-t p-4">
+            <SheetBody className="space-y-4">{children}</SheetBody>
+            <SheetFooter className="shrink-0 flex-row justify-between gap-2">
               <div>{sheetFooter}</div>
               <SheetClose render={<Button type="button" />}>Done</SheetClose>
             </SheetFooter>
           </SheetContent>
         </Sheet>
       )}
-    </div>
+      </Card.Content>
+    </Card>
   )
 }

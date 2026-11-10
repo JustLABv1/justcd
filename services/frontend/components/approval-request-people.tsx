@@ -7,7 +7,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/panelui/button"
 import { RecordedApprovals } from "@/components/plan-approval-panel"
 import type { PlanApprovalSummary } from "@/lib/types"
 
@@ -67,7 +67,7 @@ export function ApprovalRequestPeople({
             >
               {errorMessage(error)}
               <Button
-                size="xs"
+                size="sm"
                 variant="outline"
                 onClick={() => setRevision((value) => value + 1)}
               >

@@ -7,13 +7,13 @@ import { RowActions } from "@/components/action-menu"
 import type { IgnorePrefill, NewIgnore } from "@/components/application/helpers"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
 import { ErrorDetailsButton } from "@/components/error-details"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { FormSelect } from "@/components/ui/form-select"
-import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
+import { FormSelect } from "@/components/form-select"
+import { Input } from "@/components/panelui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Textarea } from "@/components/ui/textarea"
-import { FormField, SwitchField } from "@/components/ui-kit"
+import { Textarea } from "@/components/panelui/textarea"
+import { FormField, CheckboxField } from "@/components/ui-kit"
 import { SettingsDangerZone, SettingsPanel, SettingsRow } from "@/components/settings/settings-section"
 import { errorMessage } from "@/lib/api"
 import type { Application, IgnoreRule, IgnoreSelector } from "@/lib/types"
@@ -45,15 +45,15 @@ function RenderSettings({ application, kustomization, kustomizationError, canApp
   const dirty = helm !== application.kustomizeHelmEnabled || namespaceOverride !== application.kustomizeNamespaceOverride
   return <SettingsPanel title="Render settings" description={application.applicationGroupId ? "Kustomize settings are shared by this deployment group." : "Control how Kustomize builds this application's manifests."}>
     <div className="space-y-4 p-5">
-      <div className="rounded-lg border bg-muted/30 p-3 text-sm"><p className="font-medium">Namespace from Git</p><p className="mt-1 font-mono text-muted-foreground">{kustomization ? kustomization.namespace || "Not set in kustomization" : kustomizationError ? errorMessage(kustomizationError) : "Checking kustomization…"}</p>{kustomizationError != null && <div className="mt-2"><ErrorDetailsButton error={kustomizationError} /></div>}<p className="mt-1 text-muted-foreground">JustCD target: {application.namespaces.map((binding) => binding.namespace).join(", ")}</p></div>
+      <div className="text-sm"><p className="font-medium">Namespace from Git</p><p className="mt-1 font-mono text-muted-foreground">{kustomization ? kustomization.namespace || "Not set in kustomization" : kustomizationError ? errorMessage(kustomizationError) : "Checking kustomization…"}</p>{kustomizationError != null && <div className="mt-2"><ErrorDetailsButton error={kustomizationError} /></div>}<p className="mt-1 text-muted-foreground">JustCD target: {application.namespaces.map((binding) => binding.namespace).join(", ")}</p></div>
       {application.applicationGroupId
-        ? <div className="rounded-lg border bg-muted/30 p-3 text-sm">Namespace transforms and Helm chart rendering are configured for every target in the <Link href={`/application-groups/${application.applicationGroupId}`} className="font-medium text-primary hover:underline">deployment group</Link>.</div>
+        ? <div className="text-sm">Namespace transforms and Helm chart rendering are configured for every target in the <Link href={`/application-groups/${application.applicationGroupId}`} className="font-medium text-primary hover:underline">deployment group</Link>.</div>
         : <>
           {application.namespaces.length > 0
-            ? <SwitchField id="render-namespace-transform" label="Apply namespace transform" description="Build the selected Kustomize path once per namespace with granted access and set namespace metadata to that target. This can create or delete resources on the next sync, so review a new plan before applying." checked={namespaceOverride} onCheckedChange={setNamespaceOverride} disabled={locked} />
+            ? <CheckboxField id="render-namespace-transform" label="Apply namespace transform" description="Build the selected Kustomize path once per namespace with granted access and set namespace metadata to that target. This can create or delete resources on the next sync, so review a new plan before applying." checked={namespaceOverride} onCheckedChange={setNamespaceOverride} disabled={locked} />
             : <p className="text-sm text-muted-foreground">Grant namespace access to at least one namespace to configure a namespace transform.</p>}
-          <SwitchField id="render-helm-charts" label="Enable Helm charts in Kustomize" description="Permits helmCharts from this Git source. Helm may fetch pinned charts from public HTTPS repositories while building the plan." checked={helm} onCheckedChange={setHelm} disabled={locked} />
-          {canApprove && !application.repositoryConfigurationId && <Button size="sm" loading={saving} loadingText="Saving settings…" disabled={busy || hasPendingOperation || !dirty} onClick={() => void onSave({ kustomizeHelmEnabled: helm, kustomizeNamespaceOverride: namespaceOverride })}>Save changes</Button>}
+          <CheckboxField id="render-helm-charts" label="Enable Helm charts in Kustomize" description="Permits helmCharts from this Git source. Helm may fetch pinned charts from public HTTPS repositories while building the plan." checked={helm} onCheckedChange={setHelm} disabled={locked} />
+          {canApprove && !application.repositoryConfigurationId && <Button size="sm" loading={saving} disabled={busy || hasPendingOperation || !dirty} onClick={() => void onSave({ kustomizeHelmEnabled: helm, kustomizeNamespaceOverride: namespaceOverride })}>Save changes</Button>}
         </>}
     </div>
   </SettingsPanel>
@@ -121,29 +121,29 @@ export function SettingsTab({ application, kustomization, kustomizationError, ca
     <SettingsPanel title="Ignored resources" description="Exclude an exact resource, an entire Kubernetes kind, or resources with a label. Exclusions apply before cluster discovery and live reads.">
       {application.repositoryConfigurationId && <p className="px-5 pt-5 text-sm text-muted-foreground">Define Git-managed exclusions in <code>spec.ignoreResources</code> in <code>{application.configurationPath}</code>. Additional manual exclusions remain available below. <a href="/docs/guides/repository-applications#ignored-resources" target="_blank" rel="noreferrer" className="underline underline-offset-4">File format and examples</a></p>}
       <div className="space-y-5 p-5">
-        {canApprove && <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {canApprove && <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <FormField label="Exclude by" htmlFor="ignore-mode"><FormSelect id="ignore-mode" value={ignoreMode} onValueChange={setIgnoreMode} items={[{ value: "kind", label: "API kind" }, { value: "label", label: "Label" }, { value: "resource", label: "Exact resource" }]} /></FormField>
           {(ignoreMode === "kind" || ignoreMode === "resource") && <><FormField label="API version" htmlFor="ignore-api-version"><Input id="ignore-api-version" placeholder="secrets.hashicorp.com/v1beta1" value={ignoreVersion} onChange={(event) => setIgnoreVersion(event.target.value)} /></FormField><FormField label="Kind" htmlFor="ignore-kind"><Input id="ignore-kind" placeholder="VaultStaticSecret" value={ignoreKind} onChange={(event) => setIgnoreKind(event.target.value)} /></FormField></>}
           {ignoreMode === "resource" && <><FormField label="Namespace" htmlFor="ignore-namespace"><Input id="ignore-namespace" placeholder={application.namespaces[0]?.namespace ?? "namespace"} value={ignoreNamespace} onChange={(event) => setIgnoreNamespace(event.target.value)} /></FormField><FormField label="Resource name" htmlFor="ignore-name"><Input id="ignore-name" placeholder="ntfy-secret" value={ignoreName} onChange={(event) => setIgnoreName(event.target.value)} /></FormField></>}
           {ignoreMode === "label" && <><FormField label="Label key" htmlFor="ignore-label-key"><Input id="ignore-label-key" placeholder="justcd.io/exclude" value={ignoreLabelKey} onChange={(event) => setIgnoreLabelKey(event.target.value)} /></FormField><FormField label="Label value" htmlFor="ignore-label-value"><Input id="ignore-label-value" placeholder="true" value={ignoreLabelValue} onChange={(event) => setIgnoreLabelValue(event.target.value)} /></FormField></>}
           <div className="sm:col-span-2 lg:col-span-4"><FormField label="Reason" htmlFor="ignore-reason"><Textarea id="ignore-reason" aria-invalid={reasonInvalid} aria-describedby="ignore-reason-help" value={ignoreReason} onChange={(event) => setIgnoreReason(event.target.value)} placeholder="Managed by another controller or outside this service account's permissions" maxLength={500} /><p id="ignore-reason-help" className={reasonInvalid ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>{reasonInvalid ? "Enter at least 5 characters to add the exclusion." : "Required · 5–500 characters"}</p></FormField></div>
-          <Button size="sm" className="w-fit sm:col-span-2" loading={pendingAction === "add-ignore"} loadingText="Saving exclusion…" onClick={() => void addIgnore()} disabled={busy || hasPendingOperation || reasonLength < 5 || ((ignoreMode === "kind" || ignoreMode === "resource") && (!ignoreVersion.trim() || !ignoreKind.trim())) || (ignoreMode === "resource" && !ignoreName.trim()) || (ignoreMode === "label" && !ignoreLabelKey.trim())}>Add exclusion</Button>
+          <Button size="sm" className="w-fit sm:col-span-2" loading={pendingAction === "add-ignore"} onClick={() => void addIgnore()} disabled={busy || hasPendingOperation || reasonLength < 5 || ((ignoreMode === "kind" || ignoreMode === "resource") && (!ignoreVersion.trim() || !ignoreKind.trim())) || (ignoreMode === "resource" && !ignoreName.trim()) || (ignoreMode === "label" && !ignoreLabelKey.trim())}>Add exclusion</Button>
           {pendingAction === "add-ignore" && <p role="status" aria-live="polite" className="self-center text-sm text-muted-foreground sm:col-span-2">Saving the exclusion and invalidating reviewed plans…</p>}
         </div>}
         <p className="text-sm text-muted-foreground">Ignored resources stay visible here and are not read, updated, or deleted by normal plans. Existing plans become stale when these rules change.</p>
         {rulesLoading
           ? <div role="status" aria-label="Loading exclusions" className="space-y-3"><span className="sr-only">Loading exclusions…</span><Skeleton className="h-5 w-2/3 max-w-72 motion-reduce:animate-none" /><Skeleton className="h-4 w-full max-w-lg motion-reduce:animate-none" /></div>
-          : (ignoreSelectors.length > 0 || ignoreRules.length > 0) && <ul className="divide-y rounded-lg border">
+          : (ignoreSelectors.length > 0 || ignoreRules.length > 0) && <ul className="-mx-5 -mb-5 divide-y border-t">
             {ignoreSelectors.map((rule) => {
               const label = rule.kind ? `${rule.apiVersion} · ${rule.kind}` : "Any kind"
               return <li key={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
                 <span className="min-w-0 flex-1"><strong>{label}</strong>{rule.labelKey && <span className="ml-2 font-mono text-muted-foreground">{rule.labelKey}={rule.labelValue}</span>}<span className="mt-1 block text-muted-foreground">{rule.reason}</span></span>
-                {rule.managedByGit ? <Badge variant="outline" radius="full">Managed by Git</Badge> : canApprove && <RowActions label={`exclusion ${label}`} items={[{ label: "Remove exclusion", destructive: true, disabled: busy || hasPendingOperation, confirm: { title: `Remove exclusion ${label}?`, description: "Future plans may manage matching resources again.", confirmLabel: "Remove exclusion", onConfirm: () => onRemoveSelector(rule) } }]} />}
+                {rule.managedByGit ? <Badge variant="outline">Managed by Git</Badge> : canApprove && <RowActions label={`exclusion ${label}`} items={[{ label: "Remove exclusion", destructive: true, disabled: busy || hasPendingOperation, confirm: { title: `Remove exclusion ${label}?`, description: "Future plans may manage matching resources again.", confirmLabel: "Remove exclusion", onConfirm: () => onRemoveSelector(rule) } }]} />}
               </li>
             })}
             {ignoreRules.map((rule) => <li key={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
               <span className="min-w-0 flex-1"><strong>{ruleLabel(rule)}</strong><span className="ml-2 font-mono text-muted-foreground">{rule.path || "whole resource"}</span><span className="mt-1 block text-muted-foreground">{rule.reason}</span></span>
-              {rule.managedByGit ? <Badge variant="outline" radius="full">Managed by Git</Badge> : canApprove && <RowActions label={`ignore rule for ${ruleLabel(rule)}`} items={[{ label: "Remove ignore rule", destructive: true, disabled: busy || hasPendingOperation, confirm: { title: `Remove ignore rule for ${ruleLabel(rule)}?`, description: "Future plans may manage this resource again.", confirmLabel: "Remove ignore rule", onConfirm: () => onRemoveRule(rule) } }]} />}
+              {rule.managedByGit ? <Badge variant="outline">Managed by Git</Badge> : canApprove && <RowActions label={`ignore rule for ${ruleLabel(rule)}`} items={[{ label: "Remove ignore rule", destructive: true, disabled: busy || hasPendingOperation, confirm: { title: `Remove ignore rule for ${ruleLabel(rule)}?`, description: "Future plans may manage this resource again.", confirmLabel: "Remove ignore rule", onConfirm: () => onRemoveRule(rule) } }]} />}
             </li>)}
           </ul>}
       </div>

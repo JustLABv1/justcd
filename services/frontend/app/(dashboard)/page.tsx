@@ -11,6 +11,7 @@ import { Add01Icon, Alert02Icon, Refresh01Icon } from "@hugeicons/core-free-icon
 import { Alert } from "@/components/panelui/alert"
 import { Badge } from "@/components/panelui/badge"
 import { Button } from "@/components/panelui/button"
+import { Card } from "@/components/panelui/card"
 import { Frame } from "@/components/panelui/frame"
 import { Tabs } from "@/components/panelui/tabs"
 import { FrameLink, LinkRow, StatusPill, SummaryKpis } from "@/components/overview/overview-parts"
@@ -154,7 +155,7 @@ export default function OverviewPage() {
           />
 
           <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,380px)]">
-            <Frame className={attentionItems.length ? (urgent ? "border-destructive/40 bg-destructive/10" : "border-warning/40 bg-warning/10") : undefined}>
+            <Frame>
               <Frame.Header>
                 <Frame.Title as="h2" className="flex items-center gap-2">
                   {attentionItems.length > 0 && <HugeiconsIcon icon={Alert02Icon} strokeWidth={1.8} aria-hidden="true" className={`size-4 ${urgent ? "text-destructive" : "text-warning"}`} />}
@@ -197,19 +198,17 @@ export default function OverviewPage() {
               {health.approvals.length > 0 && (
                 <Frame>
                   <Frame.Header>
-                    <Frame.Title as="h2">Waiting for review</Frame.Title>
+                    <Frame.Title as="h2" className="flex items-center gap-2">Waiting for review<Badge variant="secondary" size="sm">{health.approvals.length}</Badge></Frame.Title>
                     <Frame.Action><FrameLink href="/approvals">Open inbox</FrameLink></Frame.Action>
                   </Frame.Header>
                   <Frame.Panel>
                     {health.approvals.slice(0, 4).map((item) => (
                       <LinkRow key={item.planId} href={`/applications/${item.applicationId}?tab=changes`}>
                         <Frame.Content>
-                          <span className="flex flex-wrap items-center gap-2">
-                            <Frame.Title as="p">{item.applicationName}</Frame.Title>
-                            {item.deletions.length > 0 && <Badge variant="destructive" size="sm">{item.deletions.length} deletion{item.deletions.length === 1 ? "" : "s"}</Badge>}
-                          </span>
-                          <Frame.Description>{item.changeCount} changes · {item.approvedApprovals}/{item.requiredApprovals} approvals · {ago(item.createdAt, now)}</Frame.Description>
+                          <Frame.Title as="p">{item.applicationName}</Frame.Title>
+                          <Frame.Description>{item.changeCount} change{item.changeCount === 1 ? "" : "s"} · {item.approvedApprovals}/{item.requiredApprovals} approvals · {ago(item.createdAt, now)}</Frame.Description>
                         </Frame.Content>
+                        {item.deletions.length > 0 && <Frame.Actions><Badge variant="destructive" size="sm">{item.deletions.length} deletion{item.deletions.length === 1 ? "" : "s"}</Badge></Frame.Actions>}
                       </LinkRow>
                     ))}
                   </Frame.Panel>
@@ -240,23 +239,18 @@ export default function OverviewPage() {
                 </Frame.Panel>
               </Frame>
 
-              {health.loaded && (
-                <Frame>
-                  <Frame.Panel>
-                    <LinkRow href={connectionsHref}>
-                      <Frame.Content>
-                        <Frame.Title as="p">Connections</Frame.Title>
-                        <Frame.Description>{rows.length ? (problems.length ? `${rows.length - problems.length} of ${rows.length} reachable` : `All ${rows.length} reachable`) : "None connected yet"}</Frame.Description>
-                      </Frame.Content>
-                    </LinkRow>
-                  </Frame.Panel>
-                </Frame>
-              )}
+              {health.loaded && <Card size="sm">
+                <Card.Header>
+                  <Card.Title as="h2">Connections</Card.Title>
+                  <Card.Description>{rows.length ? (problems.length ? `${rows.length - problems.length} of ${rows.length} reachable` : `All ${rows.length} reachable`) : "None connected yet"}</Card.Description>
+                  <Card.Action><Button variant="outline" size="sm" nativeButton={false} render={<Link href={connectionsHref} />}>Manage</Button></Card.Action>
+                </Card.Header>
+              </Card>}
             </div>
           </div>
 
           {workspaceId && (
-            <Tabs defaultValue="activity" variant="underline" id="insights">
+            <Tabs defaultValue="activity" id="insights">
               <Tabs.List>
                 <Tabs.Trigger value="activity">Sync activity</Tabs.Trigger>
                 {total > 0 && <Tabs.Trigger value="digest">Activity digest</Tabs.Trigger>}

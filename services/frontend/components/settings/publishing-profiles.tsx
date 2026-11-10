@@ -4,15 +4,15 @@ import { useEffect, useState } from "react"
 import { PublishingServicesEditor } from "./publishing-services"
 import { PackageSourcesCard } from "./package-sources"
 import { TemplateLibrary, type TemplateSummary } from "./template-library"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
+import { Button } from "@/components/panelui/button"
+import { Input } from "@/components/panelui/input"
+import { Textarea } from "@/components/panelui/textarea"
 import { Disclosure } from "@/components/ui/collapsible"
-import { FormSelect } from "@/components/ui/form-select"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
-import { Badge } from "@/components/reui/badge"
+import { FormSelect } from "@/components/form-select"
+import { ConfirmDisclosure } from "@/components/confirm-disclosure"
+import { Badge } from "@/components/panelui/badge"
 import { FeatureCard } from "@/components/feature-card"
-import { FormField, SwitchField } from "@/components/ui-kit"
+import { FormField, CheckboxField } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { api, apiPost } from "@/lib/api"
 import {
@@ -127,6 +127,7 @@ export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
       setNotice("Publishing profile deleted.")
     } catch (cause) {
       setError(cause)
+      throw cause
     } finally {
       setDeleting(false)
     }
@@ -215,7 +216,7 @@ export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
                     <Badge variant="outline">v{profile.currentRevision}</Badge>
                     <Badge
                       variant={
-                        profile.enabled ? "success-light" : "destructive-light"
+                        profile.enabled ? "success" : "destructive"
                       }
                     >
                       {profile.enabled ? "Enabled" : "Disabled"}
@@ -282,27 +283,16 @@ export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
         running. Infrastructure settings are locked once a profile is in use;
         credentials can still be rotated.
       </p>
-      <AppDialog
+      <ConfirmDisclosure
         open={!!deleteTarget}
-        onOpenChange={(open) => {
-          if (!open) setDeleteTarget(null)
-        }}
-        busy={deleting}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
         title="Delete publishing profile"
         description={`Delete ${deleteTarget?.name ?? "this profile"} and its stored credentials? Only unused profiles can be deleted.`}
-        size="md"
-      >
-        <DialogFooter>
-          <DialogCancel disabled={deleting} />
-          <Button
-            variant="destructive"
-            loading={deleting}
-            onClick={() => void remove()}
-          >
-            Delete profile
-          </Button>
-        </DialogFooter>
-      </AppDialog>
+        confirmLabel="Delete profile"
+        busyLabel="Deleting…"
+        confirmDisabled={deleting}
+        onConfirm={remove}
+      />
     </div>
   )
 }
@@ -576,7 +566,7 @@ function ProfileEditor({
         description={copyFrom ? "Review the copied settings and give the profile a new name. The copy starts disabled; enable it when ready. Credentials are copied securely when saved." : "Choose the approved build and destination. Secret values are encrypted and never returned to the browser."}
       >
         <fieldset disabled={busy} className="space-y-4 p-5">
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <FormField
               label="Profile name"
               htmlFor="profile-name"
@@ -601,7 +591,7 @@ function ProfileEditor({
               />
             </FormField>
           </div>
-          <SwitchField
+          <CheckboxField
             id="profile-enabled"
             label="Allow publishing with this profile"
             description="Disabling blocks new applications and source updates without stopping deployed workloads."
@@ -620,7 +610,7 @@ function ProfileEditor({
           title="Destination"
           description="Where applications of this profile are deployed."
         >
-          <div className="grid gap-4 p-5 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
             <FormField label="Application template" htmlFor="profile-template">
               <FormSelect
                 id="profile-template"
@@ -779,11 +769,11 @@ function ProfileEditor({
           </div>
         </SettingsPanel>
         <PublishingServicesEditor value={settings.serviceCatalog ?? ""} onChange={serviceCatalog => patch({ serviceCatalog })} />
-        <SettingsPanel
+        <SettingsPanel surface="flat"
           title="Build and credentials"
           description="Select a card to review or change its settings. Secret values are encrypted and never returned to the browser."
         >
-          <div className="grid gap-3 p-5">
+          <div className="grid grid-cols-1 gap-3">
             <FeatureCard
               id="profile-card-build"
               title="Source and build"
@@ -798,7 +788,7 @@ function ProfileEditor({
                   Still required: {missingBuild.join(", ")}.
                 </p>
               )}
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 {field(
                   "gitlabUrl",
                   "GitLab URL",
@@ -893,7 +883,7 @@ function ProfileEditor({
                   Still required: {missingAccess.join(", ")}.
                 </p>
               )}
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <FormField
                   label="Registry secret storage"
                   htmlFor="profile-secret-mode"
@@ -964,11 +954,11 @@ function ProfileEditor({
             </FeatureCard>
           </div>
         </SettingsPanel>
-        <SettingsPanel
+        <SettingsPanel surface="flat"
           title="Advanced settings"
           description="Most profiles do not need these. Cards with values show a Configured badge."
         >
-          <div className="grid gap-3 p-5">
+          <div className="grid grid-cols-1 gap-3">
             <FeatureCard
               id="profile-card-routing"
               title="Routing and exposure"
@@ -981,7 +971,7 @@ function ProfileEditor({
               configured={filled("exposure", "exposureLabels", "exposureAnnotations", "ingressClass", "ingressTls")}
               sheetTitle="Routing and exposure"
             >
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <FormField label="Publish with" htmlFor="profile-exposure">
                   <FormSelect
                     id="profile-exposure"
@@ -1069,7 +1059,7 @@ function ProfileEditor({
               configured={filled("runnerTag", "runnerServiceAccount", "runnerScc", "builderSetup", "caVariable", "gitImage")}
               sheetTitle="CI runner and trust"
             >
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 {field("runnerTag", "Runner tag", "Tag of an approved GitLab runner.", false)}
                 {field(
                   "caVariable",
@@ -1116,7 +1106,7 @@ function ProfileEditor({
                 configured={publishRevision}
                 sheetTitle="Profile versions"
               >
-                <SwitchField
+                <CheckboxField
                   id="profile-publish-revision"
                   checked={publishRevision}
                   onCheckedChange={setPublishRevision}

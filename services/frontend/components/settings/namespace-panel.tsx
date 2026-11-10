@@ -3,12 +3,12 @@
 import { useEffect, useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { PlusSignIcon } from "@hugeicons/core-free-icons"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
 import { Disclosure } from "@/components/ui/collapsible"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
-import { FormSelect } from "@/components/ui/form-select"
-import { Input } from "@/components/ui/input"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
+import { FormSelect } from "@/components/form-select"
+import { Input } from "@/components/panelui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { RowActions } from "@/components/action-menu"
 import { ConnectionRow, FormField, SwitchField } from "@/components/ui-kit"
@@ -145,7 +145,7 @@ export function NamespacePanel({
 
       >
         {bindings.length ? (
-          <ul className="divide-y">
+          <ul className="space-y-3">
             {bindings.map((binding) => {
               const record = reports[binding.namespace]
               const report = record?.report
@@ -156,7 +156,7 @@ export function NamespacePanel({
                   icon={<WorkspaceIcon name="server" className="size-4" />}
                   title={<span className="font-mono">{binding.namespace}</span>}
                   subtitle={cluster?.connectionMode === "agent" ? "Agent local namespace profile" : credentialName ? `Credential: ${credentialName}` : "Uses the default credential"}
-                  badges={report && <Badge variant={statusVariant(report.status)} radius="full" className="max-w-full text-left"><span className="min-w-0 whitespace-normal">Self-test: {statusLabel(report.status)}</span></Badge>}
+                  badges={report && <Badge variant={statusVariant(report.status)}  className="max-w-full text-left"><span className="min-w-0 whitespace-normal">Self-test: {statusLabel(report.status)}</span></Badge>}
                   meta={
                     record
                       ? `Last self-test ${new Date(record.checkedAt).toLocaleString()}`
@@ -223,7 +223,7 @@ export function NamespacePanel({
           />
         )}
       </InventoryPanel>
-      <Disclosure summary={includeClusterScope ? "Advanced permission checks · cluster-wide checks enabled" : "Advanced permission checks"} className="rounded-lg border bg-card p-4">
+      <Disclosure summary={includeClusterScope ? "Advanced permission checks · cluster-wide checks enabled" : "Advanced permission checks"} className="py-3">
         <SwitchField
           id="include-cluster-scope"
           checked={includeClusterScope}
@@ -284,6 +284,7 @@ function NamespaceDialog({ workspace, cluster, credentials, workspaceDefault, ac
     event.preventDefault()
     if (namespaceError) {
       setAttempted(true)
+      document.getElementById("namespace-name")?.focus()
       return
     }
     let saved: NamespaceBinding | undefined
@@ -315,7 +316,7 @@ function NamespaceDialog({ workspace, cluster, credentials, workspaceDefault, ac
       description={`Choose the namespace and credential this workspace uses on ${cluster.name}.`}
     >
       <form className="space-y-5" onSubmit={submit} noValidate>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <FormField label="Namespace" htmlFor="namespace-name" hint="Kubernetes namespace, up to 63 characters.">
             <Input id="namespace-name" placeholder="payments" value={namespace} onChange={(event) => setNamespace(event.target.value)} maxLength={63} readOnly={!!editing} aria-invalid={attempted && !!namespaceError} aria-describedby={attempted && namespaceError ? "namespace-name-error" : undefined} />
             {attempted && <FieldError id="namespace-name-error">{namespaceError}</FieldError>}
@@ -357,7 +358,7 @@ function PermissionReportDetails({ report }: { report: KubernetesPermissionRepor
     ["ClusterRoleBinding", report.suggestions.clusterRoleBindingYaml],
   ].filter((item): item is [string, string] => Boolean(item[1]))
   return (
-    <div className="space-y-3 rounded-lg border bg-muted/20 p-3">
+    <div className="space-y-3">
       <p className="text-sm text-muted-foreground">
         {report.serverVersion ? `Kubernetes ${report.serverVersion} · ` : ""}
         Checks ask Kubernetes whether the credential is allowed to act and do not touch deployment resources.
@@ -365,13 +366,13 @@ function PermissionReportDetails({ report }: { report: KubernetesPermissionRepor
       </p>
       {report.deploymentCredentials && <div className="space-y-1 text-sm text-muted-foreground"><p className="font-medium text-foreground">Short-lived namespace credentials · {report.deploymentCredentials.serviceAccount}</p><p>Provisioning: {report.deploymentCredentials.provisioning === "automatic" ? `automatic · role ${report.deploymentCredentials.deploymentClusterRole}` : "administrator-prepared"} · namespace deletion {report.deploymentCredentials.deleteNamespaces ? "limited to exclusively owned namespaces after app cleanup" : "disabled"}</p><p>Credential availability: {report.deploymentCredentials.issuance === "credential-available" ? "Verified using an issued token" : "Unverified"} · requested lifetime {report.deploymentCredentials.requestedLifetimeSeconds} seconds</p><p>Deployment permissions: {statusLabel(report.deploymentCredentials.deployment)}</p></div>}
       {report.failure && (
-        <div className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm">
+        <div className="text-sm text-destructive">
           <p className="font-medium">{report.failure.category}: {report.failure.message}</p>
           <p className="mt-1 text-muted-foreground">{report.failure.remediation}</p>
         </div>
       )}
       {report.clusterScope?.failure && (
-        <div className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm">
+        <div className="text-sm text-destructive">
           <p className="font-medium">Cluster-wide check: {report.clusterScope.failure.message}</p>
           <p className="mt-1 text-muted-foreground">{report.clusterScope.failure.remediation}</p>
         </div>
@@ -379,11 +380,11 @@ function PermissionReportDetails({ report }: { report: KubernetesPermissionRepor
       {report.clusterScope?.status === "not_configured" && (
         <p className="text-sm text-muted-foreground">Cluster-wide checks were requested, but no cluster-scope credential is configured.</p>
       )}
-      <ul className="grid gap-1 sm:grid-cols-2">
+      <ul className="grid grid-cols-1 gap-1 sm:grid-cols-2">
         {checks.map((check) => (
-          <li key={`${check.scope}-${check.id}`} className="flex items-center justify-between gap-3 rounded-md bg-muted/40 px-2 py-1.5 text-sm">
-            <span>{check.title}</span>
-            <Badge variant={statusVariant(check.status)} radius="full">{statusLabel(check.status)}</Badge>
+          <li key={`${check.scope}-${check.id}`} className="flex min-w-0 items-start justify-between gap-3 py-1.5 text-sm">
+            <span className="min-w-0 break-words">{check.title}</span>
+            <Badge variant={statusVariant(check.status)} >{statusLabel(check.status)}</Badge>
           </li>
         ))}
       </ul>

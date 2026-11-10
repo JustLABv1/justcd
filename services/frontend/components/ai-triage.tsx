@@ -6,7 +6,7 @@ import { Alert02Icon, AiMagicIcon, InformationCircleIcon } from "@hugeicons/core
 import { api, errorMessage } from "@/lib/api"
 import { ago } from "@/lib/relative-time"
 import { Button } from "@/components/panelui/button"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Dialog } from "@/components/panelui/dialog"
 import type { Triage } from "@/lib/types"
 
 const stageLabel: Record<string, string> = { collecting: "Collecting evidence", analyzing: "Ranking with AI", saving: "Saving result" }
@@ -77,19 +77,19 @@ export function TriageStatus({ triage, starting, onRun }: { triage: Triage | nul
     <div className="flex items-center justify-end gap-1.5">
       <span className="sr-only" role="status" aria-live="polite">{running ? stage : outdated ? "Ranking is out of date" : ""}</span>
       {running && <span aria-hidden="true" className="text-xs text-muted-foreground">{stage}</span>}
-      <Popover>
-        <PopoverTrigger render={<Button type="button" variant="ghost" size="icon-sm" aria-label="About this ranking" title="About this ranking" />}>
+      <Dialog>
+        <Dialog.Trigger render={<Button type="button" variant="ghost" size="icon-sm" aria-label="About this ranking" title="About this ranking" />}>
           <HugeiconsIcon icon={outdated ? Alert02Icon : InformationCircleIcon} strokeWidth={1.8} aria-hidden="true" className={outdated ? "text-warning-foreground dark:text-warning" : "text-muted-foreground"} />
-        </PopoverTrigger>
-        <PopoverContent align="end" className="w-80 gap-3 p-3">
-          <p className="text-sm font-medium">How these are ranked</p>
+        </Dialog.Trigger>
+        <Dialog.Content variant="plain" size="sm"><Dialog.Header title="How these are ranked" /><Dialog.Body>
+
           {outdated && <p className="rounded-md bg-warning/10 px-2.5 py-2 text-xs text-warning-foreground dark:text-warning">Applications changed since this ranking. New or worsened ones are already placed by rules; re-rank to refresh the explanations.</p>}
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-xs">
             {rows.map(([label, value]) => <div key={label} className="contents"><dt className="text-muted-foreground">{label}</dt><dd>{value}</dd></div>)}
           </dl>
           <p className="text-xs leading-5 text-muted-foreground">Down applications come first, then ones still serving while a rollout fails, then blocked or paused delivery. The model can explain and raise a ranking, never lower it.</p>
-        </PopoverContent>
-      </Popover>
+        </Dialog.Body></Dialog.Content>
+      </Dialog>
       {triage.available && triage.attentionCount > 0 && (
         <Button type="button" variant="outline" size="sm" loading={running} onClick={onRun}>
           <HugeiconsIcon icon={AiMagicIcon} strokeWidth={1.8} aria-hidden="true" className="text-primary" />

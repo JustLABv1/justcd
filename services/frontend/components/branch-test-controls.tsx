@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react"
 import { GitPullRequestIcon, ArrowTurnBackwardIcon, Delete02Icon, Layers01Icon } from "@hugeicons/core-free-icons"
-import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Input } from "@/components/ui/input"
-import { FormSelect } from "@/components/ui/form-select"
+import { Card } from "@/components/panelui/card"
+import { Button } from "@/components/panelui/button"
+import { Checkbox } from "@/components/panelui/checkbox"
+import { Input } from "@/components/panelui/input"
+import { FormSelect } from "@/components/form-select"
 import { FormField } from "@/components/ui-kit"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
 import { RowActions, type ActionItem } from "@/components/action-menu"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { api, apiPost } from "@/lib/api"
@@ -87,23 +88,23 @@ export function BranchTestControls({ application, canManage, disabled, onChanged
     if (state.mode === "isolated" && canManage) actions.push({ label: "Remove preview", icon: Delete02Icon, onSelect: onSettings, disabled })
   }
   return <>
-    {state && <section aria-label="Branch test" className="mb-5 rounded-xl border border-primary/30 bg-primary/5 p-4">
+    {state && <Card as="section" size="sm" aria-label="Branch test" className="mb-5"><Card.Content>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0"><p className="break-all text-sm font-semibold text-primary">Testing branch: {state.revision}</p><p className="mt-1 text-sm text-muted-foreground">{state.mode === "existing" ? "Existing environment · normal source reconciliation is paused" : "Isolated preview · manual deployment"}</p></div>
         <RowActions label={`branch test ${state.revision}`} primary={canManage ? <Button size="sm" disabled={disabled} onClick={onReview}>Review branch changes</Button> : undefined} items={actions} />
       </div>
-    </section>}
+    </Card.Content></Card>}
     <AppDialog open={open} onOpenChange={onOpenChange} title="Test a branch" description="Choose how to deploy changes before opening a pull request." busy={busy}>
       <form className="space-y-5" onSubmit={(event) => void start(event)}>
-        {error != null && <ErrorNotice error={error} />}
+        {error != null && <ErrorNotice inline error={error} />}
         <FormField label="Branch or Git revision" htmlFor="test-branch-revision"><Input id="test-branch-revision" autoFocus value={revision} onChange={(event) => setRevision(event.target.value)} placeholder="feature/my-change" required /></FormField>
         <FormField label="Test environment" htmlFor="test-branch-mode"><FormSelect id="test-branch-mode" value={mode} onValueChange={setMode} items={[{ value: "existing", label: "Deploy branch to existing dev" }, { value: "isolated", label: "Create isolated preview" }]} /></FormField>
-        {mode === "existing" ? <div className="space-y-3 rounded-lg border p-4 text-sm"><p>Uses {application.clusterName || application.clusterId} / {application.namespaces.map((binding) => binding.namespace).join(", ")}. Existing credentials and data stay available.</p><p className="text-muted-foreground">Automatic reconciliation is paused. Review the deployment plan before applying. Returning to {application.revision} will not undo database migrations or data changes.</p><label className="flex items-start gap-2"><Checkbox checked={confirmed} onCheckedChange={(value) => setConfirmed(Boolean(value))} /><span>I understand this test changes the shared environment and may modify its data.</span></label></div> : <>
+        {mode === "existing" ? <div className="space-y-3 text-sm"><p>Uses {application.clusterName || application.clusterId} / {application.namespaces.map((binding) => binding.namespace).join(", ")}. Existing credentials and data stay available.</p><p className="text-muted-foreground">Automatic reconciliation is paused. Review the deployment plan before applying. Returning to {application.revision} will not undo database migrations or data changes.</p><label className="flex items-start gap-2"><Checkbox checked={confirmed} onCheckedChange={(value) => setConfirmed(Boolean(value))} /><span>I understand this test changes the shared environment and may modify its data.</span></label></div> : <>
           <FormField label="Dedicated preview namespace" htmlFor="test-branch-namespace"><Input id="test-branch-namespace" value={namespace} onChange={(event) => setNamespace(event.target.value)} placeholder={`${application.name.slice(0, 35)}-preview`} required /></FormField>
           <FormField label="Preview overlay path" htmlFor="test-branch-path" hint="Repository-relative path with preview hostnames and dependencies."><Input id="test-branch-path" value={manifestPath} onChange={(event) => setManifestPath(event.target.value)} placeholder="envs/preview/my-app" required /></FormField>
           <p className="text-sm text-muted-foreground">The preview inherits the workspace cluster credential. Configure preview-safe databases, ingress hosts and secrets in the overlay. External services are not copied or isolated automatically. Remove the preview through its application settings when finished. Cleanup removes its managed resources through a reviewed plan; the namespace and any untracked resources remain.</p>
         </>}
-        <DialogFooter><DialogCancel disabled={busy} /><Button type="submit" loading={busy} loadingText="Verifying branch…" disabled={!revision.trim() || (mode === "existing" ? !confirmed : !namespace.trim() || !manifestPath.trim())}>Prepare branch test</Button></DialogFooter>
+        <DialogFooter><DialogCancel disabled={busy} /><Button type="submit" loading={busy} disabled={!revision.trim() || (mode === "existing" ? !confirmed : !namespace.trim() || !manifestPath.trim())}>Prepare branch test</Button></DialogFooter>
       </form>
     </AppDialog>
   </>

@@ -6,12 +6,13 @@ import { HugeiconsIcon } from "@hugeicons/react"
 import { SlidersHorizontalIcon, StarIcon, Tag01Icon, ViewIcon as SavedViewIcon, Tick02Icon, Add01Icon } from "@hugeicons/core-free-icons"
 import { ApplicationLabelsDialog } from "@/components/application-labels-dialog"
 import { ConnectionDialog } from "@/components/connection-dialog"
-import { DialogCancel, DialogFooter } from "@/components/ui/dialog"
+import { DialogCancel, DialogFooter } from "@/components/app-dialog"
 import { FormField } from "@/components/ui-kit"
 import { applicationViewSignature } from "@/lib/application-views"
 import type { ApplicationPreferences, ApplicationSavedView, ApplicationViewConfig } from "@/lib/application-views"
 import { useRouter } from "next/navigation"
 import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { Card } from "@/components/panelui/card"
 import { Alert } from "@/components/panelui/alert"
 import { Badge } from "@/components/panelui/badge"
 import { Button } from "@/components/panelui/button"
@@ -28,7 +29,7 @@ import { countActiveConditions, matchesFilterQuery } from "@/lib/filter-eval"
 import type { FilterQuery } from "@/components/reui/filters/filters-types"
 import { DataGridList, type GridColumn } from "@/components/data-grid-table"
 import { ActionMenu, RowActions, type ActionItem } from "@/components/action-menu"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { CollapsibleGroup } from "@/components/ui/collapsible"
 import { ApplicationClusterFilter } from "@/components/application-cluster-filter"
 import { Delete02Icon, Edit02Icon, ViewIcon } from "@hugeicons/core-free-icons"
 import { EmptyState } from "@/components/ui-kit"
@@ -127,7 +128,7 @@ export function ApplicationCard({
   const reason = reasonFor(app, blockedBy)
   const stalled = isCheckStalled(app, now)
   return (
-    <article className={`flex min-w-0 flex-col rounded-2xl border p-4 transition-shadow hover:shadow-md ${blockedBy ? "border-dashed bg-card opacity-75" : reason && !reason.blocked ? "border-warning/40 bg-warning/5" : "bg-card"}`}>
+    <Card as="article" size="sm" className={`min-w-0 ${blockedBy ? "border-dashed opacity-75" : reason && !reason.blocked ? "border-warning/40" : ""}`}><Card.Content className="flex h-full flex-col">
       <header className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="truncate text-base font-semibold tracking-tight" title={app.name}>
@@ -161,7 +162,7 @@ export function ApplicationCard({
           {stalled ? "Checks stalled · " : "Checked "}{ago(app.lastCheckedAt, now)}
         </span>
       </footer>
-    </article>
+    </Card.Content></Card>
   )
 }
 
@@ -177,7 +178,7 @@ function GroupHeader({ label, bucket, mode, health, open }: { label: string; buc
       </span>
       <span className="min-w-0 flex-1 basis-56">
         <span className="flex flex-wrap items-center gap-x-2">
-          <span className="truncate text-sm font-semibold">{label}</span>
+          <span className="break-words text-sm font-semibold">{label}</span>
           {health && <span className={`text-xs font-medium ${tone[health.level].text}`}><span className="sr-only">{health.level}: </span>{health.label}</span>}
         </span>
         {health && health.level !== "healthy" && (
@@ -187,7 +188,7 @@ function GroupHeader({ label, bucket, mode, health, open }: { label: string; buc
         )}
       </span>
       <span className="flex shrink-0 items-center gap-3">
-        <span role="img" aria-label={`${counts.synced} in sync, ${counts.attention} need attention, ${counts.other} other`} className="flex h-1.5 w-24 overflow-hidden rounded-full bg-muted">
+        <span role="img" aria-label={`${counts.synced} in sync, ${counts.attention} need attention, ${counts.other} other`} className="flex h-1.5 w-24 overflow-hidden rounded-full bg-foreground/10">
           {[["bg-success", counts.synced], ["bg-warning", counts.attention], ["bg-muted-foreground/40", counts.other]].map(([color, n]) => Number(n) > 0 && <span key={String(color)} className={String(color)} style={{ width: `${(Number(n) / apps.length) * 100}%` }} />)}
         </span>
         <span className="text-xs tabular-nums text-muted-foreground">{apps.length} app{apps.length === 1 ? "" : "s"}{counts.attention > 0 && <> · <span className="text-warning-foreground dark:text-warning">{counts.attention} to check</span></>}</span>
@@ -405,7 +406,7 @@ export function ApplicationCollection({
 
   if (!available.length)
     return (
-      <>{renderHeader?.()}<div className="rounded-xl border border-dashed bg-card">
+      <>{renderHeader?.()}<div className="min-w-0">
         <EmptyState
           title="Your next deployment starts here"
           description={`Connect a Git repository and a Kubernetes target to bring your first application online.${canCreate ? "" : " Ask a workspace owner to create one."}`}
@@ -480,12 +481,9 @@ export function ApplicationCollection({
     if (groupBy === "none") return <div key={bucket.key}>{body}</div>
     const open = openGroups[bucket.key] ?? defaultOpen(bucket)
     return (
-      <Collapsible key={bucket.key} open={open} onOpenChange={(next) => setOpenGroups((current) => ({ ...current, [bucket.key]: next }))} className={`rounded-2xl border bg-card/40 ${health && health.level !== "healthy" ? tone[health.level].border : ""}`}>
-        <CollapsibleTrigger className="w-full justify-between gap-3 px-4 py-3">
-          <GroupHeader label={bucket.label} bucket={bucket} mode={groupBy} health={health} open={open} />
-        </CollapsibleTrigger>
-        <CollapsibleContent><div className="border-t p-4">{body}</div></CollapsibleContent>
-      </Collapsible>
+      <CollapsibleGroup key={bucket.key} open={open} onOpenChange={(next) => setOpenGroups((current) => ({ ...current, [bucket.key]: next }))} header={<GroupHeader label={bucket.label} bucket={bucket} mode={groupBy} health={health} open={open} />}>
+        {body}
+      </CollapsibleGroup>
     )
   }
 
@@ -501,16 +499,16 @@ export function ApplicationCollection({
       <section aria-label="Filter applications" className="mb-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="max-w-full overflow-x-auto">
-            <Tabs variant="segmented" value={filter} onValueChange={(value) => { if (typeof value === "string") setFilter(value) }}>
-              <Tabs.List aria-label="Filter by health">
+            <Chip.Group multiple={false} value={[filter]} onValueChange={(next) => { if (next[0]) setFilter(next[0]) }} aria-label="Filter by health">
+
                 {([["all", "All apps"], ["attention", "Needs attention"], ["synced", "In sync"], ["other", "Other"], ["paused", "Reconciliation paused"]] as const)
                   // Empty buckets are noise; keep them only while they are the active filter.
                   .filter(([value]) => value === "all" || value === "attention" || counts[value] > 0 || filter === value)
                   .map(([value, label]) => (
-                    <Tabs.Trigger key={value} value={value}>{label} <Tabs.Badge>{counts[value]}</Tabs.Badge></Tabs.Trigger>
+                    <Chip key={value} value={value}>{label} <span className="ms-1 tabular-nums">{counts[value]}</span></Chip>
                   ))}
-              </Tabs.List>
-            </Tabs>
+
+            </Chip.Group>
           </div>
           <Chip pressed={favoritesOnly} onPressedChange={setFavoritesOnly} disabled={!preferencesReady} className="gap-1.5">
             {/* The chip draws its own tick while pressed, so the star only shows while it is off. */}
@@ -571,7 +569,7 @@ export function ApplicationCollection({
       {visible.length ? (
         <div className="space-y-3">{buckets.map(renderBucket)}</div>
       ) : (
-        <div className="rounded-xl border border-dashed bg-card pb-6 text-center">
+        <div className="pb-6 text-center">
           <EmptyState title="No matching applications" description="Try another search or clear the filters to see all applications." />
           <Button variant="outline" onClick={resetFilters}>Clear filters</Button>
         </div>

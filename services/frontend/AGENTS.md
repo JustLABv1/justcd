@@ -6,11 +6,13 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 # UI components
 
-Follow the repository's ReUI/ShadCN component policy in `../../AGENTS.md`.
-Reuse installed components from `@/components/ui` and the existing form/dialog
-wrappers before adding a primitive or implementing a custom control. In
-particular, checkboxes must use `@/components/ui/checkbox`; selects must use
-`FormSelect` or the shared Select primitives, rather than native browser inputs.
+Read `docs/design-system.md` before building or changing UI. PanelUI (`@/components/panelui`) is the
+component library, and that document decides which component fits which content. Do not default to
+Frame. Read its “Lessons from the application overview review” before continuing a migration;
+apply those corrections to surface choice, density, padding, metadata and action placement.
+Do not treat a component import replacement as a completed visual migration.
+Only the gaps and their required implementation dependencies listed in the design guide stay on
+ReUI/ShadCN. Consult `docs/panelui-migration.md` for the current verification checklist. Native browser checkboxes and selects are not allowed.
 
 # Settings pages
 

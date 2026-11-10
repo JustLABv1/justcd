@@ -1,13 +1,16 @@
 "use client"
 
+import { Section } from "@/components/section"
+
 import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
+import { Card } from "@/components/panelui/card"
 import { Button } from "@/components/panelui/button"
-import { Input } from "@/components/ui/input"
+import { Input } from "@/components/panelui/input"
 import { PublishingServicesEditor } from "@/components/settings/publishing-services"
 import { ArchiveUpload } from "@/components/applications/archive-upload"
-import { FormSelect } from "@/components/ui/form-select"
-import { Textarea } from "@/components/ui/textarea"
+import { FormSelect } from "@/components/form-select"
+import { Textarea } from "@/components/panelui/textarea"
 import { PageHeading } from "@/components/ui-kit"
 import {
   SummaryList,
@@ -17,7 +20,7 @@ import {
 } from "@/components/applications/wizard"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { ArrowLeft01Icon } from "@hugeicons/core-free-icons"
+import { ArrowLeft01Icon, ArrowUpRight01Icon } from "@hugeicons/core-free-icons"
 import {
   TemplateCatalog,
   TemplateGlyph,
@@ -27,7 +30,6 @@ import {
 import {
   PublishingCheckbox,
   PublishingField as FormField,
-  PublishingSection as Panel,
 } from "@/components/applications/publishing-fields"
 import { api } from "@/lib/api"
 import { publishProject, publishingSize, selectedWorkspaceId, templatesUrl } from "@/lib/publishing"
@@ -361,37 +363,23 @@ export default function PublishApplicationPage() {
           title="Your application is being built"
           description="The private repository and JustCD application are ready. GitLab is building and publishing the first image."
         />
-        <Panel
+        <Section
           title={config.name}
           description="Follow the build, then review the deployment in JustCD."
         >
-          <div className="space-y-5 rounded-2xl border border-border bg-card p-5 dark:border-transparent dark:bg-muted/45">
+          <Card size="sm"><Card.Content className="space-y-5">
             <SummaryList
               items={[
                 {
                   label: "Repository",
                   value: (
-                    <a
-                      href={result.projectUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-primary hover:underline"
-                    >
-                      Open GitLab project
-                    </a>
+                    <Button variant="outline" size="sm" nativeButton={false} render={<a href={result.projectUrl} target="_blank" rel="noreferrer" />}>Open GitLab project<HugeiconsIcon icon={ArrowUpRight01Icon} className="size-4" aria-hidden="true" /></Button>
                   ),
                 },
                 {
                   label: "Build",
                   value: (
-                    <a
-                      href={result.pipelineUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-primary hover:underline"
-                    >
-                      Follow pipeline progress
-                    </a>
+                    <Button variant="outline" size="sm" nativeButton={false} render={<a href={result.pipelineUrl} target="_blank" rel="noreferrer" />}>Follow pipeline progress<HugeiconsIcon icon={ArrowUpRight01Icon} className="size-4" aria-hidden="true" /></Button>
                   ),
                 },
                 {
@@ -409,8 +397,8 @@ export default function PublishApplicationPage() {
             <Button className="self-start" nativeButton={false} render={<Link href={`/applications/${result.applicationId}`} />}>
               Open application
             </Button>
-          </div>
-        </Panel>
+          </Card.Content></Card>
+        </Section>
       </>
     )
 
@@ -496,11 +484,11 @@ export default function PublishApplicationPage() {
               {
                 title: "Application",
                 content: (
-                  <Panel
+                  <Section
                     title="Bring your application"
                     description="Upload the contents of your project directory, with dependency files at the archive root."
                   >
-                    <div className="grid gap-4 md:grid-cols-2">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                       {textField(
                         "name",
                         "Application name",
@@ -568,17 +556,17 @@ export default function PublishApplicationPage() {
                         />
                       </FormField>
                     </div>
-                  </Panel>
+                  </Section>
                 ),
               },
               {
                 title: "Repository",
                 content: (
-                  <Panel
+                  <Section
                     title="Where should the Git repository live?"
                     description="JustCD creates a private project in your GitLab group. Existing unrelated repositories are never overwritten."
                   >
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                       <FormField label="GitLab URL" htmlFor="publish-gitlab">
                         <Input
                           id="publish-gitlab"
@@ -643,17 +631,17 @@ export default function PublishApplicationPage() {
                         is the publishing branch.
                       </p>
                     </div>
-                  </Panel>
+                  </Section>
                 ),
               },
               {
                 title: "Build",
                 content: (
-                  <Panel
+                  <Section
                     title="How should the app be built?"
                     description="Your platform team supplies approved image references. JustCD generates the Dockerfile and GitLab pipeline."
                   >
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                       {config.runtime !== "static" &&
                         textField(
                           "baseImage",
@@ -784,18 +772,18 @@ export default function PublishApplicationPage() {
                         )}
                       </p>
                     </div>
-                  </Panel>
+                  </Section>
                 ),
               },
               {
                 title: "Secrets",
                 content: (
                   <>
-                  <Panel
+                  <Section
                     title="Where should build secrets come from?"
                     description="Registry credentials are used by CI to push images. They are never committed to Git or included in the application image."
                   >
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                       <FormField
                         label="Secret storage"
                         htmlFor="publish-secret-mode"
@@ -890,7 +878,7 @@ export default function PublishApplicationPage() {
                         </>
                       )}
                     </div>
-                  </Panel>
+                  </Section>
                   <PublishingServicesEditor value={config.services ?? ""} onChange={services => patch({ services })} />
                   <p className="text-xs text-muted-foreground">Every service configured here is included for this application. Use approved publishing profiles to offer end users optional services.</p>
                   </>
@@ -899,11 +887,11 @@ export default function PublishApplicationPage() {
               {
                 title: "Deployment",
                 content: (
-                  <Panel
+                  <Section
                     title="Where should the app run?"
                     description="Choose an existing workspace namespace or create one through the deployment flow. Cluster credentials remain managed by JustCD."
                   >
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                       <div className="md:col-span-2 lg:col-span-3">
                         <PublishingCheckbox
                           id="publish-create-namespace"
@@ -1067,17 +1055,17 @@ export default function PublishApplicationPage() {
                         approval policy.
                       </p>
                     </div>
-                  </Panel>
+                  </Section>
                 ),
               },
               {
                 title: "Review",
                 content: (
-                  <Panel
+                  <Section
                     title="Ready to create your application?"
                     description="Review the destinations and actions before JustCD writes to GitLab."
                   >
-                    <div className="space-y-5 rounded-2xl border border-border bg-card p-5 dark:border-transparent dark:bg-muted/45">
+                    <Card size="sm"><Card.Content className="space-y-5">
                       <SummaryList
                         items={[
                           {
@@ -1132,15 +1120,15 @@ export default function PublishApplicationPage() {
                         updates, choose Upload new version on the application
                         page. Each upload replaces the complete source snapshot.
                       </p>
-                    </div>
-                  </Panel>
+                    </Card.Content></Card>
+                  </Section>
                 ),
               },
             ]}
           />
-          <div className="space-y-3 rounded-2xl border border-border bg-card p-3 dark:border-transparent dark:bg-muted/30 [&_button]:h-10 [&_button]:rounded-lg [&_button]:px-4">
+          <div className="space-y-5">
             <PublishingDraftNotice draft={draft} inline />
-            <div className="border-t pt-3">
+            <div>
             <WizardFooter
               step={wizard.step}
               isLast={wizard.isLast}

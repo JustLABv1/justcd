@@ -4,11 +4,11 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { PlusSignIcon } from "@hugeicons/core-free-icons"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
-import { FormSelect } from "@/components/ui/form-select"
-import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
+import { FormSelect } from "@/components/form-select"
+import { Input } from "@/components/panelui/input"
 import { RowActions } from "@/components/action-menu"
 import { ConnectionRow, FormField, InlineLink } from "@/components/ui-kit"
 import { WorkspaceIcon } from "@/components/workspace-ui"
@@ -79,7 +79,7 @@ export function GitSourcePanel({
         count={sources.length}
       >
         {sources.length ? (
-          <ul className="divide-y">
+          <ul className="space-y-3">
             {sources.map((source) => {
               const result = testResults[source.id]
               const own = !source.shared && source.workspaceId === workspace.id
@@ -92,11 +92,11 @@ export function GitSourcePanel({
                   badges={
                     <>
                       {source.shared
-                        ? <Badge variant="info-light" radius="full">Shared by {source.ownerWorkspaceName ?? "another workspace"}</Badge>
-                        : <Badge variant="outline" radius="full">Private to this workspace</Badge>}
-                      <Badge variant="outline" radius="full">{source.credentialId ? "Credential configured" : "No credential (public repository)"}</Badge>
-                      {result?.status === "ok" && <Badge variant="success-light" radius="full">Reachable · HEAD {result.commit.slice(0, 8)}</Badge>}
-                      {result?.status === "failed" && <Badge variant="destructive-light" radius="full">Last test failed</Badge>}
+                        ? <Badge variant="info" >Shared by {source.ownerWorkspaceName ?? "another workspace"}</Badge>
+                        : <Badge variant="outline" >Private to this workspace</Badge>}
+                      <Badge variant="outline" >{source.credentialId ? "Credential configured" : "No credential (public repository)"}</Badge>
+                      {result?.status === "ok" && <Badge variant="success" >Reachable · HEAD {result.commit.slice(0, 8)}</Badge>}
+                      {result?.status === "failed" && <Badge variant="destructive" >Last test failed</Badge>}
                     </>
                   }
                   meta={result?.status === "ok" ? `Last tested ${new Date(result.testedAt).toLocaleString()}` : result?.status === "failed" ? undefined : "Not tested yet in this session"}
@@ -207,14 +207,14 @@ function PushWebhookDialog({ source, workspace, action, onClose }: {
     >
       <form className="space-y-5" onSubmit={submit} noValidate>
         {loadError != null
-          ? <LoadErrorNotice error={loadError} title="Could not load webhook settings" onRetry={() => { setLoadError(null); setTick((value) => value + 1) }} />
+          ? <LoadErrorNotice inline error={loadError} title="Could not load webhook settings" onRetry={() => { setLoadError(null); setTick((value) => value + 1) }} />
           : !info
             ? <FieldsSkeleton label="Loading webhook settings" />
             : (
-              <div className="space-y-3 rounded-lg border bg-muted/30 p-3 text-sm">
+              <div className="space-y-3 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">Status</span>
-                  <Badge variant={info.configured ? "success-light" : "outline"} radius="full">{info.configured ? "Configured" : "Not configured"}</Badge>
+                  <Badge variant={info.configured ? "success" : "outline"} >{info.configured ? "Configured" : "Not configured"}</Badge>
                 </div>
                 <CopyCode value={info.webhookUrl} label="webhook URL" />
                 <p className="text-muted-foreground">

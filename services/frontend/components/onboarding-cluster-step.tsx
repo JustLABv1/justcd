@@ -6,8 +6,10 @@ import { HugeiconsIcon } from "@hugeicons/react"
 import { ArrowRight01Icon, Copy01Icon, Tick02Icon } from "@hugeicons/core-free-icons"
 import { ErrorDetailsButton } from "@/components/error-details"
 import { useToast } from "@/components/toast-provider"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { Button } from "@/components/panelui/button"
+import { Card } from "@/components/panelui/card"
+import { Badge } from "@/components/panelui/badge"
+import { Input } from "@/components/panelui/input"
 import { FormField, StatusBadge, type StatusTone } from "@/components/ui-kit"
 import { apiPost, errorMessage } from "@/lib/api"
 import type { OnboardingCluster, OnboardingClusterState } from "@/lib/types"
@@ -61,23 +63,23 @@ export function OnboardingClusterStep({ workspaceId, clusters, onChanged }: { wo
   return <div className="space-y-6">
     {clusters.length > 0 && <section aria-label="Clusters in this workspace" className="space-y-2">
       <h3 className="text-sm font-semibold">Your clusters</h3>
-      <ul className="divide-y rounded-xl border">
-        {clusters.map((cluster) => <li key={cluster.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
+      <ul className="space-y-3">
+        {clusters.map((cluster) => <Card as="li" size="sm" key={cluster.id}><Card.Content className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <div className="min-w-0"><p className="text-sm font-medium break-all">{cluster.name}</p><p className="text-xs text-muted-foreground">{cluster.mode === "agent" ? "Outbound agent" : "Direct API access"}{cluster.message && cluster.state !== "online" && cluster.state !== "verified" ? ` · ${cluster.message}` : ""}</p></div>
           <div className="flex items-center gap-2">
             <StatusBadge status={stateLabel[cluster.state]} tone={stateTone[cluster.state]} />
-            {cluster.mode === "agent" && ["not_enrolled", "waiting", "offline", "revoked"].includes(cluster.state) && <Button type="button" size="xs" variant="outline" disabled={busy} onClick={() => void enroll(cluster)}>New token</Button>}
+            {cluster.mode === "agent" && ["not_enrolled", "waiting", "offline", "revoked"].includes(cluster.state) && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void enroll(cluster)}>New token</Button>}
           </div>
-        </li>)}
+        </Card.Content></Card>)}
       </ul>
     </section>}
 
-    {enrollment && commands && <section aria-label="Install the agent" className="space-y-4 rounded-xl border bg-muted/20 p-4 sm:p-5">
+    {enrollment && commands && <section aria-label="Install the agent" className="space-y-4">
       {connected ? <div role="status" className="flex items-start gap-3"><span className="grid size-8 shrink-0 place-items-center rounded-full bg-success/10 text-success-foreground dark:text-success"><HugeiconsIcon icon={Tick02Icon} strokeWidth={2} className="size-4" aria-hidden="true" /></span><div><p className="text-sm font-semibold">{enrollment.clusterName} is connected</p><p className="text-sm text-muted-foreground">The agent checked in. You can continue with the next step.</p></div></div> : <>
         <div className="flex items-start gap-3"><span aria-hidden="true" className="mt-1.5 size-2.5 shrink-0 animate-pulse rounded-full bg-warning" /><div role="status"><p className="text-sm font-semibold">Waiting for {enrollment.clusterName} to connect…</p><p className="text-sm text-muted-foreground">Run these commands against the cluster. This page updates by itself as soon as the agent checks in. The token is single-use and expires at {new Date(enrollment.expiresAt).toLocaleTimeString()}.</p></div></div>
         <div className="relative">
-          <pre tabIndex={0} aria-label="Agent install commands" className="overflow-x-auto rounded-lg border bg-background p-3 pr-24 font-mono text-xs leading-5">{commands("••••••••")}</pre>
-          <Button type="button" size="xs" variant="outline" className="absolute top-2 right-2" onClick={() => void copy(commands(enrollment.token))}><HugeiconsIcon icon={copied ? Tick02Icon : Copy01Icon} strokeWidth={1.8} aria-hidden="true" />{copied ? "Copied" : "Copy"}</Button>
+          <pre tabIndex={0} aria-label="Agent install commands" className="overflow-x-auto bg-muted/30 p-3 pr-24 font-mono text-xs leading-5">{commands("••••••••")}</pre>
+          <Button type="button" size="sm" variant="outline" className="absolute top-2 right-2" onClick={() => void copy(commands(enrollment.token))}><HugeiconsIcon icon={copied ? Tick02Icon : Copy01Icon} strokeWidth={1.8} aria-hidden="true" />{copied ? "Copied" : "Copy"}</Button>
           <span role="status" aria-live="polite" className="sr-only">{copied ? "Install commands copied to clipboard" : ""}</span>
         </div>
         <p className="text-xs text-muted-foreground">Run from a checkout of the JustCD repository, or point <code>helm</code> at your chart registry. The copied commands include the real token; it is not stored anywhere else and disappears when you leave this page.</p>
@@ -85,17 +87,17 @@ export function OnboardingClusterStep({ workspaceId, clusters, onChanged }: { wo
     </section>}
 
     <section aria-label="Add a cluster" className="grid gap-4 lg:grid-cols-2">
-      <div className="space-y-4 rounded-xl border p-4 sm:p-5">
-        <div><h3 className="text-sm font-semibold">Install the agent <span className="ml-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">Recommended</span></h3><p className="mt-1 text-sm text-muted-foreground">A small pod connects outbound to JustCD. No inbound firewall rules and no cluster credentials stored here.</p></div>
+      <section className="space-y-4">
+        <div><h3 className="text-sm font-semibold">Install the agent <Badge variant="info" size="sm" className="ml-1">Recommended</Badge></h3><p className="mt-1 text-sm text-muted-foreground">A small pod connects outbound to JustCD. No inbound firewall rules and no cluster credentials stored here.</p></div>
         <FormField label="Cluster name" htmlFor="onboarding-cluster-name"><Input id="onboarding-cluster-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={80} placeholder="production-eu" /></FormField>
         <FormField label="Namespaces this workspace may deploy to" htmlFor="onboarding-cluster-namespaces" hint="Comma-separated. The agent enforces this allowlist locally. You can change it later."><Input id="onboarding-cluster-namespaces" value={namespaces} onChange={(event) => setNamespaces(event.target.value)} placeholder="apps, staging" /></FormField>
         {error != null && <div role="alert" className="flex items-start justify-between gap-3 text-sm text-destructive"><span>{errorMessage(error)}</span><ErrorDetailsButton error={error} /></div>}
         <Button type="button" onClick={() => void enroll()} loading={busy} loadingText="Creating…" disabled={!name.trim()}>Create cluster and token</Button>
-      </div>
-      <div className="flex flex-col justify-between gap-4 rounded-xl border p-4 sm:p-5">
+      </section>
+      <section className="flex flex-col gap-4">
         <div><h3 className="text-sm font-semibold">Connect the Kubernetes API directly</h3><p className="mt-1 text-sm text-muted-foreground">Use a kubeconfig or service-account token when JustCD can reach the API server. Secret values stay masked and backend-only; the access check only reads discovery and permission information.</p></div>
         <Button render={<Link href={`/workspaces/${workspaceId}/clusters/new`} />} nativeButton={false} variant="outline" className="self-start">Open the connection wizard<HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={1.8} data-icon="inline-end" aria-hidden="true" /></Button>
-      </div>
+      </section>
     </section>
   </div>
 }

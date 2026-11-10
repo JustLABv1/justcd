@@ -3,7 +3,8 @@
 import Link from "next/link"
 import { useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { Button } from "@/components/ui/button"
+import { NotFound } from "@/components/panelui/not-found"
+import { Button } from "@/components/panelui/button"
 import { LogoMark } from "@/components/logo"
 import { ThemePicker } from "@/components/theme-picker"
 import styles from "./service-state.module.css"
@@ -51,23 +52,7 @@ function StateArtwork({ state, account }: { state: ServiceState; account?: { nam
     <div className={`${styles.artwork} ${styles[state]}`} aria-hidden="true">
       <div className={styles.halo} />
       <div className={styles.grid} />
-      {state === "not-found" ? (
-        <>
-          <div className={styles.orbit}>
-            <span />
-          </div>
-          <div className={`${styles.orbit} ${styles.orbitTwo}`}>
-            <span />
-          </div>
-          <div className={styles.coordinates}>ROUTE / UNKNOWN</div>
-          <div className={styles.numerals}>
-            4<span>0</span>4
-          </div>
-          <div className={styles.satellite}>
-            <LogoMark className="size-7" />
-          </div>
-        </>
-      ) : state === "pending-approval" ? (
+      {state === "pending-approval" ? (
         <>
           <div className={styles.passRing} />
           <div className={`${styles.passRing} ${styles.passRingTwo}`} />
@@ -230,7 +215,16 @@ export function ServiceStatePage({
         </Link>
         <ThemePicker />
       </header>
-      <section className={styles.content} aria-labelledby="service-state-title">
+      <section className={state === "not-found" ? "flex flex-1 items-center py-10" : styles.content} aria-labelledby="service-state-title">
+        {state === "not-found" ? <NotFound backdrop={false}>
+          <NotFound.Code code="404" color="primary" ambient={false} />
+          <NotFound.Title id="service-state-title">{copy.title}</NotFound.Title>
+          <NotFound.Description>{copy.description}</NotFound.Description>
+          <NotFound.Actions>
+            <Button size="lg" nativeButton={false} render={<Link href="/" />}>Back to overview</Button>
+            <Button size="lg" variant="outline" onClick={() => window.history.length > 1 ? router.back() : router.push("/")}>Go back</Button>
+          </NotFound.Actions>
+        </NotFound> : <>
         <StateArtwork state={state} account={account} />
         <div className={styles.copy}>
           <p className={styles.eyebrow}>
@@ -245,30 +239,15 @@ export function ServiceStatePage({
             </p>
           )}
           <div className={styles.actions}>
-            {state === "not-found" ? (
-              <>
-                <Button size="lg" render={<Link href="/" />}>
-                  Back to overview <span aria-hidden="true">↗</span>
-                </Button>
-                <Button
-                  size="lg"
-                  variant="outline"
-                  onClick={() =>
-                    window.history.length > 1 ? router.back() : router.push("/")
-                  }
-                >
-                  Go back
-                </Button>
-              </>
-            ) : state === "pending-approval" ? (
+            {state === "pending-approval" ? (
               <>
                 <Button size="lg" onClick={() => void checkConnection(true)} loading={checking} loadingText="Checking…">
-                  Check again <span aria-hidden="true">↗</span>
+                  Check again
                 </Button>
                 <Button size="lg" variant="outline" onClick={onSignOut}>
                   Sign out
                 </Button>
-                <Button size="lg" variant="ghost" nativeButton={false} render={<Link href="/settings/security" />}>
+                <Button size="lg" variant="outline" nativeButton={false} render={<Link href="/settings/security" />}>
                   Account security
                 </Button>
               </>
@@ -282,13 +261,12 @@ export function ServiceStatePage({
                 {state === "maintenance"
                   ? "Check availability"
                   : "Try reconnecting"}
-                <span aria-hidden="true">↗</span>
               </Button>
             )}
           </div>
           {state === "maintenance" && (
             <Button
-              variant="link"
+              variant="outline"
               nativeButton={false}
               render={<Link href="/login" />}
               className="mt-3"
@@ -303,6 +281,7 @@ export function ServiceStatePage({
                 : "")}
           </p>
         </div>
+        </>}
       </section>
       <footer className={styles.footer}>
         <span>GIT → PLAN → SYNC</span>

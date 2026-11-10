@@ -3,13 +3,13 @@
 import { useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { PlusSignIcon } from "@hugeicons/core-free-icons"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
-import { FormSelect } from "@/components/ui/form-select"
-import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
+import { FormSelect } from "@/components/form-select"
+import { Input } from "@/components/panelui/input"
 import { RowActions } from "@/components/action-menu"
-import { ConnectionRow, FormField, SwitchField } from "@/components/ui-kit"
+import { ConnectionRow, FormField, CheckboxField } from "@/components/ui-kit"
 import { WorkspaceIcon } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
 import { api, apiPost } from "@/lib/api"
@@ -66,14 +66,14 @@ export function OIDCPanel({
         action={addButton}
       >
         {providers.length ? (
-          <ul className="divide-y">
+          <ul className="space-y-3">
             {providers.map((provider) => (
               <ConnectionRow
                 key={provider.id}
                 icon={<WorkspaceIcon name="shield" className="size-4" />}
                 title={provider.name}
                 subtitle={provider.redirectUrl ? `Callback URL: ${provider.redirectUrl}` : undefined}
-                badges={<Badge variant={provider.enabled ? "success-light" : "outline"} radius="full">{provider.enabled ? "Enabled" : "Disabled"}</Badge>}
+                badges={<Badge variant={provider.enabled ? "success" : "outline"} >{provider.enabled ? "Enabled" : "Disabled"}</Badge>}
                 actions={
                   <RowActions
                     label={provider.name}
@@ -143,6 +143,9 @@ function ProviderDialog({ editing, action, onClose, onSaved }: {
     event.preventDefault()
     if (invalid) {
       setAttempted(true)
+      const first = (Object.keys(errors) as (keyof typeof errors)[]).find((key) => errors[key])
+      const fieldIds = { name: "oidc-name", issuer: "oidc-issuer", clientId: "oidc-client", clientSecret: "oidc-secret" }
+      if (first) document.getElementById(fieldIds[first])?.focus()
       return
     }
     const values = { name, issuer, clientId, clientSecret, groupsClaim, enabled }
@@ -164,7 +167,7 @@ function ProviderDialog({ editing, action, onClose, onSaved }: {
       description="Configure organization sign-in and workspace group claims."
     >
       <form className="space-y-5" onSubmit={submit} noValidate>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <FormField label="Display name" htmlFor="oidc-name">
             <Input id="oidc-name" placeholder="Company SSO" value={name} onChange={(event) => setName(event.target.value)} {...field("name")} />
             {attempted && <FieldError id="oidc-name-error">{errors.name}</FieldError>}
@@ -204,7 +207,7 @@ function ProviderDialog({ editing, action, onClose, onSaved }: {
             Callback URL: the JustCD public URL plus <code className="font-mono">/api/v1/auth/oidc/&lt;provider-id&gt;/callback</code>. It is shown here once the provider is created.
           </p>
         )}
-        <SwitchField id="oidc-enabled" checked={enabled} onCheckedChange={setEnabled} label="Enabled" description="Allow people to sign in with this provider." />
+        <CheckboxField id="oidc-enabled" checked={enabled} onCheckedChange={setEnabled} label="Enabled" description="Allow people to sign in with this provider." />
         <DialogFooter>
           <DialogCancel disabled={saving} />
           <Button type="submit" loading={saving} loadingText={editing ? "Saving…" : "Adding…"}>
@@ -234,6 +237,7 @@ function GroupAccessDialog({ providers, workspaces, initialProviderId, action, o
     event.preventDefault()
     if (groupError) {
       setAttempted(true)
+      document.getElementById("mapping-group")?.focus()
       return
     }
     if (!providerId || !workspaceId) return
@@ -252,7 +256,7 @@ function GroupAccessDialog({ providers, workspaces, initialProviderId, action, o
       description="Verified ID-token groups grant the selected workspace role at each sign-in."
     >
       <form className="space-y-5" onSubmit={submit} noValidate>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <FormField label="Provider" htmlFor="mapping-provider">
             <FormSelect id="mapping-provider" value={providerId} onValueChange={setProviderId} placeholder="Choose provider" items={providers.map((provider) => ({ value: provider.id, label: provider.name }))} />
           </FormField>

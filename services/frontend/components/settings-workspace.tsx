@@ -5,10 +5,10 @@ import { useRouter, usePathname } from "next/navigation"
 import Link from "next/link"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { PlusSignIcon } from "@hugeicons/core-free-icons"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/panelui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState } from "@/components/ui-kit"
-import { Badge } from "@/components/reui/badge"
+import { Badge } from "@/components/panelui/badge"
 import { ScopeBadge, SettingsLayout, type SettingsNavGroup } from "@/components/settings/layout"
 import { useToast } from "@/components/toast-provider"
 import { api, errorMessage } from "@/lib/api"
@@ -280,7 +280,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
         { label: "Security & access", items: workspaceConnectionSections.filter((item) => item.id === "credentials" || item.id === "shares").map((item) => ({ id: item.id, label: item.title, href: `/workspaces/${fixedWorkspaceId}/connections/${item.id}` })) },
       ]
     : navGroups
-        .map((group) => ({ label: group.title, items: adminVisibleSections.filter((item) => group.ids.includes(item.id)).map((item) => ({ id: item.id, label: item.title, href: sectionHref(item.id), badge: item.id === "users" && pendingAccounts > 0 ? <Badge variant="warning-light" radius="full">{pendingAccounts}</Badge> : undefined })) }))
+        .map((group) => ({ label: group.title, items: adminVisibleSections.filter((item) => group.ids.includes(item.id)).map((item) => ({ id: item.id, label: item.title, href: sectionHref(item.id), badge: item.id === "users" && pendingAccounts > 0 ? <Badge variant="warning" >{pendingAccounts}</Badge> : undefined })) }))
         .filter((group) => group.items.length > 0)
   const firstInstanceSection = !workspaceScoped && user?.isAdmin ? adminVisibleSections[0]?.id : undefined
 

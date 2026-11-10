@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { Button } from "@/components/panelui/button"
+import { Card } from "@/components/panelui/card"
 import { Table } from "@/components/panelui/table"
 import { EmptyState } from "@/components/ui-kit"
 
@@ -30,11 +31,11 @@ export function DataGridList<T extends object>({
 }) {
   const [shown, setShown] = useState(PAGE)
   if (rows.length === 0) {
-    return <div className="min-w-0 overflow-hidden rounded-xl border bg-card"><EmptyState title={emptyTitle} description={emptyDescription ?? empty} /></div>
+    return <EmptyState title={emptyTitle} description={emptyDescription ?? empty} />
   }
   const visible = rows.slice(0, shown)
   return (
-    <div className="min-w-0 overflow-hidden rounded-2xl border bg-card">
+    <Card className="min-w-0 overflow-hidden">
       <Table density="compact" maxHeight={520} framed>
         <Table.Header>
           <Table.Row>
@@ -52,9 +53,9 @@ export function DataGridList<T extends object>({
       {rows.length > shown && (
         <div className="flex items-center justify-between gap-3 border-t px-4 py-2 text-sm text-muted-foreground">
           <span>Showing {shown} of {rows.length}</span>
-          <Button type="button" size="sm" variant="ghost" onClick={() => setShown((current) => current + PAGE)}>Show more</Button>
+          <Button type="button" size="sm" variant="outline" onClick={() => setShown((current) => current + PAGE)}>Show more</Button>
         </div>
       )}
-    </div>
+    </Card>
   )
 }

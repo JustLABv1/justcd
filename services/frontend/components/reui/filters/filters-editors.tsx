@@ -52,9 +52,9 @@ import type {
 } from "@/components/reui/filters/filters-types"
 
 import { cn } from "cn"
-import { Button } from "@/components/ui/button"
-import { ButtonGroup } from "@/components/ui/button-group"
-import { Input } from "@/components/ui/input"
+import { Button } from "@/components/panelui/button"
+import { ButtonGroup } from "@/components/panelui/button-group"
+import { Input } from "@/components/panelui/input"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Tick02Icon, Cancel01Icon } from "@hugeicons/core-free-icons"
 

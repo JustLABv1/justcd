@@ -10,16 +10,15 @@ import {
   type ReactNode,
 } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { FullScreenIcon, ArrowDown01Icon } from "@hugeicons/core-free-icons"
-import { Button } from "@/components/ui/button"
+import { FullScreenIcon, Settings02Icon } from "@hugeicons/core-free-icons"
+import { Button } from "@/components/panelui/button"
+import { Chip } from "@/components/panelui/chip"
+import { Toolbar } from "@/components/panelui/toolbar"
+import { Menu } from "@/components/panelui/menu"
+import { Dialog } from "@/components/panelui/dialog"
+import { Workbench, useWorkbench } from "@/components/panelui/workbench"
 import { useToast } from "@/components/toast-provider"
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
-import { Input } from "@/components/ui/input"
-import { FormSelect } from "@/components/ui/form-select"
+import { Input } from "@/components/panelui/input"
 import { EmptyState } from "@/components/ui-kit"
 import { PolicyEvidence } from "@/components/guardrail-policy"
 import { ApprovalEvidence } from "@/components/approval-evidence"
@@ -34,6 +33,21 @@ import {
   type ReviewGroup,
 } from "@/lib/plan-review"
 import type { Change, Plan } from "@/lib/types"
+
+function ReviewNavigation({ children, open, onOpenChange }: { children: ReactNode; open: boolean; onOpenChange: (open: boolean) => void }) {
+  const { compact } = useWorkbench()
+  if (!compact) return <Workbench.Sidebar>{children}</Workbench.Sidebar>
+  return <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog.Content variant="plain" size="lg"><Dialog.Header title="Plan resources" />
+      <Dialog.Body className="h-[70svh] min-h-0 [&>nav]:rounded-none [&>nav]:bg-transparent [&>nav]:p-0 [&>nav]:shadow-none [&>nav]:ring-0">{children}</Dialog.Body>
+    </Dialog.Content>
+  </Dialog>
+}
+
+function ReviewNavigationTrigger({ onClick }: { onClick: () => void }) {
+  const { compact } = useWorkbench()
+  return compact ? <Toolbar.Button label="Choose resource" onClick={onClick}>Resources</Toolbar.Button> : null
+}
 
 export function PlanReview({
   changes,
@@ -69,13 +83,13 @@ export function PlanReview({
     review: (identity: Change["identity"]) => void
   ) => ReactNode
 }) {
+  const [navigatorOpen, setNavigatorOpen] = useState(false)
   const [query, setQuery] = useState(""),
     deferred = useDeferredValue(query)
   const [filter, setFilter] = useState("all"),
     [group, setGroup] = useState<ReviewGroup>("risk")
-  const [optionsOpen, setOptionsOpen] = useState(false)
   const toast = useToast(),
-    root = useRef<HTMLElement>(null),
+    root = useRef<HTMLDivElement>(null),
     scrollTo = useRef<((index: number) => void) | null>(null),
     prefix = useId()
   const entries = useMemo(
@@ -153,6 +167,12 @@ export function PlanReview({
     )
     if (entry) select(entry.key)
   }
+  const [fullscreen, setFullscreen] = useState(false)
+  useEffect(() => {
+    const update = () => setFullscreen(document.fullscreenElement === root.current)
+    document.addEventListener("fullscreenchange", update)
+    return () => document.removeEventListener("fullscreenchange", update)
+  }, [])
   async function toggleFullscreen() {
     try {
       if (document.fullscreenElement) await document.exitFullscreen()
@@ -164,69 +184,8 @@ export function PlanReview({
     }
   }
   return (
-    <section
-      ref={root}
-      aria-label="Resource review"
-      className="fullscreen:overflow-auto fullscreen:p-5 min-w-0 bg-card"
-    >
+    <section aria-label="Resource review" className="min-w-0 space-y-4">
       {renderApprovalReview?.(reviewIdentity)}
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <h3 className="text-base font-semibold">
-          Review resources{" "}
-          <span className="font-normal text-muted-foreground">
-            ({entries.length})
-          </span>
-        </h3>
-        <Popover open={optionsOpen} onOpenChange={setOptionsOpen}>
-          <PopoverTrigger
-            render={<Button type="button" variant="outline" size="sm" />}
-          >
-            Review options
-            <HugeiconsIcon
-              icon={ArrowDown01Icon}
-              strokeWidth={1.8}
-              aria-hidden="true"
-            />
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-72 gap-3 p-3">
-            {entries.length > 1 && (
-              <FormSelect
-                ariaLabel="Group resources"
-                value={group}
-                onValueChange={(value) => setGroup(value as ReviewGroup)}
-                className="w-full"
-                items={[
-                  { value: "risk", label: "Group by risk" },
-                  { value: "action", label: "Group by action" },
-                  { value: "namespace", label: "Group by namespace" },
-                  { value: "kind", label: "Group by kind" },
-                  { value: "child", label: "Group by application child" },
-                ]}
-              />
-            )}
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setOptionsOpen(false)
-                void toggleFullscreen()
-              }}
-            >
-              <HugeiconsIcon
-                icon={FullScreenIcon}
-                strokeWidth={1.8}
-                aria-hidden="true"
-              />
-              Toggle fullscreen
-            </Button>
-            <p className="text-xs text-muted-foreground">
-              Search, filters, and grouping only change this view. Saved plan
-              counts and approval requirements stay the same.
-            </p>
-          </PopoverContent>
-        </Popover>
-      </div>
       <div>
         {plan && <PolicyEvidence plan={plan} />}
         {plan && showApprovalEvidence && (
@@ -238,10 +197,40 @@ export function PlanReview({
           />
         )}
       </div>
-      <div className="grid min-w-0 gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
+      <div ref={root} className={`min-w-0 ${fullscreen ? "h-screen bg-background p-3" : ""}`}>
+      <Workbench className={fullscreen ? "h-full" : "h-[min(82svh,920px)]"} sidebarWidth={340} focusShortcut={false}>
+        <Workbench.Bar>
+          <Toolbar aria-label="Plan review controls" className="max-w-full">
+            <span className="hidden px-2 text-sm font-medium sm:inline">Review resources <span className="font-normal text-muted-foreground">({entries.length})</span></span>
+            <ReviewNavigationTrigger onClick={() => setNavigatorOpen(true)} />
+            <Menu>
+              <Menu.Trigger render={<Toolbar.Button label="Review options" />}>
+                <HugeiconsIcon icon={Settings02Icon} strokeWidth={1.8} aria-hidden="true" />
+              </Menu.Trigger>
+              <Menu.Content align="end" className="min-w-56">
+                {entries.length > 1 && (
+                  <Menu.Group>
+                    <Menu.GroupLabel>Group by</Menu.GroupLabel>
+                    <Menu.RadioGroup value={group} onValueChange={(value) => setGroup(value as ReviewGroup)}>
+                      <Menu.RadioItem value="risk">Risk</Menu.RadioItem>
+                      <Menu.RadioItem value="action">Action</Menu.RadioItem>
+                      <Menu.RadioItem value="namespace">Namespace</Menu.RadioItem>
+                      <Menu.RadioItem value="kind">Kind</Menu.RadioItem>
+                      <Menu.RadioItem value="child">Application child</Menu.RadioItem>
+                    </Menu.RadioGroup>
+                  </Menu.Group>
+                )}
+              </Menu.Content>
+            </Menu>
+            <Toolbar.Button label={fullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={() => void toggleFullscreen()}>
+              <HugeiconsIcon icon={FullScreenIcon} strokeWidth={1.8} aria-hidden="true" />
+            </Toolbar.Button>
+          </Toolbar>
+        </Workbench.Bar>
+        <ReviewNavigation open={navigatorOpen} onOpenChange={setNavigatorOpen}>
         <nav
           aria-label="Plan resources"
-          className="min-w-0 rounded-lg border bg-muted/10 p-3 lg:self-start"
+          className="flex h-full min-h-0 min-w-0 flex-col gap-3 rounded-[20px] bg-popover p-3 text-popover-foreground shadow-[0_10px_30px_-12px_rgb(0_0_0/0.3)] ring-1 ring-foreground/10"
         >
           <Input
             aria-label="Search plan resources and diff text"
@@ -250,29 +239,17 @@ export function PlanReview({
             onChange={(event) => setQuery(event.target.value)}
           />
           {entries.length > 1 && (
-            <div
-              role="group"
-              aria-label="Filter changes"
-              className="my-2 flex flex-wrap gap-1"
-            >
+            <Chip.Group multiple={false} aria-label="Filter changes" value={[filter]} onValueChange={(next) => setFilter(next[0] ?? "all")}>
               {filterItems.map((item) => (
-                <Button
-                  key={item.value}
-                  type="button"
-                  size="xs"
-                  variant={filter === item.value ? "secondary" : "ghost"}
-                  aria-pressed={filter === item.value}
-                  onClick={() => setFilter(item.value)}
-                >
+                <Chip key={item.value} value={item.value} size="sm" className="gap-1.5">
                   {item.label}
-                  <span className="text-muted-foreground">{item.count}</span>
-                </Button>
+                  <span className="tabular-nums text-muted-foreground">{item.count}</span>
+                </Chip>
               ))}
-            </div>
+            </Chip.Group>
           )}
-
           <p
-            className="mb-2 text-sm text-muted-foreground"
+            className="text-sm text-muted-foreground"
             role="status"
             aria-live="polite"
           >
@@ -288,9 +265,11 @@ export function PlanReview({
             describedBy={`${prefix}-keys`}
             activeId={index >= 0 ? `${prefix}-resource-${index}` : undefined}
             role="listbox"
+            className="min-h-0 flex-1"
             label="Matching plan resources"
             apiRef={scrollTo}
             onKeyDown={(event) => {
+              if (event.key === "Enter") { event.preventDefault(); setNavigatorOpen(false); return }
               const next =
                 event.key === "ArrowDown"
                   ? Math.min(index + 1, matching.length - 1)
@@ -328,7 +307,7 @@ export function PlanReview({
                     tabIndex={-1}
                     variant={entry === active ? "secondary" : "ghost"}
                     className="mb-0.5 h-auto w-full justify-start px-3 py-2 text-left whitespace-normal"
-                    onClick={() => select(entry.key)}
+                    onClick={() => { select(entry.key); setNavigatorOpen(false) }}
                   >
                     <span className="flex w-full items-start gap-2">
                       <span className="min-w-0 flex-1">
@@ -371,28 +350,30 @@ export function PlanReview({
             }}
           />
         </nav>
-        <div className="min-w-0">
+        </ReviewNavigation>
+        <Workbench.Canvas className="!items-stretch !justify-stretch !px-0 !pb-0">
+          <div className="min-h-0 w-full overflow-auto px-4 pb-4">
           {active ? (
             renderChange(active.change, active.ignored, active, (identity) =>
               reviewIdentity(identity, active.childId)
             )
           ) : (
-            <div className="rounded-xl border border-dashed">
-              <EmptyState
-                title={
-                  entries.length
-                    ? "No matching resources"
-                    : "No resources to review"
-                }
-                description={
-                  entries.length
-                    ? "Try a different resource filter or search term."
-                    : "This plan contains no resource changes."
-                }
-              />
-            </div>
+            <EmptyState
+              title={
+                entries.length
+                  ? "No matching resources"
+                  : "No resources to review"
+              }
+              description={
+                entries.length
+                  ? "Try a different resource filter or search term."
+                  : "This plan contains no resource changes."
+              }
+            />
           )}
-        </div>
+          </div>
+        </Workbench.Canvas>
+      </Workbench>
       </div>
     </section>
   )

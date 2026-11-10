@@ -1,17 +1,12 @@
 "use client"
 import { useEffect, useState } from "react"
-import { Badge } from "@/components/reui/badge"
+import { Badge } from "@/components/panelui/badge"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { ArrowRight01Icon, ArrowUpRight01Icon, Cancel01Icon } from "@hugeicons/core-free-icons"
+import { Card } from "@/components/panelui/card"
 import { api } from "@/lib/api"
-import { Button } from "@/components/ui/button"
-import {
-  Timeline,
-  TimelineContent,
-  TimelineHeader,
-  TimelineIndicator,
-  TimelineItem,
-  TimelineSeparator,
-  TimelineTitle,
-} from "@/components/reui/timeline"
+import { Button } from "@/components/panelui/button"
+import { Steps } from "@/components/panelui/steps"
 
 import type { Publication } from "@/lib/publishing-status"
 
@@ -33,19 +28,6 @@ const buildStates: Record<string, { state: StepState; detail: string }> = {
   },
   build_canceled: { state: "failed", detail: "The pipeline was canceled." },
   build_canceling: { state: "failed", detail: "The pipeline was canceled." },
-}
-const indicator: Record<StepState, string> = {
-  done: "!border-success bg-success",
-  active: "!border-primary bg-primary animate-pulse",
-  failed: "!border-destructive bg-destructive",
-  waiting: "!border-muted-foreground/40 bg-background",
-}
-// The connector below a step takes that step's colour so the line never mixes hues with the dots.
-const connector: Record<StepState, string> = {
-  done: "!bg-success/60",
-  active: "!bg-border",
-  failed: "!bg-border",
-  waiting: "!bg-border",
 }
 const stateLabel: Record<StepState, string> = {
   done: "Done",
@@ -179,16 +161,14 @@ export function PublishingProgress({
   // Connectors fill up to the first step that is not yet done.
   const current = list.findIndex((step) => step.state !== "done") + 1 || list.length
   return (
-    <section
-      aria-label="Publishing progress"
-      className="overflow-hidden rounded-xl border bg-card"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
-        <h2 className="text-sm font-semibold">Publishing progress</h2>
+    <Card aria-label="Publishing progress">
+      <Card.Header className="flex flex-wrap items-start gap-3">
+        <Card.Title as="h2" className="min-w-0 flex-1 basis-40">Publishing progress</Card.Title>
         {publication.pipelineUrl && (
+          <Card.Action>
           <Button
             size="sm"
-            variant="ghost"
+            variant="outline"
             nativeButton={false}
             render={
               <a
@@ -198,61 +178,32 @@ export function PublishingProgress({
               />
             }
           >
-            Open GitLab pipeline →
+            Open GitLab pipeline<HugeiconsIcon icon={ArrowUpRight01Icon} strokeWidth={2} aria-hidden="true" />
           </Button>
+          </Card.Action>
         )}
-      </div>
-      <Timeline
-        render={<ol />}
-        value={current}
-        className="p-5 ps-9"
-      >
-        {list.map((step, index) => (
-          <TimelineItem
-            key={step.label}
-            step={index + 1}
-            render={<li />}
-            className="flex-row flex-wrap items-start gap-3"
-          >
-            {index < list.length - 1 && <TimelineSeparator className={connector[step.state]} />}
-            <TimelineIndicator className={indicator[step.state]} />
-            <div className="min-w-0 flex-1">
-              <TimelineHeader>
-                <TimelineTitle>
-                  {step.label}{" "}
-                  <span className="sr-only">: {stateLabel[step.state]}</span>
-                </TimelineTitle>
-              </TimelineHeader>
-              <TimelineContent className="text-xs leading-5">
-                {step.detail}
-              </TimelineContent>
-            </div>
-            {step.label === "Review and apply" && step.state === "active" && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={onReview}
-              >
-                Review changes →
-              </Button>
-            )}
-            {step.state === "failed" && (
-              <Badge size="sm" radius="full" variant="destructive-light">
-                {stateLabel[step.state]}
-              </Badge>
-            )}
-          </TimelineItem>
-        ))}
-      </Timeline>
+      </Card.Header>
+      <Card.Content>
+      <Steps orientation="vertical" value={current} aria-label="Publishing stages">
+        {list.map((step, index) => <Steps.Item key={step.label} step={index + 1} completed={step.state === "done"} loading={step.state === "active" && step.label !== "Review and apply"}>
+          <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+            <Steps.Indicator className={`row-span-2 ${step.state === "failed" ? "bg-destructive text-destructive-foreground ring-destructive/20" : step.state === "done" ? "bg-success text-success-foreground" : ""}`}>{step.state === "failed" ? <HugeiconsIcon icon={Cancel01Icon} className="size-4" aria-hidden="true" /> : undefined}</Steps.Indicator>
+            <Steps.Title className={step.state === "failed" ? "text-destructive" : undefined}>{step.label} <span className="sr-only">: {stateLabel[step.state]}</span>{step.state === "failed" && <Badge size="sm" variant="destructive" className="ml-2">Failed</Badge>}</Steps.Title>
+            <Steps.Description>{step.detail}</Steps.Description>
+            {step.label === "Review and apply" && step.state === "active" && <div className="col-start-2 mt-2"><Button type="button" size="sm" variant="outline" onClick={onReview}>Review changes<HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} aria-hidden="true" /></Button></div>}
+          </div>
+          {index < list.length - 1 && <Steps.Separator className={step.state === "done" ? "bg-success/60" : "bg-border"} />}
+        </Steps.Item>)}
+      </Steps>
       {publication.completionError && (
         <p
           role="alert"
-          className="border-t px-5 py-3 text-xs leading-5 text-destructive"
+          className="mt-4 text-sm leading-5 text-destructive"
         >
           {publication.completionError}
         </p>
       )}
-    </section>
+      </Card.Content>
+    </Card>
   )
 }

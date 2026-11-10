@@ -1,8 +1,8 @@
 "use client"
 
 import { useState } from "react"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Input } from "@/components/ui/input"
+import { Checkbox } from "@/components/panelui/checkbox"
+import { Input } from "@/components/panelui/input"
 import { FormField } from "@/components/ui-kit"
 import type { ApprovalRule, WorkspaceMember } from "@/lib/types"
 
@@ -19,7 +19,6 @@ export function ApprovalRuleEditor({
   members,
   deletion = false,
   disabled = false,
-  surface = "card",
   onChange,
 }: {
   id: string
@@ -28,7 +27,6 @@ export function ApprovalRuleEditor({
   members: WorkspaceMember[]
   deletion?: boolean
   disabled?: boolean
-  surface?: "card" | "flat"
   onChange: (rule: ApprovalRule) => void
 }) {
   const minimum = deletion ? 1 : 0
@@ -55,8 +53,8 @@ export function ApprovalRuleEditor({
   }
 
   return (
-    <section className={surface === "flat" ? "space-y-4" : "rounded-lg border p-4"}>
-      <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_120px] sm:items-center">
+    <section className="space-y-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_10rem] sm:items-center">
         <div>
           <h3 className="text-sm font-semibold">{title}</h3>
           <p className="mt-1 text-sm leading-5 text-muted-foreground">
@@ -92,16 +90,16 @@ export function ApprovalRuleEditor({
         </div>
         <p className="text-sm leading-5 text-muted-foreground">A higher workspace role also qualifies. Selected members qualify regardless of role.</p>
         {members.length > 0 ? (
-          <div className="mt-3 space-y-3 border-t pt-3">
+          <div className="mt-3 space-y-3 pt-3">
             <div className="flex flex-wrap items-end justify-between gap-3">
-              <div className="min-w-48 flex-1">
+              <div className="min-w-0 basis-48 flex-1">
                 <FormField label="Specific approvers" htmlFor={`${id}-filter`}>
                   <Input id={`${id}-filter`} type="search" placeholder="Filter members by name or email" value={filter} onChange={(event) => setFilter(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault() }} />
                 </FormField>
               </div>
               <p role="status" className="pb-2 text-sm text-muted-foreground">{configuredUserIds.length} selected</p>
             </div>
-            {visibleMembers.length > 0 ? <div className="grid max-h-56 gap-2 overflow-y-auto sm:grid-cols-2">
+            {visibleMembers.length > 0 ? <div className="grid max-h-56 grid-cols-1 gap-2 overflow-y-auto sm:grid-cols-2">
               {visibleMembers.map((member) => (
                 <label key={member.id} className="flex min-w-0 items-center gap-2 text-sm">
                   <Checkbox checked={selectedUsers.has(member.id)} disabled={disabled || (member.disabled && !selectedUsers.has(member.id))} onCheckedChange={(checked) => toggleMember(member.id, Boolean(checked))} />
@@ -112,7 +110,7 @@ export function ApprovalRuleEditor({
             </div> : <p className="text-sm text-muted-foreground">No members match “{filter.trim()}”.</p>}
           </div>
         ) : (
-          <p className="mt-3 border-t pt-3 text-sm text-muted-foreground">Add workspace members to select individuals.</p>
+          <p className="mt-3 pt-3 text-sm text-muted-foreground">Add workspace members to select individuals.</p>
         )}
       </fieldset>
     </section>

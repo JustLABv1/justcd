@@ -1,8 +1,8 @@
 "use client"
 
 import { useCallback, useState } from "react"
-import { Button } from "@/components/ui/button"
-import { Stepper, StepperContent, StepperIndicator, StepperItem, StepperNav, StepperPanel, StepperSeparator, StepperTrigger } from "@/components/reui/stepper"
+import { Button } from "@/components/panelui/button"
+import { WizardSteps } from "@/components/wizard-steps"
 
 /** Marks every failing control inline (see FormField) and focuses the first. */
 export function showInvalid(container: HTMLElement | null) {
@@ -50,35 +50,22 @@ export type WizardStep = { title: string; content: React.ReactNode }
 /** Stepper navigation plus all step panels. Place the footer buttons after it. */
 export function Wizard({ step, onStepChange, idPrefix, steps }: { step: number; onStepChange: (step: number) => void; idPrefix: string; steps: WizardStep[] }) {
   return (
-    <Stepper value={step} onValueChange={onStepChange} className="space-y-5">
-      <StepperNav>
-        {steps.map((item, index) => (
-          <StepperItem key={item.title} step={index + 1} className="not-last:flex-1">
-            <StepperTrigger type="button" aria-label={`Step ${index + 1}: ${item.title}`} className="gap-2">
-              <StepperIndicator className="size-7 text-sm" ><span>{index + 1}</span></StepperIndicator>
-              <span className={`hidden text-sm font-medium sm:inline ${step === index + 1 ? "" : "text-muted-foreground"}`}>{item.title}</span>
-            </StepperTrigger>
-            {index < steps.length - 1 && <StepperSeparator className="mx-2" />}
-          </StepperItem>
-        ))}
-      </StepperNav>
-      <StepperPanel>
-        {steps.map((item, index) => (
-          <StepperContent key={item.title} value={index + 1} forceMount>
-            <div id={`${idPrefix}-step-${index + 1}`} className="space-y-5">{item.content}</div>
-          </StepperContent>
-        ))}
-      </StepperPanel>
-    </Stepper>
+    <div className="space-y-5">
+      <WizardSteps step={step} onStepChange={onStepChange} titles={steps.map(item => item.title)} label="Creation steps" />
+      {steps.map((item, index) => <div key={item.title} id={`${idPrefix}-step-${index + 1}`} hidden={step !== index + 1} className="space-y-5">{item.content}</div>)}
+    </div>
   )
 }
 
-/** Back / Next row for steps before the review step. */
+/**
+ * Keep Next distinct from the final submit control. Reusing its DOM button can
+ * change its type during the click and submit the form before Review is shown.
+ */
 export function WizardFooter({ step, isLast, onBack, onNext, submit }: { step: number; isLast: boolean; onBack: () => void; onNext: () => void; submit: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-3">
       <Button type="button" variant="outline" onClick={onBack} disabled={step === 1}>Back</Button>
-      {isLast ? submit : <Button type="button" onClick={onNext}>Next</Button>}
+      {isLast ? <div key="submit">{submit}</div> : <Button key="next" type="button" onClick={(event) => { event.preventDefault(); onNext() }}>Next</Button>}
     </div>
   )
 }

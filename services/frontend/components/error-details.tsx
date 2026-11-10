@@ -2,8 +2,8 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { AppDialog } from "@/components/ui/dialog"
-import { Button } from "@/components/ui/button"
+import { AppDialog } from "@/components/app-dialog"
+import { Button } from "@/components/panelui/button"
 import { APIError, planFailureDetail } from "@/lib/api"
 
 const sensitiveKey =
@@ -147,8 +147,8 @@ function ErrorDetailsBody({ error }: { error: unknown }) {
   return (
     <div className="space-y-3">
       {issue && (
-        <section aria-label="Plan failure" className="space-y-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
-          <p className="font-medium break-words">{redactText(issue.summary)}</p>
+        <section aria-label="Plan failure" className="space-y-3 text-sm">
+          <p className="font-medium break-words text-destructive">{redactText(issue.summary)}</p>
           {(issue.resource || issue.action) && (
             <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
               {issue.resource && <>
@@ -220,7 +220,7 @@ export function ErrorDetailsButton({
   const [open, setOpen] = useState(false)
   return (
     <>
-      <Button type="button" size="xs" variant="outline" onClick={() => setOpen(true)}>
+      <Button type="button" size="sm" variant="outline" onClick={() => setOpen(true)}>
         {label}
       </Button>
       <ErrorDetailsDialog error={error} open={open} onOpenChange={setOpen} />

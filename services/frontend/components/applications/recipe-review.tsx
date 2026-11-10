@@ -59,7 +59,7 @@ export function RecipeReview({
             summary={`${file.exists ? "Update" : "Add"} ${file.path}`}
           >
             <pre
-              className="mt-3 max-h-96 overflow-auto rounded-lg border bg-background p-3 text-xs"
+              className="mt-3 max-h-96 overflow-auto bg-muted/20 p-3 text-xs"
               aria-label={`Changes to ${file.path}`}
             >
               <code>

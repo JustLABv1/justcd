@@ -1,5 +1,7 @@
 "use client"
 
+import { Section } from "@/components/section"
+
 import { useCallback, useEffect, useState } from "react"
 import type { FormEvent } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
@@ -7,13 +9,13 @@ import { Copy01Icon, Delete02Icon, GitBranchIcon, Layers01Icon, PauseIcon, PlayI
 import { RowActions } from "@/components/action-menu"
 import { RepositoryEnvironmentSettingsDialog } from "@/components/repository-environment-settings"
 import { RepositoryPRSettingsDialog } from "@/components/repository-pr-settings"
-import { Badge } from "@/components/reui/badge"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
+import { Badge } from "@/components/panelui/badge"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Button } from "@/components/ui/button"
-import { FormSelect } from "@/components/ui/form-select"
-import { Input } from "@/components/ui/input"
-import { ConnectionRow, FormField, Panel } from "@/components/ui-kit"
+import { Button } from "@/components/panelui/button"
+import { FormSelect } from "@/components/form-select"
+import { Input } from "@/components/panelui/input"
+import { ConnectionRow, FormField } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
 import { api, apiDelete, apiPost, errorMessage } from "@/lib/api"
 import type {
@@ -44,10 +46,10 @@ function ExampleYaml() {
     const timer = setTimeout(() => setCopied(false), 2000)
     return () => clearTimeout(timer)
   }, [copied])
-  return <div className="rounded-lg border bg-muted/30 p-3">
+  return <div className="space-y-3">
     <div className="mb-2 flex items-center justify-between gap-3">
       <p className="text-sm font-medium">Example justcd.yaml</p>
-      <Button type="button" size="xs" variant="outline" onClick={() => { navigator.clipboard.writeText(example).then(() => setCopied(true), () => toast.error("Could not copy to the clipboard.")) }}>
+      <Button type="button" size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(example).then(() => setCopied(true), () => toast.error("Could not copy to the clipboard.")) }}>
         <HugeiconsIcon icon={copied ? Tick02Icon : Copy01Icon} strokeWidth={1.8} aria-hidden="true" />{copied ? "Copied" : "Copy"}
       </Button>
     </div>
@@ -171,7 +173,7 @@ export function RepositoryConfigurations({
   const owner = workspace.role === "owner"
   const nameOf = (item: RepositoryConfiguration) => `${sources.find((source) => source.id === item.sourceId)?.name ?? "Repository"} · ${item.revision}`
   return (
-    <Panel
+    <Section
       title="Application discovery"
       description="Discover applications from justcd.yaml files on selected repository branches."
       action={owner ? <Button size="sm" variant="outline" disabled={!sources.length || Boolean(busy)} onClick={() => { setSourceId(sources[0]?.id ?? ""); setOpen(true) }}>Add discovery branch</Button> : undefined}
@@ -190,15 +192,15 @@ export function RepositoryConfigurations({
           {owner ? (sources.length ? "Use “Add discovery branch” to start." : "Connect a Git source first.") : "Ask a workspace owner to connect one."}
         </p>
       ) : (
-        <ul className="divide-y">
+        <ul className="space-y-3">
           {items.map((item) => (
             <ConnectionRow
               key={item.id}
               icon={<HugeiconsIcon icon={GitBranchIcon} strokeWidth={1.8} className="size-4" />}
               title={nameOf(item)}
               badges={<>
-                <Badge size="sm" radius="full" variant={item.enabled ? "success-light" : "outline"}>{item.enabled ? "Discovery on" : "Discovery paused"}</Badge>
-                {item.prSettings?.enabled && <Badge size="sm" radius="full" variant="info-light">Pull requests on</Badge>}
+                <Badge size="sm"  variant={item.enabled ? "success" : "outline"}>{item.enabled ? "Discovery on" : "Discovery paused"}</Badge>
+                {item.prSettings?.enabled && <Badge size="sm"  variant="info">Pull requests on</Badge>}
               </>}
               meta={<>
                 {item.lastCommit && <span>Commit <code className="font-mono">{item.lastCommit.slice(0, 12)}</code></span>}
@@ -255,6 +257,6 @@ export function RepositoryConfigurations({
           </DialogFooter>
         </form>
       </AppDialog>
-    </Panel>
+    </Section>
   )
 }

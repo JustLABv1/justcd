@@ -1,8 +1,12 @@
 "use client"
 
+import { Section } from "@/components/section"
+
 import { useEffect, useMemo, useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Alert02Icon, Tick02Icon } from "@hugeicons/core-free-icons"
+import { Alert } from "@/components/panelui/alert"
+import { Card } from "@/components/panelui/card"
 import { RowActions } from "@/components/action-menu"
 import { diffId, safeIgnorePath, sameIdentity } from "@/components/application/helpers"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
@@ -12,19 +16,18 @@ import { AffectedResources } from "@/components/approval-evidence"
 import { immutablePaths, planReviewStatus } from "@/lib/plan-review"
 import { ManifestDiff } from "@/components/manifest-diff"
 import { PlanReview } from "@/components/plan-review"
-import { Badge } from "@/components/reui/badge"
-import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
 import { Disclosure } from "@/components/ui/collapsible"
-import { FormSelect } from "@/components/ui/form-select"
-import { Input } from "@/components/ui/input"
-import { Switch } from "@/components/ui/switch"
+import { FormSelect } from "@/components/form-select"
+import { Input } from "@/components/panelui/input"
+import { Checkbox } from "@/components/panelui/checkbox"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Textarea } from "@/components/ui/textarea"
-import { CheckboxCard, EmptyState, Panel, StatusBadge } from "@/components/ui-kit"
+import { Textarea } from "@/components/panelui/textarea"
+import { CheckboxCard, EmptyState, StatusBadge } from "@/components/ui-kit"
 import type { Change, FieldExclusion, Identity, RecreationSelection, IgnoreRule, PlanApprovalSummary, PlanRecord } from "@/lib/types"
 
-const kindTone = { create: "success-light", update: "info-light", delete: "destructive-light" } as const
+const kindTone = { create: "success", update: "info", delete: "destructive" } as const
 
 const changeIdentityKey = (change: Change) => diffId(change.identity)
 
@@ -59,45 +62,46 @@ function DiffCard({ selectionDirty, savingSelection, onSaveSelection, recreation
   const fieldPaths = useMemo(() => (change.changedPaths ?? []).filter(safeIgnorePath), [change.changedPaths])
   const immutable = useMemo(() => immutablePaths(change), [change])
   const showFields = fieldPaths.length > 0 && change.kind !== "delete"
-  return <article id={diffId(change.identity)} className="scroll-mt-6 overflow-hidden rounded-lg border">
-    <div className="flex flex-wrap items-center gap-2 border-b bg-muted/20 px-3 py-2">
+  return <Card id={diffId(change.identity)} className="scroll-mt-6 min-w-0">
+    <Card.Header><div className="flex flex-wrap items-center gap-2">
       <Badge variant={ignored ? "secondary" : kindTone[change.kind]} className="uppercase">{retainedNamespace ? "Kept" : ignored ? "Excluded" : change.kind}</Badge>
       <span className="min-w-0 flex-1 break-words text-sm font-medium">{name}</span>
-      {change.takeover && <Badge variant="warning-light" radius="full">Field ownership takeover</Badge>}
-      {ignored && <Badge variant="warning-light" radius="full">Not applied</Badge>}
-      {change.identity.clusterScoped && <Badge variant="outline" radius="full">cluster-wide</Badge>}
-    </div>
-    {ignored && <div role="status" className="border-b bg-muted/30 px-4 py-3 text-sm"><strong>Excluded difference — no changes will be applied for this entry.</strong><p className="mt-1 text-sm text-muted-foreground">{retainedNamespace ? "This namespace will remain in Kubernetes after the application’s other resources are deleted." : <>{change.ignoreReason || "Excluded from this sync."} The diff below shows the difference between live state and Git, not a scheduled update.</>}</p></div>}
-    {!ignored && change.kind === "delete" && <div role="alert" className="flex items-start gap-3 border-b border-destructive/30 bg-destructive/5 px-4 py-3"><HugeiconsIcon icon={Alert02Icon} strokeWidth={2} aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-destructive" /><div><p className="text-sm font-semibold text-destructive">{readOnly ? "This snapshot proposed deleting this resource" : `${name} will be deleted`}</p><p className="mt-1 text-sm">{readOnly ? `This old plan can’t be applied. Refresh the plan to review ${name} again.` : "This may interrupt service or remove persisted data."}</p></div></div>}
-    {!ignored && !change.recreationRequired && immutable.length>0 && <div role="alert" className="border-b bg-warning/10 px-4 py-3 text-sm"><strong>Immutable-field update · replacement requires separate review</strong><p>Kubernetes may reject updates to {immutable.join(", ")}. JustCD does not automatically replace this resource. Review a deliberate deletion/recreation separately before applying.</p></div>}
-    {!ignored && change.recreationRequired && <section aria-label={`Recreation of ${name}`} className="space-y-3 border-b border-destructive/30 bg-destructive/5 p-4 text-sm">
+      {change.takeover && <Badge variant="warning">Field ownership takeover</Badge>}
+      {ignored && <Badge variant="warning">Not applied</Badge>}
+      {change.identity.clusterScoped && <Badge variant="outline">cluster-wide</Badge>}
+    </div></Card.Header>
+    <Card.Content className="space-y-4">
+    {ignored && <Alert tone="info" variant="inline" role="status" ><Alert.Icon /><Alert.Title>Excluded difference — no changes will be applied for this entry.</Alert.Title><Alert.Description>{retainedNamespace ? "This namespace will remain in Kubernetes after the application’s other resources are deleted." : <>{change.ignoreReason || "Excluded from this sync."} The diff below shows the difference between live state and Git, not a scheduled update.</>}</Alert.Description></Alert>}
+    {!ignored && change.kind === "delete" && <Alert tone="destructive" variant="inline" role="alert" ><Alert.Icon /><Alert.Title>{readOnly ? "This snapshot proposed deleting this resource" : `${name} will be deleted`}</Alert.Title><Alert.Description>{readOnly ? `This old plan can’t be applied. Refresh the plan to review ${name} again.` : "This may interrupt service or remove persisted data."}</Alert.Description></Alert>}
+    {!ignored && !change.recreationRequired && immutable.length>0 && <Alert tone="warning" variant="inline" role="alert" ><Alert.Icon /><Alert.Title>Immutable-field update · replacement requires separate review</Alert.Title><Alert.Description>Kubernetes may reject updates to {immutable.join(", ")}. JustCD does not automatically replace this resource. Review a deliberate deletion/recreation separately before applying.</Alert.Description></Alert>}
+    {!ignored && change.recreationRequired && <section aria-label={`Recreation of ${name}`} className="space-y-3 text-sm">
       <p className="font-semibold text-destructive">{change.recreation ? `Delete and recreate StatefulSet · ${change.recreation.propagationPolicy}` : "Immutable StatefulSet update · recreation or exclusion required"}</p>
       <p>Deletes the controller and recreates it from the reviewed manifest. Requires fresh owner approval and can interrupt service.</p>
       {change.recreationBlocked && <p role="alert" className="font-medium">{change.recreationBlocked}</p>}
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1 basis-72"><FormSelect ariaLabel={`Deletion policy for ${name}`} value={recreationPolicy} emptyOption="Do not recreate" items={[{value:"Orphan",label:"Orphan · keep dependent Pods"},{value:"Foreground",label:"Foreground · wait for dependent deletion"},{value:"Background",label:"Background · delete dependents asynchronously"}]} onValueChange={(value) => onRecreationChange?.(value)} disabled={busy || !canSelect || !onRecreationChange || Boolean(change.recreationBlocked)} /></div>
-        {selectionDirty && canSelect && <Button size="sm" onClick={onSaveSelection} loading={savingSelection} loadingText="Saving selection…" disabled={busy}>Save selection</Button>}
+        {selectionDirty && canSelect && <Button size="sm" onClick={onSaveSelection} loading={savingSelection} disabled={busy}>Save selection</Button>}
       </div>
       {selectionDirty && canSelect && <p role="status" className="font-medium text-primary">Unsaved selection. Save to create a new plan for review; previous approvals will be cleared.</p>}
       <Disclosure summary="How recreation works"><p className="text-muted-foreground">Orphan waits for ownership to be released before recreation. Foreground and Background delete dependent Pods; JustCD waits for the reviewed dependents to disappear before recreating. Both PVC retention policies must be Retain, and unsafe PVC owner references block recreation. Existing claims are reused, not resized by claim-template changes. Orphaning does not guarantee an uninterrupted rollout, and cascading deletion does not provide ordered shutdown or PodDisruptionBudget protection.</p></Disclosure>
       {change.recreation && <div><p className="font-medium">Reviewed dependents ({change.recreation.dependencies?.length ?? 0})</p><ul className="mt-1 max-h-40 overflow-auto break-all text-muted-foreground">{change.recreation.dependencies?.map(dep => <li key={`${dep.kind}/${dep.uid}`}>{dep.kind} {dep.name} · {dep.kind === "PersistentVolumeClaim" ? "retain" : change.recreation?.propagationPolicy === "Orphan" ? "orphan" : "delete"}</li>)}</ul><p className="mt-2">If recreation fails after deletion, inspect cluster state and the operation’s recovery checkpoint. JustCD will not automatically replay the deletion.</p></div>}
     </section>}
-    {(change.ignoredPaths?.length??0)>0 && <div className="border-b bg-muted/30 px-4 py-3 text-sm"><strong>Ignored fields · not applied</strong><p className="break-all font-mono text-xs">{change.ignoredPaths?.join(", ")}</p></div>}
+    {(change.ignoredPaths?.length??0)>0 && <Alert tone="info" variant="inline" ><Alert.Icon /><Alert.Title>Ignored fields · not applied</Alert.Title><Alert.Description><span className="break-all font-mono text-xs">{change.ignoredPaths?.join(", ")}</span></Alert.Description></Alert>}
     <ManifestDiff key={diffId(change.identity)} before={change.before} after={change.after} excluded={ignored} changedPaths={change.changedPaths} takeover={change.takeover} />
-    {(canSelect || canManageIgnores) && <Disclosure className="border-t bg-muted/10 px-4 py-3" summary={`Exclusions & ignore rules${excluded || excludedPaths.length ? ` · ${excluded ? "whole resource" : `${excludedPaths.length} fields`} selected` : ""}`}>
+    {(canSelect || canManageIgnores) && <Disclosure className="py-3" summary={`Exclusions & ignore rules${excluded || excludedPaths.length ? ` · ${excluded ? "whole resource" : `${excludedPaths.length} fields`} selected` : ""}`}>
       <div className="space-y-3">
         <CheckboxCard checked={permanentResourceIgnore || excluded} disabled={!canSelect || permanentResourceIgnore} onCheckedChange={onToggleResource} title={permanentResourceIgnore ? "Resource is ignored permanently" : "Exclude this resource from this plan"} />
         {showFields && <div className="space-y-2">
           <p className="text-sm font-medium">Select changed fields</p>
-          <div className="grid gap-2 sm:grid-cols-2">{fieldPaths.map((path) => {
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{fieldPaths.map((path) => {
             const permanent = permanentFieldIgnores.includes(path)
             return <CheckboxCard key={path} checked={permanent || excludedPaths.includes(path)} disabled={!canSelect || permanent} onCheckedChange={() => onToggleField(path)} title={<span className="break-all font-mono">{path}</span>} description={permanent ? "Ignored by a persistent rule" : "Skip this field for this plan"} />
           })}</div>
           <p className="text-sm text-muted-foreground">Field ignores require another Kubernetes field manager to own the value first. Lists can only be excluded as a whole; JustCD validates ownership before saving.</p>
         </div>}
-        {canManageIgnores && <Disclosure className="border-t pt-3" summary="Permanent ignore rule…">
+        {canManageIgnores && <Disclosure className="pt-3" summary="Permanent ignore rule…">
           <div className="space-y-2.5">
-            <Textarea aria-label={`Reason for ignoring ${name}`} rows={2} value={reason} onChange={(event) => onReasonChange(event.target.value)} placeholder="Why should future plans ignore this? (required)" className="min-h-16 resize-y" maxLength={500} />
+            <Textarea aria-label={`Reason for ignoring ${name}`} minRows={2} value={reason} onChange={(event) => onReasonChange(event.target.value)} placeholder="Why should future plans ignore this? (required)" className="min-h-16 resize-y" maxLength={500} />
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="outline" disabled={busy || permanentResourceIgnore || reason.trim().length < 5} onClick={() => onSaveIgnore("")}>{permanentResourceIgnore ? "Resource already ignored" : "Ignore resource in future plans"}</Button>
               {fieldPaths.filter((path) => !permanentFieldIgnores.includes(path)).map((path) => <Button key={path} size="sm" variant="ghost" disabled={busy || reason.trim().length < 5 || change.kind === "delete"} onClick={() => onSaveIgnore(path)}>Ignore {path} in future plans</Button>)}
@@ -106,11 +110,10 @@ function DiffCard({ selectionDirty, savingSelection, onSaveSelection, recreation
           </div>
         </Disclosure>}
         {!canManageIgnores && canSelect && <p className="text-sm text-muted-foreground">Permanent ignore rules can be managed by workspace owners.</p>}
-        {change.ignoreReason && ignored && <p className="text-sm text-muted-foreground">{change.ignoreReason}</p>}
       </div>
     </Disclosure>}
-    {ignored && <p className="border-t p-4 text-sm text-muted-foreground">{change.ignoreReason || "Excluded from this sync; no changes will be applied for this difference."}</p>}
-  </article>
+  </Card.Content>
+  </Card>
 }
 
 export function ChangesTab({ workspaceId, plans, activePlan, onSelectPlan, plansLoading, plansError, retryingPlans, onRetryPlans, decommissioning, canDeploy, canApprove, busy, hasPendingOperation, pendingAction, hasOwnershipConflict, onReviewOwnershipConflict, reviewResource, onReviewResourceChange, selectionResources, selectionFields, selectionRecreations = [], onRecreationChange, selectionDirty, onToggleResource, onToggleField, onResetSelection, onSaveSelection, ignoreRules, ignoreReasons, onIgnoreReasonChange, onSaveIgnore, onRemoveRule, requiredApprovals, approvedApprovals, approvalsComplete, approverRoles, approverMembers, approvalSummary, approvalError = null, autoApplyAfterApproval = false, approvalComment, onApprovalCommentChange, onApprove, onApply, onCreatePlan, onKeepNamespacesChange }: {
@@ -199,57 +202,61 @@ export function ChangesTab({ workspaceId, plans, activePlan, onSelectPlan, plans
                 <div className="space-y-3"><Input aria-label="Approval comment" value={approvalComment} maxLength={1000} onChange={(event) => onApprovalCommentChange(event.target.value)} placeholder="Comment (optional)" /><AffectedResources resources={activePlan.plan.changes.filter((change) => change.kind === "delete" || change.recreationRequired || change.takeover || change.identity.clusterScoped).map(change=>change.identity)} /></div>
               </ConfirmDisclosure>
 
-  return <Panel title={title} description={description} action={plans.length > 0 && <FormSelect ariaLabel="Select plan" value={activePlan?.id ?? ""} onValueChange={onSelectPlan} className="h-8 min-w-60 max-w-xs" items={plans.map((plan) => ({ value: plan.id, label: `${new Date(plan.createdAt).toLocaleString()} · ${plan.plan.rollback ? "rollback · " : plan.plan.decommission ? "deletion · " : ""}${planReviewStatus(plan, now)}` }))} />}>
+  return <Section title={title} description={description} action={plans.length > 0 && <FormSelect ariaLabel="Select plan" value={activePlan?.id ?? ""} onValueChange={onSelectPlan} className="min-w-60 max-w-xs" size="sm" items={plans.map((plan) => ({ value: plan.id, label: `${new Date(plan.createdAt).toLocaleString()} · ${plan.plan.rollback ? "rollback · " : plan.plan.decommission ? "deletion · " : ""}${planReviewStatus(plan, now)}` }))} />}>
     {plansLoading ? <PlanLoading label="Loading plans and differences" />
       : plansError != null ? <div role="alert" className="flex flex-wrap items-center justify-between gap-3 p-5 text-sm"><span>Plans could not be loaded.</span><Button size="sm" loading={retryingPlans} onClick={onRetryPlans}>Retry</Button></div>
       : !activePlan ? <EmptyState title="No review plan yet" description="Build a plan to render Git manifests and compare them with live, app-owned resources." />
-      : <div className="p-4 sm:p-5">
-        {planInactive && <Alert className="mb-4 border-warning/30 bg-warning/10 p-4 text-warning-foreground dark:text-warning">
-          <HugeiconsIcon icon={Alert02Icon} strokeWidth={2} aria-hidden="true" />
-          <AlertTitle className="text-base font-semibold">{planExpired ? "Plan expired" : "Plan is stale"}</AlertTitle>
-          <AlertDescription className="text-foreground">
-            <p>{planExpired ? `Expired ${new Date(activePlan.expiresAt).toLocaleString()}.` : "Git or the cluster changed since this plan was built."} It can no longer be approved or applied.</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button size="sm" onClick={onCreatePlan} loading={pendingAction === "create-plan"} loadingText="Generating plan…" disabled={busy || hasPendingOperation || !canDeploy || decommissioning}>Refresh plan</Button>
-              <Button size="sm" variant="outline" onClick={() => setExpandedExpiredPlan(expandedExpiredPlan === activePlan.id ? null : activePlan.id)}>{expandedExpiredPlan === activePlan.id ? "Hide old diff" : "View old diff"}</Button>
-            </div>
-            {!canDeploy && <p className="mt-2 text-xs text-muted-foreground">A workspace owner or deployer can generate a fresh plan.</p>}
-          </AlertDescription>
-        </Alert>}
+      : <div className="space-y-5">
+        {planInactive && <div role="status" className="mb-5 flex flex-wrap items-start gap-4">
+          <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-full bg-warning/15 text-warning"><HugeiconsIcon icon={Alert02Icon} strokeWidth={2} className="size-4" /></span>
+          <div className="min-w-0 flex-1 basis-80 space-y-1">
+            <p className="text-sm font-semibold">{planExpired ? "Plan expired" : "Plan is stale"}</p>
+            <div className="text-sm text-muted-foreground"><p>{planExpired ? `Expired ${new Date(activePlan.expiresAt).toLocaleString()}.` : "Git or the cluster changed since this plan was built."} It can no longer be approved or applied.</p>{!canDeploy && <p className="mt-2 text-xs text-muted-foreground">A workspace owner or deployer can generate a fresh plan.</p>}</div>
+          </div>
+          <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={onCreatePlan} loading={pendingAction === "create-plan"} disabled={busy || hasPendingOperation || !canDeploy || decommissioning}>Refresh plan</Button>
+              <Button size="sm" variant="outline" onClick={() => setExpandedExpiredPlan(expandedExpiredPlan === activePlan.id ? null : activePlan.id)}>{expandedExpiredPlan === activePlan.id ? "Hide old diff" : "View old diff"}</Button></div>
+        </div>}
 
-        {activePlan.status === "applied" && <div role="status" className="mb-4 rounded-lg border border-success/20 bg-success/5 p-4"><p className="flex items-center gap-2 text-sm font-semibold"><HugeiconsIcon icon={Tick02Icon} strokeWidth={2} aria-hidden="true" className="size-4 text-success-foreground dark:text-success" />Plan successfully applied</p><p className="mt-1 text-sm text-muted-foreground">These changes have already been executed. This plan is a historical snapshot, not a list of pending changes. Refresh the plan to compare Git with the current cluster state.</p><div className="mt-3 flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => setExpandedAppliedPlan(expandedAppliedPlan === activePlan.id ? null : activePlan.id)}>{expandedAppliedPlan === activePlan.id ? "Hide applied diff" : "View applied diff"}</Button><Button size="sm" onClick={onCreatePlan} disabled={blocked || !canDeploy || decommissioning}>Refresh plan</Button></div></div>}
+        {activePlan.status === "applied" && <div role="status" className="mb-5 flex flex-wrap items-start gap-4">
+          <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-full bg-success/15 text-success"><HugeiconsIcon icon={Tick02Icon} strokeWidth={2} className="size-4" /></span>
+          <div className="min-w-0 flex-1 basis-80 space-y-1">
+            <p className="text-sm font-semibold">Plan successfully applied</p>
+            <p className="text-sm text-muted-foreground">These changes have already been executed. This plan is a historical snapshot, not a list of pending changes. Refresh the plan to compare Git with the current cluster state.</p>
+          </div>
+          <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => setExpandedAppliedPlan(expandedAppliedPlan === activePlan.id ? null : activePlan.id)}>{expandedAppliedPlan === activePlan.id ? "Hide applied diff" : "View applied diff"}</Button><Button size="sm" variant="outline" onClick={onCreatePlan} disabled={blocked || !canDeploy || decommissioning}>Refresh plan</Button></div>
+        </div>}
         {(!planInactive || expandedExpiredPlan === activePlan.id) && (activePlan.status !== "applied" || expandedAppliedPlan === activePlan.id) && <>
-          <div className="mb-4 flex flex-wrap items-center gap-2"><StatusBadge status={planReviewStatus(activePlan, now)} />{(["create", "update", "delete"] as const).filter((kind) => counts?.[kind]).map((kind) => <Badge key={kind} variant="outline" radius="full">{counts?.[kind]} {kind}</Badge>)}<span className="text-xs text-muted-foreground" title={`Plan digest ${activePlan.plan.digest}`}>Commit <span className="font-mono">{activePlan.plan.revision.slice(0, 12)}</span> · {planExpired ? "expired" : "expires"} {new Date(activePlan.expiresAt).toLocaleString()}</span></div>
+          <div className="mb-4 flex flex-wrap items-center gap-2"><StatusBadge status={planReviewStatus(activePlan, now)} />{(["create", "update", "delete"] as const).filter((kind) => counts?.[kind]).map((kind) => <Badge key={kind} variant="outline">{counts?.[kind]} {kind}</Badge>)}<span className="text-xs text-muted-foreground" title={`Plan digest ${activePlan.plan.digest}`}>Commit <span className="font-mono">{activePlan.plan.revision.slice(0, 12)}</span> · {planExpired ? "expired" : "expires"} {new Date(activePlan.expiresAt).toLocaleString()}</span></div>
           {activePlan.trigger && <p className="mb-4 break-all text-sm text-muted-foreground">Triggered by {activePlan.trigger.provider} push to <code>{activePlan.trigger.ref}</code> · delivery <code>{activePlan.trigger.deliveryId}</code> · reported <code>{activePlan.trigger.reportedCommit.slice(0, 12)}</code>{activePlan.trigger.reportedCommit !== activePlan.plan.revision ? " · branch advanced before planning" : ""}</p>}
-          {activePlan.plan.rollback && <section className="mb-5 rounded-lg border bg-muted/30 p-3.5 text-sm leading-6"><div className="flex items-center gap-2 font-semibold"><HugeiconsIcon icon={Alert02Icon} strokeWidth={2} aria-hidden="true" className="size-4 text-warning-foreground dark:text-warning" />Rollback target · {activePlan.plan.rollback.kind === "successful_sync" ? "successful deployment" : activePlan.plan.rollback.kind === "pre_operation" ? "state before an interrupted operation" : "Git revision"}</div><p className="mt-1">{activePlan.plan.rollback.revision ? `Resolved commit ${activePlan.plan.rollback.revision.slice(0, 12)}.` : "This checkpoint has no historical successful commit; the application ref will remain paused."}{activePlan.plan.rollback.createdAt ? ` Captured ${new Date(activePlan.plan.rollback.createdAt).toLocaleString()}.` : ""}{activePlan.plan.rollback.operationId ? ` Operation ${activePlan.plan.rollback.operationId.slice(0, 8)}.` : ""} {activePlan.plan.rollback.resourceCount !== undefined ? `${activePlan.plan.rollback.resourceCount} resources in target.` : ""}</p><p className="mt-2 font-medium">Kubernetes resources cannot be changed atomically. This diff may contain creations, updates, and deletions; a failure can leave a visible partial result.</p>{(activePlan.plan.ignored?.length ?? 0) > 0 && <p className="mt-2">{activePlan.plan.ignored?.length} difference{activePlan.plan.ignored?.length === 1 ? " is" : "s are"} limited by the application&apos;s current ignore rules.</p>}</section>}
+          {activePlan.plan.rollback && <Card as="section" size="sm" className="mb-5"><Card.Content className="text-sm leading-6"><div className="flex items-center gap-2 font-semibold"><HugeiconsIcon icon={Alert02Icon} strokeWidth={2} aria-hidden="true" className="size-4 text-warning-foreground dark:text-warning" />Rollback target · {activePlan.plan.rollback.kind === "successful_sync" ? "successful deployment" : activePlan.plan.rollback.kind === "pre_operation" ? "state before an interrupted operation" : "Git revision"}</div><p className="mt-1">{activePlan.plan.rollback.revision ? `Resolved commit ${activePlan.plan.rollback.revision.slice(0, 12)}.` : "This checkpoint has no historical successful commit; the application ref will remain paused."}{activePlan.plan.rollback.createdAt ? ` Captured ${new Date(activePlan.plan.rollback.createdAt).toLocaleString()}.` : ""}{activePlan.plan.rollback.operationId ? ` Operation ${activePlan.plan.rollback.operationId.slice(0, 8)}.` : ""} {activePlan.plan.rollback.resourceCount !== undefined ? `${activePlan.plan.rollback.resourceCount} resources in target.` : ""}</p><p className="mt-2 font-medium">Kubernetes resources cannot be changed atomically. This diff may contain creations, updates, and deletions; a failure can leave a visible partial result.</p>{(activePlan.plan.ignored?.length ?? 0) > 0 && <p className="mt-2">{activePlan.plan.ignored?.length} difference{activePlan.plan.ignored?.length === 1 ? " is" : "s are"} limited by the application&apos;s current ignore rules.</p>}</Card.Content></Card>}
 
           {workspaceId && planActionable && activePlan.plan.changes.length > 0 && <PlanRiskCard workspaceId={workspaceId} planId={activePlan.id} digest={activePlan.plan.digest} />}
-          {ignoreRules.length > 0 && <Disclosure className="mb-5 rounded-lg border bg-muted/10 px-4 py-3" summary={`Persistent ignore rules (${ignoreRules.length})`}>
+          {ignoreRules.length > 0 && <Disclosure className="mb-5 py-3" summary={`Persistent ignore rules (${ignoreRules.length})`}>
             <p className="mb-3 text-sm text-muted-foreground">Applied to manual and Auto-safe plans. Changes invalidate reviewed plans.</p>
-            <ul className="divide-y rounded-lg border bg-card">{ignoreRules.map((rule) => <li key={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3"><span className="min-w-0 flex-1 text-sm font-medium">{rule.identity.kind} {rule.identity.namespace ? `${rule.identity.namespace}/` : ""}{rule.identity.name}<span className="ml-2 font-mono text-xs font-normal text-muted-foreground">{rule.path || "entire resource"}</span><span className="mt-1 block text-sm font-normal text-muted-foreground">{rule.reason}</span></span>{rule.managedByGit ? <Badge variant="outline" radius="full">Managed by Git</Badge> : canApprove && <RowActions label={`ignore rule for ${rule.identity.kind} ${rule.identity.name}`} items={[{ label: "Remove ignore rule", destructive: true, disabled: busy, confirm: { title: `Remove ignore rule for ${rule.identity.kind} ${rule.identity.name}?`, description: "The next plan may update or delete this resource again.", confirmLabel: "Remove ignore rule", onConfirm: () => onRemoveRule(rule) } }]} />}</li>)}</ul>
+            <ul className="divide-y">{ignoreRules.map((rule) => <li key={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3"><span className="min-w-0 flex-1 text-sm font-medium">{rule.identity.kind} {rule.identity.namespace ? `${rule.identity.namespace}/` : ""}{rule.identity.name}<span className="ml-2 font-mono text-xs font-normal text-muted-foreground">{rule.path || "entire resource"}</span><span className="mt-1 block text-sm font-normal text-muted-foreground">{rule.reason}</span></span>{rule.managedByGit ? <Badge variant="outline">Managed by Git</Badge> : canApprove && <RowActions label={`ignore rule for ${rule.identity.kind} ${rule.identity.name}`} items={[{ label: "Remove ignore rule", destructive: true, disabled: busy, confirm: { title: `Remove ignore rule for ${rule.identity.kind} ${rule.identity.name}?`, description: "The next plan may update or delete this resource again.", confirmLabel: "Remove ignore rule", onConfirm: () => onRemoveRule(rule) } }]} />}</li>)}</ul>
           </Disclosure>}
-          {hasOwnershipConflict && planActionable && <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2"><p className="text-sm font-medium">Ownership conflicts block approval and apply.</p>{onReviewOwnershipConflict && <Button size="sm" variant="outline" onClick={onReviewOwnershipConflict}>Review conflicts</Button>}</div>}
+          {hasOwnershipConflict && planActionable && <Alert tone="warning" variant="plain" className="mb-4"><Alert.Icon /><Alert.Title>Ownership conflicts block approval and apply.</Alert.Title>{onReviewOwnershipConflict && <Alert.Actions><Button size="sm" variant="outline" onClick={onReviewOwnershipConflict}>Review conflicts</Button></Alert.Actions>}</Alert>}
           {activePlan.plan.decommission && [...activePlan.plan.changes, ...(activePlan.plan.ignored ?? [])].some(change => change.identity.apiVersion === "v1" && change.identity.kind === "Namespace" && change.identity.clusterScoped) && (
-            <div className="mb-4 flex items-start justify-between gap-4 rounded-lg border p-4">
+            <div className="mb-4 flex items-start justify-between gap-4 py-3">
               <div className="space-y-1">
                 <label htmlFor="keep-decommission-namespaces" className="text-sm font-medium">Keep namespace</label>
                 <p id="keep-namespace-description" className="text-sm text-muted-foreground">Delete the application’s other managed resources and leave its namespace in place. Changing this option creates a new plan that needs fresh approval.</p>
               </div>
-              <Switch id="keep-decommission-namespaces" aria-describedby="keep-namespace-description" checked={Boolean(activePlan.plan.selection?.keepNamespaces)} onCheckedChange={(checked) => onKeepNamespacesChange?.(checked)} disabled={blocked || !canApprove || !planActionable || !onKeepNamespacesChange} />
+              <Checkbox id="keep-decommission-namespaces" aria-describedby="keep-namespace-description" checked={Boolean(activePlan.plan.selection?.keepNamespaces)} onCheckedChange={(checked) => onKeepNamespacesChange?.(checked)} disabled={blocked || !canApprove || !planActionable || !onKeepNamespacesChange} />
             </div>
           )}
           <PlanReview renderApprovalReview={(reviewResource) => activePlan.plan.requiresApproval && <PlanApprovalPanel record={activePlan} readOnly={planExpired} summary={approvalSummary} error={approvalError} required={requiredApprovals} approved={approvedApprovals} roles={approverRoles} members={approverMembers} workspaceId={workspaceId} onResource={reviewResource} actions={approvalAction} />} showApprovalEvidence={false} key={activePlan.id} workspaceId={workspaceId} plan={activePlan.plan} changes={activePlan.plan.changes} ignored={activePlan.plan.ignored ?? []} selected={reviewResource} onSelect={onReviewResourceChange} identityKey={changeIdentityKey} isExcluded={(change) => selectionResources.some((identity) => sameIdentity(identity, change.identity))} renderChange={(change, ignored) => <DiffCard selectionDirty={selectionDirty} savingSelection={pendingAction === "selection"} onSaveSelection={onSaveSelection} recreationPolicy={selectionRecreations.find(item => sameIdentity(item.identity, change.identity))?.propagationPolicy ?? ""} onRecreationChange={onRecreationChange ? policy => onRecreationChange(change.identity, policy) : undefined} retainedNamespace={Boolean(ignored && activePlan.plan.decommission && activePlan.plan.selection?.keepNamespaces && change.identity.apiVersion === "v1" && change.identity.kind === "Namespace" && change.identity.clusterScoped)} readOnly={planExpired} change={change} ignored={ignored} canSelect={planActionable && canDeploy && !activePlan.plan.decommission && !activePlan.plan.rollback} canManageIgnores={planActionable && canApprove && !activePlan.plan.decommission && !activePlan.plan.rollback} excluded={selectionResources.some((identity) => sameIdentity(identity, change.identity))} excludedPaths={selectionFields.filter((field) => sameIdentity(field.identity, change.identity)).map((field) => field.path)} permanentResourceIgnore={ignoreRules.some((rule) => !rule.path && sameIdentity(rule.identity, change.identity))} permanentFieldIgnores={ignoreRules.filter((rule) => Boolean(rule.path) && sameIdentity(rule.identity, change.identity)).map((rule) => rule.path!)} reason={ignoreReasons[diffId(change.identity)] ?? ""} onReasonChange={(reason) => onIgnoreReasonChange(diffId(change.identity), reason)} onToggleResource={() => onToggleResource(change.identity)} onToggleField={(path) => onToggleField(change.identity, path)} onSaveIgnore={(path) => onSaveIgnore(change.identity, path, ignoreReasons[diffId(change.identity)] ?? "")} busy={busy} />} />
           {activePlan.plan.changes.length === 0 && <p className="mt-4 text-sm text-muted-foreground">{activePlan.plan.rollback ? "The target matches the managed state. Applying will pin the source and pause reconciliation." : "No changes to apply. Git and managed fields match, or all differences are excluded."}</p>}
 
-          {planActionable && <div className="sticky bottom-[max(0.75rem,var(--toast-clearance,0px))] z-20 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card/95 px-3 py-2.5 shadow-sm backdrop-blur">
-            <div className="min-w-0 flex-1"><p className="text-sm font-medium">{activePlan.plan.changes.length} change{activePlan.plan.changes.length === 1 ? "" : "s"} · {deletionCount} deletion{deletionCount === 1 ? "" : "s"}{activePlan.plan.requiresApproval ? ` · ${approvedApprovals}/${requiredApprovals} approvals` : ""}</p>{selectionDirty && <p role="status" className="mt-1 text-sm text-primary">Unsaved selection · Save to create a new plan and clear previous approvals.</p>}</div>
-            <div className="flex flex-wrap items-center justify-end gap-2">
+          {planActionable && <Card size="sm" className="sticky bottom-[max(0.75rem,var(--toast-clearance,0px))] z-20 mt-4 bg-card/95 backdrop-blur"><Card.Content className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0 basis-full sm:flex-1 sm:basis-0"><p className="text-sm font-medium">{activePlan.plan.changes.length} change{activePlan.plan.changes.length === 1 ? "" : "s"} · {deletionCount} deletion{deletionCount === 1 ? "" : "s"}{activePlan.plan.requiresApproval ? ` · ${approvedApprovals}/${requiredApprovals} approvals` : ""}</p>{selectionDirty && <p role="status" className="mt-1 text-sm text-primary">Unsaved selection · Save to create a new plan and clear previous approvals.</p>}</div>
+            <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
               {!selectionDirty && activePlan.plan.requiresApproval && <Button variant="outline" size="sm" onClick={() => { const section = document.getElementById("plan-approval-review"); section?.focus({ preventScroll: true }); section?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" }) }}>Review approvals</Button>}
-              {selectionDirty ? <><Button size="sm" variant="outline" onClick={onResetSelection} disabled={busy}>Reset selection</Button><Button size="sm" onClick={onSaveSelection} loading={pendingAction === "selection"} loadingText="Saving selection…" disabled={blocked || !canDeploy}>Save selection</Button></> : <Button variant={activePlan.plan.decommission || activePlan.plan.changes.some(change => change.recreation) ? "destructive" : "default"} loading={pendingAction === "apply-plan"} loadingText={activePlan.plan.rollback ? "Starting rollback…" : "Starting sync…"} onClick={onApply} disabled={applyBlockedReason !== null} aria-describedby={applyBlockedReason ? "plan-apply-blocked-reason" : undefined}>{activePlan.plan.rollback ? "Apply rollback" : activePlan.plan.decommission ? "Delete resources" : activePlan.plan.requiresApproval ? "Apply plan" : "Sync application"}</Button>}
+              {selectionDirty ? <><Button size="sm" variant="outline" onClick={onResetSelection} disabled={busy}>Reset selection</Button><Button size="sm" onClick={onSaveSelection} loading={pendingAction === "selection"} disabled={blocked || !canDeploy}>Save selection</Button></> : <Button variant={activePlan.plan.decommission || activePlan.plan.changes.some(change => change.recreation) ? "destructive" : "default"} loading={pendingAction === "apply-plan"} onClick={onApply} disabled={applyBlockedReason !== null} aria-describedby={applyBlockedReason ? "plan-apply-blocked-reason" : undefined}>{activePlan.plan.rollback ? "Apply rollback" : activePlan.plan.decommission ? "Delete resources" : activePlan.plan.requiresApproval ? "Apply plan" : "Sync application"}</Button>}
             </div>
-          </div>}
+          </Card.Content></Card>}
           {planActionable && applyBlockedReason && <p id="plan-apply-blocked-reason" role="status" className="mt-2 text-right text-sm text-muted-foreground">{applyBlockedReason}</p>}
         </>}
       </div>}
-  </Panel>
+  </Section>
 }

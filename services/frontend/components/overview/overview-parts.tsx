@@ -32,7 +32,7 @@ export function LinkRow({ href, children }: { href: string; children: ReactNode 
 
 /** "View all" style link that sits in a frame header. */
 export function FrameLink({ href, children }: { href: string; children: ReactNode }) {
-  return <Button render={<Link href={href} />} nativeButton={false} variant="ghost" size="sm" className="text-primary hover:text-primary">{children}</Button>
+  return <Button render={<Link href={href} />} nativeButton={false} variant="outline" size="sm" className="bg-background">{children}</Button>
 }
 
 /** A KPI card that links to the list behind its number. */

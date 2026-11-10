@@ -1,6 +1,6 @@
 "use client"
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/panelui/button"
 import { PublishingCard } from "./publishing-fields"
 export function PublishingDraftNotice({
   draft,

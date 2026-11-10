@@ -10,8 +10,10 @@ import {
   Shield01Icon,
   ServerStack01Icon,
 } from "@hugeicons/core-free-icons"
-import { Button, buttonVariants } from "@/components/ui/button"
-import { Badge } from "@/components/reui/badge"
+import { Button, buttonVariants } from "@/components/panelui/button"
+import { Alert } from "@/components/panelui/alert"
+import { Card } from "@/components/panelui/card"
+import { Badge } from "@/components/panelui/badge"
 import { ErrorDetailsButton, ErrorGuidance } from "@/components/error-details"
 import { errorMessage } from "@/lib/api"
 import type { Workspace } from "@/lib/types"
@@ -89,38 +91,20 @@ export function LoadError({
   error: unknown
   retry: () => void
 }) {
-  return (
-    <div
-      role="alert"
-      className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive"
-    >
-      <span className="min-w-0 flex-1">{errorMessage(error)}</span>
-      <div className="flex items-center gap-2">
-        <ErrorDetailsButton error={error} />
-        <Button type="button" size="xs" variant="link" onClick={retry} className="text-destructive">
-          Try again
-        </Button>
-      </div>
-      <div className="basis-full">
-        <ErrorGuidance error={error} />
-      </div>
-    </div>
-  )
+  return <Alert tone="destructive" variant="plain" className="mb-6">
+    <Alert.Icon /><Alert.Title>{errorMessage(error)}</Alert.Title>
+    <Alert.Description><ErrorGuidance error={error} /></Alert.Description>
+    <Alert.Actions><ErrorDetailsButton error={error} /><Button type="button" size="sm" variant="outline" onClick={retry}>Try again</Button></Alert.Actions>
+  </Alert>
 }
 
-export function ErrorNotice({ error }: { error: unknown }) {
-  return (
-    <div
-      role="alert"
-      className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive"
-    >
-      <span className="min-w-0 flex-1">{errorMessage(error)}</span>
-      <ErrorDetailsButton error={error} />
-      <div className="basis-full">
-        <ErrorGuidance error={error} />
-      </div>
-    </div>
-  )
+/** Page-level errors get an Alert; inside an existing surface use the unframed variant. */
+export function ErrorNotice({ error, inline = false }: { error: unknown; inline?: boolean }) {
+  return <Alert tone="destructive" variant={inline ? "inline" : "plain"} className="mb-5">
+    <Alert.Icon /><Alert.Title>{errorMessage(error)}</Alert.Title>
+    <Alert.Description><ErrorGuidance error={error} /></Alert.Description>
+    <Alert.Actions><ErrorDetailsButton error={error} /></Alert.Actions>
+  </Alert>
 }
 
 export function WorkspaceCard({
@@ -135,10 +119,9 @@ export function WorkspaceCard({
   attention: number
 }) {
   return (
-    <Link
-      href={`/workspaces/${workspace.id}`}
-      className="workspace-card group flex min-w-0 flex-col rounded-2xl border bg-card p-5"
-    >
+    <Card render={<Link href={`/workspaces/${workspace.id}`} />} className="workspace-card group min-w-0">
+      <Card.Content className="flex flex-col p-5">
+
       <div className="flex items-center justify-between">
         <span className="grid size-10 place-items-center rounded-xl border bg-muted/40 text-muted-foreground">
           <WorkspaceIcon name="folder" />
@@ -189,6 +172,7 @@ export function WorkspaceCard({
           ? "Ready for your first application"
           : `${synced} in sync · ${attention} need attention`}
       </p>
-    </Link>
+      </Card.Content>
+    </Card>
   )
 }

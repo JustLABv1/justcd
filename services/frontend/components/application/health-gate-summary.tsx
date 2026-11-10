@@ -1,16 +1,16 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
 import { api } from "@/lib/api"
 import { ago } from "@/lib/relative-time"
 import type { ApplicationHealthGateInfo } from "@/lib/types"
 
 const statusBadge = {
-  pending: { variant: "info-light", label: "Verifying" },
-  passed: { variant: "success-light", label: "Passed" },
-  failed: { variant: "destructive-light", label: "Failed" },
+  pending: { variant: "info", label: "Verifying" },
+  passed: { variant: "success", label: "Passed" },
+  failed: { variant: "destructive", label: "Failed" },
 } as const
 
 /**
@@ -56,7 +56,7 @@ export function HealthGateSummary({
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="text-sm font-semibold">Post-deploy health gate</h3>
         {status && (
-          <Badge size="sm" radius="full" variant={status.variant}>
+          <Badge size="sm" variant={status.variant}>
             {status.label}
           </Badge>
         )}

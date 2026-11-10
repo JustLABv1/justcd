@@ -5,11 +5,11 @@ import { HugeiconsIcon } from "@hugeicons/react"
 import { AiMagicIcon } from "@hugeicons/core-free-icons"
 import { useEffect, useId, useRef, useState } from "react"
 import { api, apiStream } from "@/lib/api"
-import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Textarea } from "@/components/ui/textarea"
-import { FormSelect } from "@/components/ui/form-select"
-import { AppDialog } from "@/components/ui/dialog"
+import { Button } from "@/components/panelui/button"
+import { Checkbox } from "@/components/panelui/checkbox"
+import { Textarea } from "@/components/panelui/textarea"
+import { FormSelect } from "@/components/form-select"
+import { AppDialog } from "@/components/app-dialog"
 import { FormField } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import type { Operation } from "@/lib/types"
@@ -31,7 +31,7 @@ const labels: Record<Feature, string> = {
   drift: "Explain drift",
   summary: "Summarize deployments",
   compare: "Compare environments",
-  ask: "Ask justcd",
+  ask: "Ask JustCD",
 }
 
 const workspacePrompts = [
@@ -244,7 +244,7 @@ export function AIAssistant({
                     ((feature === "plan" || feature === "drift") && !planId)
                   }
                   loading={busy === feature}
-                  loadingText="Analyzing…"
+
                   onClick={() => void analyze(feature)}
                 >
                   {labels[feature]}
@@ -282,7 +282,7 @@ export function AIAssistant({
               {!history.length && !result && (
                 <div className="flex flex-wrap gap-2" aria-label="Suggested questions">
                   {(applicationId || groupId ? appPrompts : workspacePrompts).map((prompt) => (
-                    <Button key={prompt} type="button" size="xs" variant="outline" disabled={!!busy} onClick={() => { setQuestion(prompt); void analyze("ask", prompt) }}>{prompt}</Button>
+                    <Button key={prompt} type="button" size="sm" variant="outline" className="h-auto min-h-8 max-w-full justify-start py-1.5 text-left whitespace-normal break-words" disabled={!!busy} onClick={() => { setQuestion(prompt); void analyze("ask", prompt) }}>{prompt}</Button>
                   ))}
                 </div>
               )}
@@ -291,9 +291,9 @@ export function AIAssistant({
                   type="submit"
                   disabled={!!busy || !question.trim()}
                   loading={busy === "ask"}
-                  loadingText="Analyzing…"
+
                 >
-                  Ask justcd
+                  Ask JustCD
                 </Button>
                 {history.length > 0 && (
                   <Button
@@ -432,7 +432,7 @@ export function AIAssistant({
       <AppDialog
         open={open}
         onOpenChange={close}
-        title="Ask justcd"
+        title="Ask JustCD"
         description="Read-only assistance for this view, with links to the source evidence."
         variant="info"
         size="lg"

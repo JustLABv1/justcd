@@ -172,7 +172,7 @@ export function PublishingFlow({
     >
       <div
         ref={watch}
-        className="overflow-hidden rounded-2xl bg-card ring-1 ring-border dark:bg-muted/45 dark:ring-0"
+        className="overflow-hidden"
         style={{ height }}
       >
         <Flow
@@ -183,7 +183,7 @@ export function PublishingFlow({
           panOnDrag={false}
           zoomOnPinch={false}
           label={`What happens when you publish a ${template.name} app: ${steps.map((s) => s.title).join(", then ")}`}
-          className="h-full rounded-none border-0"
+          className="h-full"
         >
           <Flow.Background variant="dots" gap={22} />
           {steps.map((step, index) => (

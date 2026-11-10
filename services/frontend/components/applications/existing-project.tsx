@@ -20,9 +20,9 @@ import {
   PublishingField,
   PublishingCheckbox,
 } from "./publishing-fields"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { FormSelect } from "@/components/ui/form-select"
+import { Button } from "@/components/panelui/button"
+import { Input } from "@/components/panelui/input"
+import { FormSelect } from "@/components/form-select"
 import { Disclosure } from "@/components/ui/collapsible"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"

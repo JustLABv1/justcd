@@ -17,14 +17,14 @@
  * </Alert>
  * ```
  *
- * ## A card in a tray of its tone
+ * ## One surface, actions beside the message
  *
- * By default the message is a card set into a tray tinted in its tone, and
- * the actions sit in the strip of tray left under the card. What the alert
- * says and what can be done about it are two surfaces, so a row of buttons
- * never crowds the sentence it answers. `plain` is a single tinted box, for
- * inside a form or a dialog that already draws an edge; `banner` is one line
- * across the top of a page or a panel.
+ * By default the message is a card edged in its tone. The actions sit in the
+ * same card, at its trailing side, and drop under the words when the alert is
+ * narrow. (JustCD change: the registry version put them in a tinted strip
+ * under the card, which read as a second, empty surface.) `plain` is a single
+ * tinted box, for inside a form or a dialog that already draws an edge;
+ * `banner` is one line across the top of a page or a panel.
  *
  * ## It folds away
  *
@@ -39,9 +39,7 @@
  * should not cut across what a screen reader is in the middle of saying.
  */
 import {
-  Children,
   createContext,
-  isValidElement,
   useCallback,
   useContext,
   useEffect,
@@ -65,7 +63,7 @@ type RenderProp<Tag extends RenderElementType> = { render?: useRender.ComponentP
 export type AlertTone = 'neutral' | 'info' | 'success' | 'warning' | 'destructive';
 
 /** `default` is the card in a tray, `plain` one tinted box, `banner` a strip across a page. */
-export type AlertVariant = 'default' | 'plain' | 'banner';
+export type AlertVariant = 'default' | 'plain' | 'banner' | 'inline';
 
 /** The fold every opening and closing here uses, the one the Prompt's bands use. */
 const FOLD =
@@ -76,10 +74,8 @@ const alertVariants = tv({
     root: ['group/alert', FOLD],
     clip: 'min-h-0 overflow-hidden',
     /*
-     * The tray. The card fills it, so its one hairline is the alert's only
-     * edge; a rim of tint round the card read as a heavy frame. The tint
-     * shows in the strip under the card when there are actions, and at the
-     * card's lower corners, which round off over it.
+     * The tray. The card fills it, so its one hairline, drawn in the tone,
+     * is the alert's only edge.
      */
     tray: 'flex flex-col overflow-hidden rounded-[20px] border',
     /*
@@ -89,7 +85,7 @@ const alertVariants = tv({
      * list and still land where they belong.
      */
     body: [
-      'grid grid-cols-[auto_minmax(0,1fr)_auto] items-start text-sm',
+      'grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-start text-sm',
       // 19px is the tray's 20 less its hairline: one corner, two curves.
       'group-data-[variant=default]/alert:rounded-[19px] group-data-[variant=default]/alert:bg-card group-data-[variant=default]/alert:px-3.5 group-data-[variant=default]/alert:py-3 group-data-[variant=default]/alert:text-card-foreground group-data-[variant=default]/alert:shadow-xs',
       'group-data-[variant=plain]/alert:rounded-2xl group-data-[variant=plain]/alert:border group-data-[variant=plain]/alert:px-3.5 group-data-[variant=plain]/alert:py-3',
@@ -101,11 +97,12 @@ const alertVariants = tv({
       // In the card the glyph sits in a disc of its tone, the alert's one patch of colour.
       'group-data-[variant=default]/alert:size-8 group-data-[variant=default]/alert:rounded-full group-data-[variant=default]/alert:bg-[color-mix(in_oklab,var(--pu-tone)_14%,transparent)] group-data-[variant=default]/alert:[&_svg:not([class*=size-])]:size-4',
       // Elsewhere it is the glyph alone, centred on the title's line.
+      'group-data-[variant=inline]/alert:h-5 group-data-[variant=inline]/alert:[&_svg:not([class*=size-])]:size-4',
       'group-data-[variant=plain]/alert:h-5 group-data-[variant=plain]/alert:[&_svg:not([class*=size-])]:size-4',
       'group-data-[variant=banner]/alert:me-0 group-data-[variant=banner]/alert:[&_svg:not([class*=size-])]:size-4',
     ],
     title: [
-      'col-start-2 font-medium text-foreground',
+      'col-start-2 font-medium text-foreground group-data-[variant=inline]/alert:text-[var(--pu-tone)]',
       // Beside the disc, the first line of the title sits on the disc's middle,
       // and a title that wraps simply runs on below it.
       'leading-5 group-data-[variant=default]/alert:pt-1.5',
@@ -120,13 +117,16 @@ const alertVariants = tv({
     ],
     actions: [
       'flex flex-wrap items-center gap-2',
-      // In the tray's strip, at its end: what can be done follows what was said.
-      'group-data-[variant=default]/alert:justify-end group-data-[variant=default]/alert:p-2.5',
+      // Under the words when narrow; from `sm` in a column of their own at the
+      // trailing side, centred on the message.
+      'group-data-[variant=default]/alert:col-start-2 group-data-[variant=default]/alert:mt-2.5',
+      'sm:group-data-[variant=default]/alert:col-start-3 sm:group-data-[variant=default]/alert:row-span-3 sm:group-data-[variant=default]/alert:row-start-1 sm:group-data-[variant=default]/alert:mt-0 sm:group-data-[variant=default]/alert:ms-4 sm:group-data-[variant=default]/alert:self-center sm:group-data-[variant=default]/alert:justify-end',
       'group-data-[variant=plain]/alert:col-start-2 group-data-[variant=plain]/alert:mt-2.5',
-      'group-data-[variant=banner]/alert:ms-auto',
+      'sm:group-data-[variant=plain]/alert:col-start-3 sm:group-data-[variant=plain]/alert:row-span-3 sm:group-data-[variant=plain]/alert:row-start-1 sm:group-data-[variant=plain]/alert:mt-0 sm:group-data-[variant=plain]/alert:ms-4 sm:group-data-[variant=plain]/alert:self-center sm:group-data-[variant=plain]/alert:justify-end',
+      'group-data-[variant=banner]/alert:ms-auto group-data-[variant=inline]/alert:col-start-2 group-data-[variant=inline]/alert:mt-2.5',
     ],
     close: [
-      'relative col-start-3 row-start-1 ms-2 inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground outline-none',
+      'relative col-start-4 row-start-1 ms-2 inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground outline-none',
       'transition-[background-color,color,scale] duration-150 after:absolute after:-inset-1.5 hover:bg-foreground/10 hover:text-foreground active:scale-95',
       'focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none [&_svg]:size-3.5',
       'group-data-[variant=default]/alert:-me-1 group-data-[variant=default]/alert:mt-0.5',
@@ -158,6 +158,8 @@ const alertVariants = tv({
       default: {},
       plain: {},
       banner: {},
+      // Local extension: messages inside an existing Card/Dialog have no second surface.
+      inline: {},
     },
     shown: {
       true: { root: 'grid-rows-[1fr] opacity-100' },
@@ -211,9 +213,10 @@ export interface AlertProps extends ComponentProps<'div'> {
   /** The theme role it is drawn in, which also says how urgent it is. Default `neutral`. */
   tone?: AlertTone;
   /**
-   * `default` sets the message in a card inside a tray of its tone, with the
-   * actions in the tray under it. `plain` is one tinted box, for inside a form
+   * `default` sets the message in a card edged in its tone, with the actions
+   * at its trailing side. `plain` is one tinted box, for inside a form
    * or a dialog. `banner` is one line across the top of a page or panel.
+   * `inline` is unframed icon/text feedback inside an existing surface (JustCD extension).
    */
   variant?: AlertVariant;
   /** Whether it is shown, when the caller holds that. It folds away when it is not. */
@@ -223,8 +226,6 @@ export interface AlertProps extends ComponentProps<'div'> {
   /** Called when `Alert.Close` asks for it to close. */
   onOpenChange?: (open: boolean) => void;
 }
-
-const isActions = (child: ReactNode) => isValidElement(child) && child.type === AlertActions;
 
 function AlertRoot({
   tone = 'neutral',
@@ -256,14 +257,9 @@ function AlertRoot({
   const slots = alertVariants({ tone, variant, shown });
   const context = useMemo(() => ({ tone, setOpen }), [tone, setOpen]);
 
-  // In the tray the actions leave the card for the strip under it.
-  const all = Children.toArray(children);
-  const actions = variant === 'default' ? all.filter(isActions) : [];
-  const rest = variant === 'default' ? all.filter((child) => !isActions(child)) : all;
-
   const body = (
     <div data-slot="alert-body" className={slots.body()}>
-      {rest}
+      {children}
     </div>
   );
 
@@ -282,7 +278,6 @@ function AlertRoot({
           {variant === 'default' ? (
             <div data-slot="alert-tray" className={slots.tray()}>
               {body}
-              {actions}
             </div>
           ) : (
             body
@@ -394,9 +389,9 @@ AlertDescription.displayName = 'Alert.Description';
 export interface AlertActionsProps extends ComponentProps<'div'> {}
 
 /**
- * The buttons. In the default variant they sit in the tray under the card, at
- * its end; in `plain` under the words; in `banner` at the end of the line.
- * Keep it a direct child of `Alert`, so the tray can find it.
+ * The buttons. In `default` and `plain` they sit at the trailing side of the
+ * message, and under the words when narrow; in `banner` at the end of the line.
+ * Keep it a direct child of `Alert`, so the grid can place it.
  */
 function AlertActions({ className, render, ...props }: AlertActionsProps & RenderProp<'div'>) {
   return useRender({

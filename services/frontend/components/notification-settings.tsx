@@ -1,12 +1,13 @@
 "use client"
 import { useCallback, useEffect, useState } from "react"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Switch } from "@/components/ui/switch"
-import { FormSelect } from "@/components/ui/form-select"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
+import { Button } from "@/components/panelui/button"
+import { Input } from "@/components/panelui/input"
+import { Textarea } from "@/components/panelui/textarea"
+import { Checkbox } from "@/components/panelui/checkbox"
+import { FormSelect } from "@/components/form-select"
+import { Disclosure } from "@/components/ui/collapsible"
+import { ConfirmDisclosure } from "@/components/confirm-disclosure"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
 import { FormField, StatusBadge } from "@/components/ui-kit"
 import { api, apiPost, apiDelete, errorMessage } from "@/lib/api"
 import {
@@ -93,7 +94,7 @@ export function NotificationSettings({ workspaceId }: { workspaceId: string }) {
     const timer = window.setInterval(refresh, 5000)
     return () => window.clearInterval(timer)
   }, [reload])
-  async function act(action: () => Promise<unknown>, message: string) {
+  async function act(action: () => Promise<unknown>, message: string, rethrow = false) {
     setBusy(true)
     setError("")
     setNotice("")
@@ -103,6 +104,7 @@ export function NotificationSettings({ workspaceId }: { workspaceId: string }) {
       setNotice(message)
     } catch (e) {
       setError(errorMessage(e))
+      if (rethrow) throw e
     } finally {
       setBusy(false)
     }
@@ -310,14 +312,14 @@ export function NotificationSettings({ workspaceId }: { workspaceId: string }) {
         title="Notification delivery history"
         description="Recent deliveries and their attempt history."
       >
-        <div className="space-y-3 pt-4">
+        <div className="space-y-3">
           {!activity.length && (
             <p className="text-sm text-muted-foreground">
               No delivery activity yet.
             </p>
           )}
           {activity.map((a) => (
-            <div key={a.id} className="space-y-2 rounded-lg border p-3 text-sm">
+            <div key={a.id} className="space-y-2 py-3 text-sm">
               <div className="flex flex-wrap items-center gap-2">
                 <span>{a.eventType.replaceAll("_", " ")}</span>
                 <StatusBadge status={a.status} />
@@ -330,8 +332,7 @@ export function NotificationSettings({ workspaceId }: { workspaceId: string }) {
                 Idempotency ID: {a.id}
               </p>
               {a.history.length > 0 && (
-                <details>
-                  <summary>Attempt history</summary>
+                <Disclosure summary="Attempt history">
                   <ol className="mt-2 space-y-1">
                     {a.history.map((h) => (
                       <li key={h.attempt}>
@@ -340,7 +341,7 @@ export function NotificationSettings({ workspaceId }: { workspaceId: string }) {
                       </li>
                     ))}
                   </ol>
-                </details>
+                </Disclosure>
               )}
             </div>
           ))}
@@ -353,7 +354,7 @@ export function NotificationSettings({ workspaceId }: { workspaceId: string }) {
         title={draft.id ? "Edit destination" : "Add destination"}
         description="Credentials are encrypted and cannot be read back. Editing routing preserves saved credentials."
       >
-        <form className="space-y-4 pt-4" onSubmit={save}>
+        <form className="space-y-4" onSubmit={save}>
           {error && (
             <p role="alert" className="text-sm text-destructive">
               {error}
@@ -389,7 +390,7 @@ export function NotificationSettings({ workspaceId }: { workspaceId: string }) {
             />
           </FormField>
           <label className="flex items-center gap-2 text-sm">
-            <Switch
+            <Checkbox
               checked={draft.enabled}
               disabled={busy}
               onCheckedChange={(enabled) => setDraft({ ...draft, enabled })}
@@ -540,32 +541,22 @@ export function NotificationSettings({ workspaceId }: { workspaceId: string }) {
           </DialogFooter>
         </form>
       </AppDialog>
-      <AppDialog
+      <ConfirmDisclosure
         open={!!deleting}
-        onOpenChange={(v) => {
-          if (!v) setDeleting(null)
-        }}
-        busy={busy}
+        onOpenChange={(open) => { if (!open) setDeleting(null) }}
         title="Delete destination"
         description="This removes the destination, queued deliveries and its delivery history."
-      >
-        <DialogFooter>
-          <DialogCancel disabled={busy} />
-          <Button
-            variant="destructive"
-            disabled={busy}
-            onClick={() => {
-              if (deleting)
-                void act(async () => {
-                  await apiDelete(`${base}/${deleting.id}`)
-                  setDeleting(null)
-                }, "Destination deleted.")
-            }}
-          >
-            Delete destination
-          </Button>
-        </DialogFooter>
-      </AppDialog>
+        confirmLabel="Delete destination"
+        busyLabel="Deleting…"
+        confirmDisabled={busy}
+        onConfirm={async () => {
+          if (!deleting) return
+          await act(async () => {
+            await apiDelete(`${base}/${deleting.id}`)
+            setDeleting(null)
+          }, "Destination deleted.", true)
+        }}
+      />
     </>
   )
 }

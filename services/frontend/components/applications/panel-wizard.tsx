@@ -2,33 +2,22 @@
 
 import { useState, type FormEvent, type ReactNode } from "react"
 import { Button } from "@/components/panelui/button"
-import { Checkbox } from "@/components/panelui/checkbox"
 import { Field } from "@/components/panelui/field"
-import { Frame } from "@/components/panelui/frame"
-import { Label } from "@/components/panelui/label"
+import { Section } from "@/components/section"
 import { Select } from "@/components/panelui/select"
-import { Steps } from "@/components/panelui/steps"
-import { Switch } from "@/components/panelui/switch"
+import { WizardSteps } from "@/components/wizard-steps"
+import { CheckboxCard, CheckboxField } from "@/components/ui-kit"
 
 /**
  * PanelUI building blocks for the multi-step "new application" form. Step state and
  * validation stay in `useWizard` (see wizard.tsx); this file only draws them.
  */
 
-/** One wizard page: a Frame with a title strip and a single padded panel. */
+/** One wizard step on the page canvas, with no enclosing surface. */
 export function PanelStep({ title, description, children, className = "space-y-5" }: { title: string; description?: string; children: ReactNode; className?: string }) {
-  return (
-    <Frame>
-      <Frame.Header>
-        <Frame.Title as="h2">{title}</Frame.Title>
-        {description && <Frame.Description>{description}</Frame.Description>}
-      </Frame.Header>
-      <Frame.Panel>
-        {/* Frame.Panel draws a hairline between its children, so the content is one child. */}
-        <div className={`min-w-0 p-5 ${className}`}>{children}</div>
-      </Frame.Panel>
-    </Frame>
-  )
+  return <Section title={title} description={description}>
+    <div className={`min-w-0 ${className}`}>{children}</div>
+  </Section>
 }
 
 /**
@@ -76,40 +65,12 @@ export function PanelSelect({ id, value, onValueChange, items, placeholder, disa
   )
 }
 
-/** A bordered option with a checkbox, title and description; the whole card toggles it. */
-export function PanelCheckboxCard({ checked, onCheckedChange, title, description, disabled, id }: {
-  checked: boolean
-  onCheckedChange: (checked: boolean) => void
-  title: ReactNode
-  description?: ReactNode
-  disabled?: boolean
-  id?: string
-}) {
-  return (
-    <Label className={`flex items-start gap-3 rounded-lg border p-3 text-sm ${disabled ? "" : "cursor-pointer hover:bg-muted/40"}`}>
-      <Checkbox id={id} checked={checked} disabled={disabled} onCheckedChange={(next) => onCheckedChange(Boolean(next))} className="mt-0.5" />
-      <span className="min-w-0"><span className="block font-medium">{title}</span>{description && <span className="mt-0.5 block font-normal text-muted-foreground">{description}</span>}</span>
-    </Label>
-  )
-}
+/** Draft options reuse the shared checkbox row. */
+export const PanelCheckboxCard = CheckboxCard
 
-/** Boolean setting with a Switch, label and help text on one row. */
-export function PanelSwitchRow({ checked, onCheckedChange, label, description, id }: {
-  checked: boolean
-  onCheckedChange: (checked: boolean) => void
-  label: string
-  description?: string
-  id: string
-}) {
-  return (
-    <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
-      <div className="min-w-0">
-        <Label htmlFor={id} className="block text-sm font-medium">{label}</Label>
-        {description && <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>}
-      </div>
-      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} label={label} />
-    </div>
-  )
+/** A renderer choice saved with the enclosing wizard form. */
+export function PanelCheckboxRow(props: { checked: boolean; onCheckedChange: (checked: boolean) => void; label: string; description?: string; id: string }) {
+  return <CheckboxField {...props} />
 }
 
 /** Kustomize renderer toggles, drawn with PanelUI controls. */
@@ -132,16 +93,7 @@ export function PanelKustomizeOptions({ namespaceOverride, onNamespaceOverrideCh
 export function PanelWizard({ step, onStepChange, idPrefix, steps }: { step: number; onStepChange: (step: number) => void; idPrefix: string; steps: { title: string; content: ReactNode }[] }) {
   return (
     <div className="space-y-5">
-      <Steps value={step} onValueChange={onStepChange}>
-        {steps.map((item, index) => (
-          <Steps.Item key={item.title} step={index + 1}>
-            <Steps.Trigger type="button">
-              <Steps.Indicator />
-              <Steps.Title>{item.title}</Steps.Title>
-            </Steps.Trigger>
-          </Steps.Item>
-        ))}
-      </Steps>
+      <WizardSteps step={step} onStepChange={onStepChange} titles={steps.map(item => item.title)} label="Creation steps" />
       {steps.map((item, index) => (
         <div key={item.title} id={`${idPrefix}-step-${index + 1}`} hidden={step !== index + 1} className="space-y-5">{item.content}</div>
       ))}
@@ -149,12 +101,15 @@ export function PanelWizard({ step, onStepChange, idPrefix, steps }: { step: num
   )
 }
 
-/** Back / Next row for steps before the review step. */
+/**
+ * Keep Next distinct from the final submit control. Reusing its DOM button can
+ * change its type during the click and submit the form before Review is shown.
+ */
 export function PanelWizardFooter({ step, isLast, onBack, onNext, submit }: { step: number; isLast: boolean; onBack: () => void; onNext: () => void; submit: ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-3">
       <Button type="button" variant="outline" onClick={onBack} disabled={step === 1}>Back</Button>
-      {isLast ? submit : <Button type="button" onClick={onNext}>Next</Button>}
+      {isLast ? <div key="submit">{submit}</div> : <Button key="next" type="button" onClick={(event) => { event.preventDefault(); onNext() }}>Next</Button>}
     </div>
   )
 }

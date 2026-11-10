@@ -90,7 +90,7 @@ import type {
 import { cva } from "class-variance-authority"
 
 import { cn } from "cn"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/panelui/button"
 
 /* -------------------------------------------------------------------------- */
 /*                                  Variants                                  */
@@ -1094,7 +1094,7 @@ export function FiltersRow({ trigger, showClear, className }: FiltersRowProps) {
       className={cn(
         /* `sizes.button` and not `actions.size`: the gap ladder and the control
            ladder must answer for the same rung, normalized in one place. */
-        filtersBarVariants({ size: sizes.button }),
+        filtersBarVariants({ size: sizes.button === "md" ? "default" : sizes.button }),
         /* An empty toolbar is still a flex child, so it took a gap with no
            width. The gap goes, not the toolbar, which owns the row's name. */
         rules.length === 0 && "gap-0",
@@ -1110,7 +1110,7 @@ export function FiltersRow({ trigger, showClear, className }: FiltersRowProps) {
         {...(actions.readOnly
           ? { "aria-description": actions.labels.readOnly }
           : null)}
-        className={cn(filtersBarVariants({ size: sizes.button }))}
+        className={cn(filtersBarVariants({ size: sizes.button === "md" ? "default" : sizes.button }))}
         onKeyDown={onKeyDown}
       >
         {rules.map((rule, index) => (

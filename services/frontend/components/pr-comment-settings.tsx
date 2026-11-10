@@ -1,7 +1,7 @@
 "use client"
 
-import { FormSelect } from "@/components/ui/form-select"
-import { FormField, SwitchField } from "@/components/ui-kit"
+import { FormSelect } from "@/components/form-select"
+import { FormField, CheckboxField } from "@/components/ui-kit"
 
 export type PRCommentMode = "summary" | "action-required" | "off"
 
@@ -39,7 +39,7 @@ export function PRCommentSettings({
           ]}
         />
       </FormField>
-      <SwitchField
+      <CheckboxField
         id={`${id}-drafts`}
         label="Comment on draft pull requests"
         description="Off by default. Comments wait until the PR is ready for review. Preview deployments follow their configured policy."

@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Switch } from "@/components/ui/switch"
+import { Switch } from "@/components/panelui/switch"
 import { useToast } from "@/components/toast-provider"
 import { api, errorMessage } from "@/lib/api"
 import { LoadErrorNotice, SectionSkeleton } from "./shared"
@@ -94,7 +94,7 @@ export function MaintenancePanel() {
             className="mt-1 shrink-0"
           />
         </div>
-        <p className="rounded-lg border bg-muted/30 p-3 text-sm leading-6 text-muted-foreground">
+        <p className="text-sm leading-6 text-muted-foreground">
           Existing deployments, background jobs, webhooks, and cluster agents
           continue running. Maintenance restricts regular users’ authenticated
           API access; administrators can still sign in.

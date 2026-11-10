@@ -1,5 +1,6 @@
 "use client"
 
+import { Card } from "@/components/panelui/card"
 import { DocumentationLink } from "@/components/documentation-link"
 import Link from "next/link"
 import type { ReactNode } from "react"
@@ -23,12 +24,16 @@ export function AuthShell({ eyebrow, title, description, children }: { eyebrow: 
       </div>
     </div>
     <div className={styles.content}>
-      <section className={styles.card} aria-labelledby="auth-title">
+      <Card as="section" className={styles.card} aria-labelledby="auth-title">
+        <Card.Header>
         <p className={styles.eyebrow}>{eyebrow}</p>
         <h1 id="auth-title" className={styles.title}>{title}</h1>
-        <p className={styles.description}>{description}</p>
+        <Card.Description className={styles.description}>{description}</Card.Description>
+        </Card.Header>
+        <Card.Content>
         {children}
-      </section>
+        </Card.Content>
+      </Card>
       <p className={styles.tagline}>Your Git. Your clusters. In sync.</p>
     </div>
   </main>

@@ -1,10 +1,13 @@
 "use client"
 
+import { Button } from "@/components/panelui/button"
+
 import Link from "next/link"
-import type { ReactNode } from "react"
+import { useEffect, useRef, type ReactNode } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Building03Icon, Shield01Icon, UserIcon, Folder01Icon, InformationCircleIcon, Alert02Icon } from "@hugeicons/core-free-icons"
-import { Badge } from "@/components/reui/badge"
+import { Building03Icon, Shield01Icon, UserIcon, Folder01Icon } from "@hugeicons/core-free-icons"
+import { Alert } from "@/components/panelui/alert"
+import { Badge } from "@/components/panelui/badge"
 import { PageHeading } from "@/components/ui-kit"
 
 export type SettingsNavItem = { id: string; label: string; href?: string; onSelect?: () => void; badge?: ReactNode }
@@ -14,8 +17,24 @@ const navItemClass = (active: boolean) => `flex w-full items-center justify-betw
 
 /** Left navigation of a settings area. A scrollable strip below `lg`, a sticky column above. */
 export function SettingsNav({ groups, activeId, label }: { groups: SettingsNavGroup[]; activeId: string; label: string }) {
+  const rail = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const container = rail.current
+    if (!container) return
+    const reveal = () => {
+      const active = container.querySelector<HTMLElement>('[aria-current="page"]')
+      if (!active || container.scrollWidth <= container.clientWidth) return
+      const bounds = container.getBoundingClientRect()
+      const item = active.getBoundingClientRect()
+      if (item.left < bounds.left || item.right > bounds.right) container.scrollLeft += item.left - bounds.left - (bounds.width - item.width) / 2
+    }
+    reveal()
+    const observer = new ResizeObserver(reveal)
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [activeId])
   return <nav aria-label={label} className="min-w-0 lg:sticky lg:top-6 lg:self-start">
-    <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 lg:mx-0 lg:block lg:space-y-5 lg:overflow-visible lg:px-0 lg:pb-0">
+    <div ref={rail} className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 lg:mx-0 lg:block lg:space-y-5 lg:overflow-visible lg:px-0 lg:pb-0">
       {groups.map((group, index) => <div key={group.label ?? index} className="flex shrink-0 gap-1 lg:block lg:space-y-0.5">
         {group.label && <p className="hidden px-3 pb-1 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase lg:block">{group.label}</p>}
         {group.items.map((item) => {
@@ -23,7 +42,7 @@ export function SettingsNav({ groups, activeId, label }: { groups: SettingsNavGr
           const content = <><span>{item.label}</span>{item.badge}</>
           return item.href
             ? <Link key={item.id} href={item.href} aria-current={active ? "page" : undefined} className={navItemClass(active)}>{content}</Link>
-            : <button key={item.id} type="button" aria-current={active ? "page" : undefined} onClick={item.onSelect} className={navItemClass(active)}>{content}</button>
+            : <Button variant="ghost" key={item.id} type="button" aria-current={active ? "page" : undefined} onClick={item.onSelect} className={navItemClass(active)}>{content}</Button>
         })}
       </div>)}
     </div>
@@ -39,11 +58,10 @@ export function ScopeBadge({ scope, name }: { scope: keyof typeof scopeIcons; na
 }
 
 /** Inline notice for a settings page. Use sparingly; the scope badge covers "who does this affect". */
-export function SettingsNotice({ tone = "info", title, children }: { tone?: "info" | "warning"; title?: string; children?: ReactNode }) {
-  return <div role={tone === "warning" ? "alert" : "note"} className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-sm ${tone === "warning" ? "border-warning/40 bg-warning/10" : "bg-muted/30"}`}>
-    <HugeiconsIcon icon={tone === "warning" ? Alert02Icon : InformationCircleIcon} strokeWidth={1.8} className={`mt-0.5 size-4 shrink-0 ${tone === "warning" ? "text-warning-foreground dark:text-warning" : "text-muted-foreground"}`} aria-hidden="true" />
-    <div className="min-w-0">{title && <p className="font-medium">{title}</p>}{children && <div className={title ? "mt-0.5 text-muted-foreground" : "text-muted-foreground"}>{children}</div>}</div>
-  </div>
+export function SettingsNotice({ tone = "info", title, children, inline = false }: { tone?: "info" | "warning" | "success" | "destructive"; title?: string; children?: ReactNode; inline?: boolean }) {
+  return <Alert tone={tone} variant={inline ? "inline" : "plain"} role={tone === "warning" || tone === "destructive" ? "alert" : tone === "success" ? "status" : "note"}>
+    <Alert.Icon />{title && <Alert.Title>{title}</Alert.Title>}{children && <Alert.Description>{children}</Alert.Description>}
+  </Alert>
 }
 
 /**

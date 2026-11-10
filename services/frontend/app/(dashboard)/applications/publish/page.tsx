@@ -1,5 +1,6 @@
 "use client"
 
+import { Card } from "@/components/panelui/card"
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { HugeiconsIcon } from "@hugeicons/react"
@@ -220,7 +221,7 @@ export default function PublishApplicationPage() {
             ? "After a successful build, deployment follows your workspace approval rules automatically."
             : "After a successful build, an authorized user must review and apply the deployment plan."}
         </p>
-        <div className="space-y-4 rounded-2xl border bg-card p-5">
+        <Card size="sm"><Card.Content className="space-y-4">
           {result.applicationUrl && (
             <div>
               <p className="text-xs text-muted-foreground">
@@ -246,7 +247,7 @@ export default function PublishApplicationPage() {
               <HugeiconsIcon icon={LinkSquare02Icon} strokeWidth={1.8} aria-hidden="true" />
             </Button>
           </div>
-        </div>
+        </Card.Content></Card>
       </div>
     )
   if (workspaceId && !draft.ready)
@@ -608,9 +609,9 @@ export default function PublishApplicationPage() {
               </p>
             </div>
           )}
-          <div className="space-y-3 rounded-2xl border bg-card p-3">
+          <div className="space-y-4">
             <PublishingDraftNotice draft={draft} inline />
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-3">
               <p className="text-xs leading-5 text-muted-foreground">
                 {busy
                   ? "Creating the repository, configuring the build, and starting CI…"

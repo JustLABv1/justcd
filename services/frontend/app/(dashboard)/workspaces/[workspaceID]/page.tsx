@@ -9,11 +9,13 @@ import { SectionSkeleton } from "@/components/settings/shared"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Audit01Icon, Delete02Icon, UserAdd01Icon } from "@hugeicons/core-free-icons"
 import { RowActions } from "@/components/action-menu"
-import { Badge } from "@/components/reui/badge"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
-import { Button } from "@/components/ui/button"
-import { FormSelect } from "@/components/ui/form-select"
-import { Input } from "@/components/ui/input"
+import { Avatar } from "@/components/panelui/avatar"
+import { Alert } from "@/components/panelui/alert"
+import { Badge } from "@/components/panelui/badge"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
+import { Button } from "@/components/panelui/button"
+import { FormSelect } from "@/components/form-select"
+import { Input } from "@/components/panelui/input"
 import { PublishingProfiles } from "@/components/settings/publishing-profiles"
 import { WorkspaceSettings } from "@/components/workspace-settings"
 import { ErrorNotice } from "@/components/workspace-ui"
@@ -120,7 +122,7 @@ function WorkspaceSettingsPage() {
   const navGroups: SettingsNavGroup[] = [
     { label: "Workspace", items: [
       ...(isOwner ? [{ id: "general", label: "General", href: `/workspaces/${workspaceID}?tab=general` }] : []),
-      { id: "members", label: "Members & access", href: `/workspaces/${workspaceID}?tab=members`, badge: <Badge size="xs" variant="secondary">{members.length}</Badge> },
+      { id: "members", label: "Members & access", href: `/workspaces/${workspaceID}?tab=members`, badge: <Badge size="sm" variant="secondary">{members.length}</Badge> },
     ] },
     ...(isOwner ? [{ label: "Delivery", items: [
       { id: "publishing", label: "Publishing profiles", href: `/workspaces/${workspaceID}?tab=publishing` },
@@ -140,7 +142,7 @@ function WorkspaceSettingsPage() {
     navLabel="Workspace settings sections"
   >
       {!isOwner && <SettingsNotice>Workspace owners manage general settings, deployment policies, and notifications. You can view members and their roles here.</SettingsNotice>}
-    {deletionPlans.length > 0 && <div role="status" className="rounded-xl border border-warning/40 bg-warning/10 p-4 text-sm"><p className="font-medium">Deletion plans are ready for review.</p><p className="mt-1 text-sm text-muted-foreground">Approve and apply each application plan. Once all managed resources are gone, choose “Delete workspace” again to remove the workspace record.</p><ul className="mt-3 space-y-1">{deletionPlans.map((item) => <li key={item.applicationId}><Link href={`/applications/${item.applicationId}?tab=changes`} className="font-medium underline underline-offset-4">{item.applicationName} · {item.managedResources} resources</Link></li>)}</ul></div>}
+    {deletionPlans.length > 0 && <Alert tone="warning" variant="plain"><Alert.Icon /><Alert.Title>Deletion plans are ready for review.</Alert.Title><Alert.Description>Approve and apply each application plan. Once all managed resources are gone, choose “Delete workspace” again to remove the workspace record.</Alert.Description><ul className="col-start-2 mt-3 space-y-2">{deletionPlans.map((item) => <li key={item.applicationId}><Button variant="outline" size="sm" nativeButton={false} render={<Link href={`/applications/${item.applicationId}?tab=changes`} />} className="h-auto max-w-full whitespace-normal break-words text-left">{item.applicationName} · {item.managedResources} resources</Button></li>)}</ul></Alert>}
 
     {isOwner && activeTab === "publishing" && <PublishingProfiles key={workspaceID} workspaceId={workspaceID} />}
     {activeTab === "ai" && <div className="space-y-6">{isOwner && <WorkspaceAIPolicy key={workspaceID} workspaceId={workspaceID} />}<AIAssistant presentation="inline" key={`chat-${workspaceID}`} workspaceId={workspaceID} /></div>}
@@ -156,9 +158,9 @@ function WorkspaceSettingsPage() {
           {members.length ? <ul className="divide-y">{members.map((member) => {
             const name = member.displayName || member.email
             return <li key={member.id} className="flex flex-wrap items-center gap-3 px-5 py-3">
-              <span aria-hidden="true" className="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-xs font-semibold uppercase">{name.slice(0, 2)}</span>
+              <Avatar name={name} size="sm" color="muted" aria-hidden="true" />
               <span className="min-w-0 flex-1">
-                <span className="flex flex-wrap items-center gap-2"><span className="block truncate text-sm font-medium">{name}</span>{member.disabled && <Badge size="xs" radius="full" variant="warning-light">Locked</Badge>}{member.managedBySSO && <Badge size="xs" radius="full" variant="outline">Managed by SSO</Badge>}</span>
+                <span className="flex flex-wrap items-center gap-2"><span className="block truncate text-sm font-medium">{name}</span>{member.disabled && <Badge size="sm"  variant="warning">Locked</Badge>}{member.managedBySSO && <Badge size="sm"  variant="outline">Managed by SSO</Badge>}</span>
                 <span className="block truncate text-sm text-muted-foreground">{member.email}</span>
               </span>
               {isOwner && member.editable

@@ -188,7 +188,7 @@ export function filterReadOnlyProps(state: {
  *  pairing them keeps a row's kebab as tall as the cell beside it. */
 export interface FilterControlSizes {
   /** Labelled buttons: the row cells, both triggers, the panel footer. */
-  button: "sm" | "default"
+  button: "sm" | "md"
   /** Icon-only buttons, and also the CHIP's height: a chip is an
    *  `items-stretch` `ButtonGroup` and no style gives its text segment a
    *  height, so the segments stretch to the kebab, the one child that has one.
@@ -209,7 +209,7 @@ export interface FilterControlSizes {
  *  own label to clear. */
 const FILTER_CONTROL_SIZES: Record<"sm" | "default", FilterControlSizes> = {
   sm: { button: "sm", icon: "icon-sm" },
-  default: { button: "default", icon: "icon" },
+  default: { button: "md", icon: "icon" },
 }
 
 /** The pair for a bar's size, off anything with a `size`, so a

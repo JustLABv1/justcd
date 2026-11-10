@@ -1,6 +1,5 @@
 import { HugeiconsIcon } from "@hugeicons/react"
 import type { Home01Icon } from "@hugeicons/core-free-icons"
-import { IconTile } from "@/components/reui/icon-tile"
 import { cn } from "cn"
 
 /** Category colours shared by the sidebar and the command palette so a colour means the same thing everywhere. */
@@ -21,7 +20,7 @@ export type Tone = keyof typeof tones
  * `soft` is the quiet tinted version for inactive rows. Fills its parent unless `className` sizes it.
  */
 export function NavTile({ icon, tone = "blue", variant = "solid", className }: { icon: typeof Home01Icon; tone?: Tone; variant?: "solid" | "soft"; className?: string }) {
-  return <IconTile variant={variant} radius="default" className={cn("size-full rounded-lg [--icon-tile-icon-size:--spacing(4)]", variant === "solid" ? tones[tone].solid : tones[tone].soft, className)}>
+  return <span aria-hidden="true" className={cn("inline-flex size-full items-center justify-center rounded-lg [&_svg]:size-4", variant === "solid" ? tones[tone].solid : tones[tone].soft, className)}>
     <HugeiconsIcon icon={icon} strokeWidth={1.8} aria-hidden="true" />
-  </IconTile>
+  </span>
 }

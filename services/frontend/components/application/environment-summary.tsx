@@ -1,15 +1,15 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Badge } from "@/components/reui/badge"
+import { Badge } from "@/components/panelui/badge"
 import { api } from "@/lib/api"
 import { ago } from "@/lib/relative-time"
 import type { ApplicationEnvironmentInfo } from "@/lib/types"
 
 const statusBadge = {
-  success: { variant: "success-light", label: "Deployed" },
-  failed: { variant: "destructive-light", label: "Failed" },
-  running: { variant: "info-light", label: "Running" },
+  success: { variant: "success", label: "Deployed" },
+  failed: { variant: "destructive", label: "Failed" },
+  running: { variant: "info", label: "Running" },
   canceled: { variant: "outline", label: "Canceled" },
 } as const
 
@@ -48,11 +48,11 @@ export function EnvironmentSummary({
     <div className="border-t px-5 py-4">
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="text-sm font-semibold">GitLab environment</h3>
-        <Badge size="sm" radius="full" variant="outline">
+        <Badge size="sm" variant="outline">
           {environment.tier}
         </Badge>
         {status && (
-          <Badge size="sm" radius="full" variant={status.variant}>
+          <Badge size="sm" variant={status.variant}>
             {status.label}
           </Badge>
         )}

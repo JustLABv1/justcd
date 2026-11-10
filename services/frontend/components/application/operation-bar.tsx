@@ -13,15 +13,17 @@ import {
   ErrorDetailsDialog,
 } from "@/components/error-details"
 import { RolloutPanel } from "@/components/application/rollout-panel"
-import { Button } from "@/components/ui/button"
+import { Card } from "@/components/panelui/card"
+import { Frame } from "@/components/panelui/frame"
+import { Button } from "@/components/panelui/button"
 import { Disclosure } from "@/components/ui/collapsible"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Cancel01Icon } from "@hugeicons/core-free-icons"
+import { Alert02Icon, Cancel01Icon } from "@hugeicons/core-free-icons"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip"
+} from "@/components/panelui/tooltip"
 import { RunProgressStages } from "@/components/application/run-progress"
 import { StatusBadge } from "@/components/ui-kit"
 import { rolloutSummary } from "@/lib/rollout-timeline"
@@ -50,7 +52,10 @@ export function OperationBar({
   onCreatePlan,
   canCreatePlan,
   aiAction,
+  embedded = false,
 }: {
+  /** Draw a failure as rows for a frame that already exists (the attention frame). */
+  embedded?: boolean
   aiAction?: ReactNode
   onCreatePlan?: () => void
   canCreatePlan?: boolean
@@ -200,13 +205,94 @@ export function OperationBar({
             )}
           </div>
   ) : null
+  if (failed && embedded) {
+    return (
+      <Frame.Row role="alert" className="flex-wrap items-start gap-x-4 gap-y-3">
+        <span aria-hidden="true" className="grid size-8 shrink-0 place-items-center rounded-full bg-destructive/15 text-destructive"><HugeiconsIcon icon={Alert02Icon} strokeWidth={2} className="size-4" /></span>
+        <div className="min-w-0 flex-1 basis-72 space-y-0.5">
+          <p className="text-sm font-medium">{operationPhaseLabel(operation.progress?.phase, operation.status)}</p>
+          <p className="text-sm break-words text-muted-foreground">
+            {failedResource ? `${resourceLabel(failedResource.identity)} could not be applied. ` : ""}
+            {failureDetail ? <span className="font-mono text-xs text-destructive select-text">{failureDetail}</span> : failedResource?.message || operation.message}
+          </p>
+          <p className="text-sm text-muted-foreground">
+            {total > 0 ? `${completed} of ${total} resources were applied and kept. Nothing was rolled back automatically.` : "No resources were applied."}
+            {operation.nextRetryAt ? ` A fresh plan retry is scheduled for ${new Date(operation.nextRetryAt).toLocaleString()}.` : ""}
+            {" "}Elapsed {elapsed(operation.startedAt, operation.finishedAt)} · Attempt {operation.attemptCount || 1}.
+          </p>
+          {total > 0 && <div className="pt-1.5" role="img" aria-label={`${completed} of ${total} resources applied`}><div className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-success" style={{ width: `${Math.round((completed / total) * 100)}%` }} /></div></div>}
+          {cancelError != null && <p role="alert" className="pt-1 text-sm text-destructive">{errorMessage(cancelError)}</p>}
+          <Disclosure className="pt-1" summary="Timeline and resource rollout">
+            <div className="space-y-4">
+              {progress && <RunProgressStages progress={progress} label="Sync stages" />}
+              {Boolean(operation.progress?.resources?.length) && (
+                <RolloutPanel key={operation.id} operation={operation} plan={plan} elapsed={elapsed} onReviewResource={onReviewResource} />
+              )}
+            </div>
+          </Disclosure>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {actionBar}
+          {scheduleActions}
+        </div>
+      </Frame.Row>
+    )
+  }
+  if (failed) {
+    return (
+      <Card aria-label={operation.type === "rollback" ? "Rollback progress" : "Sync progress"} className="mb-5 min-w-0 border-destructive/40 bg-[color-mix(in_oklab,var(--destructive)_12%,var(--muted))]">
+        <Card.Header>
+          <Card.Title as="h2" className="text-destructive">{operationPhaseLabel(operation.progress?.phase, operation.status)}</Card.Title>
+          <Card.Description>Elapsed {elapsed(operation.startedAt, operation.finishedAt)} · Attempt {operation.attemptCount || 1}</Card.Description>
+          <Card.Action><StatusBadge status={operation.status} /></Card.Action>
+        </Card.Header>
+        <Card.Content>
+          <div role="alert" className="flex min-w-0 items-start gap-3 p-4">
+            <span aria-hidden="true" className="grid size-8 shrink-0 place-items-center rounded-full bg-destructive/15 text-destructive"><HugeiconsIcon icon={Alert02Icon} strokeWidth={2} className="size-4" /></span>
+            <div className="min-w-0 flex-1 space-y-1.5">
+            <p className="text-sm font-semibold break-words text-destructive">
+              {failedResource ? `${resourceLabel(failedResource.identity)} could not be applied` : operation.message}
+            </p>
+            {failureDetail && <p className="font-mono text-xs break-words text-destructive select-text">{failureDetail}</p>}
+            {!failureDetail && failedResource && <p className="text-sm break-words text-muted-foreground">{failedResource.message || operation.message}</p>}
+            <p className="text-sm text-muted-foreground">
+              {total > 0 ? `${completed} of ${total} resources were applied and kept. Nothing was rolled back automatically.` : "No resources were applied."}
+              {operation.nextRetryAt ? ` A fresh plan retry is scheduled for ${new Date(operation.nextRetryAt).toLocaleString()}.` : ""}
+            </p>
+            {total > 0 && <div className="pt-1" role="img" aria-label={`${completed} of ${total} resources applied`}><div className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-success" style={{ width: `${Math.round((completed / total) * 100)}%` }} /></div></div>}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2 px-4 py-3">
+            {actionBar}
+            {scheduleActions}
+          </div>
+          {cancelError != null && <p role="alert" className="px-4 py-3 text-sm text-destructive">{errorMessage(cancelError)}</p>}
+          <div className="px-4 py-3">
+            <Disclosure summary="Timeline and resource rollout">
+              <div className="space-y-4">
+                {progress && <RunProgressStages progress={progress} label="Sync stages" />}
+                {Boolean(operation.progress?.resources?.length) && (
+                  <RolloutPanel key={operation.id} operation={operation} plan={plan} elapsed={elapsed} onReviewResource={onReviewResource} />
+                )}
+              </div>
+            </Disclosure>
+          </div>
+        </Card.Content>
+      </Card>
+    )
+  }
   return (
-    <section
+    <Card
       aria-label={
         operation.type === "rollback" ? "Rollback progress" : "Sync progress"
       }
-      className={`mb-5 min-w-0 space-y-4 rounded-xl border px-4 py-4 ${failed ? "border-destructive/30 bg-destructive/5" : "bg-card"}`}
+      className="mb-5 min-w-0"
     >
+      <Card.Header>
+        <Card.Title as="h2">{operation.type === "rollback" ? "Rollback" : "Sync"}</Card.Title>
+      </Card.Header>
+      <Card.Content>
+      <div className="min-w-0 space-y-4 p-4">
       <div
         role="status"
         aria-live="polite"
@@ -253,7 +339,7 @@ export function OperationBar({
         {!failed && actionBar}
       </div>
       {failed && (
-        <div role="alert" className="min-w-0 space-y-2 rounded-lg border border-destructive/30 bg-background/60 p-3">
+        <div role="alert" className="min-w-0 space-y-2 rounded-2xl bg-destructive/10 p-4">
           <p className="text-sm font-medium break-words">
             {failedResource ? `${resourceLabel(failedResource.identity)} could not be applied` : operation.message}
           </p>
@@ -309,6 +395,8 @@ export function OperationBar({
           )}
         </>
       )}
-    </section>
+      </div>
+      </Card.Content>
+    </Card>
   )
 }

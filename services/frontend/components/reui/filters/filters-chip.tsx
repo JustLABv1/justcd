@@ -46,11 +46,11 @@ import type {
 } from "@/components/reui/filters/filters-types"
 
 import { cn } from "cn"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/panelui/button"
 import {
   ButtonGroup,
   ButtonGroupText,
-} from "@/components/ui/button-group"
+} from "@/components/panelui/button-group"
 import {
   DropdownMenu,
   DropdownMenuContent,

@@ -97,8 +97,8 @@ const alertDialogVariants = tv({
     description: 'text-[15px] leading-[22px] text-muted-foreground',
     // Held in from the band's edge further than the panel is, so the row of
     // answers does not read as a third edge of the dialog.
-    footer: 'flex items-center gap-3 px-[18px] pb-2.5 pt-4',
-    action: 'relative isolate h-11 min-w-0 flex-1 overflow-hidden rounded-full px-4 text-[15px]',
+    footer: 'flex flex-col-reverse items-stretch gap-3 px-[18px] pb-2.5 pt-4 sm:flex-row',
+    action: 'relative isolate h-auto min-h-11 min-w-0 flex-1 overflow-hidden rounded-full px-4 py-2.5 text-center text-[15px] leading-5 whitespace-normal break-words',
     // Drawn under the label and over the button's own fill, from the start edge.
     fill: 'pointer-events-none absolute inset-0 -z-10 origin-left scale-x-0 bg-[color-mix(in_oklab,currentColor_24%,transparent)] rtl:origin-right',
   },
@@ -316,7 +316,7 @@ function AlertDialogContent({
 }
 AlertDialogContent.displayName = 'AlertDialog.Content';
 
-export interface AlertDialogMediaProps extends ComponentProps<'div'> {}
+export type AlertDialogMediaProps = ComponentProps<'div'>;
 
 /** A glyph in a disc of the dialog's tone, above the title. */
 function AlertDialogMedia({ className, render, ...props }: AlertDialogMediaProps & RenderProp<'div'>) {
@@ -335,7 +335,7 @@ function AlertDialogMedia({ className, render, ...props }: AlertDialogMediaProps
 }
 AlertDialogMedia.displayName = 'AlertDialog.Media';
 
-export interface AlertDialogTitleProps extends ComponentProps<'h2'> {}
+export type AlertDialogTitleProps = ComponentProps<'h2'>;
 
 /** The question. It is what the dialog is announced as. */
 function AlertDialogTitle({ className, ...props }: AlertDialogTitleProps) {
@@ -346,7 +346,7 @@ function AlertDialogTitle({ className, ...props }: AlertDialogTitleProps) {
 }
 AlertDialogTitle.displayName = 'AlertDialog.Title';
 
-export interface AlertDialogDescriptionProps extends ComponentProps<'p'> {}
+export type AlertDialogDescriptionProps = ComponentProps<'p'>;
 
 /** What follows from each answer, read out after the title. */
 function AlertDialogDescription({ className, ...props }: AlertDialogDescriptionProps) {
@@ -363,7 +363,7 @@ function AlertDialogDescription({ className, ...props }: AlertDialogDescriptionP
 }
 AlertDialogDescription.displayName = 'AlertDialog.Description';
 
-export interface AlertDialogFooterProps extends ComponentProps<'div'> {}
+export type AlertDialogFooterProps = ComponentProps<'div'>;
 
 /**
  * The answers, side by side at equal widths in the band under the panel.
@@ -381,7 +381,7 @@ function AlertDialogFooter({ className, render, ...props }: AlertDialogFooterPro
 }
 AlertDialogFooter.displayName = 'AlertDialog.Footer';
 
-export interface AlertDialogCancelProps extends Omit<ButtonProps, 'variant' | 'size'> {}
+export type AlertDialogCancelProps = Omit<ButtonProps, 'variant' | 'size'>;
 
 /** Closes the dialog without doing anything. It reads "Cancel" unless given children. */
 function AlertDialogCancel({ className, children = 'Cancel', disabled, ...props }: AlertDialogCancelProps) {
@@ -429,7 +429,7 @@ function useHold(duration: number | undefined, onDone: () => void) {
   // as a screen reader sends, can be told apart.
   const pressedAt = useRef(0);
   const done = useRef(onDone);
-  done.current = onDone;
+  useEffect(() => { done.current = onDone; }, [onDone]);
 
   const stop = useCallback(() => {
     window.clearTimeout(timer.current);

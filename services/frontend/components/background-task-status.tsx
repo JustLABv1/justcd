@@ -2,12 +2,13 @@
 
 import Link from "next/link"
 import { useProgressDismissals } from "@/hooks/use-progress-dismissals"
-import { Button } from "@/components/ui/button"
+import { Card } from "@/components/panelui/card"
+import { Button } from "@/components/panelui/button"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Cancel01Icon } from "@hugeicons/core-free-icons"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { Spinner } from "@/components/ui/spinner"
-import { Badge } from "@/components/reui/badge"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/panelui/tooltip"
+import { Spinner } from "@/components/panelui/spinner"
+import { Badge } from "@/components/panelui/badge"
 import { ErrorDetailsButton } from "@/components/error-details"
 import { errorMessage, taskError } from "@/lib/api"
 import { taskPending } from "@/hooks/background-tasks"
@@ -33,10 +34,7 @@ export function BackgroundTaskStatus({
   const displayed = active.length ? active : tasks.slice(0, 1).filter((task) => (task.kind !== "approval" || task.status !== "succeeded") && !isDismissed(`task:${task.id}`) && !planTaskHasOperation(task, operations))
   if (!displayed.length && !error) return null
   return (
-    <section
-      aria-label="Background work"
-      className="mb-5 space-y-3 rounded-xl border bg-card p-4"
-    >
+    <Card as="section" size="sm" aria-label="Background work" className="mb-5"><Card.Content className="space-y-3">
       {displayed.map((task) => (
         <div key={task.id} className="min-w-0 space-y-4">
           <div
@@ -53,12 +51,12 @@ export function BackgroundTaskStatus({
               <p className="font-medium">
                 {task.kind === "plan" ? "Plan generation" : "Approval"}{" "}
                 <Badge
-                  size="xs"
+                  size="sm"
                   variant={
                     task.status === "failed"
-                      ? "destructive-light"
+                      ? "destructive"
                       : task.status === "succeeded"
-                        ? "success-light"
+                        ? "success"
                         : "secondary"
                   }
                 >
@@ -127,6 +125,6 @@ export function BackgroundTaskStatus({
           </Button>
         </div>
       )}
-    </section>
+    </Card.Content></Card>
   )
 }

@@ -1,16 +1,9 @@
 "use client"
 
-import { useId } from "react"
-import { Bar, BarChart, XAxis, YAxis } from "recharts"
+import { BarChart } from "@/components/panelui/bar-chart"
 import { Button } from "@/components/panelui/button"
-import { Frame } from "@/components/panelui/frame"
+import { Card } from "@/components/panelui/card"
 import { Tabs } from "@/components/panelui/tabs"
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-  type ChartConfig,
-} from "@/components/ui/chart"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ErrorDetailsButton } from "@/components/error-details"
 import { summarizeSyncHistory } from "@/lib/sync-history"
@@ -20,8 +13,8 @@ const config = {
   succeeded: { label: "Succeeded", color: "var(--success)" },
   failed: { label: "Failed", color: "var(--destructive)" },
   cancelled: { label: "Cancelled", color: "var(--warning)" },
-  active: { label: "Active", color: "var(--chart-2)" },
-} satisfies ChartConfig
+  active: { label: "Active", color: "var(--info)" },
+}
 const outcomes = ["succeeded", "failed", "cancelled", "active"] as const
 
 export function SyncHistoryChart({
@@ -52,9 +45,9 @@ export function SyncHistoryChartView({
   onViewActivity?: () => void
 }) {
   const { result, range, setRange, retry } = state
-  const patternID = useId().replace(/:/g, "")
   const history = result.history
   const totals = history ? summarizeSyncHistory(history) : null
+  const showData = !result.loading && !result.error && Boolean(totals && totals.total > 0)
   const label = range === "24h" ? "24 hours" : "7 days"
   const max = Math.max(
     1,
@@ -77,10 +70,10 @@ export function SyncHistoryChartView({
     return `${start.toLocaleString()} – ${end.toLocaleTimeString()}`
   }
   return (
-    <Frame variant="plain" className="min-w-0">
-      <Frame.Header>
-        <Frame.Title as="h2">Sync activity</Frame.Title>
-        <Frame.Description aria-live="polite">
+    <Card className="min-w-0">
+      <Card.Header className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1 basis-48"><Card.Title as="h2">Sync activity</Card.Title>
+        <Card.Description aria-live="polite" className={result.error ? "text-destructive" : undefined}>
           {result.loading
             ? "Loading sync history…"
             : result.error
@@ -88,19 +81,19 @@ export function SyncHistoryChartView({
               : totals && totals.total > 0
                 ? `${totals.total} runs in the last ${label}${totals.successRate == null ? "" : ` · ${totals.successRate.toFixed(1)}% succeeded`}`
                 : ""}
-        </Frame.Description>
-        <Frame.Action>
+        </Card.Description></div>
+        <Card.Action>
           <Tabs value={range} onValueChange={(value) => { if (value === "24h" || value === "7d") setRange(value) }} aria-label="Sync history period">
             <Tabs.List aria-label="Sync history period">
               <Tabs.Trigger value="24h">24 hours</Tabs.Trigger>
               <Tabs.Trigger value="7d">7 days</Tabs.Trigger>
             </Tabs.List>
           </Tabs>
-        </Frame.Action>
-      </Frame.Header>
-      <Frame.Panel>
-      <div className="space-y-4 p-5">
-      {totals?.total !== 0 && (
+        </Card.Action>
+      </Card.Header>
+      <Card.Content>
+      <div className="space-y-4">
+      {showData && (
         <ul aria-label="Run outcomes" className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
           {outcomes.map((outcome) => (
             <li key={outcome} className="inline-flex items-center gap-1.5">
@@ -114,10 +107,10 @@ export function SyncHistoryChartView({
         <Skeleton className="h-56 w-full motion-reduce:animate-none" />
       ) : result.error ? (
         <div
-          role="status"
+          role="alert"
           className="flex min-h-40 flex-wrap items-center justify-center gap-3 p-5"
         >
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-destructive">
             Sync history could not be loaded.
           </p>
           <Button variant="outline" size="sm" onClick={retry}>
@@ -126,104 +119,43 @@ export function SyncHistoryChartView({
           <ErrorDetailsButton error={result.error} />
         </div>
       ) : totals?.total === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          No sync runs in the last {label}. Syncs and rollbacks appear here once recorded.
-        </p>
+        <div className="flex flex-col items-center gap-3 px-4 py-6 text-center">
+          <p className="max-w-sm text-sm text-muted-foreground">
+            No sync runs in the last {label}. Syncs and rollbacks appear here once recorded.
+          </p>
+          {onViewActivity && <Button variant="outline" size="sm" onClick={onViewActivity}>View activity</Button>}
+        </div>
       ) : (
         history && (
           <div className="px-2 pt-4">
-            <ChartContainer
-              config={config}
-              className="aspect-auto h-56 w-full"
-              aria-label={`Sync and rollback outcomes over the last ${label}`}
-            >
-              <BarChart
-                data={history.buckets}
-                accessibilityLayer
-                margin={{ top: 4, right: 8, bottom: 4, left: 0 }}
-                barCategoryGap="24%"
-              >
-                <defs>
-                  {outcomes.map((outcome) => (
-                    <pattern
-                      key={outcome}
-                      id={`${patternID}-${outcome}`}
-                      width="6"
-                      height="6"
-                      patternUnits="userSpaceOnUse"
-                    >
-                      <rect
-                        width="6"
-                        height="6"
-                        fill={`var(--color-${outcome})`}
-                        fillOpacity="0.75"
-                      />
-                      <path
-                        d="M-1 1L1-1M0 6L6 0M5 7L7 5"
-                        stroke="var(--card)"
-                        strokeOpacity="0.4"
-                        strokeWidth="1.5"
-                      />
-                    </pattern>
-                  ))}
-                </defs>
-                <XAxis
-                  dataKey="startedAt"
-                  tickFormatter={tick}
-                  tickLine={false}
-                  axisLine={false}
-                  minTickGap={45}
-                  tickMargin={10}
-                />
-                <YAxis
-                  domain={[0, max]}
-                  allowDecimals={false}
-                  tickLine={false}
-                  axisLine={false}
-                  width={32}
-                  tickCount={4}
-                />
-                <ChartTooltip
-                  cursor={false}
-                  content={
-                    <ChartTooltipContent
-                      labelFormatter={(label) => bucketLabel(String(label))}
-                    />
-                  }
-                />
-                {outcomes.map((outcome, index) => (
-                  <Bar
-                    key={outcome}
-                    dataKey={outcome}
-                    stackId="outcome"
-                    fill={`url(#${patternID}-${outcome})`}
-                    maxBarSize={28}
-                    isAnimationActive={false}
-                    background={
-                      index === 0
-                        ? { fill: "var(--muted)", radius: 4 }
-                        : undefined
-                    }
-                  />
-                ))}
-              </BarChart>
-            </ChartContainer>
+            <BarChart data={history.buckets} xDataKey="startedAt" stacked barWidth={28} barGap={0.24}
+              yDomain={[0, max]} animationDuration={0} domainDuration={0}
+              label={`Sync and rollback outcomes over the last ${label}`}
+              labelForDatum={(datum) => `${bucketLabel(String(datum.startedAt))}. ${outcomes.map(outcome => `${config[outcome].label}: ${datum[outcome]}`).join(". ")}`}>
+              <BarChart.XAxis ticks={5} format={(datum) => tick(String(datum.startedAt))} />
+              <BarChart.YAxis ticks={Math.min(4, max + 1)} format={(value) => Number.isInteger(value) ? String(value) : ""} />
+              <BarChart.Tooltip labels={Object.fromEntries(outcomes.map((outcome) => [outcome, config[outcome].label]))} formatX={(datum) => bucketLabel(String(datum.startedAt))} />
+              <BarChart.Bar dataKey="succeeded" color="success" />
+              <BarChart.Bar dataKey="failed" color="destructive" />
+              <BarChart.Bar dataKey="cancelled" color="warning" />
+              <BarChart.Bar dataKey="active" color="info" />
+            </BarChart>
           </div>
         )
       )}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        {totals?.total !== 0 && <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
+        {showData && <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
           Syncs and rollbacks grouped by start time. Success rate includes
           succeeded, failed and cancelled runs; active runs are excluded.
         </p>}
-        {onViewActivity && (
-          <Button variant="ghost" size="sm" onClick={onViewActivity}>
+        {onViewActivity && showData && (
+          <Button variant="outline" size="sm" onClick={onViewActivity}>
             View activity
           </Button>
         )}
       </div>
       </div>
-      </Frame.Panel>
-    </Frame>
+      </Card.Content>
+    </Card>
   )
 }

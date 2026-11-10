@@ -13,9 +13,10 @@ import { ErrorNotice } from "@/components/workspace-ui"
 import { Alert } from "@/components/panelui/alert"
 import { Badge } from "@/components/panelui/badge"
 import { Button } from "@/components/panelui/button"
-import { Frame } from "@/components/panelui/frame"
+import { Card } from "@/components/panelui/card"
+import { Section } from "@/components/section"
 import { Input } from "@/components/panelui/input"
-import { Tabs } from "@/components/panelui/tabs"
+import { Chip } from "@/components/panelui/chip"
 
 export type TemplateLayoutRule = { message?: string; anyOf: string[][] }
 
@@ -152,11 +153,9 @@ export function TemplateCatalog({
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="max-w-full overflow-x-auto">
-          <Tabs variant="segmented" value={category} onValueChange={(next) => { if (typeof next === "string") setCategory(next) }}>
-            <Tabs.List aria-label="Template category">
-              {categories.map((value) => <Tabs.Trigger key={value} value={value}>{value}</Tabs.Trigger>)}
-            </Tabs.List>
-          </Tabs>
+          <Chip.Group multiple={false} value={[category]} onValueChange={(next) => { if (next[0]) setCategory(next[0]) }} aria-label="Template category">
+            {categories.map((value) => <Chip key={value} value={value}>{value}</Chip>)}
+          </Chip.Group>
         </div>
         <Input.Group className="w-full sm:w-72">
           <Input.Addon><HugeiconsIcon icon={Search01Icon} aria-hidden="true" strokeWidth={1.7} /></Input.Addon>
@@ -168,31 +167,24 @@ export function TemplateCatalog({
       {loading && <p role="status" className="text-sm text-muted-foreground">Loading templates…</p>}
 
       {visible.length > 0 && (
-        <Frame>
-          <Frame.Header>
-            <Frame.Title as="h2">{category === "All" ? "All templates" : category}</Frame.Title>
-            <Frame.Description>{visible.length} {visible.length === 1 ? "template" : "templates"}</Frame.Description>
-          </Frame.Header>
-          <Frame.Panel aria-label="Application templates">
-            {visible.map((template) => (
-              <Frame.Row key={template.id} chevron onClick={() => onSelect(template)} aria-label={`Use ${template.name} template`} className="items-start gap-4 py-4">
-                <Frame.Media><TemplateGlyph template={template} /></Frame.Media>
-                <Frame.Content className="gap-1">
-                  <span className="flex flex-wrap items-center gap-2">
-                    <Frame.Title as="p">{template.name}</Frame.Title>
-                    {template.custom && <Badge size="sm" variant="outline">Custom</Badge>}
-                  </span>
-                  <Frame.Description className="whitespace-normal">{template.description}</Frame.Description>
-                  <span className="text-xs text-muted-foreground">{template.detail}</span>
-                </Frame.Content>
-              </Frame.Row>
-            ))}
-          </Frame.Panel>
-        </Frame>
+        <Section title={category === "All" ? "All templates" : category} description={`${visible.length} ${visible.length === 1 ? "template" : "templates"}`}>
+          <div aria-label="Application templates" className="grid gap-3 sm:grid-cols-2">
+            {visible.map((template) => <Card key={template.id} size="sm">
+              <Card.Header>
+                <Card.Title className="flex flex-wrap items-center gap-2 text-sm"><TemplateGlyph template={template} />{template.name}{template.custom && <Badge size="sm" variant="outline">Custom</Badge>}</Card.Title>
+                <Card.Description>{template.description}</Card.Description>
+              </Card.Header>
+              <Card.Content className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-muted-foreground">{template.detail}</p>
+                <Button variant="outline" size="sm" onClick={() => onSelect(template)} aria-label={`Use ${template.name} template`}>Use template</Button>
+              </Card.Content>
+            </Card>)}
+          </div>
+        </Section>
       )}
 
       {!loading && !error && !visible.length && (
-        <div role="status" className="rounded-2xl border border-dashed px-6 py-12 text-center">
+        <div role="status" className="px-6 py-12 text-center">
           <p className="font-medium">No templates found</p>
           <p className="mt-2 text-sm text-muted-foreground">Try another search or category.</p>
           <Button type="button" variant="outline" className="mt-5" onClick={() => { setSearch(""); setCategory("All") }}>Clear filters</Button>

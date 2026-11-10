@@ -1,19 +1,17 @@
 "use client"
 
+import { Section } from "@/components/section"
+
 import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/panelui/button"
-import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
-import { Spinner } from "@/components/ui/spinner"
-import { Input } from "@/components/ui/input"
+import { Card } from "@/components/panelui/card"
+import { Alert } from "@/components/panelui/alert"
+import { Spinner } from "@/components/panelui/spinner"
+import { Input } from "@/components/panelui/input"
 import { ArchiveUpload } from "@/components/applications/archive-upload"
-import {
-  CheckboxCard,
-  FormField,
-  PageHeading,
-  Panel,
-} from "@/components/ui-kit"
+import { CheckboxCard, FormField, PageHeading } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { api } from "@/lib/api"
 import { publishProject, publishingSize } from "@/lib/publishing"
@@ -130,7 +128,7 @@ export default function PublishVersionPage() {
         }
       />
       {setup?.publication.completionError && (
-        <Panel
+        <Section
           title="Deployment update needs attention"
           description={setup.publication.completionError}
         >
@@ -138,35 +136,32 @@ export default function PublishVersionPage() {
             JustCD retries automatically. Check the publishing token permissions
             and backend GitLab connectivity.
           </p>
-        </Panel>
+        </Section>
       )}
       {(error ?? limitsError) != null && (
         <ErrorNotice error={error ?? limitsError} />
       )}
       {busy && (
-        <Alert
-          role="status"
-          className="mb-5 border-primary/25 bg-primary/5 p-4"
-        >
-          <Spinner className="text-primary" />
-          <AlertTitle>
+        <Alert tone="info" role="status" className="mb-5">
+          <Alert.Icon><Spinner /></Alert.Icon>
+          <Alert.Title>
             {uploadPercent < 100
               ? `Uploading new version · ${uploadPercent}%`
               : "Upload complete · Preparing build"}
-          </AlertTitle>
-          <AlertDescription>
+          </Alert.Title>
+          <Alert.Description>
             {uploadPercent < 100
               ? "Your source archive is being transferred. Keep this page open."
               : "JustCD is validating the source, committing it to GitLab, and requesting a build. This may take a little while. Keep this page open; publishing progress will open automatically once the pipeline starts."}
-          </AlertDescription>
+          </Alert.Description>
         </Alert>
       )}
       {pipeline ? (
-        <Panel
+        <Section
           title="Build started"
           description="The running application keeps its current version until the new release is built and applied."
         >
-          <div className="space-y-4 p-5">
+          <div className="space-y-4">
             <Button variant="outline" nativeButton={false} render={<a href={pipeline} target="_blank" rel="noreferrer" />}>
               Follow GitLab pipeline
             </Button>
@@ -178,16 +173,16 @@ export default function PublishVersionPage() {
               Open application
             </Button>
           </div>
-        </Panel>
+        </Section>
       ) : (
         <form onSubmit={submit} className="space-y-5">
-          <Panel
+          <Section
             title="Upload application source"
             description="Each upload is a complete source snapshot. Files absent from this archive are removed from source/ in Git."
           >
             <fieldset
               disabled={!setup || !limits || busy}
-              className="space-y-4 p-5"
+              className="space-y-4"
             >
               <FormField
                 label="Application ZIP"
@@ -213,7 +208,7 @@ export default function PublishVersionPage() {
                 />
               </FormField>
               {setup?.publication.profileId ? (
-                <div className="rounded-xl border bg-muted/30 p-4 text-sm">
+                <Card size="sm"><Card.Content className="text-sm">
                   <p className="font-medium">{setup.publication.profileName}</p>
                   <p className="mt-1 text-xs text-muted-foreground">
                     Using v{setup.publication.profileRevision}
@@ -222,19 +217,14 @@ export default function PublishVersionPage() {
                       : ""}
                   </p>
                   {setup.publication.profileUpdateAvailable && (
-                    <Link
-                      className="mt-2 inline-block text-sm text-primary underline"
-                      href={`/applications/${applicationID}/profile-update`}
-                    >
-                      Review profile update
-                    </Link>
+                    <Button className="mt-2" size="sm" variant="outline" nativeButton={false} render={<Link href={`/applications/${applicationID}/profile-update`} />}>Review profile update</Button>
                   )}
                   <p className="mt-1 text-muted-foreground">
                     {setup.publication.profileEnabled === false
                       ? "This profile is disabled. Ask your workspace administrator before publishing another version."
                       : "This source upload keeps the application’s pinned profile version and uses current credentials. Use the profile update action to review newer images and rebuild without uploading a ZIP."}
                   </p>
-                </div>
+                </Card.Content></Card>
               ) : (
                 <>
                   <FormField
@@ -269,7 +259,7 @@ export default function PublishVersionPage() {
                 {busy ? (uploadPercent < 100 ? `Uploading source · ${uploadPercent}%` : "Preparing build…") : "Upload and build version"}
               </Button>
             </fieldset>
-          </Panel>
+          </Section>
         </form>
       )}
     </>

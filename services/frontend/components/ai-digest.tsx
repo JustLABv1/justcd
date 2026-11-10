@@ -7,7 +7,7 @@ import { AiMagicIcon } from "@hugeicons/core-free-icons"
 import { api, errorMessage } from "@/lib/api"
 import { ago } from "@/lib/relative-time"
 import { Button } from "@/components/panelui/button"
-import { Frame } from "@/components/panelui/frame"
+import { Card } from "@/components/panelui/card"
 import { Tabs } from "@/components/panelui/tabs"
 import type { Digest } from "@/lib/types"
 
@@ -50,11 +50,11 @@ export function WorkspaceDigest({ workspaceId }: { workspaceId: string }) {
     .map((section) => [section, digest?.items.filter((item) => item.section === section) ?? []] as const)
     .filter(([, items]) => items.length > 0)
   return (
-    <Frame variant="plain">
-      <Frame.Header>
-        <Frame.Title as="h2">Activity digest</Frame.Title>
-        <Frame.Description>{`What shipped, what failed and what needs a decision in the last ${window}.`}</Frame.Description>
-        <Frame.Action>
+    <Card>
+      <Card.Header>
+        <Card.Title as="h2">Activity digest</Card.Title>
+        <Card.Description>{`What shipped, what failed and what needs a decision in the last ${window}.`}</Card.Description>
+        <Card.Action>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <Tabs value={period} onValueChange={(next) => { if (next === "day" || next === "week") setPeriod(next) }}>
               <Tabs.List aria-label="Digest period">
@@ -69,17 +69,17 @@ export function WorkspaceDigest({ workspaceId }: { workspaceId: string }) {
               </Button>
             )}
           </div>
-        </Frame.Action>
-      </Frame.Header>
-      <Frame.Panel>
-      <div className="space-y-4 p-5">
+        </Card.Action>
+      </Card.Header>
+      <Card.Content>
+      <div className="space-y-4">
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         {!digest && !error && <p role="status" className="text-sm text-muted-foreground">Loading digest…</p>}
         {stats && (
           <>
             <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {([["Deployments", stats.operations], ["Succeeded", stats.succeeded], ["Failed", stats.failed], ["Rollbacks", stats.rollbacks]] as const).map(([label, value]) => (
-                <div key={label} className="rounded-lg border px-3 py-2"><dt className="text-xs text-muted-foreground">{label}</dt><dd className={`text-xl font-semibold tabular-nums ${label === "Failed" && value > 0 ? "text-destructive" : ""}`}>{value}</dd></div>
+                <div key={label} className="space-y-1"><dt className="text-xs text-muted-foreground">{label}</dt><dd className={`text-xl font-semibold tabular-nums ${label === "Failed" && value > 0 ? "text-destructive" : ""}`}>{value}</dd></div>
               ))}
             </dl>
             {digest.source === "ai" && digest.summary ? (
@@ -121,7 +121,7 @@ export function WorkspaceDigest({ workspaceId }: { workspaceId: string }) {
           </>
         )}
       </div>
-    </Frame.Panel>
-    </Frame>
+    </Card.Content>
+    </Card>
   )
 }

@@ -11,7 +11,8 @@ import { CommandPalette, CommandPaletteButton } from "@/components/command-palet
 import { PendingApproval } from "@/components/pending-approval"
 import { NavRail } from "@/components/panelui/nav-rail"
 import { Select } from "@/components/panelui/select"
-import { Button, buttonVariants } from "@/components/ui/button"
+import { Card } from "@/components/panelui/card"
+import { Button, buttonVariants } from "@/components/panelui/button"
 import { APIError, api, apiPost, errorMessage } from "@/lib/api"
 import { WorkspaceSelectionProvider } from "@/hooks/workspace-selection"
 import type { Application, ListResponse, OnboardingStatus, Workspace, User } from "@/lib/types"
@@ -235,9 +236,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   if (loading || !user) {
     return (
       <main className="grid min-h-svh place-items-center bg-muted/30">
-        <div role={sessionError ? "alert" : "status"} className="flex max-w-md flex-wrap items-center gap-3 rounded-xl border bg-card px-4 py-3 text-sm text-muted-foreground shadow-sm">
-          {sessionError ? <><span>{errorMessage(sessionError)}</span><Button onClick={() => window.location.reload()}>Try again</Button></> : <><span className="size-2 animate-pulse rounded-full bg-primary motion-reduce:animate-none" />Loading your JustCD workspace…</>}
-        </div>
+        <Card size="sm" role={sessionError ? "alert" : "status"} className="mx-4 max-w-md"><Card.Content className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+          {sessionError ? <><span className="text-destructive">{errorMessage(sessionError)}</span><Button onClick={() => window.location.reload()}>Try again</Button></> : <><span className="size-2 animate-pulse rounded-full bg-primary motion-reduce:animate-none" />Loading your JustCD workspace…</>}
+        </Card.Content></Card>
       </main>
     )
   }
@@ -352,7 +353,7 @@ function WorkspaceSelector({
   const router = useRouter()
   if (loading && collapsed) return <div role="status" className="mx-auto mb-2 size-10 animate-pulse rounded-lg border bg-muted/40 motion-reduce:animate-none" />
   if (!loading && !workspaces.length && collapsed && !canCreate) return <span role="note" aria-label="No workspaces yet" title="Ask an administrator to add you to a workspace" className="mx-auto mb-2 grid size-10 place-items-center rounded-lg border border-dashed text-muted-foreground">?</span>
-  if (!loading && !workspaces.length && collapsed) return <Link href="/workspaces/new" aria-label="Create a workspace" title="Create a workspace" className="mx-auto mb-2 grid size-10 place-items-center rounded-lg border border-dashed text-primary hover:bg-muted/40"><HugeiconsIcon icon={Add01Icon} strokeWidth={1.8} className="size-4" aria-hidden="true" /></Link>
+  if (!loading && !workspaces.length && collapsed) return <Button variant="outline" size="icon" nativeButton={false} render={<Link href="/workspaces/new" />} aria-label="Create a workspace" title="Create a workspace" className="mx-auto mb-2"><HugeiconsIcon icon={Add01Icon} strokeWidth={1.8} className="size-4" aria-hidden="true" /></Button>
   if (loading) {
     return <div role="status" className={`mb-2 h-10 animate-pulse rounded-lg border bg-muted/40 motion-reduce:animate-none ${compact ? "mb-4" : ""}`} />
   }
@@ -360,7 +361,7 @@ function WorkspaceSelector({
     return <p role="note" className={`mb-2 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground ${compact ? "mb-4" : ""}`}>No workspaces yet. Ask an administrator to add you to one.</p>
   }
   if (!workspaces.length) {
-    return <Link href="/workspaces/new" className={`mb-2 flex h-10 items-center justify-between rounded-lg border border-dashed px-3 text-xs font-medium text-primary hover:bg-muted/40 ${compact ? "mb-4" : ""}`}>Create a workspace <HugeiconsIcon icon={Add01Icon} strokeWidth={1.8} className="size-4" aria-hidden="true" /></Link>
+    return <Button variant="outline" nativeButton={false} render={<Link href="/workspaces/new" />} className={`mb-2 w-full justify-between ${compact ? "mb-4" : ""}`}>Create a workspace <HugeiconsIcon icon={Add01Icon} strokeWidth={1.8} className="size-4" aria-hidden="true" /></Button>
   }
   const selected = workspaces.find((workspace) => workspace.id === selectedId)
   const items = workspaces.map((workspace) => ({ value: workspace.id, label: workspace.name }))
@@ -440,6 +441,7 @@ function pageCrumbs(pathname: string, workspace: Workspace | null, application: 
     if (parts[2] === "git-sources" && parts[3] === "new") return [parent, connectionsParent, { label: "Connect Git source" }]
     return [{ label: parts[1] === "new" ? "New workspace" : workspace?.name ?? "Workspace" }]
   }
+  if (parts[0] === "application-groups") return [{ label: "Applications", href: "/applications" }, { label: parts[1] === "new" ? "New deployment group" : "Deployment group" }]
   if (parts[0] === "applications") {
     if (!parts[1]) return [{ label: "Applications" }]
     if (parts[1] === "new") return [{ label: "Applications", href: "/applications" }, { label: "New application" }]

@@ -2,11 +2,11 @@
 
 import Link from "next/link"
 import { useCallback, useEffect, useState } from "react"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { FormSelect } from "@/components/ui/form-select"
-import { Input } from "@/components/ui/input"
-import { Switch } from "@/components/ui/switch"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
+import { FormSelect } from "@/components/form-select"
+import { Input } from "@/components/panelui/input"
+import { Switch } from "@/components/panelui/switch"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
 import { useToast } from "@/components/toast-provider"
 import { SettingsNotice } from "@/components/settings/layout"
@@ -81,15 +81,15 @@ export function AccessPanel() {
 
   return <div className="space-y-8">
     <SettingsSection title="Sign-in methods" description="How people prove who they are. Turning off password sign-in makes single sign-on the only way in.">
-      {settings.localLoginForced && !settings.localLoginEnabled && <SettingsNotice tone="warning" title="Password sign-in is being forced on">The server is started with <code>JUSTCD_FORCE_LOCAL_LOGIN=true</code>, which keeps password sign-in available even though it is turned off here. Remove it once single sign-on works again.</SettingsNotice>}
+      {settings.localLoginForced && !settings.localLoginEnabled && <SettingsNotice inline tone="warning" title="Password sign-in is being forced on">The server is started with <code>JUSTCD_FORCE_LOCAL_LOGIN=true</code>, which keeps password sign-in available even though it is turned off here. Remove it once single sign-on works again.</SettingsNotice>}
       <SettingsGroup className="mt-3">
         <SettingsRow
           label="Password sign-in"
           description={<>Let people sign in with an email address and password. Accounts that use two-factor authentication keep it.{settings.localLoginEnabled && blocked && <span className="mt-1 block text-warning-foreground dark:text-warning">Before you can turn this off: {blocked}</span>}</>}
-          value={<Badge size="xs" radius="full" variant={settings.localLoginEnabled ? "success-light" : "secondary"}>{settings.localLoginEnabled ? "On" : "Off"}</Badge>}
+          value={<Badge size="sm"  variant={settings.localLoginEnabled ? "success" : "secondary"}>{settings.localLoginEnabled ? "On" : "Off"}</Badge>}
           action={settings.localLoginEnabled
             ? <ConfirmDisclosure trigger="Turn off" triggerVariant="outline" confirmVariant="destructive" disabled={busy || Boolean(blocked)} title="Turn off password sign-in?" description="Nobody will be able to sign in with a password, including you. Make sure single sign-on works for your administrator account: if your identity provider is unavailable, you can only recover access with the server's JUSTCD_FORCE_LOCAL_LOGIN setting." confirmLabel="Turn off password sign-in" busyLabel="Turning off…" onConfirm={() => save({ localLoginEnabled: false }, "Password sign-in turned off. People now sign in with single sign-on.")} />
-            : <Button type="button" size="sm" disabled={busy} loading={busy} loadingText="Turning on…" onClick={() => attempt({ localLoginEnabled: true }, "Password sign-in turned on.")}>Turn on</Button>}
+            : <Button type="button" variant="outline" size="sm" disabled={busy} loading={busy} loadingText="Turning on…" onClick={() => attempt({ localLoginEnabled: true }, "Password sign-in turned on.")}>Turn on</Button>}
         />
         <SettingsRow
           label="Single sign-on"
@@ -125,7 +125,7 @@ export function AccessPanel() {
             <Input aria-label="Allowed email domains" className="min-w-64 flex-1" placeholder="example.com, corp.example.org" value={domainText} disabled={busy} onChange={(event) => setDomainText(event.target.value)} />
             <Button type="button" size="sm" disabled={busy || !domainsChanged} onClick={() => attempt({ oidcAllowedDomains: domains }, domains.length ? "Allowed domains saved." : "Any email domain may create an account.")}>Save domains</Button>
           </div>
-          {settings.oidcAllowedDomains.length > 0 && <div className="flex flex-wrap gap-1.5" aria-label="Saved domains">{settings.oidcAllowedDomains.map((domain) => <Badge key={domain} size="xs" radius="full" variant="outline">{domain}</Badge>)}</div>}
+          {settings.oidcAllowedDomains.length > 0 && <div className="flex flex-wrap gap-1.5" aria-label="Saved domains">{settings.oidcAllowedDomains.map((domain) => <Badge key={domain} size="sm"  variant="outline">{domain}</Badge>)}</div>}
         </div>
       </SettingsGroup>
     </SettingsSection>

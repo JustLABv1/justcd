@@ -2,9 +2,9 @@
 
 import { useState } from "react"
 import { ConnectionDialog } from "@/components/connection-dialog"
-import { DialogCancel, DialogFooter } from "@/components/ui/dialog"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { DialogCancel, DialogFooter } from "@/components/app-dialog"
+import { Button } from "@/components/panelui/button"
+import { Input } from "@/components/panelui/input"
 import { FormField } from "@/components/ui-kit"
 import { api, errorMessage } from "@/lib/api"
 import { useToast } from "@/components/toast-provider"

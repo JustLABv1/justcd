@@ -1,9 +1,9 @@
 "use client"
 import Link from "next/link"
 import type { Application } from "@/lib/types"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
+import { Alert } from "@/components/panelui/alert"
 import { PublishingCard } from "./publishing-fields"
 import type { ReactNode } from "react"
 export function ProfileVersionBadge({
@@ -16,7 +16,7 @@ export function ProfileVersionBadge({
   return (
     <Badge
       variant={
-        profile.updateAvailable || profile.needsBuild ? "info-light" : "outline"
+        profile.updateAvailable || profile.needsBuild ? "info" : "outline"
       }
     >
       Profile v{profile.revision}
@@ -43,15 +43,16 @@ export function ProfileVersionNotice({
   if (!profile) return null
   if (profile.updateAvailable || profile.needsBuild) {
     return (
-      <Alert role="status" className="gap-3 border-primary/25 bg-primary/5 p-4">
-        <AlertTitle className="text-primary">
+      <Alert tone="info" role="status">
+        <Alert.Icon />
+        <Alert.Title>
           {profile.adoptionPending
             ? "Finish converting to the profile"
             : profile.needsBuild
               ? "Profile build pending"
               : "Profile update available"}
-        </AlertTitle>
-        <AlertDescription className="space-y-2 text-xs leading-5">
+        </Alert.Title>
+        <Alert.Description className="space-y-2">
           <p className="font-medium break-words text-foreground">
             {profile.name}
           </p>
@@ -65,7 +66,7 @@ export function ProfileVersionNotice({
             {profile.updateAvailable && !profile.adoptionPending && (
               <>
                 <span aria-hidden="true">→</span>
-                <Badge variant="info-light" size="sm">
+                <Badge variant="info" size="sm">
                   Available v{profile.latestRevision}
                 </Badge>
               </>
@@ -80,7 +81,8 @@ export function ProfileVersionNotice({
                   ? "The profile build has not started. Review the pending update to retry."
                   : "Review the updated build settings before rebuilding your application."}
           </p>
-        </AlertDescription>
+        </Alert.Description>
+        <Alert.Actions>
         <Button
           size="sm"
           className="w-fit max-w-full"
@@ -96,6 +98,7 @@ export function ProfileVersionNotice({
             ? "Review conversion"
             : "Review profile update"}
         </Button>
+        </Alert.Actions>
       </Alert>
     )
   }

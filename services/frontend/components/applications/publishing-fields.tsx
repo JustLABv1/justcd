@@ -1,10 +1,7 @@
 import type { ReactNode } from "react"
 import { Card } from "@/components/panelui/card"
-import { Checkbox } from "@/components/panelui/checkbox"
+import { CheckboxField } from "@/components/ui-kit"
 import { PanelField } from "@/components/applications/panel-wizard"
-
-const publishingControlStyles =
-  "[&_[data-slot=input]]:h-10 [&_[data-slot=input]]:rounded-xl [&_[data-slot=input]]:border [&_[data-slot=input]]:border-input dark:[&_[data-slot=input]]:border-0 [&_[data-slot=input]]:bg-background [&_[data-slot=input]]:px-4 [&_[data-slot=input]]:shadow-none [&_[data-slot=select-trigger]]:h-10 [&_[data-slot=select-trigger]]:rounded-xl [&_[data-slot=select-trigger]]:border [&_[data-slot=select-trigger]]:border-input dark:[&_[data-slot=select-trigger]]:border-0 [&_[data-slot=select-trigger]]:bg-background [&_[data-slot=select-trigger]]:px-4"
 
 export function PublishingCard({
   children,
@@ -17,7 +14,7 @@ export function PublishingCard({
 }) {
   return (
     <Card className={`h-full ${className}`}>
-      <Card.Content className={`${publishingControlStyles} ${contentClassName}`}>
+      <Card.Content className={contentClassName}>
         {children}
       </Card.Content>
     </Card>
@@ -39,11 +36,9 @@ export function PublishingField({
   className?: string
 }) {
   return (
-    <PublishingCard className={className}>
-      <PanelField label={label} htmlFor={htmlFor} hint={hint}>
-        {children}
-      </PanelField>
-    </PublishingCard>
+    <PanelField label={label} htmlFor={htmlFor} hint={hint} className={className}>
+      {children}
+    </PanelField>
   )
 }
 
@@ -91,35 +86,5 @@ export function PublishingCheckbox({
   description?: ReactNode
   disabled?: boolean
 }) {
-  return (
-    <PublishingCard>
-      <label
-        htmlFor={id}
-        className={`flex items-start gap-3 text-sm ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
-      >
-        <Checkbox
-          id={id}
-          checked={checked}
-          disabled={disabled}
-          onCheckedChange={(next) => onCheckedChange(Boolean(next))}
-          aria-labelledby={`${id}-label`}
-          aria-describedby={description ? `${id}-description` : undefined}
-          className="mt-0.5 shrink-0"
-        />
-        <span className="min-w-0">
-          <span id={`${id}-label`} className="block font-medium">
-            {title}
-          </span>
-          {description && (
-            <span
-              id={`${id}-description`}
-              className="mt-2 block text-xs leading-5 text-muted-foreground"
-            >
-              {description}
-            </span>
-          )}
-        </span>
-      </label>
-    </PublishingCard>
-  )
+  return <CheckboxField id={id} checked={checked} onCheckedChange={onCheckedChange} label={title} description={description} disabled={disabled} />
 }

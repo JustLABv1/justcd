@@ -6,31 +6,31 @@ import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react"
 import { Alert02Icon, AlertCircleIcon, PauseIcon } from "@hugeicons/core-free-icons"
 import { ActionMenu } from "@/components/action-menu"
 import { ErrorDetailsButton, ErrorDetailsDialog } from "@/components/error-details"
-import { Button } from "@/components/ui/button"
+import { Frame } from "@/components/panelui/frame"
+import { Button } from "@/components/panelui/button"
 import { Disclosure } from "@/components/ui/collapsible"
-import { Input } from "@/components/ui/input"
+import { Input } from "@/components/panelui/input"
 import { FormField } from "@/components/ui-kit"
 import type { Application, Operation } from "@/lib/types"
 
 type Tone = "destructive" | "warning" | "info"
 
 const toneClass: Record<Tone, string> = {
-  destructive: "text-destructive",
-  warning: "text-warning-foreground dark:text-warning",
-  info: "text-muted-foreground",
+  destructive: "bg-destructive/15 text-destructive",
+  warning: "bg-warning/15 text-warning",
+  info: "bg-info/15 text-info",
 }
 
 function AttentionRow({ tone, icon, title, detail, children, actions, alert = false }: { tone: Tone; icon: IconSvgElement; title: ReactNode; detail?: string; children?: ReactNode; actions?: ReactNode; alert?: boolean }) {
-  const hasBody = Boolean(children || detail)
-  return <li role={alert ? "alert" : "status"} className={`flex flex-wrap gap-x-3 gap-y-2 px-4 py-3 ${hasBody ? "items-start" : "items-center"}`}>
-    <HugeiconsIcon icon={icon} strokeWidth={2} aria-hidden="true" className={`${hasBody ? "mt-0.5" : ""} size-4 shrink-0 ${toneClass[tone]}`} />
-    <div className="min-w-0 flex-1">
+  return <Frame.Row role={alert ? "alert" : "status"} className="flex-wrap items-start gap-x-4 gap-y-3">
+    <span aria-hidden="true" className={`grid size-8 shrink-0 place-items-center rounded-full ${toneClass[tone]}`}><HugeiconsIcon icon={icon} strokeWidth={2} className="size-4" /></span>
+    <div className="min-w-0 flex-1 basis-72 space-y-0.5">
       <p className="text-sm font-medium">{title}</p>
       {detail && <pre className="mt-2 max-h-48 overflow-auto rounded-md border bg-muted/40 p-2 text-xs leading-5 whitespace-pre-wrap break-words" aria-label="Renderer output">{detail}</pre>}
       {children}
     </div>
     {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
-  </li>
+  </Frame.Row>
 }
 
 type Issue = Application["statusIssues"][number]
@@ -43,7 +43,7 @@ function StatusIssueRow({ application, issue, canApprove, onConfigureExclusion, 
   return <AttentionRow alert tone="destructive" icon={Alert02Icon} title={issue.summary} detail={rendererOutput} actions={configurable
     ? <>
       {extraActions}
-      <Button size="sm" variant="outline" onClick={() => onConfigureExclusion(issue)}>Configure exclusion</Button>
+      <Button size="sm" variant="outline"  onClick={() => onConfigureExclusion(issue)}>Configure exclusion</Button>
       <ActionMenu label="More" size="sm" variant="ghost" items={[{ label: "View diagnostics", onSelect: () => setOpen(true) }]} />
       <ErrorDetailsDialog error={diagnostics} open={open} onOpenChange={setOpen} />
     </>
@@ -66,7 +66,9 @@ function IssueGroup({ application, issues, canApprove, onConfigureExclusion, aiA
  * check failures, load errors, ownership conflicts, namespace mismatch, deletion in progress and paused auto-sync.
  * Each row is a short summary with at most one primary action.
  */
-export function AttentionBar({ application, canApprove, busy, hasPendingOperation, pendingAction, plansError, retryingPlans, onRetryPlans, conflictCount, onReviewConflicts, namespaceMismatch, kustomizeNamespace, onReviewNamespaceSetting, onCancelDecommission, onConfigureExclusion, aiAction, resumeRevision, onResumeRevisionChange, onKeepPin, onResume, latestOperation, canDeploy, onRetryReconciliation, onViewActivity }: {
+export function AttentionBar({ operation, application, canApprove, busy, hasPendingOperation, pendingAction, plansError, retryingPlans, onRetryPlans, conflictCount, onReviewConflicts, namespaceMismatch, kustomizeNamespace, onReviewNamespaceSetting, onCancelDecommission, onConfigureExclusion, aiAction, resumeRevision, onResumeRevisionChange, onKeepPin, onResume, latestOperation, canDeploy, onRetryReconciliation, onViewActivity }: {
+  /** A failed sync, drawn as rows of this same frame. */
+  operation?: ReactNode
   application: Application
   latestOperation?: Operation
   canDeploy: boolean
@@ -98,14 +100,16 @@ export function AttentionBar({ application, canApprove, busy, hasPendingOperatio
   const mismatch = namespaceMismatch && !application.kustomizeNamespaceOverride
   const stalled = Boolean(application.retryTerminalReason || application.retryNextAt)
   const failedSync = latestOperation?.status === "failed" ? latestOperation : undefined
-  if (!issues.length && plansError == null && !conflictCount && !mismatch && !application.decommissioning && !paused && !stalled && !failedSync) return null
+  if (!operation && !issues.length && plansError == null && !conflictCount && !mismatch && !application.decommissioning && !paused && !stalled && !failedSync) return null
   const resumeBlocked = busy || hasPendingOperation
-  return <section aria-label="Needs attention" className="mb-5 overflow-hidden rounded-xl border bg-card">
-    <ul className="divide-y">
+  const worst = operation || issues.length > 0 || stalled || failedSync || plansError != null || application.decommissioning ? "text-destructive" : mismatch || conflictCount > 0 ? "text-warning" : "text-info"
+  return <Frame aria-label="Needs attention" className="mb-5">
+    <Frame.Header><Frame.Title as="h2" className="flex items-center gap-2"><HugeiconsIcon icon={Alert02Icon} strokeWidth={1.8} aria-hidden="true" className={`size-4 ${worst}`} />Needs attention</Frame.Title></Frame.Header>
+    <Frame.Panel>
       {issues.length === 1 && <StatusIssueRow application={application} issue={issues[0]} canApprove={canApprove} onConfigureExclusion={onConfigureExclusion} extraActions={aiAction} />}
       {issues.length > 1 && <IssueGroup application={application} issues={issues} canApprove={canApprove} onConfigureExclusion={onConfigureExclusion} aiAction={aiAction} />}
       {(stalled || failedSync) && <AttentionRow alert tone="destructive" icon={Alert02Icon} title={application.retryTerminalReason ? "Auto-sync stopped" : application.retryNextAt ? "Sync failed, retry scheduled" : "Last sync failed"} actions={<>
-        {canDeploy && !application.decommissioning && <Button size="sm" variant="outline" loading={pendingAction === "retry-reconciliation"} disabled={resumeBlocked} onClick={onRetryReconciliation}>Retry now</Button>}
+        {canDeploy && !application.decommissioning && <Button size="sm" variant="outline"  loading={pendingAction === "retry-reconciliation"} disabled={resumeBlocked} onClick={onRetryReconciliation}>Retry now</Button>}
         {onViewActivity && <Button size="sm" variant="ghost" onClick={onViewActivity}>View activity</Button>}
       </>}>
         <p className="mt-0.5 text-sm text-muted-foreground">{failedSync?.message || (application.retryTerminalReason ? `Automatic retries ended: ${application.retryTerminalReason.replaceAll("_", " ")}.` : "The last sync did not complete.")}{application.retryNextAt && !application.retryTerminalReason ? ` Next automatic attempt: ${new Date(application.retryNextAt).toLocaleString()}.` : ""}{application.retryLastErrorCode ? ` (${application.retryLastErrorCode})` : ""}</p>
@@ -114,17 +118,17 @@ export function AttentionBar({ application, canApprove, busy, hasPendingOperatio
         <Button size="sm" loading={retryingPlans} onClick={onRetryPlans}>Retry</Button>
         <ErrorDetailsButton error={plansError} />
       </>} />}
-      {conflictCount > 0 && <AttentionRow alert tone="warning" icon={AlertCircleIcon} title={`${conflictCount} existing resource${conflictCount === 1 ? " is" : "s are"} owned elsewhere and block${conflictCount === 1 ? "s" : ""} sync`} actions={<Button size="sm" variant="outline" onClick={onReviewConflicts}>Review conflicts</Button>} />}
+      {conflictCount > 0 && <AttentionRow alert tone="warning" icon={AlertCircleIcon} title={`${conflictCount} existing resource${conflictCount === 1 ? " is" : "s are"} owned elsewhere and block${conflictCount === 1 ? "s" : ""} sync`} actions={<Button size="sm" variant="outline"  onClick={onReviewConflicts}>Review conflicts</Button>} />}
       {mismatch && <AttentionRow alert tone="warning" icon={AlertCircleIcon} title={`Kustomize namespace ${kustomizeNamespace} differs from the JustCD target ${application.namespaces[0]?.namespace}`} actions={application.applicationGroupId
-        ? <Button size="sm" variant="outline" render={<Link href={`/application-groups/${application.applicationGroupId}`} />}>Review group settings</Button>
-        : <Button size="sm" variant="outline" onClick={onReviewNamespaceSetting}>Review namespace setting</Button>}>
+        ? <Button size="sm" variant="outline"  render={<Link href={`/application-groups/${application.applicationGroupId}`} />}>Review group settings</Button>
+        : <Button size="sm" variant="outline"  onClick={onReviewNamespaceSetting}>Review namespace setting</Button>}>
         <p className="mt-0.5 text-sm text-muted-foreground">A plan cannot be refreshed until an owner enables the namespace transform.</p>
       </AttentionRow>}
-      {application.decommissioning && <AttentionRow tone="warning" icon={AlertCircleIcon} title="Deletion in progress" actions={canApprove && <Button size="sm" variant="outline" disabled={busy || hasPendingOperation} onClick={onCancelDecommission}>Cancel deletion</Button>}>
+      {application.decommissioning && <AttentionRow tone="destructive" icon={Alert02Icon} title="Deletion in progress" actions={canApprove && <Button size="sm" variant="outline"  disabled={busy || hasPendingOperation} onClick={onCancelDecommission}>Cancel deletion</Button>}>
         <p className="mt-0.5 text-sm text-muted-foreground">Auto-sync is paused. Review and apply the deletion plan, then finish removing the application.{application.configurationMissing && " Restore the Git definition to cancel deletion; discovery will recreate the plan while it remains removed."}</p>
       </AttentionRow>}
       {paused && <AttentionRow tone="info" icon={PauseIcon} title="Auto-sync paused" actions={canApprove && <>
-        <Button size="sm" variant="outline" loading={pendingAction === "rollback-state-resume"} loadingText="Resuming…" disabled={resumeBlocked || (Boolean(application.rollbackResumeRequiresRevision) && !resumeRevision.trim())} onClick={onResume}>{application.rollbackResumeAvailable ? "Resume previous source" : "Resume auto-sync"}</Button>
+        <Button size="sm" variant="outline"  loading={pendingAction === "rollback-state-resume"} disabled={resumeBlocked || (Boolean(application.rollbackResumeRequiresRevision) && !resumeRevision.trim())} onClick={onResume}>{application.rollbackResumeAvailable ? "Resume previous source" : "Resume auto-sync"}</Button>
         {application.rollbackResumeAvailable && <ActionMenu label="More" size="sm" variant="ghost" items={[{ label: pendingAction === "rollback-state-keep" ? "Keeping pin…" : "Keep rollback pin", disabled: resumeBlocked, onSelect: onKeepPin }]} />}
       </>}>
         <Disclosure className="mt-1" summary="What happens when I resume?">
@@ -132,6 +136,7 @@ export function AttentionBar({ application, canApprove, busy, hasPendingOperatio
         </Disclosure>
         {application.rollbackResumeRequiresRevision && <div className="mt-3 max-w-md"><FormField label="Git revision to use before resuming" htmlFor="rollback-resume-revision"><Input id="rollback-resume-revision" value={resumeRevision} onChange={(event) => onResumeRevisionChange(event.target.value)} placeholder="branch, tag, or commit" /></FormField></div>}
       </AttentionRow>}
-    </ul>
-  </section>
+      {operation}
+    </Frame.Panel>
+  </Frame>
 }

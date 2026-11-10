@@ -118,11 +118,11 @@ export function ApplicationCard({
   const labels = summaryLabels(app)
   const namespaces = app.namespaces.map((item) => item.namespace).join(", ") || "No namespace"
   const revision = /^[a-f0-9]{40}$|^[a-f0-9]{64}$/i.test(app.revision) ? app.revision.slice(0, 8) : app.revision
-  const status = applicationCardStatus(app, { blocked: Boolean(blockedBy) })
+  const status = applicationCardStatus(app, { blocked: Boolean(blockedBy), blockedLabel: blockedBy?.label })
   const reason = status.reason
   const stalled = isCheckStalled(app, now)
   return (
-    <Card as="article" size="sm" className={`min-w-0 ${status.needsDecision ? "border-warning/50" : ""}`}><Card.Content className="flex h-full flex-col">
+    <Card as="article" size="sm" className={`min-w-0 ${status.edge === "destructive" ? "border-destructive/50" : status.edge === "warning" ? "border-warning/50" : ""}`}><Card.Content className="flex h-full flex-col">
       <header className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="line-clamp-2 break-words text-base leading-snug font-semibold tracking-tight" title={app.name}>
@@ -136,7 +136,6 @@ export function ApplicationCard({
         <div className="flex shrink-0 items-center gap-1">{onFavorite && <FavoriteButton name={app.name} favorite={Boolean(favorite)} busy={favoriteBusy} onClick={onFavorite} />}<ApplicationActions app={app} canManage={Boolean(canManage)} onDeleted={onDeleted} onEditLabels={onEditLabels} /></div>
       </header>
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
-        {blockedBy && <Badge variant="outline" size="sm" title={blockedBy.detail}>Blocked by cluster</Badge>}
         {status.badges.map((item) => <span key={item.key} title={item.title} className="inline-flex"><StatusPill status={item.status} tone={item.tone} /></span>)}
         <ProfileVersionBadge application={app} />
       </div>
@@ -144,7 +143,7 @@ export function ApplicationCard({
       {reason && (
         <p className="mt-2.5 flex items-start gap-2 text-sm" title={app.statusIssues?.map((issue) => issue.summary).join("\n") || reason}>
           <HugeiconsIcon icon={Alert02Icon} strokeWidth={2} aria-hidden="true" className={`mt-0.5 size-4 shrink-0 ${status.signal === "destructive" ? "text-destructive" : status.signal === "warning" ? "text-warning" : "text-muted-foreground"}`} />
-          <span className="line-clamp-2 min-w-0">{reason}{app.statusIssues?.length > 0 && <> · <span className="text-muted-foreground">{checkSources(app)} check failed</span></>}</span>
+          <span className="line-clamp-2 min-w-0">{reason}{!blockedBy && app.statusIssues?.length > 0 && <> · <span className="text-muted-foreground">{checkSources(app)} check failed</span></>}</span>
         </p>
       )}
       <footer className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-1 pt-4 text-xs text-muted-foreground">
@@ -426,12 +425,11 @@ export function ApplicationCollection({
       id: "health", title: "Health", size: 260,
       cell: (app) => {
         const blocked = blockedByCluster(app)
-        const status = applicationCardStatus(app, { blocked: Boolean(blocked) })
+        const status = applicationCardStatus(app, { blocked: Boolean(blocked), blockedLabel: blocked?.label })
         const reason = status.reason
         return (
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center gap-1.5">
-              {blocked && <Badge variant="outline" size="sm" title={blocked.detail}>Blocked by cluster</Badge>}
               {status.badges.map((item) => <span key={item.key} title={item.title} className="inline-flex"><StatusPill status={item.status} tone={item.tone} /></span>)}
               <ProfileVersionBadge application={app} />
             </div>

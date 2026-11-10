@@ -10,8 +10,10 @@ export type CardStatus = {
   reason: string | null
   /** Tone of the icon beside the reason line. */
   signal: "destructive" | "warning" | "neutral"
-  /** Waiting on a person (a deletion review). The one state that earns a coloured card edge. */
+  /** Waiting on a person (a deletion review). */
   needsDecision: boolean
+  /** Colour of the card edge: a decision is `warning`, an application that is down is `destructive`. */
+  edge: "destructive" | "warning" | null
 }
 
 type CardApplication = Pick<Application, "health" | "healthCondition" | "statusIssues" | "decommissioning" | "autoSyncPaused" | "retryTerminalReason" | "retryNextAt"> & { configurationMissing?: boolean }
@@ -41,11 +43,11 @@ function runtimeTone(status: string | undefined): CardTone {
  * Rules, covered by application-card-status.test.mjs:
  * - Every application on the attention list shows a coloured signal: a badge, or the reason icon.
  * - Only the worst badge is coloured; the rest are neutral facts (a success stays green).
- * - Blocked by an unreachable cluster, delivery and runtime are consequences and turn neutral. States
- *   that are the application's own (deletion review, paused, decommissioning) keep their colour.
+ * - Blocked by an unreachable cluster, an application is still down: its states keep their colour and
+ *   the reason line names the cluster as the cause. A shared cause explains a state, it never hides it.
  * - A pending deletion review is the signal on its own, in `warning`, whatever else is wrong.
  */
-export function applicationCardStatus(app: CardApplication, options: { blocked?: boolean } = {}): CardStatus {
+export function applicationCardStatus(app: CardApplication, options: { blocked?: boolean; blockedLabel?: string } = {}): CardStatus {
   const blocked = Boolean(options.blocked)
   const decommissioned = app.health === "decommissioned"
   const needsDecision = !decommissioned && (app.health === "deletion_pending" || Boolean(app.configurationMissing))
@@ -58,7 +60,7 @@ export function applicationCardStatus(app: CardApplication, options: { blocked?:
     ...(app.autoSyncPaused ? [{ key: "paused" as const, title: "Reconciliation", status: "Reconciliation paused", tone: "warning" as const }] : []),
     ...(app.decommissioning && !decommissioned ? [{ key: "decommissioning" as const, title: "Lifecycle", status: "Decommissioning", tone: "warning" as const }] : []),
   ]
-  const own = items.map((item) => (blocked && item.consequence ? { ...item, tone: "neutral" as const } : item))
+  const own = items
 
   let signalItem: (typeof own)[number] | undefined
   if (needsDecision) {
@@ -74,16 +76,18 @@ export function applicationCardStatus(app: CardApplication, options: { blocked?:
   })
 
   let reason: string | null
-  if (blocked) {
-    // The outage is stated once for the cluster; only the application's own decision is repeated here.
-    reason = needsDecision ? (app.configurationMissing ? applicationAttentionReason(app as Application) : "Deletion review required") : null
+  if (blocked && !needsDecision) {
+    // The cause, in a few words. The cluster's own detail is in the group header.
+    reason = options.blockedLabel ?? "Cluster unreachable"
+  } else if (blocked) {
+    reason = app.configurationMissing ? applicationAttentionReason(app as Application) : "Deletion review required"
   } else {
     reason = applicationAttentionReason(app as Application) ?? app.statusIssues?.[0]?.summary ?? null
     // The paused badge already says this.
     if (reason === "Reconciliation paused") reason = null
   }
 
-  const retriesExhausted = !blocked && !app.decommissioning && Boolean(app.retryTerminalReason)
+  const retriesExhausted = !app.decommissioning && Boolean(app.retryTerminalReason)
   const signal: CardStatus["signal"] = needsDecision
     ? "warning"
     : decommissioned
@@ -92,5 +96,6 @@ export function applicationCardStatus(app: CardApplication, options: { blocked?:
         ? "destructive"
         : "warning"
 
-  return { badges, reason, signal, needsDecision }
+  const edge: CardStatus["edge"] = needsDecision ? "warning" : signal === "destructive" ? "destructive" : null
+  return { badges, reason, signal, needsDecision, edge }
 }

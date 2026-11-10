@@ -144,12 +144,13 @@ key-value pairs is always wrong.
   `applicationCardStatus` (`lib/application-card-status.ts`), with a test over every combination of
   delivery state, runtime state and flags. Change tones there, not in a component, and never by
   matching substrings of a status string.
-- **One record style.** Do not dim, dash or tint a Card to show state. A coloured Card edge
-  (`border-warning/50`) is reserved for records waiting on a decision from a person, such as a
-  deletion review. Paused, degraded or blocked are badges, not card styles.
-- **Say a shared cause once.** When a group's records are all affected by one thing (an unreachable
-  cluster), the group header states it. The records carry a neutral "Blocked by cluster" badge and
-  no colour of their own, because their state is a consequence, not a separate problem.
+- **One record style.** Do not dim, dash or shrink a Card to show state. Its edge may carry the
+  card's signal colour: `destructive` for a record that is down, `warning` for one waiting on a
+  decision from a person (a deletion review). Everything else (paused, unknown, informational) is a
+  badge, not a card style.
+- **A shared cause explains, it never hides.** When a group's records are all affected by one thing
+  (an unreachable cluster), the group header states it in detail and each record names it in its
+  reason line. The records keep their own state colour: they are down, and the page must read that way.
 - An error must read as an error: red tone on the icon and title or the Alert edge, not only on a
   small badge. A large tinted background is not required and usually looks muddy on dark themes.
 
@@ -279,7 +280,8 @@ The user rejected screens where blocks were not clearly bounded. These apply fro
 | Collapsible cluster group as a bare heading line above application Cards | `CollapsibleGroup` tray, so several groups read as separate containers. |
 | "Recent operations" and "Rollback targets" as open sections whose tables ran into each other | `Section surface` for each. |
 
-| Application cards where every card carried two or three coloured badges, yellow text, and one of three card styles (dashed and dimmed, yellow edge, normal) | One card style, one coloured badge, coloured edge only for a pending decision, shared cluster outage stated in the group header. See `ApplicationCard` and `statusBadges`. |
+| Application cards where every card carried two or three coloured badges, yellow text, and one of three card styles (dashed and dimmed, yellow edge, normal) | One card style, one coloured badge, a coloured edge for the card signal. See `applicationCardStatus`. |
+| Cards of applications blocked by an unreachable cluster all turned grey "because the cluster is the shared cause", so a page of down applications looked healthy | Blocked applications keep their state colour (red when down) and a reason line naming the cluster. |
 | Truncated card titles and a tray around a single group | Titles clamp to two lines. `CollapsibleGroup` only when there are two or more groups; a single group keeps its header on the canvas. |
 
 ### Application detail review (2026-11-10)

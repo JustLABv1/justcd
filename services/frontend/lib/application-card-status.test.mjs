@@ -59,19 +59,29 @@ test("exhausted retries are red even when the badges are green", () => {
   assert.match(status.reason, /retries exhausted/)
 })
 
-test("blocked by its cluster, delivery and runtime turn neutral and the reason is not repeated", () => {
-  const status = applicationCardStatus({ health: "degraded", healthCondition: { status: "Missing" }, statusIssues: [{ source: "cluster", summary: "cluster unreachable", observedAt: "" }], decommissioning: false, retryTerminalReason: "max_attempts" }, { blocked: true })
-  assert.ok(status.badges.every((item) => item.tone === "neutral"))
-  assert.equal(status.reason, null)
+test("an application blocked by its cluster is still shown as down", () => {
+  const status = applicationCardStatus({ health: "degraded", healthCondition: { status: "Missing" }, statusIssues: [{ source: "cluster", summary: "cluster unreachable", observedAt: "" }], decommissioning: false }, { blocked: true, blockedLabel: "Cluster unreachable" })
+  assert.deepEqual(status.badges.filter((item) => coloured(item.tone)).map((item) => [item.key, item.tone]), [["delivery", "destructive"]])
+  assert.equal(status.reason, "Cluster unreachable")
+  assert.equal(status.signal, "destructive")
+  assert.equal(status.edge, "destructive")
 })
 
 test("blocked applications keep the states that are their own", () => {
-  const paused = applicationCardStatus({ health: "degraded", healthCondition: { status: "Unknown" }, statusIssues: [], decommissioning: false, autoSyncPaused: true }, { blocked: true })
+  const paused = applicationCardStatus({ health: "synced", healthCondition: { status: "Healthy" }, statusIssues: [], decommissioning: false, autoSyncPaused: true }, { blocked: true })
   assert.equal(paused.badges.find((item) => item.key === "paused").tone, "warning")
   const review = applicationCardStatus({ health: "deletion_pending", healthCondition: { status: "Missing" }, statusIssues: [], decommissioning: false, configurationMissing: true }, { blocked: true })
   assert.equal(review.needsDecision, true)
+  assert.equal(review.edge, "warning")
   assert.equal(review.badges.find((item) => item.key === "delivery").tone, "warning")
   assert.match(review.reason, /deletion review required/)
+})
+
+test("only an application that is down or waiting on a decision gets a coloured edge", () => {
+  const unknown = applicationCardStatus({ health: "synced", healthCondition: { status: "Unknown" }, statusIssues: [], decommissioning: false })
+  assert.equal(unknown.edge, null)
+  const fine = applicationCardStatus({ health: "synced", healthCondition: { status: "Healthy" }, statusIssues: [], decommissioning: false })
+  assert.equal(fine.edge, null)
 })
 
 test("a pending deletion review is the single warning signal", () => {

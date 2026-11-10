@@ -20,7 +20,7 @@ const InSettingsCard = createContext(false)
 function SettingsSurface({ title, description, action, children, className = "", tone }: { title?: ReactNode; description?: ReactNode; action?: ReactNode; children: ReactNode; className?: string; tone?: "danger" }) {
   return <Section divided={false} title={title} description={description} action={action} className={className}>
     <InSettingsCard.Provider value>
-      <Card className={tone === "danger" ? "min-w-0 border-destructive/30" : "min-w-0"}>{children}</Card>
+      <Card className={tone === "danger" ? "min-w-0 border-destructive/30 dark:border-destructive/30" : "min-w-0"}>{children}</Card>
     </InSettingsCard.Provider>
   </Section>
 }

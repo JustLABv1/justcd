@@ -87,8 +87,8 @@ const kpiVariants = tv({
   variants: {
     surface: {
       true: {
-        root: 'rounded-3xl border bg-card p-5 text-card-foreground',
-        group: 'rounded-3xl border bg-card p-5 text-card-foreground',
+        root: 'rounded-3xl border bg-card p-5 text-card-foreground dark:border-transparent',
+        group: 'rounded-3xl border bg-card p-5 text-card-foreground dark:border-transparent',
       },
     },
     color: {

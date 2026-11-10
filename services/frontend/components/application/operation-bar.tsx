@@ -240,7 +240,7 @@ export function OperationBar({
   }
   if (failed) {
     return (
-      <Card aria-label={operation.type === "rollback" ? "Rollback progress" : "Sync progress"} className="mb-5 min-w-0 border-destructive/40 bg-[color-mix(in_oklab,var(--destructive)_12%,var(--muted))]">
+      <Card aria-label={operation.type === "rollback" ? "Rollback progress" : "Sync progress"} className="mb-5 min-w-0 border-destructive/40 bg-[color-mix(in_oklab,var(--destructive)_12%,var(--muted))] dark:border-destructive/40">
         <Card.Header>
           <Card.Title as="h2" className="text-destructive">{operationPhaseLabel(operation.progress?.phase, operation.status)}</Card.Title>
           <Card.Description>Elapsed {elapsed(operation.startedAt, operation.finishedAt)} · Attempt {operation.attemptCount || 1}</Card.Description>

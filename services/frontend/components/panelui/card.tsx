@@ -46,7 +46,9 @@ type RenderProp<Tag extends RenderElementType> = { render?: useRender.ComponentP
 
 const cardVariants = tv({
   slots: {
-    root: 'group/card flex flex-col rounded-2xl border bg-card text-card-foreground shadow-xs',
+    // JustCD change: in the dark theme the fill step separates a card from what it sits on, so it has no hairline
+    // (a card nested in a card keeps one, it is the same grey as its parent).
+    root: 'group/card flex flex-col rounded-2xl border bg-card text-card-foreground shadow-xs dark:border-transparent dark:shadow-none dark:in-data-[slot=card]:border-border',
     header: [
       'grid auto-rows-min grid-cols-[minmax(0,1fr)] items-start gap-x-4 gap-y-1.5 p-6',
       'has-data-[slot=card-action]:grid-cols-[minmax(0,1fr)_auto]',

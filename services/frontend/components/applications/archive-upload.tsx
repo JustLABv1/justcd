@@ -191,7 +191,7 @@ export function ArchiveUpload({
           if (!dragDepth.current) setDragging(false)
         }}
         onDrop={drop}
-        className={`min-w-0 border-dashed transition-colors duration-150 ${disabled ? "opacity-50" : ""} ${dragging ? "border-primary bg-primary/5 ring-2 ring-primary/15" : error ? "border-destructive bg-destructive/5" : "border-border bg-muted/25 dark:bg-background/40"}`}
+        className={`min-w-0 border-dashed dark:border-border transition-colors duration-150 ${disabled ? "opacity-50" : ""} ${dragging ? "border-primary dark:border-primary bg-primary/5 ring-2 ring-primary/15" : error ? "border-destructive dark:border-destructive bg-destructive/5" : "border-border bg-muted/25 dark:bg-background/40"}`}
       ><Card.Content className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-3 sm:flex-nowrap">
         <span
           aria-hidden="true"

@@ -39,9 +39,15 @@ sits on; a surface is never darker than its parent.
 
 ### Shell
 
-The sidebar has no card, border or shadow; only the canvas is raised. There is no top bar: a
-top-level page starts with its `PageHeading`, and nested pages show a breadcrumb above it. Search
-lives in the sidebar (⌘K) only. The current navigation item is marked by its tint alone.
+The sidebar is the PanelUI `NavRail` used as it ships: a floating, rounded panel inset 8px from the
+window, filled one step above the canvas. The content sits directly on the canvas (`bg-background`);
+there is no second container. There is no top bar: a top-level page starts with its `PageHeading`,
+and nested pages show a breadcrumb above it. Search lives in the sidebar (⌘K) only. The current
+navigation item is marked by its tint alone.
+
+In the dark theme raised surfaces (Card, Frame, Kpi, `CollapsibleGroup`) have no border: the fill
+step separates them from what they sit on. A Card inside a Card keeps its border, and a Card that
+colours its own edge must set the `dark:` colour too, otherwise the dark rule wins.
 
 Rules:
 

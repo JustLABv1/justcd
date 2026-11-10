@@ -122,7 +122,7 @@ export function ApplicationCard({
   const reason = status.reason
   const stalled = isCheckStalled(app, now)
   return (
-    <Card as="article" size="sm" className={`min-w-0 ${status.edge === "destructive" ? "border-destructive/50" : status.edge === "warning" ? "border-warning/50" : ""}`}><Card.Content className="flex h-full flex-col">
+    <Card as="article" size="sm" className={`min-w-0 ${status.edge === "destructive" ? "border-destructive/50 dark:border-destructive/50" : status.edge === "warning" ? "border-warning/50 dark:border-warning/50" : ""}`}><Card.Content className="flex h-full flex-col">
       <header className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="line-clamp-2 break-words text-base leading-snug font-semibold tracking-tight" title={app.name}>

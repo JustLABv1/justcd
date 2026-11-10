@@ -250,14 +250,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="min-h-svh overflow-x-clip bg-shell text-foreground">
+    <div className="min-h-svh overflow-x-clip bg-background text-foreground">
       <NavRail
         aria-label="Sidebar"
         collapsed={collapsed}
         onCollapsedChange={setSidebarCollapsed}
         expandedWidth={256}
         collapsedWidth={72}
-        className="fixed inset-y-0 left-0 z-20 hidden h-auto rounded-none bg-transparent px-3 py-4 ring-0 dark:bg-transparent dark:ring-0 lg:flex not-data-collapsed:overflow-y-auto"
+        className="fixed bottom-2 left-2 top-2 z-20 hidden h-auto bg-muted dark:bg-muted/50 lg:flex not-data-collapsed:overflow-y-auto"
       >
         <NavRail.Header className="pb-3 pt-1">
           <NavRail.Brand href="/" label="JustCD home" icon={<LogoMark className="h-5 w-auto text-current" />}>JustCD</NavRail.Brand>
@@ -278,8 +278,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} isAdmin={user.isAdmin} canCreateWorkspace={canCreateWorkspace} workspaces={workspaces} workspaceId={selectedWorkspaceId} onSelectWorkspace={selectWorkspace} onToggleSidebar={toggleSidebar} onboardingIncomplete={onboardingIncomplete} />
 
-      <div className={`${collapsed ? "lg:pl-[72px]" : "lg:pl-[256px]"} transition-[padding] duration-200 motion-reduce:transition-none lg:py-2 lg:pr-2`}>
-      <div className="bg-background lg:min-h-[calc(100svh-1rem)] lg:rounded-[20px] lg:border lg:border-border/70 lg:shadow-[0_1px_2px_rgb(0_0_0_/_0.06)]">
+      <div className={`${collapsed ? "lg:pl-[88px]" : "lg:pl-[272px]"} transition-[padding] duration-200 motion-reduce:transition-none`}>
+      <div className="lg:min-h-svh">
         <header className="flex h-14 items-center justify-between gap-4 px-5 sm:px-8 lg:hidden">
           <Link href="/" className="flex items-center gap-2">
             <LogoMark className="h-7 w-auto text-foreground" />
@@ -303,7 +303,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {group.items.map((item) => <Link key={item.href} href={item.href} aria-current={isNavSelected(item.href, pathname) ? "page" : undefined} className={`${styles.navItem} shrink-0 !py-1.5 !text-xs`}><HugeiconsIcon icon={item.icon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />{item.label}<NavBadge item={item} /></Link>)}
           </div>)}
         </nav>
-        <main style={{ paddingBottom: "calc(2rem + var(--toast-clearance, 0px))" }} className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") && !pathname.endsWith("/publish") ? "max-w-none" : "max-w-[1440px]"} px-5 pb-7 pt-5 sm:px-8 sm:pb-8 sm:pt-6 lg:pt-7 ${pathname === "/audit" ? "lg:flex lg:h-[calc(100dvh-1rem)] lg:flex-col lg:overflow-hidden" : ""}`}>
+        <main style={{ paddingBottom: "calc(2rem + var(--toast-clearance, 0px))" }} className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") && !pathname.endsWith("/publish") ? "max-w-none" : "max-w-[1440px]"} px-5 pb-7 pt-5 sm:px-8 sm:pb-8 sm:pt-6 lg:pt-7 ${pathname === "/audit" ? "lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden" : ""}`}>
           {crumbs.length > 1 && <nav aria-label="Breadcrumb" className="mb-4 shrink-0 text-sm">
             <ol className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               {crumbs.map((crumb, index) => <li key={`${crumb.label}-${index}`} className="flex min-w-0 max-w-full items-center gap-2">

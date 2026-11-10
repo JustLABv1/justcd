@@ -22,7 +22,7 @@ import { Chip } from "@/components/panelui/chip"
 import { Menu } from "@/components/panelui/menu"
 import { PanelSelect } from "@/components/applications/panel-wizard"
 import { StatusPill } from "@/components/overview/overview-parts"
-import { statusTone, type StatusTone } from "@/components/ui-kit"
+import { applicationCardStatus } from "@/lib/application-card-status"
 import { Filters } from "@/components/reui/filters/filters"
 import { createFilterQuery } from "@/components/reui/filters/filters-query"
 import { applicationFilterFieldIds, applicationFilterFields, readApplicationField } from "@/components/application-filter-fields"
@@ -32,7 +32,7 @@ import { DataGridList, type GridColumn } from "@/components/data-grid-table"
 import { ActionMenu, RowActions, type ActionItem } from "@/components/action-menu"
 import { CollapsibleGroup } from "@/components/ui/collapsible"
 import { ApplicationClusterFilter } from "@/components/application-cluster-filter"
-import { Delete02Icon, Edit02Icon, ViewIcon } from "@hugeicons/core-free-icons"
+import { Alert02Icon, Delete02Icon, Edit02Icon, ViewIcon } from "@hugeicons/core-free-icons"
 import { EmptyState } from "@/components/ui-kit"
 import { WorkspaceIcon, CollectionSkeleton } from "@/components/workspace-ui"
 import { tone } from "@/components/health-tone"
@@ -43,7 +43,6 @@ import {
   type WorkspaceApplication,
 } from "@/hooks/use-workspace"
 import type { ClusterStatus } from "@/hooks/use-cluster-statuses"
-import { applicationAttentionReason } from "@/lib/application-status"
 import { groupApplications, type ApplicationBucket, type GroupMode, type StatusBucket } from "@/lib/application-grouping"
 import { clusterHealth, isCheckStalled, type ConnectionHealth, type HealthLevel } from "@/lib/connection-health"
 import { ago } from "@/lib/relative-time"
@@ -109,36 +108,6 @@ function Dot({ level }: { level: HealthLevel }) {
   return <span aria-hidden="true" className={`inline-block size-2 shrink-0 rounded-full ${tone[level].dot}`} />
 }
 
-/** Why the application itself is not fine, most specific first. A cluster outage is stated once, in the group header. */
-function reasonFor(app: WorkspaceApplication, blockedBy?: ConnectionHealth) {
-  if (blockedBy) return null
-  const reason = applicationAttentionReason(app) ?? app.statusIssues?.[0]?.summary ?? null
-  // The paused badge already says this; a line repeating it adds nothing.
-  return reason === "Reconciliation paused" ? null : reason
-}
-
-/** Waiting on a person rather than on the system: the one state that earns a coloured card edge. */
-function needsDecision(app: WorkspaceApplication) {
-  return app.health === "deletion_pending" || (Boolean(app.configurationMissing) && app.health !== "decommissioned")
-}
-
-const toneRank: Record<StatusTone, number> = { destructive: 3, warning: 2, neutral: 1, success: 0 }
-
-/**
- * The card's status badges. Only the worst one keeps its colour, so a card carries a single signal;
- * the others read as neutral facts. A card blocked by its cluster has no signal of its own.
- */
-function statusBadges(app: WorkspaceApplication, blocked: boolean) {
-  const items: { key: string; title: string; status: string; tone: StatusTone }[] = [
-    ...(app.configurationMissing ? [{ key: "definition", title: "Application definition", status: "Definition missing", tone: "destructive" as const }] : []),
-    { key: "delivery", title: "Delivery state", status: app.health, tone: statusTone(app.health) },
-    { key: "runtime", title: "Runtime state", status: app.healthCondition?.status ?? "Unknown", tone: statusTone(app.healthCondition?.status ?? "Unknown") },
-    ...(app.autoSyncPaused ? [{ key: "paused", title: "Reconciliation", status: "Reconciliation paused", tone: "warning" as const }] : []),
-  ]
-  const worst = items.reduce((best, item) => (toneRank[item.tone] > toneRank[best.tone] ? item : best), items[0])
-  return items.map((item) => ({ ...item, tone: blocked ? "neutral" as const : item === worst || item.tone === "success" ? item.tone : "neutral" as const }))
-}
-
 export function ApplicationCard({
   app, canManage, onDeleted, showCluster = true, clusterLevel, blockedBy, now, favorite, favoriteBusy, onFavorite, onEditLabels,
 }: {
@@ -149,10 +118,11 @@ export function ApplicationCard({
   const labels = summaryLabels(app)
   const namespaces = app.namespaces.map((item) => item.namespace).join(", ") || "No namespace"
   const revision = /^[a-f0-9]{40}$|^[a-f0-9]{64}$/i.test(app.revision) ? app.revision.slice(0, 8) : app.revision
-  const reason = reasonFor(app, blockedBy)
+  const status = applicationCardStatus(app, { blocked: Boolean(blockedBy) })
+  const reason = status.reason
   const stalled = isCheckStalled(app, now)
   return (
-    <Card as="article" size="sm" className={`min-w-0 ${!blockedBy && needsDecision(app) ? "border-warning/50" : ""}`}><Card.Content className="flex h-full flex-col">
+    <Card as="article" size="sm" className={`min-w-0 ${status.needsDecision ? "border-warning/50" : ""}`}><Card.Content className="flex h-full flex-col">
       <header className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="line-clamp-2 break-words text-base leading-snug font-semibold tracking-tight" title={app.name}>
@@ -167,13 +137,14 @@ export function ApplicationCard({
       </header>
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         {blockedBy && <Badge variant="outline" size="sm" title={blockedBy.detail}>Blocked by cluster</Badge>}
-        {statusBadges(app, Boolean(blockedBy)).map((item) => <span key={item.key} title={item.title} className="inline-flex"><StatusPill status={item.status} tone={item.tone} /></span>)}
+        {status.badges.map((item) => <span key={item.key} title={item.title} className="inline-flex"><StatusPill status={item.status} tone={item.tone} /></span>)}
         <ProfileVersionBadge application={app} />
       </div>
       {labels.length > 0 && <div aria-label="Application labels" className="mt-2 flex flex-wrap gap-1">{labels.map(([key, value]) => <Badge key={key} variant="outline" size="sm" className="max-w-full truncate" title={`${key}=${value}`}>{key}{value && <>: {value}</>}</Badge>)}</div>}
       {reason && (
-        <p className="mt-2 line-clamp-2 text-sm" title={app.statusIssues?.map((issue) => issue.summary).join("\n") || reason}>
-          {reason}{app.statusIssues?.length > 0 && <> · <span className="text-muted-foreground">{checkSources(app)} check failed</span></>}
+        <p className="mt-2.5 flex items-start gap-2 text-sm" title={app.statusIssues?.map((issue) => issue.summary).join("\n") || reason}>
+          <HugeiconsIcon icon={Alert02Icon} strokeWidth={2} aria-hidden="true" className={`mt-0.5 size-4 shrink-0 ${status.signal === "destructive" ? "text-destructive" : status.signal === "warning" ? "text-warning" : "text-muted-foreground"}`} />
+          <span className="line-clamp-2 min-w-0">{reason}{app.statusIssues?.length > 0 && <> · <span className="text-muted-foreground">{checkSources(app)} check failed</span></>}</span>
         </p>
       )}
       <footer className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-1 pt-4 text-xs text-muted-foreground">
@@ -455,12 +426,13 @@ export function ApplicationCollection({
       id: "health", title: "Health", size: 260,
       cell: (app) => {
         const blocked = blockedByCluster(app)
-        const reason = reasonFor(app, blocked)
+        const status = applicationCardStatus(app, { blocked: Boolean(blocked) })
+        const reason = status.reason
         return (
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center gap-1.5">
               {blocked && <Badge variant="outline" size="sm" title={blocked.detail}>Blocked by cluster</Badge>}
-              {statusBadges(app, Boolean(blocked)).map((item) => <span key={item.key} title={item.title} className="inline-flex"><StatusPill status={item.status} tone={item.tone} /></span>)}
+              {status.badges.map((item) => <span key={item.key} title={item.title} className="inline-flex"><StatusPill status={item.status} tone={item.tone} /></span>)}
               <ProfileVersionBadge application={app} />
             </div>
             {reason && <p className="line-clamp-2 text-xs text-muted-foreground" title={reason}>{reason}</p>}

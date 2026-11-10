@@ -203,6 +203,8 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
   }
 
   const canEdit = Boolean(source && (canConfigure ?? ownerAccess))
+  // With nothing configured yet, the one action belongs in the empty state, not in a corner of the header.
+  const enableFromEmptyState = embedded && canEdit && !connection && !showSettings
   const reportingActions = connection?.managedByGit ? <span className="text-sm text-muted-foreground">{connection.repositoryPrId ? "Managed by repository PR discovery settings" : "Managed by justcd.yaml · spec.pullRequests"}</span> : canEdit && (showSettings
     ? <Button variant="outline" size="sm" onClick={() => setShowSettings(false)}>Back to reviews</Button>
     : <Button size="sm" onClick={() => setShowSettings(true)}>{connection && <HugeiconsIcon icon={Edit02Icon} strokeWidth={1.8} aria-hidden="true" />}{connection ? "Edit settings" : "Enable PR reporting"}</Button>)
@@ -287,8 +289,8 @@ export function PullRequestsWorkspace({ embedded = false, canConfigure }: { embe
           {review.plan && <Disclosure className="text-sm" summary={<>Review plan · {review.plan.plan.changes.length} changes {review.plan.status==="review-only"?"· cannot be applied":""}</>}><ul className="space-y-1 pl-4">{review.plan.plan.changes.map((change,index)=><li key={`${change.identity.kind}-${change.identity.namespace}-${change.identity.name}-${index}`}>{change.kind}: {change.identity.kind} {change.identity.namespace}/{change.identity.name}</li>)}</ul></Disclosure>}
         </Card.Content></Card>)}</div>
       </Section>
-      </> : <Section title="Pull requests" description={application ? `Review plans and previews for ${application.name}.` : "Review plans and optional previews for this application."} action={embedded ? reportingActions : undefined}>
-        <EmptyState title="PR reporting isn’t enabled yet" description={`This application already uses ${source.repository}. Enable reporting to receive review-only plans and commit statuses for its pull requests.${canConfigure ?? ownerAccess ? "" : " A workspace owner can enable reporting."}`} />
+      </> : <Section surface title="Pull requests" description={application ? `Review plans and previews for ${application.name}.` : "Review plans and optional previews for this application."} action={embedded && !enableFromEmptyState ? reportingActions : undefined}>
+        <EmptyState title="PR reporting isn’t enabled yet" description={`This application already uses ${source.repository}. Enable reporting to receive review-only plans and commit statuses for its pull requests.${canConfigure ?? ownerAccess ? "" : " A workspace owner can enable reporting."}`} action="Enable PR reporting" onAction={enableFromEmptyState ? () => setShowSettings(true) : undefined} />
       </Section>}
       </>}
     </> : null}

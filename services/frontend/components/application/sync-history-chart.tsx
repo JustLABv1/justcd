@@ -70,7 +70,7 @@ export function SyncHistoryChartView({
     return `${start.toLocaleString()} – ${end.toLocaleTimeString()}`
   }
   return (
-    <Card className="min-w-0">
+    <Card size="sm" className="min-w-0">
       <Card.Header className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1 basis-48"><Card.Title as="h2">Sync activity</Card.Title>
         <Card.Description aria-live="polite" className={result.error ? "text-destructive" : undefined}>

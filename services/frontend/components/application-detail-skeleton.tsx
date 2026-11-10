@@ -1,3 +1,5 @@
+"use client"
+
 import { Card } from "@/components/panelui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 

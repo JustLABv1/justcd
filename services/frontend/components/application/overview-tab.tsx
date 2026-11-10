@@ -260,55 +260,8 @@ export function OverviewTab({
               .join(",")}
             onViewActivity={() => onSelectTab("activity")}
           />
-      {(pending.operations ||
-        operationsError != null ||
-        operations.length > 0) && (
-        <Card size="sm" aria-label="Recent activity">
-          <Card.Header>
-            <Card.Title as="h2">Recent activity</Card.Title>
-            <Card.Action>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => onSelectTab("activity")}
-              >
-                View all{trailingArrow}
-              </Button>
-            </Card.Action>
-          </Card.Header>
-          <Card.Content>
-          {pending.operations ? (
-            <SectionLoading label="Loading recent activity" />
-          ) : operationsError != null ? (
-            <div className="flex flex-wrap items-center justify-between gap-3 px-5 pb-5 text-sm">
-              <span>Recent activity could not be loaded.</span>
-              <ErrorDetailsButton error={operationsError} />
-            </div>
-          ) : operations.length ? (
-            <ol className="divide-y">
-              {operations.slice(0, 3).map((operation) => (
-                <li
-                  key={operation.id}
-                  className="flex flex-wrap items-center gap-3 px-5 py-4 text-sm"
-                >
-                  <StatusBadge status={operation.status} />
-                  <span className="min-w-0 flex-1 break-words">
-                    {operation.message || `${operation.type} operation`}
-                  </span>
-                  <time
-                    className="text-sm text-muted-foreground"
-                    dateTime={operation.startedAt}
-                  >
-                    {new Date(operation.startedAt).toLocaleString()}
-                  </time>
-                </li>
-              ))}
-            </ol>
-          ) : null}
-          </Card.Content>
-        </Card>
-      )}
         </div>
+        <div className="min-w-0 space-y-5">
         <Card size="sm" aria-label="Source" className="min-w-0">
           <Card.Header className="items-center">
             <Card.Title as="h2">Source</Card.Title>
@@ -359,6 +312,56 @@ export function OverviewTab({
           )}
           </Card.Content>
         </Card>
+      {(pending.operations ||
+        operationsError != null ||
+        operations.length > 0) && (
+        <Card size="sm" aria-label="Recent activity">
+          <Card.Header>
+            <Card.Title as="h2">Recent activity</Card.Title>
+            <Card.Action>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => onSelectTab("activity")}
+              >
+                View all{trailingArrow}
+              </Button>
+            </Card.Action>
+          </Card.Header>
+          <Card.Content>
+          {pending.operations ? (
+            <SectionLoading label="Loading recent activity" />
+          ) : operationsError != null ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+              <span>Recent activity could not be loaded.</span>
+              <ErrorDetailsButton error={operationsError} />
+            </div>
+          ) : operations.length ? (
+            <ol className="divide-y">
+              {operations.slice(0, 3).map((operation) => (
+                <li
+                  key={operation.id}
+                  className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-sm first:pt-0 last:pb-0"
+                >
+                  <StatusBadge status={operation.status} />
+                  <span className="min-w-0 flex-1 break-words">
+                    {operation.message || `${operation.type} operation`}
+                  </span>
+                  <time
+                    className="shrink-0 text-xs text-muted-foreground"
+                    dateTime={operation.startedAt}
+                    title={new Date(operation.startedAt).toLocaleString()}
+                  >
+                    {ago(operation.startedAt)}
+                  </time>
+                </li>
+              ))}
+            </ol>
+          ) : null}
+          </Card.Content>
+        </Card>
+      )}
+        </div>
       </div>
     </div>
   )

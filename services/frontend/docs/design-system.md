@@ -136,7 +136,14 @@ key-value pairs is always wrong.
   Shared notice wrappers expose `inline` for this case.
 - **One signal per record.** A Card or row that shows several states (delivery, runtime, paused)
   colours only the worst badge; the others are neutral `secondary` badges. Do not repeat the state
-  as coloured text under the badges; the reason line is plain text.
+  as coloured text under the badges; the reason line is plain text led by an alert icon in the
+  signal's tone.
+- **Attention is never neutral.** A record counted as "needs attention" shows at least one coloured
+  signal. A state such as runtime "Unknown" is `warning` when it is the reason the record is on
+  the attention list, not a grey badge. For applications this is one function,
+  `applicationCardStatus` (`lib/application-card-status.ts`), with a test over every combination of
+  delivery state, runtime state and flags. Change tones there, not in a component, and never by
+  matching substrings of a status string.
 - **One record style.** Do not dim, dash or tint a Card to show state. A coloured Card edge
   (`border-warning/50`) is reserved for records waiting on a decision from a person, such as a
   deletion review. Paused, degraded or blocked are badges, not card styles.
@@ -274,6 +281,19 @@ The user rejected screens where blocks were not clearly bounded. These apply fro
 
 | Application cards where every card carried two or three coloured badges, yellow text, and one of three card styles (dashed and dimmed, yellow edge, normal) | One card style, one coloured badge, coloured edge only for a pending decision, shared cluster outage stated in the group header. See `ApplicationCard` and `statusBadges`. |
 | Truncated card titles and a tray around a single group | Titles clamp to two lines. `CollapsibleGroup` only when there are two or more groups; a single group keeps its header on the canvas. |
+
+### Application detail review (2026-11-10)
+
+| Found | Now |
+| --- | --- |
+| Deployment schedule as loose rows at the bottom of Overview | Configuration lives in the Settings tab, as a settings section. Overview shows state, not settings. |
+| Right column of Overview ended after one Card while the left ran on | Balance the columns: Source and Recent activity right, the chart left. |
+| Plan status ("applied", "stale") as an icon and text floating on the canvas | `Alert` with its actions. A status message with actions is always an Alert. |
+| "Refresh plan" in the page header and again inside the tab | An action appears once per view. |
+| Empty state with its only action in the far corner of the section header | The action sits in the empty state; the section is a `surface`. |
+| Header action filled on every tab, beside a filled action in the tab | The page-header action is filled only on tabs where it is the next step (Overview, Activity). |
+| Cards on one page in two sizes (18px and 16px titles) | Cards inside a tab use `size="sm"`. |
+| A server component reading `Card.Content` from the client module crashed the page | A file that uses compound PanelUI parts (`Card.Content`, `Frame.Row`) is a client component. |
 
 "No container" and "whitespace separates first" were over-applied during the migration. When in
 doubt, a block gets a boundary.

@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { ApplicationNotificationSettings } from "@/components/application-notification-settings"
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 import { RowActions } from "@/components/action-menu"
 import type { IgnorePrefill, NewIgnore } from "@/components/application/helpers"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
@@ -59,7 +59,7 @@ function RenderSettings({ application, kustomization, kustomizationError, canApp
   </SettingsPanel>
 }
 
-export function SettingsTab({ application, kustomization, kustomizationError, canApprove, busy, hasPendingOperation, pendingAction, rulesLoading, ignoreRules, ignoreSelectors, managedResourceCount, deletionApprovalCount, prefill, onSaveRenderSettings, onAddIgnore, onRemoveRule, onRemoveSelector, onDeleteApplication, onCancelDecommission }: {
+export function SettingsTab({ application, kustomization, kustomizationError, canApprove, busy, hasPendingOperation, pendingAction, rulesLoading, ignoreRules, ignoreSelectors, managedResourceCount, deletionApprovalCount, prefill, onSaveRenderSettings, onAddIgnore, onRemoveRule, onRemoveSelector, onDeleteApplication, onCancelDecommission, schedule }: {
   application: Application
   kustomization: { namespace: string; commit: string } | null
   kustomizationError: unknown | null
@@ -80,6 +80,8 @@ export function SettingsTab({ application, kustomization, kustomizationError, ca
   onRemoveSelector: (selector: IgnoreSelector) => Promise<void>
   onDeleteApplication: (resourcePolicy: string) => Promise<void>
   onCancelDecommission: () => void
+  /** Deployment schedule section, placed before the danger zone. */
+  schedule?: ReactNode
 }) {
   const [ignoreMode, setIgnoreMode] = useState<string>(prefill?.mode ?? "kind")
   const [ignoreVersion, setIgnoreVersion] = useState(prefill?.version ?? "")
@@ -148,6 +150,7 @@ export function SettingsTab({ application, kustomization, kustomizationError, ca
           </ul>}
       </div>
     </SettingsPanel>
+    {schedule}
     {canApprove && <SettingsDangerZone description="Choose whether JustCD keeps or removes the resources it manages.">
       <SettingsRow label="Delete this application" description={<>{`${managedResourceCount} managed resource${managedResourceCount === 1 ? "" : "s"} currently recorded.`} Keeping them removes ownership tracking from JustCD.{application.decommissioning ? " Deletion is already in progress." : ""}</>} action={<div className="flex flex-wrap items-center gap-2">
         {application.decommissioning && <Button type="button" size="sm" variant="outline" disabled={busy || hasPendingOperation} onClick={onCancelDecommission}>Cancel deletion</Button>}

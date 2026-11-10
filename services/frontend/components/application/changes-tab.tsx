@@ -207,24 +207,22 @@ export function ChangesTab({ workspaceId, plans, activePlan, onSelectPlan, plans
       : plansError != null ? <div role="alert" className="flex flex-wrap items-center justify-between gap-3 p-5 text-sm"><span>Plans could not be loaded.</span><Button size="sm" loading={retryingPlans} onClick={onRetryPlans}>Retry</Button></div>
       : !activePlan ? <EmptyState title="No review plan yet" description="Build a plan to render Git manifests and compare them with live, app-owned resources." />
       : <div className="space-y-5">
-        {planInactive && <div role="status" className="mb-5 flex flex-wrap items-start gap-4">
-          <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-full bg-warning/15 text-warning"><HugeiconsIcon icon={Alert02Icon} strokeWidth={2} className="size-4" /></span>
-          <div className="min-w-0 flex-1 basis-80 space-y-1">
-            <p className="text-sm font-semibold">{planExpired ? "Plan expired" : "Plan is stale"}</p>
-            <div className="text-sm text-muted-foreground"><p>{planExpired ? `Expired ${new Date(activePlan.expiresAt).toLocaleString()}.` : "Git or the cluster changed since this plan was built."} It can no longer be approved or applied.</p>{!canDeploy && <p className="mt-2 text-xs text-muted-foreground">A workspace owner or deployer can generate a fresh plan.</p>}</div>
-          </div>
-          <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={onCreatePlan} loading={pendingAction === "create-plan"} disabled={busy || hasPendingOperation || !canDeploy || decommissioning}>Refresh plan</Button>
-              <Button size="sm" variant="outline" onClick={() => setExpandedExpiredPlan(expandedExpiredPlan === activePlan.id ? null : activePlan.id)}>{expandedExpiredPlan === activePlan.id ? "Hide old diff" : "View old diff"}</Button></div>
-        </div>}
+        {planInactive && <Alert tone="warning" role="status">
+          <Alert.Icon />
+          <Alert.Title>{planExpired ? "Plan expired" : "Plan is stale"}</Alert.Title>
+          <Alert.Description>{planExpired ? `Expired ${new Date(activePlan.expiresAt).toLocaleString()}.` : "Git or the cluster changed since this plan was built."} It can no longer be approved or applied.{!canDeploy && " A workspace owner or deployer can generate a fresh plan."}</Alert.Description>
+          <Alert.Actions>
+            <Button size="sm" variant="outline" onClick={() => setExpandedExpiredPlan(expandedExpiredPlan === activePlan.id ? null : activePlan.id)}>{expandedExpiredPlan === activePlan.id ? "Hide old diff" : "View old diff"}</Button>
+            <Button size="sm" variant="outline" onClick={onCreatePlan} loading={pendingAction === "create-plan"} disabled={busy || hasPendingOperation || !canDeploy || decommissioning}>Refresh plan</Button>
+          </Alert.Actions>
+        </Alert>}
 
-        {activePlan.status === "applied" && <div role="status" className="mb-5 flex flex-wrap items-start gap-4">
-          <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-full bg-success/15 text-success"><HugeiconsIcon icon={Tick02Icon} strokeWidth={2} className="size-4" /></span>
-          <div className="min-w-0 flex-1 basis-80 space-y-1">
-            <p className="text-sm font-semibold">Plan successfully applied</p>
-            <p className="text-sm text-muted-foreground">These changes have already been executed. This plan is a historical snapshot, not a list of pending changes. Refresh the plan to compare Git with the current cluster state.</p>
-          </div>
-          <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => setExpandedAppliedPlan(expandedAppliedPlan === activePlan.id ? null : activePlan.id)}>{expandedAppliedPlan === activePlan.id ? "Hide applied diff" : "View applied diff"}</Button><Button size="sm" variant="outline" onClick={onCreatePlan} disabled={blocked || !canDeploy || decommissioning}>Refresh plan</Button></div>
-        </div>}
+        {activePlan.status === "applied" && <Alert tone="success" role="status">
+          <Alert.Icon />
+          <Alert.Title>Plan successfully applied</Alert.Title>
+          <Alert.Description>These changes have already been executed. This plan is a historical snapshot, not a list of pending changes. Use Refresh plan above to compare Git with the current cluster state.</Alert.Description>
+          <Alert.Actions><Button size="sm" variant="outline" onClick={() => setExpandedAppliedPlan(expandedAppliedPlan === activePlan.id ? null : activePlan.id)}>{expandedAppliedPlan === activePlan.id ? "Hide applied diff" : "View applied diff"}</Button></Alert.Actions>
+        </Alert>}
         {(!planInactive || expandedExpiredPlan === activePlan.id) && (activePlan.status !== "applied" || expandedAppliedPlan === activePlan.id) && <>
           <div className="mb-4 flex flex-wrap items-center gap-2"><StatusBadge status={planReviewStatus(activePlan, now)} />{(["create", "update", "delete"] as const).filter((kind) => counts?.[kind]).map((kind) => <Badge key={kind} variant="outline">{counts?.[kind]} {kind}</Badge>)}<span className="text-xs text-muted-foreground" title={`Plan digest ${activePlan.plan.digest}`}>Commit <span className="font-mono">{activePlan.plan.revision.slice(0, 12)}</span> · {planExpired ? "expired" : "expires"} {new Date(activePlan.expiresAt).toLocaleString()}</span></div>
           {activePlan.trigger && <p className="mb-4 break-all text-sm text-muted-foreground">Triggered by {activePlan.trigger.provider} push to <code>{activePlan.trigger.ref}</code> · delivery <code>{activePlan.trigger.deliveryId}</code> · reported <code>{activePlan.trigger.reportedCommit.slice(0, 12)}</code>{activePlan.trigger.reportedCommit !== activePlan.plan.revision ? " · branch advanced before planning" : ""}</p>}

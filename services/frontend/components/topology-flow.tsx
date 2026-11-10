@@ -120,7 +120,7 @@ export function TopologyFlow(props: Props) {
     return <Card size="sm" key={row.id} aria-label={workload.identity.name} className="@container min-w-0">
       <Card.Header>
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-        <Button variant="ghost" type="button" onClick={() => onSelect(workload.id)} className={`flex min-w-0 items-center gap-2 rounded text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${selectedId === workload.id ? "text-info" : ""}`}>
+        <Button variant="ghost" type="button" onClick={() => onSelect(workload.id)} className={`-mx-2 flex h-8 min-w-0 items-center gap-2 rounded px-2 text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${selectedId === workload.id ? "text-info" : ""}`}>
           <HugeiconsIcon icon={iconFor(workload.identity.kind)} strokeWidth={1.6} className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
           <i aria-hidden="true" className={`size-2 shrink-0 rounded-full ${signalDot[runtimeSignal(workload)]}`} />
           <h3 className="truncate text-sm font-semibold">{workload.identity.name}</h3>
@@ -161,8 +161,8 @@ export function TopologyFlow(props: Props) {
       {toChange > 0 && <Badge variant="warning" dot>{toChange} to change</Badge>}
     </div>}
     {rows.map(flowRow)}
-    {other.length > 0 && <Card aria-label="Other resources" className="min-w-0">
-      <Card.Header><Card.Title as="h3">Other resources</Card.Title><Card.Description>Not attached to a workload.</Card.Description></Card.Header>
+    {other.length > 0 && <Card size="sm" aria-label="Other resources" className="min-w-0">
+      <Card.Header><Card.Title as="h3" className="text-sm">Other resources</Card.Title><Card.Description>Not attached to a workload.</Card.Description></Card.Header>
       <Card.Content><div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">{other.map(chip)}</div></Card.Content>
     </Card>}
   </div>

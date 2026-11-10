@@ -161,7 +161,7 @@ export function PublishingProgress({
   // Connectors fill up to the first step that is not yet done.
   const current = list.findIndex((step) => step.state !== "done") + 1 || list.length
   return (
-    <Card aria-label="Publishing progress">
+    <Card size="sm" aria-label="Publishing progress">
       <Card.Header className="flex flex-wrap items-start gap-3">
         <Card.Title as="h2" className="min-w-0 flex-1 basis-40">Publishing progress</Card.Title>
         {publication.pipelineUrl && (

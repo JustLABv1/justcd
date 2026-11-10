@@ -123,15 +123,10 @@ export function InventoryPanel({ title, description, count, action, toolbar, chi
 }) {
   return (
     <SettingsPanel
-      title={title}
+      title={<span className="inline-flex items-center gap-2">{title}<Badge variant="secondary" size="sm" aria-label={`${count} total`} className="tabular-nums">{count}</Badge></span>}
       surface={surface}
       description={description}
-      action={
-        <div className="flex max-w-full flex-wrap items-center gap-3">
-          <Badge variant="secondary"  aria-label={`${count} total`} className="tabular-nums">{count}</Badge>
-          {action}
-        </div>
-      }
+      action={action}
       className="overflow-hidden"
     >
       {toolbar && <div className="pb-3">{toolbar}</div>}

@@ -295,6 +295,18 @@ The user rejected screens where blocks were not clearly bounded. These apply fro
 | Cards on one page in two sizes (18px and 16px titles) | Cards inside a tab use `size="sm"`. |
 | A server component reading `Card.Content` from the client module crashed the page | A file that uses compound PanelUI parts (`Card.Content`, `Frame.Row`) is a client component. |
 
+### Connections and settings review (2026-11-10)
+
+| Found | Now |
+| --- | --- |
+| A Git source the dashboard reports as unreachable looked neutral on the page where it is fixed | A record shows the state other screens report about it: destructive badge and the reason. Derive it from the same function (`gitSourceHealth`), never a second rule. |
+| "Discovery paused" as a grey outline badge | Paused is `warning`, failed is `destructive`, on is `success`, each with a dot. |
+| Workspace name in the breadcrumb, the sidebar switcher and a scope badge | `ScopeBadge` only where the scope is not already on screen (instance settings). |
+| Settings navigation group named "Delivery", like the main sidebar group | Group labels are unique across both navigations. |
+| Content column narrower than the page heading, so the header action overhung the cards | With a settings navigation the content fills to the heading's right edge. |
+| Count badge alone in the far corner of a section heading | A count sits directly after the title. |
+| Properties ("Private to this workspace", "No credential") as badges beside the name | Badges are for state. Properties go in the muted line under the name. |
+
 "No container" and "whitespace separates first" were over-applied during the migration. When in
 doubt, a block gets a boundary.
 

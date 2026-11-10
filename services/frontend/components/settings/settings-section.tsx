@@ -53,7 +53,7 @@ export function SettingsRow({ label, description, value, action, className = "" 
  * pages: same title, description and action props.
  */
 export function SettingsPanel({ title, description, action, children, className = "", surface = "card" }: { title?: ReactNode; description?: ReactNode; action?: ReactNode; children: ReactNode; className?: string; /** `flat` drops the Card, for a panel nested inside another one. */ surface?: "card" | "flat" }) {
-  if (surface === "flat") return <Section title={title} description={description} action={action} className={className}>{children}</Section>
+  if (surface === "flat") return <Section divided={false} title={title} description={description} action={action} className={className}>{children}</Section>
   return <SettingsSurface title={title} description={description} action={action} className={className}>{children}</SettingsSurface>
 }
 

@@ -84,7 +84,7 @@ export function SettingsLayout({ title, description, scope, actions, nav, active
     {hasNav
       ? <div className="grid items-start gap-6 lg:grid-cols-[176px_minmax(0,1fr)] lg:gap-8">
           <SettingsNav groups={nav!} activeId={activeId ?? ""} label={navLabel} />
-          <div className="min-w-0 max-w-5xl space-y-8">{children}</div>
+          <div className="min-w-0 space-y-8">{children}</div>
         </div>
       : <div className="max-w-4xl space-y-8">{children}</div>}
   </div>

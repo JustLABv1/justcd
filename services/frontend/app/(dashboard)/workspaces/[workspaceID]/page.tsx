@@ -20,7 +20,7 @@ import { PublishingProfiles } from "@/components/settings/publishing-profiles"
 import { WorkspaceSettings } from "@/components/workspace-settings"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { EmptyState, FormField } from "@/components/ui-kit"
-import { ScopeBadge, SettingsLayout, SettingsNotice, type SettingsNavGroup } from "@/components/settings/layout"
+import { SettingsLayout, SettingsNotice, type SettingsNavGroup } from "@/components/settings/layout"
 import { SettingsPanel } from "@/components/settings/settings-section"
 import { useToast } from "@/components/toast-provider"
 import { api, apiPost, errorMessage } from "@/lib/api"
@@ -135,7 +135,6 @@ function WorkspaceSettingsPage() {
   return <SettingsLayout
     title="Workspace settings"
     description={`Manage ${workspace.name} · ${workspace.description || "Members, deployment policies, and notifications."}`}
-    scope={<ScopeBadge scope="workspace" name={workspace.name} />}
     actions={<Button variant="outline" render={<Link href={`/audit?workspaceId=${encodeURIComponent(workspaceID)}`} />} nativeButton={false}><HugeiconsIcon icon={Audit01Icon} strokeWidth={1.8} aria-hidden="true" />Audit trail</Button>}
     nav={navGroups}
     activeId={activeTab}

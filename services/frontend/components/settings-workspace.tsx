@@ -276,7 +276,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
 
   const navGroupsForArea: SettingsNavGroup[] = workspaceScoped && fixedWorkspaceId
     ? [
-        { label: "Delivery", items: workspaceConnectionSections.filter((item) => item.id === "git-sources" || item.id === "clusters").map((item) => ({ id: item.id, label: item.title, href: `/workspaces/${fixedWorkspaceId}/connections/${item.id}` })) },
+        { label: "Sources & targets", items: workspaceConnectionSections.filter((item) => item.id === "git-sources" || item.id === "clusters").map((item) => ({ id: item.id, label: item.title, href: `/workspaces/${fixedWorkspaceId}/connections/${item.id}` })) },
         { label: "Security & access", items: workspaceConnectionSections.filter((item) => item.id === "credentials" || item.id === "shares").map((item) => ({ id: item.id, label: item.title, href: `/workspaces/${fixedWorkspaceId}/connections/${item.id}` })) },
       ]
     : navGroups
@@ -402,7 +402,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
     <SettingsLayout
       title={workspaceScoped ? "Connections" : "Instance settings"}
       description={workspaceScoped ? "Repositories, Kubernetes access, credentials and sharing for this workspace." : "Maintenance, sign-in, accounts and AI for the whole JustCD instance."}
-      scope={<ScopeBadge scope={workspaceScoped ? "workspace" : "instance"} name={workspace?.name} />}
+      scope={workspaceScoped ? undefined : <ScopeBadge scope="instance" />}
       nav={navGroupsForArea}
       activeId={section || firstInstanceSection || ""}
       navLabel={workspaceScoped ? "Connection sections" : "Instance settings sections"}

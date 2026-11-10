@@ -5,7 +5,7 @@ import { Section } from "@/components/section"
 import { useCallback, useEffect, useState } from "react"
 import type { FormEvent } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Copy01Icon, Delete02Icon, GitBranchIcon, Layers01Icon, PauseIcon, PlayIcon, Settings02Icon, Tick02Icon } from "@hugeicons/core-free-icons"
+import { Copy01Icon, Delete02Icon, Radar01Icon, Layers01Icon, PauseIcon, PlayIcon, Settings02Icon, Tick02Icon } from "@hugeicons/core-free-icons"
 import { RowActions } from "@/components/action-menu"
 import { RepositoryEnvironmentSettingsDialog } from "@/components/repository-environment-settings"
 import { RepositoryPRSettingsDialog } from "@/components/repository-pr-settings"
@@ -174,6 +174,7 @@ export function RepositoryConfigurations({
   const nameOf = (item: RepositoryConfiguration) => `${sources.find((source) => source.id === item.sourceId)?.name ?? "Repository"} · ${item.revision}`
   return (
     <Section
+      divided={false}
       title="Application discovery"
       description="Discover applications from justcd.yaml files on selected repository branches."
       action={owner ? <Button size="sm" variant="outline" disabled={!sources.length || Boolean(busy)} onClick={() => { setSourceId(sources[0]?.id ?? ""); setOpen(true) }}>Add discovery branch</Button> : undefined}
@@ -196,10 +197,12 @@ export function RepositoryConfigurations({
           {items.map((item) => (
             <ConnectionRow
               key={item.id}
-              icon={<HugeiconsIcon icon={GitBranchIcon} strokeWidth={1.8} className="size-4" />}
+              icon={<HugeiconsIcon icon={Radar01Icon} strokeWidth={1.8} className="size-4" />}
               title={nameOf(item)}
               badges={<>
-                <Badge size="sm"  variant={item.enabled ? "success" : "outline"}>{item.enabled ? "Discovery on" : "Discovery paused"}</Badge>
+                {item.lastError
+                  ? <Badge size="sm" variant="destructive" dot>Discovery failed</Badge>
+                  : <Badge size="sm" variant={item.enabled ? "success" : "warning"} dot>{item.enabled ? "Discovery on" : "Discovery paused"}</Badge>}
                 {item.prSettings?.enabled && <Badge size="sm"  variant="info">Pull requests on</Badge>}
               </>}
               meta={<>

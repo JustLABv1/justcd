@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils"
  * `surface`: the whole section is one Card, heading inside. Use it for data that would otherwise
  * float on the canvas: a toolbar with a table, a filtered list, a summary beside other Cards.
  */
-export function Section({ id, title, description, action, children, className, surface = false, divided = true }: {
+export function Section({ id, title, description, action, children, className, surface = false, divided = true, heading = "default" }: {
   id?: string
   title?: ReactNode
   description?: ReactNode
@@ -26,6 +26,8 @@ export function Section({ id, title, description, action, children, className, s
   surface?: boolean
   /** Rule this open section off from an open section directly before it. Default true. */
   divided?: boolean
+  /** `large` for the one heading that titles a whole wizard step. */
+  heading?: "default" | "large"
 }) {
   const generatedId = useId()
   const headingId = `${id ?? generatedId}-heading`
@@ -48,7 +50,7 @@ export function Section({ id, title, description, action, children, className, s
   >
     {hasHeading && <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
       <div className="min-w-0 flex-1 basis-56 space-y-1">
-        {title && <h2 id={headingId} className="text-sm font-semibold">{title}</h2>}
+        {title && <h2 id={headingId} className={heading === "large" ? "text-lg font-semibold tracking-tight" : "text-sm font-semibold"}>{title}</h2>}
         {description && <div className="text-sm leading-5 text-muted-foreground">{description}</div>}
       </div>
       {action && <div className="flex max-w-full flex-wrap items-center gap-2">{action}</div>}

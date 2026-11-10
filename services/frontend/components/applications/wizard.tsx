@@ -63,8 +63,8 @@ export function Wizard({ step, onStepChange, idPrefix, steps }: { step: number; 
  */
 export function WizardFooter({ step, isLast, onBack, onNext, submit }: { step: number; isLast: boolean; onBack: () => void; onNext: () => void; submit: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-3">
-      <Button type="button" variant="outline" onClick={onBack} disabled={step === 1}>Back</Button>
+    <div className="flex items-center justify-end gap-2">
+      {step > 1 && <Button type="button" variant="outline" onClick={onBack}>Back</Button>}
       {isLast ? <div key="submit">{submit}</div> : <Button key="next" type="button" onClick={(event) => { event.preventDefault(); onNext() }}>Next</Button>}
     </div>
   )

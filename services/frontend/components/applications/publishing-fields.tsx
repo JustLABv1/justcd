@@ -7,13 +7,15 @@ export function PublishingCard({
   children,
   className = "",
   contentClassName = "",
+  size = "default",
 }: {
   children: ReactNode
   className?: string
   contentClassName?: string
+  size?: "default" | "sm"
 }) {
   return (
-    <Card className={`h-full ${className}`}>
+    <Card size={size} className={`h-full ${className}`}>
       <Card.Content className={contentClassName}>
         {children}
       </Card.Content>

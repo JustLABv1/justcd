@@ -42,7 +42,8 @@ export function PublishingDraftNotice({
       {draft.ready && (draft.savedAt || draft.error) && (
         <Button
           type="button"
-          variant="destructive"
+          variant="outline"
+          size="sm"
           onClick={() => {
             if (draft.clear()) window.location.reload()
           }}
@@ -54,6 +55,7 @@ export function PublishingDraftNotice({
         <Button
           type="button"
           variant="outline"
+          size="sm"
           onClick={() => window.location.reload()}
         >
           Reload
@@ -65,6 +67,6 @@ export function PublishingDraftNotice({
   return inline ? (
     <div className={row}>{content}</div>
   ) : (
-    <PublishingCard contentClassName={row}>{content}</PublishingCard>
+    <PublishingCard size="sm" contentClassName={row}>{content}</PublishingCard>
   )
 }

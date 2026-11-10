@@ -203,7 +203,9 @@ with the heading on the canvas; rows in one Card; records as a stack of Cards;
 on the canvas, inspector for detail. Fullscreen targets the Workbench only. On phones, resource navigation opens in a Dialog;
 do not force a desktop sidebar to remain beside the canvas.
 
-**Wizard** (New application, Publish): `Steps`; each step is a section of `Field`s, not a Card;
+**Wizard** (New application, Publish): `Steps`; each step is a `Section surface` (one Card: title and
+description in its header, `Field`s in its content), so the step is a visible block. Selectable option
+cards inside it (package sources, optional services) are allowed;
 Back and Next at the bottom. Use `WizardSteps` for application/group flows so labels retain readable
 widths on phones and the current step scrolls into view within the step rail.
 
@@ -308,6 +310,17 @@ The user rejected screens where blocks were not clearly bounded. These apply fro
 | Content column narrower than the page heading, so the header action overhung the cards | With a settings navigation the content fills to the heading's right edge. |
 | Count badge alone in the far corner of a section heading | A count sits directly after the title. |
 | Properties ("Private to this workspace", "No credential") as badges beside the name | Badges are for state. Properties go in the muted line under the name. |
+
+### Manual publishing wizard review (2026-11-10)
+
+| Found | Now |
+| --- | --- |
+| Filled red "Discard draft" beside the filled blue "Next" | Discarding a draft is not a deletion: outline, small. One filled button per view. |
+| "Publishing in workspace X. Switch it with the workspace menu…" as a sentence on the canvas | `WorkspaceNote` is an outline badge in the page header; the hint is its tooltip. |
+| Back far left, Next far right, Back disabled and almost invisible on step 1 | Both on the right, Back only from step 2. |
+| Wizard steps as bare fields on the canvas, "just input and text on a background" | Each step is a `Section surface`. The earlier rule "a step is a section, not a Card" contradicted "every block has a boundary" and is replaced. |
+| Draft notice floating between the step and the buttons | `PublishingDraftNotice` renders as a compact Card. |
+| Notes between fields indented 4 px and one size above the field hints | Aligned with the fields. A note that states a security or storage fact is an `Alert variant="plain"`. |
 
 "No container" and "whitespace separates first" were over-applied during the migration. When in
 doubt, a block gets a boundary.

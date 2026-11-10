@@ -5,6 +5,7 @@ import { Section } from "@/components/section"
 import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { Card } from "@/components/panelui/card"
+import { Alert } from "@/components/panelui/alert"
 import { Button } from "@/components/panelui/button"
 import { Input } from "@/components/panelui/input"
 import { PublishingServicesEditor } from "@/components/settings/publishing-services"
@@ -388,7 +389,7 @@ export default function PublishApplicationPage() {
                 },
               ]}
             />
-            <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
+            <p className="self-start text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
               The build commits the immutable image digest into
               deploy/application.yaml. JustCD will discover that revision.
               Review and apply the plan to make the app available. Before the
@@ -439,7 +440,7 @@ export default function PublishApplicationPage() {
         <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={1.8} />
         All templates
       </Button>
-      <header className="flex items-start gap-4">
+      <header className="flex flex-wrap items-start gap-x-4 gap-y-3">
         <TemplateGlyph
           template={selectedTemplate}
           className="size-11 bg-muted/50"
@@ -452,10 +453,10 @@ export default function PublishApplicationPage() {
             {selectedTemplate.description}
           </p>
         </div>
+        <div className="ml-auto">
+          <WorkspaceNote name={workspaces.find((item) => item.id === workspaceId)?.name} />
+        </div>
       </header>
-      <WorkspaceNote
-        name={workspaces.find((item) => item.id === workspaceId)?.name}
-      />
       <div ref={errorRef} tabIndex={-1}>
         {(error ?? limitsError) != null && (
           <ErrorNotice error={error ?? limitsError} />
@@ -485,6 +486,7 @@ export default function PublishApplicationPage() {
                 title: "Application",
                 content: (
                   <Section
+                    surface
                     title="Bring your application"
                     description="Upload the contents of your project directory, with dependency files at the archive root."
                   >
@@ -563,6 +565,7 @@ export default function PublishApplicationPage() {
                 title: "Repository",
                 content: (
                   <Section
+                    surface
                     title="Where should the Git repository live?"
                     description="JustCD creates a private project in your GitLab group. Existing unrelated repositories are never overwritten."
                   >
@@ -623,13 +626,13 @@ export default function PublishApplicationPage() {
                           }
                         />
                       </FormField>
-                      <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
+                      <Alert tone="info" variant="plain" className="md:col-span-2 lg:col-span-3"><Alert.Icon /><Alert.Description>
                         JustCD retains the API token encrypted to update
                         deployment manifests after builds. It must permit Git
                         repository writes to the protected main branch. GitLab
                         18.4 or newer is recommended. The protected main branch
                         is the publishing branch.
-                      </p>
+                      </Alert.Description></Alert>
                     </div>
                   </Section>
                 ),
@@ -638,6 +641,7 @@ export default function PublishApplicationPage() {
                 title: "Build",
                 content: (
                   <Section
+                    surface
                     title="How should the app be built?"
                     description="Your platform team supplies approved image references. JustCD generates the Dockerfile and GitLab pipeline."
                   >
@@ -758,7 +762,7 @@ export default function PublishApplicationPage() {
                           credentialsNote="Builds use these mirrors. The token is stored as a masked, protected CI variable in the new GitLab project; JustCD does not keep it."
                         />
                       </div>
-                      <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
+                      <p className="self-start text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
                         {config.runtime === "static" ? (
                           "Your website files are copied directly into the approved webserver image. No dependencies are installed and no build command is run."
                         ) : (
@@ -780,6 +784,7 @@ export default function PublishApplicationPage() {
                 content: (
                   <>
                   <Section
+                    surface
                     title="Where should build secrets come from?"
                     description="Registry credentials are used by CI to push images. They are never committed to Git or included in the application image."
                   >
@@ -843,11 +848,11 @@ export default function PublishApplicationPage() {
                               }
                             />
                           </FormField>
-                          <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
+                          <Alert tone="info" variant="plain" className="md:col-span-2 lg:col-span-3"><Alert.Icon /><Alert.Description>
                             JustCD sends REGISTRY_USER and REGISTRY_PASSWORD
                             through the GitLab API. GitLab stores the values;
                             JustCD does not retain them.
-                          </p>
+                          </Alert.Description></Alert>
                         </>
                       ) : (
                         <>
@@ -870,7 +875,7 @@ export default function PublishApplicationPage() {
                             true,
                             "secret/data/analytics/registry"
                           )}
-                          <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
+                          <p className="self-start text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
                             This workflow references an existing Vault secret.
                             It does not create Vault policies or upload secret
                             values into Vault.
@@ -888,6 +893,7 @@ export default function PublishApplicationPage() {
                 title: "Deployment",
                 content: (
                   <Section
+                    surface
                     title="Where should the app run?"
                     description="Choose an existing workspace namespace or create one through the deployment flow. Cluster credentials remain managed by JustCD."
                   >
@@ -951,7 +957,7 @@ export default function PublishApplicationPage() {
                         )}
                       </FormField>
                       {!bindings.length && !config.createNamespace && (
-                        <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
+                        <p className="self-start text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
                           Configure namespace access in workspace Connections
                           before publishing.
                         </p>
@@ -1044,12 +1050,12 @@ export default function PublishApplicationPage() {
                         />
                       </FormField>
                       {!config.host && (
-                        <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
+                        <p className="self-start text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
                           Route or Ingress settings apply once an application
                           hostname is set.
                         </p>
                       )}
-                      <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
+                      <p className="self-start text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
                         Deployment starts in manual mode. After the build
                         succeeds, review and apply the plan under your workspace
                         approval policy.
@@ -1062,10 +1068,11 @@ export default function PublishApplicationPage() {
                 title: "Review",
                 content: (
                   <Section
+                    surface
                     title="Ready to create your application?"
                     description="Review the destinations and actions before JustCD writes to GitLab."
                   >
-                    <Card size="sm"><Card.Content className="space-y-5">
+                    <div className="space-y-5">
                       <SummaryList
                         items={[
                           {
@@ -1114,20 +1121,20 @@ export default function PublishApplicationPage() {
                         title="Create the repository and start the build"
                         description="JustCD will upload this source to a private GitLab project, configure CI, register the application, and start its pipeline. I have removed credentials from the source and reviewed the access settings."
                       />
-                      <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
+                      <p className="self-start text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
                         If setup fails, the private repository is retained.
                         Retry the same archive and settings to resume. For
                         updates, choose Upload new version on the application
                         page. Each upload replaces the complete source snapshot.
                       </p>
-                    </Card.Content></Card>
+                    </div>
                   </Section>
                 ),
               },
             ]}
           />
           <div className="space-y-5">
-            <PublishingDraftNotice draft={draft} inline />
+            <PublishingDraftNotice draft={draft} />
             <div>
             <WizardFooter
               step={wizard.step}

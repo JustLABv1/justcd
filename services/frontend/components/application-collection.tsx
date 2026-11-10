@@ -88,7 +88,7 @@ function ApplicationActions({ app, canManage, onDeleted, onEditLabels }: { app: 
 }
 
 function FavoriteButton({ name, favorite, busy, onClick }: { name: string; favorite: boolean; busy?: boolean; onClick: () => void }) {
-  return <Button type="button" variant="ghost" size="icon-sm" aria-label={`${favorite ? "Remove" : "Add"} ${name} ${favorite ? "from" : "to"} favorites`} aria-pressed={favorite} disabled={busy} onClick={onClick} title={favorite ? "Remove from favorites" : "Add to favorites"}><HugeiconsIcon icon={StarIcon} strokeWidth={1.8} aria-hidden="true" className={favorite ? "fill-warning text-warning-foreground dark:text-warning" : "text-muted-foreground"} /></Button>
+  return <Button type="button" variant="ghost" size="icon-sm" aria-label={`${favorite ? "Remove" : "Add"} ${name} ${favorite ? "from" : "to"} favorites`} aria-pressed={favorite} disabled={busy} onClick={onClick} title={favorite ? "Remove from favorites" : "Add to favorites"}><HugeiconsIcon icon={StarIcon} strokeWidth={1.8} aria-hidden="true" className={favorite ? "fill-foreground text-foreground" : "text-muted-foreground"} /></Button>
 }
 
 const checkSources = (app: WorkspaceApplication) => app.statusIssues.map((issue) => issue.source === "git" ? "Git" : issue.source === "cluster" ? "Cluster" : issue.source).join(" + ")
@@ -192,7 +192,8 @@ function GroupHeader({ label, bucket, mode, health, open }: { label: string; buc
   const apps = bucket.applications
   const counts = { synced: 0, attention: 0, other: 0 }
   for (const app of apps) counts[classify(app)]++
-  const level = health?.level ?? (counts.attention ? "warning" : "healthy")
+  // Only a cluster has a health of its own; a label or namespace group is just a heading.
+  const level = health?.level ?? "unknown"
   return (
     <span className="flex w-full min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-left">
       <span aria-hidden="true" className={`grid size-8 shrink-0 place-items-center rounded-lg ${tone[level].bg} ${tone[level].text}`}>

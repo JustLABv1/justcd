@@ -250,14 +250,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="min-h-svh overflow-x-clip bg-muted text-foreground dark:bg-[oklch(0.17_0_0)]">
+    <div className="min-h-svh overflow-x-clip bg-shell text-foreground">
       <NavRail
         aria-label="Sidebar"
         collapsed={collapsed}
         onCollapsedChange={setSidebarCollapsed}
-        expandedWidth={224}
+        expandedWidth={256}
         collapsedWidth={72}
-        className="fixed bottom-3 left-3 top-3 z-20 hidden h-auto rounded-[24px] border border-border/70 bg-card p-3 shadow-[0_8px_32px_-16px_rgb(0_0_0_/_0.2)] dark:bg-card lg:flex not-data-collapsed:overflow-y-auto"
+        className="fixed inset-y-0 left-0 z-20 hidden h-auto rounded-none bg-transparent px-3 py-4 ring-0 dark:bg-transparent dark:ring-0 lg:flex not-data-collapsed:overflow-y-auto"
       >
         <NavRail.Header className="pb-3 pt-1">
           <NavRail.Brand href="/" label="JustCD home" icon={<LogoMark className="h-5 w-auto text-current" />}>JustCD</NavRail.Brand>
@@ -278,19 +278,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} isAdmin={user.isAdmin} canCreateWorkspace={canCreateWorkspace} workspaces={workspaces} workspaceId={selectedWorkspaceId} onSelectWorkspace={selectWorkspace} onToggleSidebar={toggleSidebar} onboardingIncomplete={onboardingIncomplete} />
 
-      <div className={`${collapsed ? "lg:pl-[96px]" : "lg:pl-[248px]"} transition-[padding] duration-200 motion-reduce:transition-none lg:py-3 lg:pr-3`}>
-      <div className="lg:min-h-[calc(100svh-1.5rem)] lg:rounded-[24px] lg:border lg:border-border/70 lg:bg-card lg:shadow-[0_8px_32px_-16px_rgb(0_0_0_/_0.2)]">
-        <div className="hidden h-[52px] items-center justify-between gap-4 border-b px-8 lg:flex">
-          <nav aria-label="Breadcrumb" className="min-w-0 text-sm">
-            <ol className="flex min-w-0 items-center gap-x-2">
-              {crumbs.map((crumb, index) => <li key={`top-${crumb.label}-${index}`} className="flex min-w-0 items-center gap-2">
-                {index > 0 && <span aria-hidden="true" className="text-muted-foreground/50">/</span>}
-                {crumb.href ? <Link href={crumb.href} className="truncate text-muted-foreground transition-colors hover:text-foreground">{crumb.label}</Link> : <span aria-current="page" className="truncate font-medium">{crumb.label}</span>}
-              </li>)}
-            </ol>
-          </nav>
-          <div className="flex shrink-0 items-center gap-1"><CommandPaletteButton onClick={() => setPaletteOpen(true)} /></div>
-        </div>
+      <div className={`${collapsed ? "lg:pl-[72px]" : "lg:pl-[256px]"} transition-[padding] duration-200 motion-reduce:transition-none lg:py-2 lg:pr-2`}>
+      <div className="bg-background lg:min-h-[calc(100svh-1rem)] lg:rounded-[20px] lg:border lg:border-border/70 lg:shadow-[0_1px_2px_rgb(0_0_0_/_0.06)]">
         <header className="flex h-14 items-center justify-between gap-4 px-5 sm:px-8 lg:hidden">
           <Link href="/" className="flex items-center gap-2">
             <LogoMark className="h-7 w-auto text-foreground" />
@@ -314,8 +303,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {group.items.map((item) => <Link key={item.href} href={item.href} aria-current={isNavSelected(item.href, pathname) ? "page" : undefined} className={`${styles.navItem} shrink-0 !py-1.5 !text-xs`}><HugeiconsIcon icon={item.icon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />{item.label}<NavBadge item={item} /></Link>)}
           </div>)}
         </nav>
-        <main style={{ paddingBottom: "calc(2rem + var(--toast-clearance, 0px))" }} className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") && !pathname.endsWith("/publish") ? "max-w-none" : "max-w-[1440px]"} px-5 pb-7 pt-5 sm:px-8 sm:pb-8 sm:pt-6 lg:pt-7 ${pathname === "/audit" ? "lg:flex lg:h-[calc(100dvh-1.5rem-52px)] lg:flex-col lg:overflow-hidden" : ""}`}>
-          {crumbs.length > 1 && <nav aria-label="Breadcrumb" className="mb-4 shrink-0 text-sm lg:hidden">
+        <main style={{ paddingBottom: "calc(2rem + var(--toast-clearance, 0px))" }} className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") && !pathname.endsWith("/publish") ? "max-w-none" : "max-w-[1440px]"} px-5 pb-7 pt-5 sm:px-8 sm:pb-8 sm:pt-6 lg:pt-7 ${pathname === "/audit" ? "lg:flex lg:h-[calc(100dvh-1rem)] lg:flex-col lg:overflow-hidden" : ""}`}>
+          {crumbs.length > 1 && <nav aria-label="Breadcrumb" className="mb-4 shrink-0 text-sm">
             <ol className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               {crumbs.map((crumb, index) => <li key={`${crumb.label}-${index}`} className="flex min-w-0 max-w-full items-center gap-2">
                 {index > 0 && <span aria-hidden="true" className="text-muted-foreground/50">/</span>}

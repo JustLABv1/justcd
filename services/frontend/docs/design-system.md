@@ -16,6 +16,33 @@ The page has three levels and never more:
 | 1. Section | A heading with content under it. Open on the canvas, or one Card (`Section surface`) | `Section` (section 8) |
 | 2. Surface | One bordered thing inside a section | `Card`, `Frame`, `Table`, `Kpi`, `Alert`, `Workbench` |
 
+### Surface colours
+
+Dark surfaces are one ladder, defined in `app/globals.css`. Each step is lighter than the one it
+sits on; a surface is never darker than its parent.
+
+| Token | Utility | Used for |
+| --- | --- | --- |
+| `--shell` | `bg-shell` | Behind the sidebar and the canvas. The sidebar sits directly on it. |
+| `--background` | `bg-background` | The content canvas |
+| `--tray` | `bg-tray` | A container that holds Cards: Frame trays, `CollapsibleGroup` |
+| `--card` | `bg-card` | Cards, Frame panels, tables in a surface |
+| `--popover` | `bg-popover` | Menus, popovers, dialogs |
+| `--muted` | `bg-muted` | Small fills and hover states only: tab lists, chips, skeletons, icon tiles |
+
+- Never use `bg-muted` for a container of Cards; it is lighter than `bg-card`, so the Cards would
+  read as holes. Use `bg-tray`.
+- Where the fill step already separates two surfaces, do not add a second border for emphasis.
+- Yellow (`warning`) means "needs attention" and nothing else. Favourites, decorative icons and
+  neutral group headings are not yellow.
+- In the light theme `--shell` and `--tray` equal `--muted`.
+
+### Shell
+
+The sidebar has no card, border or shadow; only the canvas is raised. There is no top bar: a
+top-level page starts with its `PageHeading`, and nested pages show a breadcrumb above it. Search
+lives in the sidebar (⌘K) only. The current navigation item is marked by its tint alone.
+
 Rules:
 
 - **Choose grouping in the context of the whole page.** Open sections suit forms and page-level

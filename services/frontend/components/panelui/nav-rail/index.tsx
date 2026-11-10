@@ -276,10 +276,10 @@ const navRailVariants = tv({
     // can stay a tint rather than a solid block of colour.
     indicator: [
       'pointer-events-none absolute top-(--indicator-y) left-(--indicator-x) z-0 h-(--indicator-h) w-(--indicator-w) rounded-[10px]',
-      'bg-primary/[0.12] opacity-0 ring-1 ring-primary/20 ring-inset',
-      'group-data-[variant=solid]/nav-rail:bg-primary group-data-[variant=solid]/nav-rail:ring-0',
-      "group-data-[collapsed]/nav-rail:before:hidden group-data-[variant=solid]/nav-rail:before:hidden",
-      "before:absolute before:inset-y-2.5 before:start-1 before:w-[3px] before:rounded-full before:bg-primary before:content-['']",
+      // JustCD change: the tint alone marks the current page. The registry version added a ring
+      // and an accent bar, three indicators for one state.
+      'bg-primary/[0.14] opacity-0',
+      'group-data-[variant=solid]/nav-rail:bg-primary',
       'data-ready:opacity-100',
       'data-ready:transition-[left,top,width,height] data-ready:duration-300 data-ready:ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none',
     ],

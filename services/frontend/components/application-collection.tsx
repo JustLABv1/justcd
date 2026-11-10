@@ -22,6 +22,7 @@ import { Chip } from "@/components/panelui/chip"
 import { Menu } from "@/components/panelui/menu"
 import { PanelSelect } from "@/components/applications/panel-wizard"
 import { StatusPill } from "@/components/overview/overview-parts"
+import { statusTone, type StatusTone } from "@/components/ui-kit"
 import { Filters } from "@/components/reui/filters/filters"
 import { createFilterQuery } from "@/components/reui/filters/filters-query"
 import { applicationFilterFieldIds, applicationFilterFields, readApplicationField } from "@/components/application-filter-fields"
@@ -108,11 +109,34 @@ function Dot({ level }: { level: HealthLevel }) {
   return <span aria-hidden="true" className={`inline-block size-2 shrink-0 rounded-full ${tone[level].dot}`} />
 }
 
-/** Why the application is not fine, most specific first. Connection outages are reported once per cluster, not per card. */
+/** Why the application itself is not fine, most specific first. A cluster outage is stated once, in the group header. */
 function reasonFor(app: WorkspaceApplication, blockedBy?: ConnectionHealth) {
-  if (blockedBy) return { text: `Blocked by cluster: ${blockedBy.label.toLowerCase()}`, blocked: true }
-  const text = applicationAttentionReason(app) ?? app.statusIssues?.[0]?.summary
-  return text ? { text, blocked: false } : null
+  if (blockedBy) return null
+  const reason = applicationAttentionReason(app) ?? app.statusIssues?.[0]?.summary ?? null
+  // The paused badge already says this; a line repeating it adds nothing.
+  return reason === "Reconciliation paused" ? null : reason
+}
+
+/** Waiting on a person rather than on the system: the one state that earns a coloured card edge. */
+function needsDecision(app: WorkspaceApplication) {
+  return app.health === "deletion_pending" || (Boolean(app.configurationMissing) && app.health !== "decommissioned")
+}
+
+const toneRank: Record<StatusTone, number> = { destructive: 3, warning: 2, neutral: 1, success: 0 }
+
+/**
+ * The card's status badges. Only the worst one keeps its colour, so a card carries a single signal;
+ * the others read as neutral facts. A card blocked by its cluster has no signal of its own.
+ */
+function statusBadges(app: WorkspaceApplication, blocked: boolean) {
+  const items: { key: string; title: string; status: string; tone: StatusTone }[] = [
+    ...(app.configurationMissing ? [{ key: "definition", title: "Application definition", status: "Definition missing", tone: "destructive" as const }] : []),
+    { key: "delivery", title: "Delivery state", status: app.health, tone: statusTone(app.health) },
+    { key: "runtime", title: "Runtime state", status: app.healthCondition?.status ?? "Unknown", tone: statusTone(app.healthCondition?.status ?? "Unknown") },
+    ...(app.autoSyncPaused ? [{ key: "paused", title: "Reconciliation", status: "Reconciliation paused", tone: "warning" as const }] : []),
+  ]
+  const worst = items.reduce((best, item) => (toneRank[item.tone] > toneRank[best.tone] ? item : best), items[0])
+  return items.map((item) => ({ ...item, tone: blocked ? "neutral" as const : item === worst || item.tone === "success" ? item.tone : "neutral" as const }))
 }
 
 export function ApplicationCard({
@@ -128,33 +152,31 @@ export function ApplicationCard({
   const reason = reasonFor(app, blockedBy)
   const stalled = isCheckStalled(app, now)
   return (
-    <Card as="article" size="sm" className={`min-w-0 ${blockedBy ? "border-dashed opacity-75" : reason && !reason.blocked ? "border-warning/40" : ""}`}><Card.Content className="flex h-full flex-col">
+    <Card as="article" size="sm" className={`min-w-0 ${!blockedBy && needsDecision(app) ? "border-warning/50" : ""}`}><Card.Content className="flex h-full flex-col">
       <header className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="truncate text-base font-semibold tracking-tight" title={app.name}>
+          <h3 className="line-clamp-2 break-words text-base leading-snug font-semibold tracking-tight" title={app.name}>
             <Link href={`/applications/${app.id}`} className="rounded-sm underline-offset-4 hover:underline">{app.name}</Link>
           </h3>
           <p className="mt-0.5 flex min-w-0 items-center gap-1.5 truncate text-sm text-muted-foreground">
-            {showCluster && <><Dot level={clusterLevel ?? "unknown"} /><span className="truncate" title={app.clusterId}>{app.clusterName || app.clusterId}</span><span aria-hidden="true">/</span></>}
-            <span className="truncate" title={namespaces}>{namespaces}</span>
+            {showCluster && <><Dot level={clusterLevel ?? "unknown"} /><span className="min-w-0 truncate" title={app.clusterId}>{app.clusterName || app.clusterId}</span><span aria-hidden="true">/</span></>}
+            <span className="max-w-[60%] shrink-0 truncate" title={namespaces}>{namespaces}</span>
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1">{onFavorite && <FavoriteButton name={app.name} favorite={Boolean(favorite)} busy={favoriteBusy} onClick={onFavorite} />}<ApplicationActions app={app} canManage={Boolean(canManage)} onDeleted={onDeleted} onEditLabels={onEditLabels} /></div>
       </header>
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
-        <span title="Delivery state" className="inline-flex"><StatusPill status={app.health} /></span>
-        <span title="Runtime state" className="inline-flex"><StatusPill status={app.healthCondition?.status ?? "Unknown"} /></span>
-        {app.autoSyncPaused && <StatusPill status="Reconciliation paused" />}
+        {blockedBy && <Badge variant="outline" size="sm" title={blockedBy.detail}>Blocked by cluster</Badge>}
+        {statusBadges(app, Boolean(blockedBy)).map((item) => <span key={item.key} title={item.title} className="inline-flex"><StatusPill status={item.status} tone={item.tone} /></span>)}
         <ProfileVersionBadge application={app} />
-        {app.configurationMissing && <Badge variant="destructive" size="sm">Definition missing</Badge>}
       </div>
       {labels.length > 0 && <div aria-label="Application labels" className="mt-2 flex flex-wrap gap-1">{labels.map(([key, value]) => <Badge key={key} variant="outline" size="sm" className="max-w-full truncate" title={`${key}=${value}`}>{key}{value && <>: {value}</>}</Badge>)}</div>}
       {reason && (
-        <p className={`mt-2 line-clamp-2 text-sm ${reason.blocked ? "text-muted-foreground" : "text-warning-foreground dark:text-warning"}`} title={app.statusIssues?.map((issue) => issue.summary).join("\n") || reason.text}>
-          {reason.text}{app.statusIssues?.length > 0 && !reason.blocked && <> · <span className="text-muted-foreground">{checkSources(app)} check failed</span></>}
+        <p className="mt-2 line-clamp-2 text-sm" title={app.statusIssues?.map((issue) => issue.summary).join("\n") || reason}>
+          {reason}{app.statusIssues?.length > 0 && <> · <span className="text-muted-foreground">{checkSources(app)} check failed</span></>}
         </p>
       )}
-      <footer className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-1 pt-3 text-xs text-muted-foreground">
+      <footer className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-1 pt-4 text-xs text-muted-foreground">
         <span className="truncate" title={`${app.revision} · ${app.manifestPath || "."} · ${app.syncPolicy}`}>
           <span className="font-mono">{revision}</span> · {rendererLabel[app.renderer]} · {app.autoSyncPaused ? "paused" : app.syncPolicy}
         </span>
@@ -166,7 +188,7 @@ export function ApplicationCard({
   )
 }
 
-function GroupHeader({ label, bucket, mode, health, open }: { label: string; bucket: ApplicationBucket<WorkspaceApplication>; mode: GroupMode; health?: ConnectionHealth; open: boolean }) {
+function GroupHeader({ label, bucket, mode, health, open }: { label: string; bucket: ApplicationBucket<WorkspaceApplication>; mode: GroupMode; health?: ConnectionHealth; /** Omit for a group that cannot collapse. */ open?: boolean }) {
   const apps = bucket.applications
   const counts = { synced: 0, attention: 0, other: 0 }
   for (const app of apps) counts[classify(app)]++
@@ -193,7 +215,7 @@ function GroupHeader({ label, bucket, mode, health, open }: { label: string; buc
         </span>
         <span className="text-xs tabular-nums text-muted-foreground">{apps.length} app{apps.length === 1 ? "" : "s"}{counts.attention > 0 && <> · <span className="text-warning-foreground dark:text-warning">{counts.attention} to check</span></>}</span>
       </span>
-      <span className="sr-only">{open ? "Collapse" : "Expand"} {label}</span>
+      {open !== undefined && <span className="sr-only">{open ? "Collapse" : "Expand"} {label}</span>}
     </span>
   )
 }
@@ -431,17 +453,16 @@ export function ApplicationCollection({
     {
       id: "health", title: "Health", size: 260,
       cell: (app) => {
-        const blocked = clusters.get(app.clusterId)?.health
-        const reason = reasonFor(app, blocked?.level === "critical" && blocked.affectedApplications.some((item) => item.id === app.id) ? blocked : undefined)
+        const blocked = blockedByCluster(app)
+        const reason = reasonFor(app, blocked)
         return (
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center gap-1.5">
-              <StatusPill status={app.health} /><StatusPill status={app.healthCondition?.status ?? "Unknown"} />
-              {app.autoSyncPaused && <StatusPill status="Reconciliation paused" />}
+              {blocked && <Badge variant="outline" size="sm" title={blocked.detail}>Blocked by cluster</Badge>}
+              {statusBadges(app, Boolean(blocked)).map((item) => <span key={item.key} title={item.title} className="inline-flex"><StatusPill status={item.status} tone={item.tone} /></span>)}
               <ProfileVersionBadge application={app} />
-              {app.configurationMissing && <Badge variant="destructive" size="sm">Definition missing</Badge>}
             </div>
-            {reason && <p className="line-clamp-2 text-xs text-muted-foreground" title={reason.text}>{reason.text}</p>}
+            {reason && <p className="line-clamp-2 text-xs text-muted-foreground" title={reason}>{reason}</p>}
           </div>
         )
       },
@@ -461,9 +482,16 @@ export function ApplicationCollection({
     { id: "actions", title: "", size: 64, cell: (app) => <ApplicationActions app={app} canManage={canManageApp(app)} onDeleted={handleDeleted} onEditLabels={editLabelsFor(app)} /> },
   ]
 
+  /** The unreachable cluster behind this application's state, whatever the list is grouped by. */
+  const blockedByCluster = (app: WorkspaceApplication) => {
+    const state = clusters.get(app.clusterId)?.health
+    return state?.level === "critical" && state.affectedApplications.some((item) => item.id === app.id) ? state : undefined
+  }
+  // Grouped by cluster, each group header reports its own outage. Otherwise it is said once, above the groups.
+  const unreachable = groupBy === "cluster" ? [] : [...clusters.values()].filter((cluster) => cluster.health.level === "critical" && visible.some((app) => app.clusterId === cluster.id && blockedByCluster(app)))
+
   const renderBucket = (bucket: ApplicationBucket<WorkspaceApplication>) => {
     const health = groupBy === "cluster" ? clusters.get(bucket.key)?.health : undefined
-    const blockedIds = new Set(health?.level === "critical" ? health.affectedApplications.map((app) => app.id) : [])
     const body = view === "cards" ? (
       <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,300px),1fr))] gap-3">
         {bucket.applications.map((app) => (
@@ -471,7 +499,7 @@ export function ApplicationCollection({
             key={app.id} app={app} canManage={canManageApp(app)} onDeleted={handleDeleted} now={now}
             favorite={favoriteIds.includes(app.id)} favoriteBusy={!preferencesReady || favoriteBusy.includes(app.id)} onFavorite={() => void toggleFavorite(app)} onEditLabels={editLabelsFor(app)}
             showCluster={groupBy !== "cluster"} clusterLevel={clusters.get(app.clusterId)?.health.level}
-            blockedBy={blockedIds.has(app.id) ? health : undefined}
+            blockedBy={blockedByCluster(app)}
           />
         ))}
       </div>
@@ -479,6 +507,8 @@ export function ApplicationCollection({
       <DataGridList rows={bucket.applications} columns={listColumns(groupBy !== "cluster")} />
     )
     if (groupBy === "none") return <div key={bucket.key}>{body}</div>
+    // A single group has nothing to be told apart from: its header sits on the canvas, with no tray and no collapsing.
+    if (buckets.length === 1) return <section key={bucket.key} aria-label={bucket.label} className="min-w-0 space-y-3"><GroupHeader label={bucket.label} bucket={bucket} mode={groupBy} health={health} />{body}</section>
     const open = openGroups[bucket.key] ?? defaultOpen(bucket)
     return (
       <CollapsibleGroup key={bucket.key} open={open} onOpenChange={(next) => setOpenGroups((current) => ({ ...current, [bucket.key]: next }))} header={<GroupHeader label={bucket.label} bucket={bucket} mode={groupBy} health={health} open={open} />}>
@@ -567,7 +597,14 @@ export function ApplicationCollection({
         {(filtering || buckets.length > 1) && <p role="status" className="px-1 text-sm text-muted-foreground">Showing {visible.length} of {available.length} applications{buckets.length > 1 && groupBy !== "none" ? ` in ${buckets.length} groups` : ""}</p>}
       </section>
       {visible.length ? (
-        <div className="space-y-3">{buckets.map(renderBucket)}</div>
+        <div className="space-y-3">
+        {unreachable.length > 0 && <Alert tone="destructive" variant="plain">
+          <Alert.Icon />
+          <Alert.Title>{unreachable.length === 1 ? `${unreachable[0].name}: ${unreachable[0].health.label.toLowerCase()}` : `${unreachable.length} clusters are unreachable`}</Alert.Title>
+          <Alert.Description>{unreachable.length === 1 ? unreachable[0].health.detail : unreachable.map((cluster) => cluster.name).join(" · ")} {unreachable.reduce((sum, cluster) => sum + cluster.health.affectedApplications.length, 0)} applications are blocked until the connection is restored.</Alert.Description>
+        </Alert>}
+        {buckets.map(renderBucket)}
+        </div>
       ) : (
         <div className="pb-6 text-center">
           <EmptyState title="No matching applications" description="Try another search or clear the filters to see all applications." />

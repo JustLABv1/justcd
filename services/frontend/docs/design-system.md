@@ -42,7 +42,8 @@ Rules:
     with the heading inside.
   - A collapsible group of Cards or a Table is a `CollapsibleGroup` (`components/ui/collapsible`):
     a bordered tray whose header is the trigger. It is the second sanctioned place, after Workbench,
-    where surfaces sit inside a container. Never a bare trigger line between Cards.
+    where surfaces sit inside a container. Never a bare trigger line between Cards. With a single
+    group there is nothing to tell apart: show its header on the canvas, no tray, not collapsible.
 - No divider under a tab row, header or toolbar; hairlines belong between rows of one list and
   between stacked open sections.
 - **Headings sit above the surface**, in the section, unless the component owns a header slot and the
@@ -106,6 +107,15 @@ key-value pairs is always wrong.
 - Inside a surface, state is a tinted icon and text, not a nested Alert. The local
   `Alert variant="inline"` provides accessible shared message parts without a border, tray or background.
   Shared notice wrappers expose `inline` for this case.
+- **One signal per record.** A Card or row that shows several states (delivery, runtime, paused)
+  colours only the worst badge; the others are neutral `secondary` badges. Do not repeat the state
+  as coloured text under the badges; the reason line is plain text.
+- **One record style.** Do not dim, dash or tint a Card to show state. A coloured Card edge
+  (`border-warning/50`) is reserved for records waiting on a decision from a person, such as a
+  deletion review. Paused, degraded or blocked are badges, not card styles.
+- **Say a shared cause once.** When a group's records are all affected by one thing (an unreachable
+  cluster), the group header states it. The records carry a neutral "Blocked by cluster" badge and
+  no colour of their own, because their state is a consequence, not a separate problem.
 - An error must read as an error: red tone on the icon and title or the Alert edge, not only on a
   small badge. A large tinted background is not required and usually looks muddy on dark themes.
 
@@ -234,6 +244,9 @@ The user rejected screens where blocks were not clearly bounded. These apply fro
 | "Waiting for review" as a canvas heading over loose Cards, beside Frames | Same container as its neighbours: a Frame with link rows. |
 | Collapsible cluster group as a bare heading line above application Cards | `CollapsibleGroup` tray, so several groups read as separate containers. |
 | "Recent operations" and "Rollback targets" as open sections whose tables ran into each other | `Section surface` for each. |
+
+| Application cards where every card carried two or three coloured badges, yellow text, and one of three card styles (dashed and dimmed, yellow edge, normal) | One card style, one coloured badge, coloured edge only for a pending decision, shared cluster outage stated in the group header. See `ApplicationCard` and `statusBadges`. |
+| Truncated card titles and a tray around a single group | Titles clamp to two lines. `CollapsibleGroup` only when there are two or more groups; a single group keeps its header on the canvas. |
 
 "No container" and "whitespace separates first" were over-applied during the migration. When in
 doubt, a block gets a boundary.

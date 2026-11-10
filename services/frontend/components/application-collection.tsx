@@ -160,7 +160,7 @@ export function ApplicationCard({
           </h3>
           <p className="mt-0.5 flex min-w-0 items-center gap-1.5 truncate text-sm text-muted-foreground">
             {showCluster && <><Dot level={clusterLevel ?? "unknown"} /><span className="min-w-0 truncate" title={app.clusterId}>{app.clusterName || app.clusterId}</span><span aria-hidden="true">/</span></>}
-            <span className="max-w-[60%] shrink-0 truncate" title={namespaces}>{namespaces}</span>
+            <span className={showCluster ? "max-w-[60%] shrink-0 truncate" : "min-w-0 truncate"} title={namespaces}>{namespaces}</span>
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1">{onFavorite && <FavoriteButton name={app.name} favorite={Boolean(favorite)} busy={favoriteBusy} onClick={onFavorite} />}<ApplicationActions app={app} canManage={Boolean(canManage)} onDeleted={onDeleted} onEditLabels={onEditLabels} /></div>

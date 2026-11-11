@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -42,11 +43,20 @@ func fieldOwnershipConflict(err error) bool {
 func applyWithOwnershipMigration(ctx context.Context, rc dynamic.ResourceInterface, name string, body []byte, options metav1.PatchOptions) (*unstructured.Unstructured, error) {
 	// Inspect the pre-apply snapshot, including for removal-only updates that
 	// produce no SSA conflict. Their omitted legacy fields still need cleanup.
+	// legacyManagers may always be cleaned up after an Apply: a leftover
+	// client-side entry keeps co-owning fields removed from Git, so server-side
+	// apply would never delete them. Only the initial adoption handoff may
+	// force through conflicts with that manager (pendingAdoption).
 	var legacyManagers []string
+	pendingAdoption := false
 	request := &unstructured.Unstructured{}
 	if request.UnmarshalJSON(body) == nil && request.GetResourceVersion() != "" {
-		if live, err := rc.Get(ctx, name, metav1.GetOptions{}); err == nil && live.GetResourceVersion() == request.GetResourceVersion() && pendingClientSideAdoption(live, options.FieldManager) {
-			legacyManagers = []string{"kubectl-client-side-apply"}
+		if live, err := rc.Get(ctx, name, metav1.GetOptions{}); err == nil && live.GetResourceVersion() == request.GetResourceVersion() {
+			pendingAdoption = pendingClientSideAdoption(live, options.FieldManager)
+			legacyManagers = leftoverLegacyManagers(live, options.FieldManager)
+			if pendingAdoption && len(legacyManagers) == 0 {
+				legacyManagers = []string{"kubectl-client-side-apply"}
+			}
 		}
 	}
 	object, err := rc.Patch(ctx, name, types.ApplyPatchType, body, options)
@@ -71,7 +81,7 @@ func applyWithOwnershipMigration(ctx context.Context, rc dynamic.ResourceInterfa
 		}
 		return object, err
 	}
-	if legacy && len(legacyManagers) == 0 {
+	if legacy && !pendingAdoption {
 		return object, err
 	}
 	force := true
@@ -86,6 +96,30 @@ func applyWithOwnershipMigration(ctx context.Context, rc dynamic.ResourceInterfa
 func managerConflict(message, manager string) bool {
 	prefix := "conflict with " + strconv.Quote(manager)
 	return message == prefix || strings.HasPrefix(message, prefix+" using ")
+}
+
+// legacyFieldManagers are managers whose Update entries predate server-side
+// apply (kubectl, Helm 3, or objects written before managed fields existed).
+var legacyFieldManagers = map[string]bool{"kubectl-client-side-apply": true, "before-first-apply": true, "helm": true}
+
+// leftoverLegacyManagers returns the legacy Update managers still present on an
+// object owned by this application, e.g. after an adoption whose handoff never
+// completed. Their stale fields are cleaned up after Apply.
+func leftoverLegacyManagers(object *unstructured.Unstructured, manager string) []string {
+	applicationID, ok := strings.CutPrefix(manager, "justcd/")
+	if !ok || applicationID == "" || object.GetLabels()["justcd.io/application-id"] != applicationID {
+		return nil
+	}
+	var found []string
+	seen := map[string]bool{}
+	for _, entry := range object.GetManagedFields() {
+		if entry.Subresource == "" && entry.Operation == metav1.ManagedFieldsOperationUpdate && legacyFieldManagers[entry.Manager] && !seen[entry.Manager] {
+			seen[entry.Manager] = true
+			found = append(found, entry.Manager)
+		}
+	}
+	sort.Strings(found)
+	return found
 }
 
 // Adoption is the explicit authorization to replace the old client-side manager.
@@ -110,6 +144,26 @@ func pendingClientSideAdoption(object *unstructured.Unstructured, manager string
 		}
 	}
 	return adopted && clientSide
+}
+
+// unhonoredGitRemovals returns paths the Git-owned comparison shows as removed
+// (present in the live projection, absent from desired) that are still present
+// in the live object the server-side dry-run was compared against.
+func unhonoredGitRemovals(localBefore, localAfter, live []byte) ([]string, error) {
+	if len(localBefore) == 0 || len(localAfter) == 0 {
+		return nil, nil
+	}
+	changed, err := render.ChangedJSONPointers(localBefore, localAfter)
+	if err != nil {
+		return nil, err
+	}
+	removed := make([]string, 0, len(changed))
+	for _, path := range changed {
+		if render.JSONPointerExists(localBefore, path) && !render.JSONPointerExists(localAfter, path) && render.JSONPointerExists(live, path) {
+			removed = append(removed, path)
+		}
+	}
+	return removed, nil
 }
 
 // reconcileUpdatePlan validates ownership and compares the live snapshot with
@@ -202,6 +256,23 @@ func (s *Service) reconcileUpdatePlan(ctx context.Context, input planInput, plan
 		paths, err := render.ChangedJSONPointers(before, after)
 		if err != nil {
 			return err
+		}
+		if len(paths) == 0 {
+			// Server-side apply keeps fields that another manager still owns,
+			// so a field removed from Git can vanish from the dry-run diff while
+			// it is still live. Keep that Git-driven removal visible.
+			removed, err := unhonoredGitRemovals(change.Before, change.After, before)
+			if err != nil {
+				return err
+			}
+			if len(removed) > 0 {
+				for _, path := range removed {
+					if after, err = render.RemoveJSONPointer(after, path); err != nil {
+						return err
+					}
+				}
+				paths = removed
+			}
 		}
 		// A no-op value change may still transfer ownership. Keep takeovers
 		// visible so auto-safe never silently approves an ownership transfer.

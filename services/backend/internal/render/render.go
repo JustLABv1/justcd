@@ -1018,6 +1018,21 @@ func CanonicalLiveAgainstIgnoring(object *unstructured.Unstructured, clusterID, 
 // ServerSideComparisonManifests compares a canonical live snapshot with the
 // canonical server-side dry-run result. Both lists already have Kubernetes's
 // merge/admission semantics applied, so no local list projection is needed.
+const lastAppliedAnnotation = "kubectl.kubernetes.io/last-applied-configuration"
+
+// dropLastApplied removes kubectl's bookkeeping annotation, which is never
+// Git-owned, so a legacy handoff removing it is not drift on its own.
+func dropLastApplied(object map[string]interface{}) {
+	if metadata, ok := object["metadata"].(map[string]interface{}); ok {
+		if annotations, ok := metadata["annotations"].(map[string]interface{}); ok {
+			delete(annotations, lastAppliedAnnotation)
+			if len(annotations) == 0 {
+				delete(metadata, "annotations")
+			}
+		}
+	}
+}
+
 func ServerSideComparisonManifests(liveManifest, predictedManifest []byte, ignoredPaths []string) ([]byte, []byte, error) {
 	for _, path := range ignoredPaths {
 		var err error
@@ -1037,6 +1052,8 @@ func ServerSideComparisonManifests(liveManifest, predictedManifest []byte, ignor
 	if err := json.Unmarshal(predictedManifest, &predicted); err != nil {
 		return nil, nil, err
 	}
+	dropLastApplied(live)
+	dropLastApplied(predicted)
 	normalizeEquivalentQuantities(predicted, live)
 	normalizeEmptyEquivalents(predicted, live)
 	before, err := json.Marshal(live)

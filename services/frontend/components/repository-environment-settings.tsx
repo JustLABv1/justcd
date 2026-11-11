@@ -1,10 +1,10 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Button } from "@/components/ui/button"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
-import { FormSelect } from "@/components/ui/form-select"
-import { FormField, SwitchField } from "@/components/ui-kit"
+import { Button } from "@/components/panelui/button"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
+import { FormSelect } from "@/components/form-select"
+import { FormField, CheckboxField } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
 import { api, errorMessage } from "@/lib/api"
 import type {
@@ -159,7 +159,7 @@ function DialogContent({
           </div>
         )}
         <fieldset disabled={busy || !loaded || Boolean(loadError)} className="min-w-0 space-y-4">
-          <SwitchField
+          <CheckboxField
             id="repo-environments-enabled"
             label="Report deployments to GitLab environments"
             description="Each application appears as an environment named cluster/namespace, with its latest successful or failed deployment. Override the name, tier or URL with spec.environment in justcd.yaml."

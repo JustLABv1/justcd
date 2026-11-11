@@ -2,11 +2,9 @@ import Link from "next/link"
 import type { ReactNode } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Layers01Icon } from "@hugeicons/core-free-icons"
-import { IconStack } from "@/components/reui/icon-stack"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Switch } from "@/components/ui/switch"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
+import { Card } from "@/components/panelui/card"
 
 export function PageHeading({
   title,
@@ -36,64 +34,6 @@ export function PageHeading({
   )
 }
 
-export function Panel({
-  title,
-  description,
-  action,
-  children,
-  className = "",
-  surface = "card",
-}: {
-  title?: string
-  description?: string
-  action?: ReactNode
-  children: ReactNode
-  className?: string
-  surface?: "card" | "flat"
-}) {
-  return (
-    <section className={`${surface === "flat" ? "min-w-0" : "rounded-xl border bg-card"} ${className}`}>
-      {(title || action) && (
-        <div className={`flex flex-wrap items-start justify-between gap-4 ${surface === "flat" ? "pb-4" : "border-b px-5 py-4"}`}>
-          <div className="min-w-0 flex-1 basis-72">
-            {title && <h2 className="text-sm font-semibold">{title}</h2>}
-            {description && <p className="mt-1 text-sm leading-5 text-muted-foreground">{description}</p>}
-          </div>
-          <div className="max-w-full shrink-0">{action}</div>
-        </div>
-      )}
-      {children}
-    </section>
-  )
-}
-
-export function StatCard({
-  label,
-  value,
-  note,
-  accent = "bg-primary/10 text-primary",
-  icon,
-}: {
-  label: string
-  value: string | number
-  note: string
-  accent?: string
-  icon?: ReactNode
-}) {
-  return (
-    <div className="rounded-xl border bg-card p-4 sm:p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium text-muted-foreground">{label}</p>
-          <p className="mt-3 text-2xl font-semibold tracking-tight">{value}</p>
-        </div>
-        {icon && <span aria-hidden="true" className={`grid size-9 shrink-0 place-items-center rounded-lg text-base leading-none ${accent}`}>{icon}</span>}
-      </div>
-      <p className="mt-3 text-sm text-muted-foreground">{note}</p>
-    </div>
-  )
-}
-
 export type StatusTone = "success" | "destructive" | "warning" | "neutral"
 
 /** Maps a free-form status string (sync, health, check result, …) to a semantic tone. Matching is substring based on purpose. */
@@ -105,11 +45,11 @@ export function statusTone(status: string): StatusTone {
   return "neutral"
 }
 
-const statusBadgeVariant = { success: "success-light", destructive: "destructive-light", warning: "warning-light", neutral: "secondary" } as const
+const statusBadgeVariant = { success: "success", destructive: "destructive", warning: "warning", neutral: "secondary" } as const
 
 export function StatusBadge({ status, tone }: { status: string; tone?: StatusTone }) {
   const normalized = status.toLowerCase().replaceAll("_", " ")
-  return <Badge variant={statusBadgeVariant[tone ?? statusTone(status)]} radius="full" className="capitalize"><span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-current opacity-70" />{normalized}</Badge>
+  return <Badge variant={statusBadgeVariant[tone ?? statusTone(status)]} dot className="capitalize">{normalized}</Badge>
 }
 
 export function EmptyState({
@@ -128,8 +68,8 @@ export function EmptyState({
   actionVariant?: "default" | "outline"
 }) {
   return (
-    <div className="flex flex-col items-center justify-center px-5 py-12 text-center">
-      <IconStack className="empty-state-icon-stack text-primary"><HugeiconsIcon icon={Layers01Icon} className="size-6" aria-hidden="true" /></IconStack>
+    <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-foreground/15 bg-muted/30 px-5 py-12 text-center in-data-[slot=card]:border-0 in-data-[slot=card]:bg-transparent">
+      <span aria-hidden="true" className="inline-flex shrink-0 items-center justify-center rounded-2xl bg-primary/10 p-3 empty-state-icon-stack text-primary"><HugeiconsIcon icon={Layers01Icon} className="size-6" aria-hidden="true" /></span>
       <h3 className="mt-4 text-sm font-semibold">{title}</h3>
       <p className="mt-1 max-w-sm text-sm leading-5 text-muted-foreground">{description}</p>
       {href ? <Button render={<Link href={href} />} nativeButton={false} variant={actionVariant} className="mt-4">{action}</Button>
@@ -141,12 +81,13 @@ export function EmptyState({
 export { FormField } from "@/components/form-field"
 
 export function InlineLink({ href, children }: { href: string; children: ReactNode }) {
-  return <Link href={href} className="text-sm font-medium text-primary hover:underline">{children}</Link>
+  return <Button render={<Link href={href} />} nativeButton={false} variant="ghost" size="sm" className="-mx-2 text-primary hover:text-primary">{children}</Button>
 }
 
 /** A single list entry for connection-style inventories (credentials, clusters, Git sources, …). */
-export function ConnectionRow({ icon, title, subtitle, badges, meta, actions, children }: {
+export function ConnectionRow({ icon, media, title, subtitle, badges, meta, actions, children }: {
   icon?: ReactNode
+  media?: ReactNode
   title: ReactNode
   subtitle?: ReactNode
   badges?: ReactNode
@@ -155,10 +96,11 @@ export function ConnectionRow({ icon, title, subtitle, badges, meta, actions, ch
   children?: ReactNode
 }) {
   return (
-    <li className="px-5 py-4">
+    <Card as="li" size="sm">
+      <Card.Content className="px-5 py-4">
       <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-3 sm:flex sm:flex-wrap">
-        {icon && <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">{icon}</span>}
-        <div className={`min-w-0 sm:flex-1 sm:basis-56 ${icon ? "" : "col-span-2"}`}>
+        {media ?? (icon && <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">{icon}</span>)}
+        <div className={`min-w-0 sm:flex-1 sm:basis-56 ${icon || media ? "" : "col-span-2"}`}>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <h3 className="truncate text-sm font-medium">{title}</h3>
             {badges}
@@ -169,41 +111,9 @@ export function ConnectionRow({ icon, title, subtitle, badges, meta, actions, ch
         {actions && <div className="col-span-2 justify-self-end sm:contents">{actions}</div>}
       </div>
       {children && <div className="mt-3">{children}</div>}
-    </li>
+      </Card.Content>
+    </Card>
   )
 }
 
-/** Bordered checkbox with a title and optional help text; the whole card toggles. */
-export function CheckboxCard({ checked, onCheckedChange, title, description, disabled, id }: {
-  checked: boolean
-  onCheckedChange: (checked: boolean) => void
-  title: ReactNode
-  description?: ReactNode
-  disabled?: boolean
-  id?: string
-}) {
-  return (
-    <label className={`flex items-start gap-3 rounded-lg border p-3 text-sm ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-muted/40"}`}>
-      <Checkbox id={id} checked={checked} disabled={disabled} onCheckedChange={(next) => onCheckedChange(Boolean(next))} className="mt-0.5" />
-      <span className="min-w-0"><span className="block font-medium">{title}</span>{description && <span className="mt-0.5 block text-muted-foreground">{description}</span>}</span>
-    </label>
-  )
-}
-
-/** Boolean setting with a Switch, label and help text on one row. */
-export function SwitchField({ checked, onCheckedChange, label, description, disabled, id, tone = "default" }: {
-  checked: boolean
-  onCheckedChange: (checked: boolean) => void
-  label: string
-  description?: string
-  disabled?: boolean
-  id: string
-  tone?: "default" | "warning"
-}) {
-  return (
-    <div className={`flex items-start justify-between gap-4 rounded-lg border p-3 ${tone === "warning" ? "border-warning/30 bg-warning/10" : ""}`}>
-      <div className="min-w-0"><label htmlFor={id} className="block text-sm font-medium">{label}</label>{description && <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>}</div>
-      <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} aria-label={label} />
-    </div>
-  )
-}
+export { CheckboxCard, CheckboxField, SwitchField } from "@/components/boolean-field"

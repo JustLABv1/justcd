@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react"
 import { Flow } from "@/components/panelui/flow"
-import { PublishingSection } from "./publishing-fields"
+import { CollapsibleGroup } from "@/components/ui/collapsible"
 import type { ApplicationTemplate } from "./template-catalog"
 import type {
   ApprovedPublishingProfile,
@@ -166,13 +166,17 @@ export function PublishingFlow({
   const height = wide ? (extras.length ? 420 : 250) : rows * rowGap + 20
 
   return (
-    <PublishingSection
-      title="What happens when you publish"
-      description={description}
+    <CollapsibleGroup
+      header={
+        <span className="min-w-0 flex-1 text-left">
+          <span className="block text-base font-medium tracking-tight">What happens when you publish</span>
+          <span className="mt-0.5 block text-sm font-normal leading-5 text-muted-foreground">{description}</span>
+        </span>
+      }
     >
       <div
         ref={watch}
-        className="overflow-hidden rounded-2xl bg-card ring-1 ring-border dark:bg-muted/45 dark:ring-0"
+        className="overflow-hidden"
         style={{ height }}
       >
         <Flow
@@ -183,7 +187,7 @@ export function PublishingFlow({
           panOnDrag={false}
           zoomOnPinch={false}
           label={`What happens when you publish a ${template.name} app: ${steps.map((s) => s.title).join(", then ")}`}
-          className="h-full rounded-none border-0"
+          className="h-full"
         >
           <Flow.Background variant="dots" gap={22} />
           {steps.map((step, index) => (
@@ -263,6 +267,6 @@ export function PublishingFlow({
           </li>
         ))}
       </ol>
-    </PublishingSection>
+    </CollapsibleGroup>
   )
 }

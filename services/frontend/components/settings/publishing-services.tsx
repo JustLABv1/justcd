@@ -3,11 +3,11 @@
 import { useState } from "react"
 import { Disclosure } from "@/components/ui/collapsible"
 import { FeatureCard } from "@/components/feature-card"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { FormSelect } from "@/components/ui/form-select"
-import { FormField, SwitchField } from "@/components/ui-kit"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
+import { Input } from "@/components/panelui/input"
+import { FormSelect } from "@/components/form-select"
+import { FormField, CheckboxField } from "@/components/ui-kit"
 import type {
   DatabasePlan,
   ServiceCatalog,
@@ -84,11 +84,11 @@ export function PublishingServicesEditor({
   )
   return (
     <div className="space-y-5">
-      <SettingsPanel
+      <SettingsPanel surface="flat"
         title="Optional application services"
         description="Offer a StackGres database and approved Vault secrets. Turn a service on, then select its card to configure it. Secret values never enter Git."
       >
-        <div className="grid gap-3 p-5">
+        <div className="grid gap-3">
           <FeatureCard
             id="services-allow-environment"
             title="App-specific environment variables"
@@ -157,7 +157,7 @@ export function PublishingServicesEditor({
                     }
                   />
                 </FormField>
-                <SwitchField
+                <CheckboxField
                   id="database-allow-configure"
                   label="Allow users to choose database name and username"
                   checked={!!db.allowConfigure}
@@ -166,7 +166,7 @@ export function PublishingServicesEditor({
                     patch({ ...catalog, database: { ...db, allowConfigure } })
                   }
                 />
-                <SwitchField
+                <CheckboxField
                   id="database-allow-password"
                   label="Allow a user-supplied password"
                   checked={!!db.allowCustomPassword}
@@ -179,7 +179,7 @@ export function PublishingServicesEditor({
                   }
                   description="Otherwise JustCD always generates a password. Values are encrypted and excluded from Git and drafts."
                 />
-                <SwitchField
+                <CheckboxField
                   id="database-allow-envs"
                   label="Allow custom database environment names"
                   checked={!!db.allowEnvMapping}
@@ -357,7 +357,7 @@ export function PublishingServicesEditor({
           </FeatureCard>
         </div>
       </SettingsPanel>
-      <SettingsPanel
+      <SettingsPanel surface="flat"
         title="Vault secrets"
         description="Approve Vault locations once; users switch them on by name. Requires Vault Secrets Operator and an authorized VaultAuth."
         action={
@@ -394,9 +394,9 @@ export function PublishingServicesEditor({
           </Button>
         }
       >
-        <div className="grid gap-3 p-5">
+        <div className="grid gap-3">
           {bindings.length === 0 && (
-            <p className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">
+            <p className="py-4 text-sm text-muted-foreground">
               No Vault secrets approved yet. Add one so users can synchronize a
               secret into their app.
             </p>
@@ -410,15 +410,15 @@ export function PublishingServicesEditor({
                 <span className="flex flex-wrap gap-1.5">
                   <Badge
                     size="sm"
-                    radius="full"
-                    variant={v.allowPathSuffix ? "info-light" : "invert-light"}
+
+                    variant={v.allowPathSuffix ? "info" : "secondary"}
                   >
                     {v.allowPathSuffix ? "Users choose path" : "Fixed path"}
                   </Badge>
                   <Badge
                     size="sm"
-                    radius="full"
-                    variant={v.allowEnvMapping ? "info-light" : "invert-light"}
+
+                    variant={v.allowEnvMapping ? "info" : "secondary"}
                   >
                     {v.allowEnvMapping
                       ? "Users map variables"
@@ -475,7 +475,7 @@ export function PublishingServicesEditor({
                 )}
               </div>
               <h3 className="text-sm font-medium">What users may change</h3>
-              <SwitchField
+              <CheckboxField
                 id={`vault-${i}-allow-path`}
                 label="Allow users to choose a secret below this path"
                 checked={!!v.allowPathSuffix}
@@ -484,7 +484,7 @@ export function PublishingServicesEditor({
                 }
                 description="The configured path remains the boundary. Users can only add a relative suffix."
               />
-              <SwitchField
+              <CheckboxField
                 id={`vault-${i}-allow-env`}
                 label="Allow users to map Secret keys to environment variables"
                 checked={!!v.allowEnvMapping}

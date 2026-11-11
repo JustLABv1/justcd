@@ -7,14 +7,14 @@ import { GuardrailPolicyPanel } from "@/components/guardrail-policy"
 import { ApprovalRuleEditor } from "@/components/approval-rule-editor"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
 import { DeploymentSchedulePanel } from "@/components/deployment-schedule"
-import { Badge } from "@/components/reui/badge"
+import { Badge } from "@/components/panelui/badge"
 import { SettingsDangerZone, SettingsGroup, SettingsRow, SettingsSection } from "@/components/settings/settings-section"
 import { useToast } from "@/components/toast-provider"
-import { Button } from "@/components/ui/button"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
-import { FormSelect } from "@/components/ui/form-select"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
+import { Button } from "@/components/panelui/button"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
+import { FormSelect } from "@/components/form-select"
+import { Input } from "@/components/panelui/input"
+import { Textarea } from "@/components/panelui/textarea"
 import { FormField } from "@/components/ui-kit"
 import { api, errorMessage } from "@/lib/api"
 import type { ApprovalPolicy, ApprovalRule, Workspace, WorkspaceMember } from "@/lib/types"
@@ -91,7 +91,7 @@ export function WorkspaceSettings({ workspace, members, section, onUpdated, onDe
             const label = kind === "sync" ? "Deployments" : "Application deletion"
             return <SettingsRow key={kind} label={label}
               description={required === 0 ? "Changes can deploy without manual approval." : approversSummary(rule)}
-              value={<Badge variant="secondary" radius="full">{required === 0 ? "No approval required" : `${required} approval${required === 1 ? "" : "s"} required`}</Badge>}
+              value={<Badge variant="secondary" >{required === 0 ? "No approval required" : `${required} approval${required === 1 ? "" : "s"} required`}</Badge>}
               action={<Button variant="outline" size="sm" aria-label={`Edit ${label.toLowerCase()} approval rule`} onClick={() => editApprovals(kind)}>Edit rule</Button>} />
           })}
         </SettingsGroup>
@@ -127,7 +127,7 @@ export function WorkspaceSettings({ workspace, members, section, onUpdated, onDe
 
     <AppDialog open={approvalKind !== null} onOpenChange={(open) => { if (!open) setApprovalKind(null) }} busy={approvalBusy} size="lg" title={approvalKind === "deletion" ? "Application deletion approvals" : "Deployment approvals"} description="Choose the required approvals and who can give them. Saving this rule invalidates existing plans.">
       {approvalKind && <form className="space-y-5" onSubmit={saveApprovals}>
-        <ApprovalRuleEditor key={approvalKind} id={`workspace-${approvalKind}-approvals`} title={approvalKind === "deletion" ? "Application deletion" : "Deployments"} rule={approvalRule} members={members} deletion={approvalKind === "deletion"} disabled={approvalBusy} surface="flat" onChange={setApprovalRule} />
+        <ApprovalRuleEditor key={approvalKind} id={`workspace-${approvalKind}-approvals`} title={approvalKind === "deletion" ? "Application deletion" : "Deployments"} rule={approvalRule} members={members} deletion={approvalKind === "deletion"} disabled={approvalBusy} onChange={setApprovalRule} />
         {editorError && <p role="alert" className="text-sm text-destructive">{editorError}</p>}
         <DialogFooter><DialogCancel disabled={approvalBusy} /><Button type="submit" loading={approvalBusy} loadingText="Saving…">Save approval rule</Button></DialogFooter>
       </form>}

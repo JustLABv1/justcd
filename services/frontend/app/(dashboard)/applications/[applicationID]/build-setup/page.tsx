@@ -4,13 +4,14 @@ import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import Link from "next/link"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { ArrowLeft01Icon } from "@hugeicons/core-free-icons"
+import { ArrowLeft01Icon, ArrowUpRight01Icon } from "@hugeicons/core-free-icons"
 import { api } from "@/lib/api"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { Badge } from "@/components/reui/badge"
+import { Button } from "@/components/panelui/button"
+import { Input } from "@/components/panelui/input"
+import { Textarea } from "@/components/panelui/textarea"
+import { Badge } from "@/components/panelui/badge"
 import { FormField } from "@/components/ui-kit"
+import { Section } from "@/components/section"
 import { PublishingCard } from "@/components/applications/publishing-fields"
 import {
   RecipeReview,
@@ -222,7 +223,7 @@ export default function BuildSetupPage() {
                   />
                 }
               >
-                Follow build
+                Follow build <HugeiconsIcon icon={ArrowUpRight01Icon} aria-hidden="true" />
               </Button>
             )}
             <Button
@@ -258,7 +259,7 @@ export default function BuildSetupPage() {
             }
             credentialsNote="Builds use these mirrors. The token is stored as a masked, protected CI variable in this app's GitLab project; JustCD does not keep it. Closing this panel does not apply anything: review and apply on the page."
           />
-          <PublishingCard contentClassName="space-y-3">
+          <Section title="Template parameters" description="Optional, non-secret settings for the build template.">
             <FormField
               label="Template parameters (optional)"
               htmlFor="build-setup-parameters"
@@ -274,7 +275,7 @@ export default function BuildSetupPage() {
                 }
               />
             </FormField>
-          </PublishingCard>
+          </Section>
           {dirty && (
             <p
               role="status"
@@ -288,7 +289,7 @@ export default function BuildSetupPage() {
               saved or committed until you apply them.
             </p>
           )}
-          <PublishingCard contentClassName="space-y-3">
+          <Section title="Review build settings"><div className="space-y-3">
             <FormField
               label="GitLab token"
               htmlFor="build-setup-token"
@@ -313,11 +314,12 @@ export default function BuildSetupPage() {
               disabled={busy}
               loading={busy && !plan}
               loadingText="Checking the repository…"
+              variant={plan && !plan.upToDate ? "outline" : "default"}
               onClick={() => void review()}
             >
               {dirty ? "Review changes to apply" : "Review changes"}
             </Button>
-          </PublishingCard>
+          </div></Section>
           {plan &&
             (plan.upToDate ? (
               <PublishingCard>
@@ -355,7 +357,7 @@ export default function BuildSetupPage() {
                     emptyText="Only the generated files change."
                   />
                 </section>
-                <PublishingCard contentClassName="space-y-3">
+                <Section title="Apply reviewed changes"><div className="space-y-3">
                   <p className="text-sm text-muted-foreground">
                     Applying commits these files, sets the package credentials
                     in GitLab and starts a build. The running app keeps its
@@ -370,7 +372,7 @@ export default function BuildSetupPage() {
                   >
                     Apply and rebuild
                   </Button>
-                </PublishingCard>
+                </div></Section>
               </>
             ))}
         </>

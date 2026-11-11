@@ -22,19 +22,16 @@
 .plane:nth-child(2) { transform: translate(-22px, 26px); opacity: .65; }
 .plane:nth-child(3) { background-color: color-mix(in srgb, var(--primary) 6%, var(--background)); }
 .content { position: relative; display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; padding: 36px 20px 90px; }
-.card { width: 100%; max-width: 440px; padding: 32px; border: 1px solid var(--border); border-radius: 20px; background: var(--card); box-shadow: 0 32px 100px -28px rgb(0 0 0 / .3), 0 4px 16px -8px rgb(0 0 0 / .12); }
+.card { width: 100%; max-width: 440px; }
 .eyebrow { text-align: center; color: var(--primary); font-size: 10px; font-weight: 600; letter-spacing: .15em; text-transform: uppercase; }
 .title { margin-top: 8px; text-align: center; font-size: 26px; line-height: 1.25; font-weight: 600; letter-spacing: -.9px; text-wrap: balance; }
-.description { margin: 12px auto 0; text-align: center; font-size: 13px; line-height: 1.7; color: var(--muted-foreground); text-wrap: pretty; }
-.card input { height: 42px; border-radius: 8px; background: color-mix(in srgb, var(--muted) 35%, var(--card)); }
-.card button[type="submit"] { min-height: 42px; margin-top: 8px; border-radius: 8px; }
+.description { margin: 0 auto; text-align: center; font-size: 13px; line-height: 1.7; color: var(--muted-foreground); text-wrap: pretty; }
 .tagline { margin-top: 24px; font-size: 11px; letter-spacing: .04em; color: var(--muted-foreground); }
 @keyframes atmosphereIn { from { opacity: 0; } to { opacity: 1; } }
 @media (max-width: 640px) {
   .header { padding: 20px; }
   .brandCaption { display: none; }
   .content { padding-top: 20px; padding-bottom: 72px; }
-  .card { padding: 28px 24px; }
   .layers { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {

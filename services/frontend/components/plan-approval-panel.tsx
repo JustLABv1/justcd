@@ -3,21 +3,11 @@
 import { useEffect, useId, useState, type ReactNode } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Tick02Icon } from "@hugeicons/core-free-icons"
-import {
-  Avatar,
-  AvatarBadge,
-  AvatarFallback,
-  AvatarGroup,
-  AvatarGroupCount,
-} from "@/components/ui/avatar"
-import { Badge } from "@/components/reui/badge"
+import { Avatar, AvatarBadge, AvatarGroup } from "@/components/panelui/avatar"
+import { Card } from "@/components/panelui/card"
+import { Badge } from "@/components/panelui/badge"
 import { ApprovalEvidence } from "@/components/approval-evidence"
 import { Disclosure } from "@/components/ui/collapsible"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
 import { errorMessage } from "@/lib/api"
 import type {
   Identity,
@@ -25,19 +15,6 @@ import type {
   PlanApprovalSummary,
   PlanRecord,
 } from "@/lib/types"
-
-function initials(name: string) {
-  const parts = name
-    .trim()
-    .split(/[\s.@_-]+/)
-    .filter(Boolean)
-  return (
-    (parts.length > 1
-      ? parts[0][0] + parts[1][0]
-      : name.slice(0, 2)
-    ).toUpperCase() || "?"
-  )
-}
 
 export function ApproverAvatar({
   name,
@@ -47,21 +24,8 @@ export function ApproverAvatar({
   approved?: boolean
 }) {
   return (
-    <Avatar aria-hidden="true">
-      <AvatarFallback
-        className={
-          approved
-            ? "bg-success/10 text-success-foreground dark:text-success"
-            : ""
-        }
-      >
-        {initials(name)}
-      </AvatarFallback>
-      {approved && (
-        <AvatarBadge className="bg-success text-white">
-          <HugeiconsIcon icon={Tick02Icon} strokeWidth={2} />
-        </AvatarBadge>
-      )}
+    <Avatar name={name} aria-hidden="true" color={approved ? "chart-2" : "muted"}>
+      {approved && <AvatarBadge label="Approved" className="bg-success text-success-foreground"><HugeiconsIcon icon={Tick02Icon} strokeWidth={2} /></AvatarBadge>}
     </Avatar>
   )
 }
@@ -156,13 +120,13 @@ export function PlanApprovalPanel({
       `${takeovers} field ownership takeover${takeovers === 1 ? "" : "s"}`,
   ].filter(Boolean)
   return (
-    <section
+    <Card as="section" size="sm"
       id="plan-approval-review"
       tabIndex={-1}
       aria-label="Approval review"
-      className="mb-4 scroll-mt-5 overflow-hidden rounded-lg border outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="mb-4 scroll-mt-5 overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+      <Card.Content className="space-y-3"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-semibold">
@@ -183,39 +147,10 @@ export function PlanApprovalPanel({
                       : `${approved} of ${required} approved`}
             </span>
             {!!summary?.approvals.some((approval) => approval.eligible) && (
-              <AvatarGroup>
-                {summary.approvals
-                  .filter((approval) => approval.eligible)
-                  .slice(0, 4)
-                  .map((approval) => (
-                    <Tooltip key={approval.id}>
-                      <TooltipTrigger
-                        render={
-                          <span
-                            tabIndex={0}
-                            aria-label={`${approval.displayName || approval.email} · approved`}
-                            className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          />
-                        }
-                      >
-                        <ApproverAvatar
-                          name={approval.displayName || approval.email}
-                          approved
-                        />
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {approval.displayName || approval.email} · approved
-                      </TooltipContent>
-                    </Tooltip>
-                  ))}
-                {summary.approvals.filter((approval) => approval.eligible)
-                  .length > 4 && (
-                  <AvatarGroupCount>
-                    +
-                    {summary.approvals.filter((approval) => approval.eligible)
-                      .length - 4}
-                  </AvatarGroupCount>
-                )}
+              <AvatarGroup max={4} size="sm" label="Approvers">
+                {summary.approvals.filter((approval) => approval.eligible).map((approval) => <Avatar key={approval.id} name={approval.displayName || approval.email}>
+                  <AvatarBadge label="Approved" className="bg-success text-success-foreground"><HugeiconsIcon icon={Tick02Icon} strokeWidth={2} /></AvatarBadge>
+                </Avatar>)}
               </AvatarGroup>
             )}
           </div>
@@ -246,12 +181,12 @@ export function PlanApprovalPanel({
         ) : null}
       </div>
       {Boolean(error) && (
-        <p role="alert" className="px-4 pb-3 text-sm text-destructive">
+        <p role="alert" className="text-sm text-destructive">
           Could not load approvals: {errorMessage(error)}. Retrying
           automatically.
         </p>
       )}
-      <Disclosure summary="Approval details" className="border-t px-4 py-2.5">
+      <Disclosure summary="Approval details" className="pb-1">
         <p className="mb-4 text-xs text-muted-foreground">
           {required} distinct eligible approval{required === 1 ? "" : "s"}{" "}
           required for this exact plan.
@@ -272,9 +207,7 @@ export function PlanApprovalPanel({
               </p>
             ) : summary.approvals.length === 0 ? (
               <div className="flex items-center gap-3">
-                <Avatar aria-hidden="true" className="border border-dashed">
-                  <AvatarFallback>—</AvatarFallback>
-                </Avatar>
+                <Avatar aria-hidden="true" fallback="—" color="muted" className="border border-dashed" />
                 <div>
                   <p className="text-sm">
                     {current ? "No approvals yet" : "No active approvals"}
@@ -303,11 +236,9 @@ export function PlanApprovalPanel({
               {members.map((member) => (
                 <span
                   key={member.id}
-                  className="inline-flex items-center gap-2 rounded-full border bg-card py-1 pr-3 pl-1 text-xs"
+                  className="inline-flex items-center gap-2 text-xs"
                 >
-                  <Avatar size="sm" aria-hidden="true">
-                    <AvatarFallback>{initials(member.label)}</AvatarFallback>
-                  </Avatar>
+                  <Avatar size="sm" name={member.label} aria-hidden="true" />
                   {member.label}
                 </span>
               ))}
@@ -332,7 +263,7 @@ export function PlanApprovalPanel({
             )}
           </div>
         </div>
-        <div className="border-t pt-3">
+        <div className="pt-3">
           <ApprovalEvidence
             plan={plan}
             workspaceId={workspaceId}
@@ -342,6 +273,6 @@ export function PlanApprovalPanel({
           />
         </div>
       </Disclosure>
-    </section>
+    </Card.Content></Card>
   )
 }

@@ -1,18 +1,16 @@
 "use client"
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { HugeiconsIcon } from "@hugeicons/react"
-import { InformationCircleIcon } from "@hugeicons/core-free-icons"
-import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
+import { Alert } from "@/components/panelui/alert"
 import {
   SettingsGroup,
   SettingsRow,
   SettingsSection,
 } from "@/components/settings/settings-section"
-import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
-import { FormSelect } from "@/components/ui/form-select"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
+import { Button } from "@/components/panelui/button"
+import { Checkbox } from "@/components/panelui/checkbox"
+import { FormSelect } from "@/components/form-select"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
 import { FormField } from "@/components/ui-kit"
 import {
   notificationEvents,
@@ -117,26 +115,21 @@ export function ApplicationNotificationSettings({
       >
         <div className="space-y-3">
           {data?.managedByGit && (
-            <Alert
+            <Alert variant="inline"
+              tone="info"
               role="note"
               aria-labelledby="notification-git-title"
-              className="border-info/20 bg-info/5 p-4"
             >
-              <HugeiconsIcon
-                icon={InformationCircleIcon}
-                strokeWidth={2}
-                aria-hidden="true"
-                className="text-info-foreground dark:text-info"
-              />
-              <AlertTitle id="notification-git-title">
+              <Alert.Icon />
+              <Alert.Title id="notification-git-title">
                 Managed by Git
-              </AlertTitle>
-              <AlertDescription id="notification-git-description">
+              </Alert.Title>
+              <Alert.Description id="notification-git-description">
                 Routing is read-only here. To change it, edit{" "}
                 <code className="font-mono text-xs">spec.notifications</code> in{" "}
                 <code className="font-mono text-xs">justcd.yaml</code> and
                 commit the change.
-              </AlertDescription>
+              </Alert.Description>
             </Alert>
           )}
           <SettingsGroup>
@@ -183,7 +176,7 @@ export function ApplicationNotificationSettings({
                   variant="outline"
                   size="sm"
                   render={
-                    <Link href={`/workspaces/${workspaceId}?tab=settings`} />
+                    <Link href={`/workspaces/${workspaceId}/settings/notifications`} />
                   }
                   nativeButton={false}
                 >
@@ -220,7 +213,7 @@ export function ApplicationNotificationSettings({
         title="Application notification routing"
         description="Custom routing replaces destination event and severity defaults for this application. Workspace-disabled destinations stay off."
       >
-        <form className="space-y-4 pt-4" onSubmit={save}>
+        <form className="space-y-4" onSubmit={save}>
           <FormField label="Routing mode" htmlFor="app-notification-mode">
             <FormSelect
               id="app-notification-mode"

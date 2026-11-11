@@ -4,8 +4,8 @@ import Link from "next/link"
 import { useState, type ReactNode } from "react"
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react"
 import { ArrowDown01Icon, MoreHorizontalIcon } from "@hugeicons/core-free-icons"
-import { Button } from "@/components/ui/button"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Button } from "@/components/panelui/button"
+import { Menu } from "@/components/panelui/menu"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
 
 export type ActionItem = {
@@ -26,10 +26,10 @@ function MenuItems({ items, onConfirm }: { items: ActionItem[]; onConfirm: (inde
     const separator = index > 0 && (item.separatorBefore || (item.destructive && !items[index - 1].destructive))
     const content = <>{item.icon && <HugeiconsIcon icon={item.icon} strokeWidth={1.8} aria-hidden="true" />}{item.label}</>
     return <span key={item.label} className="contents">
-      {separator && <DropdownMenuSeparator />}
+      {separator && <Menu.Separator />}
       {item.href
-        ? <DropdownMenuItem render={<Link href={item.href} />} disabled={item.disabled} variant={item.destructive ? "destructive" : "default"}>{content}</DropdownMenuItem>
-        : <DropdownMenuItem disabled={item.disabled} variant={item.destructive ? "destructive" : "default"} onClick={() => item.confirm ? onConfirm(index) : item.onSelect?.()}>{content}</DropdownMenuItem>}
+        ? <Menu.Item render={<Link href={item.href} />} disabled={item.disabled} variant={item.destructive ? "destructive" : "default"}>{content}</Menu.Item>
+        : <Menu.Item disabled={item.disabled} variant={item.destructive ? "destructive" : "default"} onClick={() => item.confirm ? onConfirm(index) : item.onSelect?.()}>{content}</Menu.Item>}
     </span>
   })}</>
 }
@@ -60,14 +60,14 @@ export function RowActions({ label, primary, items }: { label: string; primary?:
   const visible = items.filter((item) => item.label)
   return <div className="flex shrink-0 items-center gap-1.5">
     {primary}
-    {visible.length > 0 && <DropdownMenu>
-      <DropdownMenuTrigger render={<Button type="button" variant="ghost" size="icon" aria-label={`Actions for ${label}`} />}>
+    {visible.length > 0 && <Menu>
+      <Menu.Trigger render={<Button type="button" variant="ghost" size="icon" aria-label={`Actions for ${label}`} />}>
         <HugeiconsIcon icon={MoreHorizontalIcon} strokeWidth={2} aria-hidden="true" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-auto min-w-48">
+      </Menu.Trigger>
+      <Menu.Content align="end" className="min-w-48">
         <MenuItems items={visible} onConfirm={ask} />
-      </DropdownMenuContent>
-    </DropdownMenu>}
+      </Menu.Content>
+    </Menu>}
     {dialog}
   </div>
 }
@@ -83,16 +83,16 @@ export function ActionMenu({ label, items, variant = "outline", size = "default"
 }) {
   const { dialog, ask } = useConfirmState(items)
   return <>
-    <DropdownMenu>
-      <DropdownMenuTrigger render={<Button type="button" variant={variant} size={size} />}>
+    <Menu>
+      <Menu.Trigger render={<Button type="button" variant={variant} size={size === "default" ? "md" : "sm"} />}>
         {icon && <HugeiconsIcon icon={icon} strokeWidth={1.8} aria-hidden="true" />}
         {label}
         <HugeiconsIcon icon={ArrowDown01Icon} strokeWidth={2} aria-hidden="true" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align={align} className="w-auto min-w-52">
+      </Menu.Trigger>
+      <Menu.Content align={align} className="min-w-52">
         <MenuItems items={items} onConfirm={ask} />
-      </DropdownMenuContent>
-    </DropdownMenu>
+      </Menu.Content>
+    </Menu>
     {dialog}
   </>
 }

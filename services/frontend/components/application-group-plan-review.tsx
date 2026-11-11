@@ -1,5 +1,7 @@
 "use client"
 
+import { Section } from "@/components/section"
+
 import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { api } from "@/lib/api"
@@ -14,8 +16,9 @@ import { PlanReview } from "@/components/plan-review"
 import { PolicyEvidence } from "@/components/guardrail-policy"
 import { ApprovalEvidence } from "@/components/approval-evidence"
 import { ManifestDiff } from "@/components/manifest-diff"
-import { Button } from "@/components/ui/button"
-import { Panel } from "@/components/ui-kit"
+import { Card } from "@/components/panelui/card"
+import { Button } from "@/components/panelui/button"
+
 
 export function ApplicationGroupPlanReview({
   applications,
@@ -93,7 +96,7 @@ export function ApplicationGroupPlanReview({
     (app) => !plans[app.id] && !failures.includes(app.name)
   )
   return (
-    <Panel
+    <Section
       title="Review target plans"
       description="Compare each child’s current immutable plan. Every target retains its own approval and apply action."
       action={
@@ -110,7 +113,7 @@ export function ApplicationGroupPlanReview({
         </Button>
       }
     >
-      <div className="p-4 sm:p-5">
+      <div>
         {loading ? (
           <p role="status">Loading target plans…</p>
         ) : (
@@ -136,22 +139,22 @@ export function ApplicationGroupPlanReview({
               identityKey={resourceKey}
               isExcluded={() => false}
               renderChange={(change, ignored, entry: ReviewEntry, review) => (
-                <article className="overflow-hidden rounded-lg border">
-                  <div className="border-b p-3">
-                    <h4 className="font-semibold">
+                <Card as="article" size="sm" className="overflow-hidden">
+                  <Card.Header>
+                    <Card.Title as="h4" className="break-words">
                       {entry.child} · {change.identity.kind}{" "}
                       {change.identity.namespace}/{change.identity.name}
-                    </h4>
-                    <p className="mt-1 text-sm">
+                    </Card.Title>
+                    <Card.Description>
                       {ignored ? "Excluded · not applied" : change.kind} ·{" "}
                       {entry.risks.map((r) => riskLabels[r]).join(", ")}
-                    </p>
+                    </Card.Description>
                     <p className="mt-1 font-mono text-xs break-all text-muted-foreground">
                       Plan digest {entry.plan?.digest}
                     </p>
                     <Button
                       size="sm"
-                      variant="link"
+                      variant="outline"
                       render={
                         <Link
                           href={`/applications/${encodeURIComponent(entry.childId ?? "")}?tab=changes`}
@@ -161,11 +164,12 @@ export function ApplicationGroupPlanReview({
                     >
                       Open child plan to approve or apply
                     </Button>
-                  </div>
+                  </Card.Header>
                   {entry.plan && (
-                    <div className="p-3">
-                      <PolicyEvidence plan={entry.plan} />
+                    <Card.Content className="space-y-3">
+                      <PolicyEvidence plan={entry.plan} inline />
                       <ApprovalEvidence
+                        inline
                         plan={entry.plan}
                         workspaceId={
                           applications.find((app) => app.id === entry.childId)
@@ -174,18 +178,18 @@ export function ApplicationGroupPlanReview({
                         prefix={`child-${entry.childId}`}
                         onResource={review}
                       />
-                    </div>
+                    </Card.Content>
                   )}
-                  {change.recreationRequired && <p role="alert" className="bg-destructive/5 p-3 text-sm">{change.recreation ? `Delete and recreate StatefulSet using ${change.recreation.propagationPolicy} propagation. Review Pod disruption and retained PVCs in the child plan.` : "Immutable StatefulSet update is blocked. Open the child plan to select a recreation policy or exclude it."}{change.recreationBlocked ? ` ${change.recreationBlocked}` : ""}</p>}
+                  {change.recreationRequired && <p role="alert" className="px-4 pb-3 text-sm text-destructive">{change.recreation ? `Delete and recreate StatefulSet using ${change.recreation.propagationPolicy} propagation. Review Pod disruption and retained PVCs in the child plan.` : "Immutable StatefulSet update is blocked. Open the child plan to select a recreation policy or exclude it."}{change.recreationBlocked ? ` ${change.recreationBlocked}` : ""}</p>}
                   {!change.recreationRequired && entry.immutablePaths.length > 0 && (
-                    <p role="alert" className="bg-warning/10 p-3 text-sm">
+                    <p role="alert" className="px-4 pb-3 text-sm text-warning-foreground dark:text-warning">
                       Immutable-field update: {entry.immutablePaths.join(", ")}.
                       Kubernetes may reject this update; deletion/recreation
                       requires separate review.
                     </p>
                   )}
                   {(change.ignoredPaths?.length ?? 0) > 0 && (
-                    <p className="bg-muted/20 p-3 text-sm">
+                    <p className="px-4 pb-3 text-sm text-muted-foreground">
                       Ignored fields · not applied:{" "}
                       {change.ignoredPaths?.join(", ")}
                     </p>
@@ -198,12 +202,12 @@ export function ApplicationGroupPlanReview({
                     changedPaths={change.changedPaths}
                     takeover={change.takeover}
                   />
-                </article>
+                </Card>
               )}
             />
           </>
         )}
       </div>
-    </Panel>
+    </Section>
   )
 }

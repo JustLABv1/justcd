@@ -1,13 +1,13 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { FormSelect } from "@/components/ui/form-select"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
+import { FormSelect } from "@/components/form-select"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { GitBranchIcon, ServerStack01Icon, Delete02Icon } from "@hugeicons/core-free-icons"
 import { RowActions } from "@/components/action-menu"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
 import { Disclosure } from "@/components/ui/collapsible"
 import { InventoryPanel, LoadErrorNotice } from "@/components/settings/shared"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -146,11 +146,11 @@ export function WorkspaceConnectionShares({
       key={share.id}
       icon={<HugeiconsIcon icon={share.kind === "cluster" ? ServerStack01Icon : GitBranchIcon} strokeWidth={1.8} className="size-4" />}
       title={share.resourceName}
-      badges={<><Badge size="sm" radius="full" variant="outline">{share.kind === "cluster" ? "Kubernetes cluster" : "Git source"}</Badge><Badge size="sm" radius="full" variant={share.status === "accepted" ? "success-light" : share.status === "pending" ? "warning-light" : share.status === "declined" || share.status === "revoked" ? "destructive-light" : "outline"} className="capitalize">{share.status}</Badge></>}
+      badges={<><Badge size="sm"  variant="outline">{share.kind === "cluster" ? "Kubernetes cluster" : "Git source"}</Badge><Badge size="sm"  variant={share.status === "accepted" ? "success" : share.status === "pending" ? "warning" : share.status === "declined" || share.status === "revoked" ? "destructive" : "outline"} className="capitalize">{share.status}</Badge></>}
       meta={<><p className="truncate text-sm">{outgoing ? `Offered to ${share.targetWorkspaceName}` : `Shared by ${share.ownerWorkspaceName}`}{share.repositoryUrl ? ` · ${share.repositoryUrl}` : ""}</p><p className="mt-0.5 text-sm">{share.kind === "git-source" ? outgoing ? "Recipient must provide its own Git credential after accepting." : share.status === "accepted" ? `Workspace credential: ${savedCredentialName ?? "not configured"}` : "Credential access is not included." : "Kubernetes credentials are never included in cluster shares."}</p></>}
       actions={actions}
     >
-      {!outgoing && share.status === "accepted" && share.kind === "git-source" && canOffer && <div className="grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto]"><FormField label="Credential owned by this workspace" htmlFor={`shared-git-credential-${share.id}`} hint="Choose a private credential or leave blank for a public repository."><FormSelect id={`shared-git-credential-${share.id}`} value={currentCredential} onValueChange={(value) => setCredentialSelection((current) => ({ ...current, [share.id]: value }))} emptyOption="Public repository / no credential" items={ownGitCredentials.map((item) => ({ value: item.id, label: item.name }))} /></FormField><Button size="sm" variant="outline" aria-label={`Save credential for ${share.resourceName}`} disabled={busyId !== "" || currentCredential === (share.credentialId ?? "")} loading={busyId === share.id} onClick={() => void saveGitCredential(share)}>Save credential</Button></div>}
+      {!outgoing && share.status === "accepted" && share.kind === "git-source" && canOffer && <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto]"><FormField label="Credential owned by this workspace" htmlFor={`shared-git-credential-${share.id}`} hint="Choose a private credential or leave blank for a public repository."><FormSelect id={`shared-git-credential-${share.id}`} value={currentCredential} onValueChange={(value) => setCredentialSelection((current) => ({ ...current, [share.id]: value }))} emptyOption="Public repository / no credential" items={ownGitCredentials.map((item) => ({ value: item.id, label: item.name }))} /></FormField><Button size="sm" variant="outline" aria-label={`Save credential for ${share.resourceName}`} disabled={busyId !== "" || currentCredential === (share.credentialId ?? "")} loading={busyId === share.id} onClick={() => void saveGitCredential(share)}>Save credential</Button></div>}
     </ConnectionRow>
   }
 
@@ -177,13 +177,13 @@ export function WorkspaceConnectionShares({
       {loading ? <div role="status" aria-label="Loading shared connections" className="space-y-3 p-5"><Skeleton className="h-14 rounded-lg" /><Skeleton className="h-14 rounded-lg" /></div>
         : error != null ? <div className="p-5"><LoadErrorNotice error={error} title="Could not load shared connections" onRetry={() => { setLoading(true); void loadShares() }} /></div>
         : shares.length === 0 ? <EmptyState title="No shared connections yet" description={canOffer ? "Offer a Git source or cluster to another workspace. Its owner must accept, and credentials stay private." : "Ask a workspace owner to offer a connection or accept an incoming offer. Credentials stay private."} />
-        : <div className="divide-y">
+        : <div className="space-y-6">
           {groups.every((group) => group.items.length === 0) && <EmptyState title="No active shared connections" description="Previous offers and revoked access are recorded below. New offers require an owner to accept them." />}
           {groups.filter((group) => group.items.length > 0).map((group) => <section key={group.title} aria-label={group.title}>
-            <header className="bg-muted/30 px-5 py-3"><h3 className="text-sm font-medium">{group.title} <span className="ml-2 text-muted-foreground">{group.items.length}</span></h3><p className="mt-1 text-sm text-muted-foreground">{group.description}</p></header>
-            <ul className="divide-y">{group.items.map(shareRow)}</ul>
+            <header className="mb-3"><h3 className="text-sm font-medium">{group.title} <span className="ml-2 text-muted-foreground">{group.items.length}</span></h3><p className="mt-1 text-sm text-muted-foreground">{group.description}</p></header>
+            <ul className="space-y-3">{group.items.map(shareRow)}</ul>
           </section>)}
-          {history.length > 0 && <Disclosure summary={`Past offers and revoked access · ${history.length}`} className="p-5"><ul className="divide-y rounded-lg border">{history.map(shareRow)}</ul></Disclosure>}
+          {history.length > 0 && <Disclosure summary={`Past offers and revoked access · ${history.length}`} className="p-5"><ul className="space-y-3">{history.map(shareRow)}</ul></Disclosure>}
         </div>}
     </InventoryPanel>
   </div>

@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { Button } from "@/components/ui/button"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
-import { FormSelect } from "@/components/ui/form-select"
+import { Button } from "@/components/panelui/button"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
+import { FormSelect } from "@/components/form-select"
 import { FormField } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { api } from "@/lib/api"
@@ -137,7 +137,7 @@ export function ConvertToProfileDialog({
           ) : (
             <div
               role="alert"
-              className="space-y-2 rounded-xl border border-destructive/30 bg-destructive/5 p-4"
+              className="space-y-2"
             >
               <p className="text-sm font-medium text-destructive">
                 This profile does not match the app yet
@@ -159,7 +159,7 @@ export function ConvertToProfileDialog({
               </dl>
             </div>
           ))}
-        {error != null && <ErrorNotice error={error} />}
+        {error != null && <ErrorNotice inline error={error} />}
         <DialogFooter>
           <DialogCancel disabled={busy} />
           <Button
@@ -174,7 +174,7 @@ export function ConvertToProfileDialog({
             type="button"
             disabled={!profileId || busy || !check?.compatible}
             loading={busy}
-            loadingText="Converting…"
+
             onClick={() => void run(false)}
           >
             Convert

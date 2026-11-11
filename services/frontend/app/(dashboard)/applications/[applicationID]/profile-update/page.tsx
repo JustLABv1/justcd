@@ -4,11 +4,11 @@ import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import Link from "next/link"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { ArrowLeft01Icon, ArrowRight01Icon } from "@hugeicons/core-free-icons"
+import { ArrowLeft01Icon, ArrowRight01Icon, ArrowUpRight01Icon } from "@hugeicons/core-free-icons"
 import { api } from "@/lib/api"
 import { RecipeReview } from "@/components/applications/recipe-review"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/reui/badge"
+import { Button } from "@/components/panelui/button"
+import { Badge } from "@/components/panelui/badge"
 import { PublishingCard } from "@/components/applications/publishing-fields"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
@@ -141,7 +141,7 @@ export default function ProfileUpdatePage() {
                 <a href={result.pipelineUrl} target="_blank" rel="noreferrer" />
               }
             >
-              Follow build
+              Follow build <HugeiconsIcon icon={ArrowUpRight01Icon} aria-hidden="true" />
             </Button>
             <Button
               variant="outline"
@@ -170,15 +170,15 @@ export default function ProfileUpdatePage() {
                 >
                   {plan.adopting ? (
                     <>
-                      <Badge variant="warning-light">Converting</Badge>
-                      <Badge variant="primary-light">
+                      <Badge variant="warning">Converting</Badge>
+                      <Badge variant="info">
                         Profile v{plan.toRevision}
                       </Badge>
                     </>
                   ) : plan.resume ? (
                     <>
-                      <Badge variant="primary-light">v{plan.toRevision}</Badge>
-                      <Badge variant="warning-light">Build pending</Badge>
+                      <Badge variant="info">v{plan.toRevision}</Badge>
+                      <Badge variant="warning">Build pending</Badge>
                     </>
                   ) : (
                     <>
@@ -190,7 +190,7 @@ export default function ProfileUpdatePage() {
                         className="size-4 text-muted-foreground"
                         aria-hidden="true"
                       />
-                      <Badge variant="primary-light">
+                      <Badge variant="info">
                         Update · v{plan.toRevision}
                       </Badge>
                     </>

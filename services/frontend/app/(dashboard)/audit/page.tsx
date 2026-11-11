@@ -7,7 +7,9 @@ import {
   Download01Icon,
   Refresh01Icon,
 } from "@hugeicons/core-free-icons"
-import { Badge } from "@/components/reui/badge"
+import { Table } from "@/components/panelui/table"
+import { Card } from "@/components/panelui/card"
+import { Badge } from "@/components/panelui/badge"
 import { AuditDetailPanel } from "@/components/audit-detail-panel"
 import { AuditColumnHeader, AuditRow } from "@/components/audit-row"
 import { auditFilterFields } from "@/components/audit-filter-fields"
@@ -15,12 +17,12 @@ import { Filters } from "@/components/reui/filters/filters"
 import { createFilterQuery } from "@/components/reui/filters/filters-query"
 import type { FilterQuery } from "@/components/reui/filters/filters-types"
 import { serializeAuditFilter } from "@/lib/audit-filter"
-import { Button } from "@/components/ui/button"
-import { FormSelect } from "@/components/ui/form-select"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
+import { Button } from "@/components/panelui/button"
+import { FormSelect } from "@/components/form-select"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { Input } from "@/components/ui/input"
+import { Chip, ChipGroup } from "@/components/panelui/chip"
+import { Input } from "@/components/panelui/input"
 import { EmptyState, PageHeading } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
@@ -239,15 +241,26 @@ function AuditPageContent() {
       />
       {error !== null && <ErrorNotice error={error} />}
       {access?.scope === "workspace" && access.role !== "owner" && (
-        <p role="note" className="mb-4 rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+        <p role="note" className="mb-4 text-sm text-muted-foreground">
           {access.role === "deployer"
             ? "As a deployer you see deployment and configuration activity. Workspace owners also see access and security events and can export audit evidence."
             : "As a viewer you see deployment activity. Workspace owners and deployers can see more, and owners can export audit evidence."}
         </p>
       )}
-      <div className="mb-4 space-y-3 rounded-xl border bg-card p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <ToggleGroup
+      <Card
+        aria-label="Audit events"
+        aria-busy={loading}
+        className="min-h-0 flex-1 overflow-hidden"
+      >
+        <Card.Header className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold">Activity</h2>
+          <span className="text-xs text-muted-foreground">
+            {loading ? "Loading…" : `${events.length} events loaded${hasMore ? " · More available" : ""}`} · Newest first · Local time
+          </span>
+        </Card.Header>
+      <div className="flex flex-wrap items-center gap-3 border-b px-6 pb-4">
+        <div className="contents">
+          <ChipGroup multiple={false}
             value={[tabAllowed ? filter : "all"]}
             onValueChange={(next) => {
               if (next[0]) setFilter(next[0] as EventFilter)
@@ -257,13 +270,13 @@ function AuditPageContent() {
             disabled={loadingMore}
           >
             {visibleFilters.map((item) => (
-              <ToggleGroupItem key={item.id} value={item.id}>
+              <Chip key={item.id} value={item.id}>
                 {item.label}
-              </ToggleGroupItem>
+              </Chip>
             ))}
-          </ToggleGroup>
+          </ChipGroup>
           <Input
-            className="w-full sm:max-w-72"
+            className="w-full sm:ml-auto sm:w-64"
             aria-label="Search audit events"
             placeholder="Search actions, actors, resources…"
             value={query}
@@ -272,8 +285,8 @@ function AuditPageContent() {
             onChange={(event) => setQuery(event.target.value)}
           />
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="w-full sm:w-60">
+        <div className="contents">
+          <div className="w-full sm:w-52">
             <FormSelect
               value={workspace}
               onValueChange={setWorkspace}
@@ -306,25 +319,8 @@ function AuditPageContent() {
               Clear resource filter
             </Button>
           )}
-          <p className="ml-auto text-xs text-muted-foreground">
-            {loading
-              ? "Loading…"
-              : `${events.length} events loaded${hasMore ? " · More available" : ""}`}
-          </p>
         </div>
       </div>
-      <section
-        aria-label="Audit events"
-        aria-busy={loading}
-        className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card"
-      >
-        <div className="flex items-center justify-between border-b px-5 py-3">
-          <h2 className="text-sm font-semibold">Activity</h2>
-          <span className="text-xs text-muted-foreground">
-            Newest first · Local time
-          </span>
-        </div>
-        <AuditColumnHeader />
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
           {loading ? (
             <div
@@ -340,9 +336,10 @@ function AuditPageContent() {
               ))}
             </div>
           ) : events.length ? (
-            <div className="divide-y">
-              {events.map((event) => <AuditRow key={event.id} event={event} showWorkspace={!workspace} onSelect={setSelected} />)}
-            </div>
+            <Table framed maxHeight="65vh" aria-label="Audit events">
+              <AuditColumnHeader />
+              <Table.Body>{events.map((event) => <AuditRow key={event.id} event={event} showWorkspace={!workspace} onSelect={setSelected} />)}</Table.Body>
+            </Table>
           ) : (
             <EmptyState
               title={
@@ -370,7 +367,7 @@ function AuditPageContent() {
             </Button>
           </div>
         )}
-      </section>
+      </Card>
       <AuditDetailPanel
         event={selected}
         events={events}

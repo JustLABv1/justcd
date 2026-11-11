@@ -17,7 +17,7 @@ import {
   TimelineSeparator,
   TimelineTitle,
 } from "@/components/reui/timeline"
-import { Switch } from "@/components/ui/switch"
+import { Switch } from "@/components/panelui/switch"
 import {
   rolloutFocusResource,
   rolloutStatus,
@@ -27,19 +27,13 @@ import {
   rolloutResourceKey,
   type RolloutResource,
 } from "@/lib/rollout-timeline"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { FormSelect } from "@/components/ui/form-select"
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Badge } from "@/components/reui/badge"
+import { Card } from "@/components/panelui/card"
+import { Button } from "@/components/panelui/button"
+import { Input } from "@/components/panelui/input"
+import { FormSelect } from "@/components/form-select"
+import { Sheet } from "@/components/panelui/sheet"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/panelui/tabs"
+import { Badge } from "@/components/panelui/badge"
 import { StatusBadge } from "@/components/ui-kit"
 import { resourceLabel, sameIdentity } from "@/components/application/helpers"
 import { syncRunProgress } from "@/lib/run-progress"
@@ -238,8 +232,8 @@ export function RolloutPanel({
   ])
   const progress = syncRunProgress(operation, plan)
   return (
-    <Sheet open={open} onOpenChange={changeOpen}>
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/20 p-3">
+    <Sheet side="right" open={open} onOpenChange={changeOpen}>
+      <Card size="sm"><Card.Content className="flex flex-wrap items-center justify-between gap-3">
         <div className="space-y-1">
           <p className="text-sm font-medium">
             Resource rollout{" "}
@@ -251,27 +245,27 @@ export function RolloutPanel({
             {rolloutSummary(resources)}
           </p>
         </div>
-        <SheetTrigger render={<Button variant="outline" size="sm" />}>
+        <Sheet.Trigger render={<Button variant="outline" size="sm" />}>
           View rollout details
-        </SheetTrigger>
-      </div>
-      <SheetContent className="gap-0 data-[side=right]:w-full motion-reduce:transition-none sm:my-3 sm:mr-3 sm:rounded-xl sm:border sm:data-[side=right]:h-[calc(100%-1.5rem)] data-[side=right]:sm:max-w-xl">
-        <SheetHeader className="shrink-0 border-b p-5 pr-12">
+        </Sheet.Trigger>
+      </Card.Content></Card>
+      <Sheet.Content className="gap-0 sm:max-w-xl">
+        <Sheet.Header className="shrink-0 p-5">
           <p
             className="mb-2 truncate font-mono text-xs text-muted-foreground"
             title={operation.id}
           >
             {operation.id}
           </p>
-          <SheetTitle className="flex flex-wrap items-center gap-2">
+          <Sheet.Title className="flex flex-wrap items-center gap-2">
             {operation.type === "rollback" ? "Rollback" : "Sync"} rollout{" "}
             <StatusBadge status={operation.status} />
-          </SheetTitle>
-          <SheetDescription>
+          </Sheet.Title>
+          <Sheet.Description>
             {rolloutSummary(resources)} · Elapsed{" "}
             {elapsed(operation.startedAt, operation.finishedAt)}
-          </SheetDescription>
-        </SheetHeader>
+          </Sheet.Description>
+        </Sheet.Header>
         <Tabs
           value={tab}
           onValueChange={(value) => setTab(String(value))}
@@ -290,7 +284,7 @@ export function RolloutPanel({
             value="resources"
             className="flex min-h-0 flex-1 flex-col"
           >
-            <div className="shrink-0 space-y-3 border-b p-5">
+            <div className="shrink-0 space-y-3 p-5">
               <div className="grid gap-2 sm:grid-cols-[1fr_160px]">
                 <Input
                   aria-label="Search rollout resources"
@@ -468,7 +462,7 @@ export function RolloutPanel({
                           {resource.status === "failed" &&
                           resource.mutationApplied ? (
                             <Badge
-                              variant="warning-light"
+                              variant="warning"
                               className="max-w-36 text-right whitespace-normal"
                             >
                               {rolloutStatus(resource)}
@@ -481,7 +475,7 @@ export function RolloutPanel({
                       {expanded && selected && (
                         <section
                           aria-label="Selected resource"
-                          className="mt-2 rounded-lg border bg-muted/20 p-4"
+                          className="mt-2 space-y-3 py-3"
                         >
                           <h3 className="sr-only">
                             {selected.identity.name} details
@@ -572,7 +566,7 @@ export function RolloutPanel({
                             </div>
                           )}
                           {selected.failureDetail && (
-                            <div className="mt-4 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+                            <div className="mt-4 text-destructive">
                               <p className="text-xs font-medium text-destructive">Kubernetes rejected this resource</p>
                               <p className="mt-1 font-mono text-xs break-words select-text">{selected.failureDetail}</p>
                             </div>
@@ -620,7 +614,7 @@ export function RolloutPanel({
           >
             <ol
               aria-label="Sync stages"
-              className="divide-y rounded-lg border px-4"
+              className="divide-y"
             >
               {progress.stages.map((stage) => (
                 <li key={stage.id} className="py-3">
@@ -669,7 +663,7 @@ export function RolloutPanel({
             </dl>
           </TabsContent>
         </Tabs>
-      </SheetContent>
+      </Sheet.Content>
     </Sheet>
   )
 }

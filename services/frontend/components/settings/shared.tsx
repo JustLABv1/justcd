@@ -3,9 +3,10 @@
 import { useState, type ReactNode } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Copy01Icon, Layers01Icon, RefreshIcon, Tick02Icon } from "@hugeicons/core-free-icons"
-import { Badge } from "@/components/reui/badge"
-import { IconStack } from "@/components/reui/icon-stack"
-import { Button } from "@/components/ui/button"
+import { Card } from "@/components/panelui/card"
+import { Alert } from "@/components/panelui/alert"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ErrorDetailsButton } from "@/components/error-details"
 import type { ActionItem } from "@/components/action-menu"
@@ -54,9 +55,9 @@ export function statusLabel(status: string) {
 }
 
 export function statusVariant(status: string): BadgeVariant {
-  if (status === "passed") return "success-light"
-  if (status === "partial" || status === "missing") return "warning-light"
-  if (status === "failed") return "destructive-light"
+  if (status === "passed") return "success"
+  if (status === "partial" || status === "missing") return "warning"
+  if (status === "failed") return "destructive"
   return "outline"
 }
 
@@ -67,30 +68,19 @@ export function FieldError({ id, children }: { id: string; children?: ReactNode 
 }
 
 /** Inline notice for failed loads, always with a retry. */
-export function LoadErrorNotice({ error, title, onRetry }: { error: unknown; title: string; onRetry: () => void }) {
-  return (
-    <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
-      <div className="min-w-0">
-        <p className="font-medium text-destructive">{title}</p>
-        <p className="mt-0.5 break-words text-muted-foreground">{errorMessage(error)}</p>
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <ErrorDetailsButton error={error} />
-        <Button type="button" size="sm" variant="outline" onClick={onRetry}>
-          <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} aria-hidden="true" />
-          Retry
-        </Button>
-      </div>
-    </div>
-  )
+export function LoadErrorNotice({ error, title, onRetry, inline = false }: { error: unknown; title: string; onRetry: () => void; inline?: boolean }) {
+  return <Alert tone="destructive" variant={inline ? "inline" : "plain"}>
+    <Alert.Icon /><Alert.Title>{title}</Alert.Title><Alert.Description>{errorMessage(error)}</Alert.Description>
+    <Alert.Actions><ErrorDetailsButton error={error} /><Button type="button" size="sm" variant="outline" onClick={onRetry}><HugeiconsIcon icon={RefreshIcon} strokeWidth={2} aria-hidden="true" />Retry</Button></Alert.Actions>
+  </Alert>
 }
 
 /** Skeleton shaped like an inventory panel with a few rows. */
 export function SectionSkeleton({ rows = 3, label = "Loading" }: { rows?: number; label?: string }) {
   return (
-    <div role="status" aria-label={label} className="rounded-xl border bg-card">
+    <Card role="status" aria-label={label}>
       <span className="sr-only">{label}</span>
-      <div className="flex items-center justify-between gap-4 border-b px-5 py-4">
+      <div className="flex items-center justify-between gap-4 px-5 py-4">
         <Skeleton className="h-4 w-40" />
         <Skeleton className="h-5 w-8 rounded-full" />
       </div>
@@ -106,7 +96,7 @@ export function SectionSkeleton({ rows = 3, label = "Loading" }: { rows?: number
           </li>
         ))}
       </ul>
-    </div>
+    </Card>
   )
 }
 
@@ -122,7 +112,7 @@ export function FieldsSkeleton({ label = "Loading" }: { label?: string }) {
 }
 
 /** Panel with a count badge in the header, an optional toolbar row and primary action. */
-export function InventoryPanel({ title, description, count, action, toolbar, children, surface = "card" }: {
+export function InventoryPanel({ title, description, count, action, toolbar, children, surface = "flat" }: {
   title: string
   surface?: "card" | "flat"
   description?: string
@@ -133,18 +123,13 @@ export function InventoryPanel({ title, description, count, action, toolbar, chi
 }) {
   return (
     <SettingsPanel
-      title={title}
+      title={<span className="inline-flex items-center gap-2">{title}<Badge variant="secondary" size="sm" aria-label={`${count} total`} className="tabular-nums">{count}</Badge></span>}
       surface={surface}
       description={description}
-      action={
-        <div className="flex max-w-full flex-wrap items-center gap-3">
-          <Badge variant="secondary" radius="full" aria-label={`${count} total`} className="tabular-nums">{count}</Badge>
-          {action}
-        </div>
-      }
+      action={action}
       className="overflow-hidden"
     >
-      {toolbar && <div className="border-b px-5 py-3">{toolbar}</div>}
+      {toolbar && <div className="pb-3">{toolbar}</div>}
       {children}
     </SettingsPanel>
   )
@@ -160,7 +145,7 @@ export function SectionEmpty({ title, description, action, hint }: {
 }) {
   return (
     <div className="flex flex-col items-center justify-center px-5 py-12 text-center">
-      <IconStack className="empty-state-icon-stack text-primary"><HugeiconsIcon icon={Layers01Icon} className="size-6" /></IconStack>
+      <span aria-hidden="true" className="inline-flex shrink-0 items-center justify-center rounded-2xl bg-primary/10 p-3 empty-state-icon-stack text-primary"><HugeiconsIcon icon={Layers01Icon} className="size-6" /></span>
       <h3 className="mt-4 text-sm font-semibold">{title}</h3>
       <p className="mt-1 max-w-sm text-sm leading-5 text-muted-foreground">{description}</p>
       {action ? <div className="mt-4">{action}</div> : hint ? <p className="mt-4 max-w-sm text-sm text-muted-foreground">{hint}</p> : null}
@@ -183,7 +168,7 @@ export function CopyCode({ value, label, block = false }: { value: string; label
     }
   }
   const button = (
-    <Button type="button" size="icon-xs" variant="ghost" aria-label={`Copy ${label}`} onClick={() => void copy()}>
+    <Button type="button" size="icon-sm" variant="ghost" aria-label={`Copy ${label}`} onClick={() => void copy()}>
       <HugeiconsIcon icon={copied ? Tick02Icon : Copy01Icon} strokeWidth={2} aria-hidden="true" />
     </Button>
   )

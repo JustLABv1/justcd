@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { PlusSignIcon } from "@hugeicons/core-free-icons"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
+import { Avatar } from "@/components/panelui/avatar"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
+import { Input } from "@/components/panelui/input"
 import { RowActions, type ActionItem } from "@/components/action-menu"
-import { ConnectionRow, FormField, SwitchField } from "@/components/ui-kit"
+import { ConnectionRow, FormField, CheckboxField } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
 import { useWorkspaceSelection } from "@/hooks/workspace-selection"
 import { api, apiPost } from "@/lib/api"
@@ -119,7 +120,7 @@ export function PlatformUsersPanel({
         action={createButton}
       >
         {users.length ? (
-          <ul className="divide-y">
+          <ul className="space-y-3">
             {users.map((user) => {
               const deleted = Boolean(user.deletedAt)
               const self = user.id === currentUserId
@@ -147,15 +148,15 @@ export function PlatformUsersPanel({
               return (
                 <ConnectionRow
                   key={user.id}
-                  icon={<span className="text-xs font-semibold uppercase">{label.slice(0, 2)}</span>}
+                  media={<Avatar name={label} size="md" color="muted" aria-hidden="true" />}
                   title={label}
                   subtitle={user.email}
                   badges={
                     <>
-                      <Badge variant="outline" radius="full">{user.isAdmin ? "Instance admin" : "User"}</Badge>
-                      {deleted ? <Badge variant="destructive-light" radius="full">Deleted</Badge> : user.disabled ? <Badge variant="warning-light" radius="full">Locked</Badge> : null}
-                      {pending && <Badge variant="warning-light" radius="full">Awaiting approval</Badge>}
-                      {self && !deleted && <Badge variant="info-light" radius="full">You</Badge>}
+                      <Badge variant="outline" >{user.isAdmin ? "Instance admin" : "User"}</Badge>
+                      {deleted ? <Badge variant="destructive" >Deleted</Badge> : user.disabled ? <Badge variant="warning" >Locked</Badge> : null}
+                      {pending && <Badge variant="warning" >Awaiting approval</Badge>}
+                      {self && !deleted && <Badge variant="info" >You</Badge>}
                     </>
                   }
                   actions={deleted ? undefined : <RowActions label={label} items={items} />}
@@ -194,6 +195,7 @@ function CreateUserDialog({ action, onClose, onCreated }: { action: ActionRunner
     event.preventDefault()
     if (emailError || passwordError) {
       setAttempted(true)
+      document.getElementById(emailError ? "user-email" : "user-password")?.focus()
       return
     }
     const ok = await track(action(
@@ -212,7 +214,7 @@ function CreateUserDialog({ action, onClose, onCreated }: { action: ActionRunner
       description="Add a person who signs in directly with an email address and password."
     >
       <form className="space-y-5" onSubmit={submit} noValidate>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <FormField label="Email" htmlFor="user-email">
             <Input id="user-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} aria-invalid={attempted && !!emailError} aria-describedby={attempted && emailError ? "user-email-error" : undefined} />
             {attempted && <FieldError id="user-email-error">{emailError}</FieldError>}
@@ -225,7 +227,7 @@ function CreateUserDialog({ action, onClose, onCreated }: { action: ActionRunner
           <Input id="user-password" type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} aria-invalid={attempted && !!passwordError} aria-describedby={attempted && passwordError ? "user-password-error" : undefined} />
           {attempted && <FieldError id="user-password-error">{passwordError}</FieldError>}
         </FormField>
-        <SwitchField id="user-is-admin" checked={isAdmin} onCheckedChange={setIsAdmin} label="Instance administrator" description="Can manage sign-in providers and all platform users." />
+        <CheckboxField id="user-is-admin" checked={isAdmin} onCheckedChange={setIsAdmin} label="Instance administrator" description="Can manage sign-in providers and all platform users." />
         <DialogFooter>
           <DialogCancel disabled={saving} />
           <Button type="submit" loading={saving} loadingText="Creating…">Create user</Button>
@@ -248,6 +250,7 @@ function EditUserDialog({ user, self, action, onClose, onSaved }: { user: User; 
     event.preventDefault()
     if (emailError || passwordError) {
       setAttempted(true)
+      document.getElementById(emailError ? "edit-user-email" : "edit-user-password")?.focus()
       return
     }
     const ok = await track(action(
@@ -269,7 +272,7 @@ function EditUserDialog({ user, self, action, onClose, onSaved }: { user: User; 
       description="Update this account's details or reset its password."
     >
       <form className="space-y-5" onSubmit={submit} noValidate>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <FormField label="Email" htmlFor="edit-user-email">
             <Input id="edit-user-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} aria-invalid={attempted && !!emailError} aria-describedby={attempted && emailError ? "edit-user-email-error" : undefined} />
             {attempted && <FieldError id="edit-user-email-error">{emailError}</FieldError>}
@@ -284,7 +287,7 @@ function EditUserDialog({ user, self, action, onClose, onSaved }: { user: User; 
         </FormField>
         {self
           ? <p className="text-sm text-muted-foreground">Your administrator access cannot be changed here.</p>
-          : <SwitchField id="edit-user-is-admin" checked={isAdmin} onCheckedChange={setIsAdmin} label="Instance administrator" description="Can manage sign-in providers and all platform users." />}
+          : <CheckboxField id="edit-user-is-admin" checked={isAdmin} onCheckedChange={setIsAdmin} label="Instance administrator" description="Can manage sign-in providers and all platform users." />}
         <DialogFooter>
           <DialogCancel disabled={saving} />
           <Button type="submit" loading={saving} loadingText="Saving…">Save changes</Button>

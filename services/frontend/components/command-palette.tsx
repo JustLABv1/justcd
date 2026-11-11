@@ -11,8 +11,8 @@ import {
 import { Command } from "@/components/panelui/command"
 import { NavTile, type Tone } from "@/components/nav-tile"
 import { LogoMark } from "@/components/logo"
-import { Button } from "@/components/ui/button"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Button } from "@/components/panelui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/panelui/tooltip"
 import { api } from "@/lib/api"
 import type { Application, ListResponse, Workspace } from "@/lib/types"
 

@@ -3,18 +3,19 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { PlusSignIcon } from "@hugeicons/core-free-icons"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
-import { FormSelect } from "@/components/ui/form-select"
-import { Input } from "@/components/ui/input"
+import { PlusSignIcon, SourceCodeIcon } from "@hugeicons/core-free-icons"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
+import { FormSelect } from "@/components/form-select"
+import { Input } from "@/components/panelui/input"
 import { RowActions } from "@/components/action-menu"
 import { ConnectionRow, FormField, InlineLink } from "@/components/ui-kit"
-import { WorkspaceIcon } from "@/components/workspace-ui"
 import { RepositoryConfigurations } from "@/components/repository-configurations"
 import { useToast } from "@/components/toast-provider"
 import { api, apiPost } from "@/lib/api"
+import { useWorkspace } from "@/hooks/use-workspace"
+import { gitSourceHealth } from "@/lib/connection-health"
 import type { Credential, GitSource, Workspace } from "@/lib/types"
 import {
   credentialKindLabels,
@@ -55,6 +56,7 @@ export function GitSourcePanel({
   const [webhookSource, setWebhookSource] = useState<GitSource | null>(null)
   const [testingSourceId, setTestingSourceId] = useState("")
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({})
+  const { applications } = useWorkspace()
 
   async function test(source: GitSource) {
     setTestingSourceId(source.id)
@@ -79,27 +81,35 @@ export function GitSourcePanel({
         count={sources.length}
       >
         {sources.length ? (
-          <ul className="divide-y">
+          <ul className="space-y-3">
             {sources.map((source) => {
               const result = testResults[source.id]
               const own = !source.shared && source.workspaceId === workspace.id
+              // What applications report about this repository; a test run in this session is newer and wins.
+              const health = gitSourceHealth(source, applications)
+              const unreachable = health.level === "critical" && result?.status !== "ok"
+              const properties = [
+                source.shared ? `Shared by ${source.ownerWorkspaceName ?? "another workspace"}` : "Private to this workspace",
+                source.credentialId ? "Credential configured" : "No credential (public repository)",
+              ].join(" · ")
               return (
                 <ConnectionRow
                   key={source.id}
-                  icon={<WorkspaceIcon name="branch" className="size-4" />}
+                  icon={<HugeiconsIcon icon={SourceCodeIcon} strokeWidth={1.8} className="size-4" />}
                   title={source.name}
                   subtitle={source.repositoryUrl}
                   badges={
                     <>
-                      {source.shared
-                        ? <Badge variant="info-light" radius="full">Shared by {source.ownerWorkspaceName ?? "another workspace"}</Badge>
-                        : <Badge variant="outline" radius="full">Private to this workspace</Badge>}
-                      <Badge variant="outline" radius="full">{source.credentialId ? "Credential configured" : "No credential (public repository)"}</Badge>
-                      {result?.status === "ok" && <Badge variant="success-light" radius="full">Reachable · HEAD {result.commit.slice(0, 8)}</Badge>}
-                      {result?.status === "failed" && <Badge variant="destructive-light" radius="full">Last test failed</Badge>}
+                      {result?.status === "ok" && <Badge size="sm" variant="success" dot>Reachable · HEAD {result.commit.slice(0, 8)}</Badge>}
+                      {result?.status === "failed" && <Badge size="sm" variant="destructive" dot>Last test failed</Badge>}
+                      {!result && unreachable && <Badge size="sm" variant="destructive" dot>Unreachable</Badge>}
                     </>
                   }
-                  meta={result?.status === "ok" ? `Last tested ${new Date(result.testedAt).toLocaleString()}` : result?.status === "failed" ? undefined : "Not tested yet in this session"}
+                  meta={<>
+                    <span>{properties}</span>
+                    {result?.status === "ok" && <span> · Last tested {new Date(result.testedAt).toLocaleString()}</span>}
+                    {unreachable && <p role="alert" className="mt-1 break-words text-sm text-destructive">{health.detail.charAt(0).toUpperCase() + health.detail.slice(1).replace(/\.$/, "")} · {health.affectedApplications.length} application{health.affectedApplications.length === 1 ? "" : "s"} affected</p>}
+                  </>}
                   actions={
                     <RowActions
                       label={source.name}
@@ -207,14 +217,14 @@ function PushWebhookDialog({ source, workspace, action, onClose }: {
     >
       <form className="space-y-5" onSubmit={submit} noValidate>
         {loadError != null
-          ? <LoadErrorNotice error={loadError} title="Could not load webhook settings" onRetry={() => { setLoadError(null); setTick((value) => value + 1) }} />
+          ? <LoadErrorNotice inline error={loadError} title="Could not load webhook settings" onRetry={() => { setLoadError(null); setTick((value) => value + 1) }} />
           : !info
             ? <FieldsSkeleton label="Loading webhook settings" />
             : (
-              <div className="space-y-3 rounded-lg border bg-muted/30 p-3 text-sm">
+              <div className="space-y-3 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">Status</span>
-                  <Badge variant={info.configured ? "success-light" : "outline"} radius="full">{info.configured ? "Configured" : "Not configured"}</Badge>
+                  <Badge variant={info.configured ? "success" : "outline"} >{info.configured ? "Configured" : "Not configured"}</Badge>
                 </div>
                 <CopyCode value={info.webhookUrl} label="webhook URL" />
                 <p className="text-muted-foreground">

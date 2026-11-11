@@ -37,7 +37,7 @@ import { getDefaultFilterOperator } from "@/components/reui/filters/filters-oper
 import type { FilterField } from "@/components/reui/filters/filters-types"
 
 import { cn } from "cn"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/panelui/button"
 import {
   Popover,
   PopoverContent,

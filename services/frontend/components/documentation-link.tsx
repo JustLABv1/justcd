@@ -1,7 +1,7 @@
 import { HugeiconsIcon } from "@hugeicons/react"
 import { BookOpen01Icon } from "@hugeicons/core-free-icons"
-import { buttonVariants } from "@/components/ui/button"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { buttonVariants } from "@/components/panelui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/panelui/tooltip"
 import styles from "./app-shell.module.css"
 
 export function DocumentationLink({ compact = false, collapsed = false }: { compact?: boolean; collapsed?: boolean }) {

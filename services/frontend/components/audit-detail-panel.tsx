@@ -8,8 +8,9 @@ import {
   Copy01Icon,
   Link01Icon,
 } from "@hugeicons/core-free-icons"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
+import { Card } from "@/components/panelui/card"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
 import {
   Sheet,
   SheetContent,
@@ -17,8 +18,8 @@ import {
   SheetHeader,
   SheetTitle,
   SheetFooter,
-} from "@/components/ui/sheet"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+} from "@/components/panelui/sheet"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/panelui/tabs"
 import { useToast } from "@/components/toast-provider"
 import {
   actionLabel,
@@ -81,7 +82,7 @@ function DeploymentDetails({ evidence, where }: { evidence: DeploymentEvidence; 
           Deployment targets
         </h3>
         {evidence.targets.map((target, index) => (
-          <div key={index} className="rounded-lg border p-4">
+          <Card key={index} size="sm"><Card.Content>
             <Facts
               values={[
                 ["Cluster", where?.find((item) => item.clusterId === target.clusterId)?.clusterName || target.clusterId],
@@ -92,7 +93,7 @@ function DeploymentDetails({ evidence, where }: { evidence: DeploymentEvidence; 
                 ],
               ]}
             />
-          </div>
+          </Card.Content></Card>
         ))}
         {!evidence.targets.length && (
           <p className="text-sm text-muted-foreground">
@@ -106,7 +107,7 @@ function DeploymentDetails({ evidence, where }: { evidence: DeploymentEvidence; 
           {evidence.requiredApprovals} required
         </h3>
         {evidence.approvals.map((approval) => (
-          <div key={approval.id} className="rounded-lg border p-4">
+          <Card key={approval.id} size="sm"><Card.Content>
             <Facts
               values={[
                 ["Approval ID", approval.id],
@@ -116,7 +117,7 @@ function DeploymentDetails({ evidence, where }: { evidence: DeploymentEvidence; 
                 ["Used at", approval.usedAt],
               ]}
             />
-          </div>
+          </Card.Content></Card>
         ))}
         {!evidence.approvals.length && (
           <p className="text-sm text-muted-foreground">
@@ -139,7 +140,7 @@ function DeploymentDetails({ evidence, where }: { evidence: DeploymentEvidence; 
               ]}
             />
             {evidence.policy.results.map((result, index) => (
-              <div key={index} className="rounded-lg border p-4">
+              <Card key={index} size="sm"><Card.Content>
                 <Facts
                   values={[
                     ["Rule", result.rule],
@@ -150,7 +151,7 @@ function DeploymentDetails({ evidence, where }: { evidence: DeploymentEvidence; 
                     ["Cluster ID", result.resource.clusterId],
                   ]}
                 />
-              </div>
+              </Card.Content></Card>
             ))}
             {!evidence.policy.results.length && (
               <p className="text-sm text-muted-foreground">
@@ -223,12 +224,13 @@ export function AuditDetailPanel({
   }
   return (
     <Sheet
+      side="right"
       open={event !== null}
       onOpenChange={(open) => {
         if (!open) onClose()
       }}
     >
-      <SheetContent className="gap-0 data-[side=right]:w-full motion-reduce:transition-none sm:rounded-2xl sm:border data-[side=right]:sm:inset-y-3 data-[side=right]:sm:right-3 data-[side=right]:sm:h-[calc(100%-1.5rem)] data-[side=right]:sm:max-w-2xl">
+      <SheetContent className="w-full max-w-2xl">
         {event && (
           <>
             <SheetHeader className="shrink-0 px-5 pt-5 pb-4 sm:px-7 sm:pt-6">
@@ -237,7 +239,7 @@ export function AuditDetailPanel({
                   EVT-{event.id}
                   <Button
                     variant="ghost"
-                    size="icon-xs"
+                    size="icon-sm"
                     aria-label="Copy event ID"
                     onClick={() =>
                       void copy(String(event.id), "Event ID copied.")
@@ -437,7 +439,7 @@ export function AuditDetailPanel({
                 </TabsContent>
               </div>
             </Tabs>
-            <SheetFooter className="mt-0 shrink-0 flex-row flex-wrap items-center justify-between gap-2 border-t px-5 py-4 sm:px-7">
+            <SheetFooter className="mt-0 shrink-0 flex-row flex-wrap items-center justify-between gap-2">
               <Button
                 variant="outline"
                 onClick={() => {

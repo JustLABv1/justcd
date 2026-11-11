@@ -2,9 +2,9 @@
 
 import { useState } from "react"
 import { ConnectionDialog } from "@/components/connection-dialog"
-import { DialogCancel, DialogFooter } from "@/components/ui/dialog"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { DialogCancel, DialogFooter } from "@/components/app-dialog"
+import { Button } from "@/components/panelui/button"
+import { Input } from "@/components/panelui/input"
 import { FormField } from "@/components/ui-kit"
 import { api, errorMessage } from "@/lib/api"
 import { useToast } from "@/components/toast-provider"
@@ -35,7 +35,7 @@ export function ApplicationLabelsDialog({ application, onClose, onSaved }: {
     } catch (cause) { setError(errorMessage(cause)) }
     finally { setSaving(false) }
   }
-  return <ConnectionDialog open onOpenChange={open => { if (!open) onClose() }} title={`Labels for ${application.name}`} description={managed ? "Labels are managed in Git. Edit metadata.labels in the application’s justcd.yaml." : "Use labels to organize and group applications. Labels do not change Kubernetes resources."} busy={saving} size="md">
+  return <ConnectionDialog open onOpenChange={open => { if (!open) onClose() }} title={`Labels for ${application.name}`} description={managed ? "Labels are managed in Git. Edit metadata.labels in the application’s justcd.yaml." : "Use labels to organize and group applications. Labels do not change Kubernetes resources."} busy={saving} size="lg">
     <form onSubmit={save} className="space-y-4">
       {managed && <pre className="overflow-x-auto rounded-lg border bg-muted/30 p-3 text-xs">{`metadata:\n  labels:\n${Object.entries(Object.keys(application.labels ?? {}).length ? application.labels! : { team: "platform", environment: "production" }).map(([key, value]) => `    ${key}: ${JSON.stringify(value)}`).join("\n")}`}</pre>}
       {!managed && <>

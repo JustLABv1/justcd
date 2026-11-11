@@ -2,21 +2,21 @@
 
 import { useEffect, useState, type ReactNode } from "react"
 import Link from "next/link"
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/panelui/tabs"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { PlusSignIcon } from "@hugeicons/core-free-icons"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
-import { FormSelect } from "@/components/ui/form-select"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
+import { FormSelect } from "@/components/form-select"
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible"
-import { Input } from "@/components/ui/input"
+import { Input } from "@/components/panelui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Textarea } from "@/components/ui/textarea"
+import { Textarea } from "@/components/panelui/textarea"
 import { RowActions, type ActionItem } from "@/components/action-menu"
 import { ClusterAgentActivity } from "@/components/cluster-agent-activity"
 import { ClusterAgentConnection } from "@/components/cluster-agent-connection"
-import { ConnectionRow, FormField, SwitchField } from "@/components/ui-kit"
+import { ConnectionRow, FormField, CheckboxField } from "@/components/ui-kit"
 import { WorkspaceIcon } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
 import { api, apiPost } from "@/lib/api"
@@ -164,7 +164,7 @@ export function ClusterPanel({
         toolbar={<Input aria-label="Search clusters" placeholder="Search clusters or connection type…" value={clusterQuery} onChange={event => setClusterQuery(event.target.value)} className="max-w-sm" />}
       >
         {visibleClusters.length ? (
-          <ul className="divide-y">
+          <ul className="space-y-3">
             {visibleClusters.map((cluster) => {
               const record = latestTests[cluster.id]
               const credentialId = credentialByCluster[cluster.id]
@@ -204,20 +204,20 @@ export function ClusterPanel({
                   badges={
                     <>
                       {cluster.shared
-                        ? <Badge variant="info-light" radius="full">Shared by {cluster.ownerWorkspaceName ?? "another workspace"}</Badge>
-                        : <Badge variant="outline" radius="full">{cluster.workspaceId ? "Private to this workspace" : "Instance-owned"}</Badge>}
+                        ? <Badge variant="info" >Shared by {cluster.ownerWorkspaceName ?? "another workspace"}</Badge>
+                        : <Badge variant="outline" >{cluster.workspaceId ? "Private to this workspace" : "Instance-owned"}</Badge>}
                       {credentialId
-                        ? <Badge variant="success-light" radius="full" className="max-w-full text-left"><span className="min-w-0 whitespace-normal break-words">Default credential: {workspaceCredentials.find((item) => item.id === credentialId)?.name ?? "configured"}</span></Badge>
+                        ? <Badge variant="success"  className="max-w-full text-left"><span className="min-w-0 whitespace-normal break-words">Default credential: {workspaceCredentials.find((item) => item.id === credentialId)?.name ?? "configured"}</span></Badge>
                         : cluster.connectionMode === "agent"
-                          ? <Badge variant="outline" radius="full">Agent local credentials</Badge>
+                          ? <Badge variant="outline" >Agent local credentials</Badge>
                           : cluster.shared
-                            ? <Badge variant="warning-light" radius="full">Credential needed</Badge>
+                            ? <Badge variant="warning" >Credential needed</Badge>
                             : cluster.defaultCredentialId
-                              ? <Badge variant="outline" radius="full">Instance default credential</Badge>
-                              : statusLoaded && <Badge variant="warning-light" radius="full">No default credential</Badge>}
+                              ? <Badge variant="outline" >Instance default credential</Badge>
+                              : statusLoaded && <Badge variant="warning" >No default credential</Badge>}
                       {testFailed[cluster.id]
-                        ? <Badge variant="destructive-light" radius="full">Test could not run</Badge>
-                        : record && <Badge variant={statusVariant(record.report.status)} radius="full">Test: {statusLabel(record.report.status)}</Badge>}
+                        ? <Badge variant="destructive" >Test could not run</Badge>
+                        : record && <Badge variant={statusVariant(record.report.status)} >Test: {statusLabel(record.report.status)}</Badge>}
                     </>
                   }
                   meta={
@@ -377,7 +377,7 @@ function DefaultCredentialDialog({ cluster, workspace, workspaceCredentials, act
     >
       <form className="space-y-5" onSubmit={submit}>
         {error != null
-          ? <LoadErrorNotice error={error} title="Could not load the current default credential" onRetry={retry} />
+          ? <LoadErrorNotice inline error={error} title="Could not load the current default credential" onRetry={retry} />
           : !loaded
             ? <FieldsSkeleton label="Loading default credential" />
             : (
@@ -477,7 +477,7 @@ function EditClusterDialog({ cluster, workspace, user, globalCredentials, worksp
       description="Update the endpoint, authentication and rate limits for this cluster connection."
     >
       <form className="space-y-5" onSubmit={submit} noValidate>
-        {credential.error != null && <LoadErrorNotice error={credential.error} title="Could not load the default credential" onRetry={credential.retry} />}
+        {credential.error != null && <LoadErrorNotice inline error={credential.error} title="Could not load the default credential" onRetry={credential.retry} />}
         <Tabs value={tab} onValueChange={(value) => setTab(value as TabId)}>
           <TabsList aria-label="Cluster settings">
             <TabsTrigger value="general">General{errorDot(attempted && generalInvalid)}</TabsTrigger>
@@ -504,7 +504,7 @@ function EditClusterDialog({ cluster, workspace, user, globalCredentials, worksp
                 : credential.error != null ? <p className="text-sm text-muted-foreground">Unavailable until the default credential loads.</p> : <FieldsSkeleton label="Loading default credential" />}
             </FormField>
             {showInstanceCredentials && (
-              <div className="space-y-3 rounded-lg border p-3">
+              <div className="space-y-3">
                 <div>
                   <h3 className="text-sm font-semibold">Instance credentials</h3>
                   <p className="mt-0.5 text-sm text-muted-foreground">Optional. These apply to every workspace; workspace credentials stay private to each workspace.</p>
@@ -519,7 +519,7 @@ function EditClusterDialog({ cluster, workspace, user, globalCredentials, worksp
                 </div>
               </div>
             )}
-            <SwitchField
+            <CheckboxField
               id="cluster-insecure"
               tone="warning"
               checked={insecure}

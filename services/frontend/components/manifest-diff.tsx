@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
@@ -14,18 +15,16 @@ import {
   ArrowUp01Icon,
   Settings02Icon,
 } from "@hugeicons/core-free-icons"
-import { Input } from "@/components/ui/input"
-import { FormSelect } from "@/components/ui/form-select"
+import { Input } from "@/components/panelui/input"
+import { FormSelect } from "@/components/form-select"
 import { DiffText, useDiffSyntax } from "@/components/diff-text"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Alert } from "@/components/panelui/alert"
 import { VirtualReviewList } from "@/components/virtual-review-list"
-import { Button } from "@/components/ui/button"
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { Button } from "@/components/panelui/button"
+import { Dialog } from "@/components/panelui/dialog"
+import { Toolbar } from "@/components/panelui/toolbar"
+import { RadioGroup, Radio } from "@/components/panelui/radio-group"
+import { Label } from "@/components/panelui/label"
 import { SwitchField } from "@/components/ui-kit"
 import { contextRows, reviewRows, reviewTextRows } from "@/lib/line-diff"
 import {
@@ -42,6 +41,13 @@ type ManifestDiffProps = {
   excluded?: boolean
   changedPaths?: string[]
   takeover?: boolean
+}
+
+const wideDiffQuery = "(min-width: 768px)"
+function subscribeDiffWidth(listener: () => void) {
+  const query = window.matchMedia(wideDiffQuery)
+  query.addEventListener("change", listener)
+  return () => query.removeEventListener("change", listener)
 }
 
 export function ManifestDiff(props: ManifestDiffProps) {
@@ -91,7 +97,7 @@ export function ManifestDiff(props: ManifestDiffProps) {
               <span>Other manifest fields also changed.</span>
               <Button
                 type="button"
-                variant="link"
+                variant="outline"
                 size="sm"
                 onClick={() => setSelected("manifest")}
               >
@@ -131,7 +137,8 @@ function ManifestDiffView({
     ? file.before === undefined || file.after === undefined
     : before == null || after == null
   const beforeMissing = file ? file.before === undefined : before == null
-  const split = !singleSide && mode === "split"
+  const wide = useSyncExternalStore(subscribeDiffWidth, () => window.matchMedia(wideDiffQuery).matches, () => true)
+  const split = !singleSide && mode === "split" && wide
   const rows = useMemo(
     () =>
       file
@@ -279,41 +286,18 @@ function ManifestDiffView({
     )
   return (
     <section aria-label="Manifest comparison">
-      <div className="flex flex-wrap items-center gap-2 border-b p-3">
+      <Toolbar variant="inline" aria-label="Manifest comparison tools" className="flex-wrap gap-2 p-3">
         {!singleSide && (
-          <ToggleGroup
-            aria-label="Diff layout"
-            value={[mode]}
-            onValueChange={(next) => {
-              if (next[0]) setMode(next[0])
-            }}
-          >
-            <ToggleGroupItem value="split">Side by side</ToggleGroupItem>
-            <ToggleGroupItem value="unified">Unified</ToggleGroupItem>
-          </ToggleGroup>
+          <Toolbar.Group aria-label="Diff layout" value={split ? "split" : "unified"} onValueChange={setMode}>
+            <Toolbar.Tool value="split" disabled={!wide}>Side by side</Toolbar.Tool>
+            <Toolbar.Tool value="unified">Unified</Toolbar.Tool>
+          </Toolbar.Group>
         )}
-        <Popover>
-          <PopoverTrigger
-            render={
-              <Button
-                type="button"
-                variant={query ? "secondary" : "outline"}
-                size="icon-sm"
-                aria-label={`Diff options${query ? " · Search active" : ""}`}
-                title="Diff options"
-              />
-            }
-          >
-            <HugeiconsIcon
-              icon={Settings02Icon}
-              strokeWidth={1.8}
-              aria-hidden="true"
-            />
-          </PopoverTrigger>
-          <PopoverContent
-            align="start"
-            className="w-80 max-w-[calc(100vw-2rem)] gap-3 p-3"
-          >
+        <Dialog>
+          <Dialog.Trigger render={<Toolbar.Button label={`Diff options${query ? " · Search active" : ""}`} />}>
+            <HugeiconsIcon icon={Settings02Icon} strokeWidth={1.8} aria-hidden="true" />
+          </Dialog.Trigger>
+          <Dialog.Content variant="plain" size="sm"><Dialog.Header title="Diff options" /><Dialog.Body>
             <label
               htmlFor={`${optionsId}-search`}
               className="text-sm font-medium"
@@ -332,19 +316,9 @@ function ManifestDiffView({
               <p id={`${optionsId}-font`} className="text-sm font-medium">
                 Code font size
               </p>
-              <ToggleGroup
-                aria-labelledby={`${optionsId}-font`}
-                value={[fontSize]}
-                onValueChange={(next) => {
-                  if (next[0]) setFontSize(next[0])
-                }}
-              >
-                {[14, 16, 18].map((n) => (
-                  <ToggleGroupItem key={n} value={String(n)}>
-                    {n} px
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
+              <RadioGroup orientation="horizontal" aria-labelledby={`${optionsId}-font`} value={fontSize} onValueChange={setFontSize}>
+                {[14, 16, 18].map(n => <Label key={n} className="flex w-auto items-center gap-2"><Radio value={String(n)} />{n} px</Label>)}
+              </RadioGroup>
             </div>
             <SwitchField
               id={`${optionsId}-wrap`}
@@ -360,8 +334,8 @@ function ManifestDiffView({
               checked={expanded}
               onCheckedChange={setExpanded}
             />
-          </PopoverContent>
-        </Popover>
+          </Dialog.Body></Dialog.Content>
+        </Dialog>
 
         {search && (
           <span role="status" className="text-sm text-muted-foreground">
@@ -380,11 +354,8 @@ function ManifestDiffView({
                   ? "Ownership change only"
                   : "No text changes"}
           </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Previous change"
+          <Toolbar.Button
+            label="Previous change"
             disabled={!hunks.length}
             onClick={() => jump(-1)}
           >
@@ -393,12 +364,9 @@ function ManifestDiffView({
               strokeWidth={2}
               aria-hidden="true"
             />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Next change"
+          </Toolbar.Button>
+          <Toolbar.Button
+            label="Next change"
             disabled={!hunks.length}
             onClick={() => jump(1)}
           >
@@ -407,13 +375,14 @@ function ManifestDiffView({
               strokeWidth={2}
               aria-hidden="true"
             />
-          </Button>
+          </Toolbar.Button>
         </div>
-      </div>
+      </Toolbar>
       {hiddenPaths.length > 0 && (
-        <div className="border-b p-3">
-          <Alert role="status">
-            <AlertDescription>
+        <div className="p-3">
+          <Alert tone="info" role="status" variant="inline">
+            <Alert.Icon />
+            <Alert.Description>
               <p>
                 <strong>Sensitive values hidden</strong> ·{" "}
                 {excluded
@@ -427,7 +396,7 @@ function ManifestDiffView({
                   </span>
                 ))}
               </p>
-            </AlertDescription>
+            </Alert.Description>
           </Alert>
         </div>
       )}
@@ -436,7 +405,7 @@ function ManifestDiffView({
         style={{ fontSize: Number(fontSize) }}
       >
         <div
-          className={`grid border-b bg-muted px-3 py-2 font-sans text-sm font-medium ${split ? "md:grid-cols-2" : "grid-cols-2"}`}
+          className={`grid border-b bg-muted px-3 py-2 font-sans text-sm font-medium grid-cols-2`}
         >
           {!(singleSide && beforeMissing) && (
             <span>

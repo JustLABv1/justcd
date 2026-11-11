@@ -1,17 +1,13 @@
 "use client"
-import { useEffect, useState } from "react"
-import { Badge } from "@/components/reui/badge"
+import { useEffect, useState, useSyncExternalStore } from "react"
+import { Badge } from "@/components/panelui/badge"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { ArrowRight01Icon, ArrowUpRight01Icon, Cancel01Icon } from "@hugeicons/core-free-icons"
+import { Card } from "@/components/panelui/card"
 import { api } from "@/lib/api"
-import { Button } from "@/components/ui/button"
-import {
-  Timeline,
-  TimelineContent,
-  TimelineHeader,
-  TimelineIndicator,
-  TimelineItem,
-  TimelineSeparator,
-  TimelineTitle,
-} from "@/components/reui/timeline"
+import { Alert } from "@/components/panelui/alert"
+import { Button } from "@/components/panelui/button"
+import { Steps } from "@/components/panelui/steps"
 
 import type { Publication } from "@/lib/publishing-status"
 
@@ -33,19 +29,6 @@ const buildStates: Record<string, { state: StepState; detail: string }> = {
   },
   build_canceled: { state: "failed", detail: "The pipeline was canceled." },
   build_canceling: { state: "failed", detail: "The pipeline was canceled." },
-}
-const indicator: Record<StepState, string> = {
-  done: "!border-success bg-success",
-  active: "!border-primary bg-primary animate-pulse",
-  failed: "!border-destructive bg-destructive",
-  waiting: "!border-muted-foreground/40 bg-background",
-}
-// The connector below a step takes that step's colour so the line never mixes hues with the dots.
-const connector: Record<StepState, string> = {
-  done: "!bg-success/60",
-  active: "!bg-border",
-  failed: "!bg-border",
-  waiting: "!bg-border",
 }
 const stateLabel: Record<StepState, string> = {
   done: "Done",
@@ -111,6 +94,22 @@ function steps(p: Publication): Step[] {
   ]
 }
 
+/** Five stages fit across a card from `sm` up; below that they stack. */
+function useWide() {
+  return useSyncExternalStore(
+    (notify) => { const query = window.matchMedia("(min-width: 640px)"); query.addEventListener("change", notify); return () => query.removeEventListener("change", notify) },
+    () => window.matchMedia("(min-width: 640px)").matches,
+    () => true,
+  )
+}
+
+const chipFor: Record<StepState, { label: string; variant: "success" | "info" | "destructive" | "outline" }> = {
+  done: { label: "Done", variant: "success" },
+  active: { label: "In progress", variant: "info" },
+  failed: { label: "Failed", variant: "destructive" },
+  waiting: { label: "Waiting", variant: "outline" },
+}
+
 // One poller shared by the tab indicator and its panel, even while another tab is open.
 export function usePublication(applicationId: string | undefined) {
   const [publication, setPublication] = useState<{
@@ -159,6 +158,7 @@ export function PublishingProgress({
   failed: boolean
   onReview: () => void
 }) {
+  const wide = useWide()
   if (!publication)
     return (
       <p role="status" className="py-5 text-sm text-muted-foreground">
@@ -178,81 +178,35 @@ export function PublishingProgress({
   const list = steps(publication)
   // Connectors fill up to the first step that is not yet done.
   const current = list.findIndex((step) => step.state !== "done") + 1 || list.length
+  const reviewable = list.some((step) => step.label === "Review and apply" && step.state === "active")
   return (
-    <section
-      aria-label="Publishing progress"
-      className="overflow-hidden rounded-xl border bg-card"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
-        <h2 className="text-sm font-semibold">Publishing progress</h2>
-        {publication.pipelineUrl && (
-          <Button
-            size="sm"
-            variant="ghost"
-            nativeButton={false}
-            render={
-              <a
-                href={publication.pipelineUrl}
-                target="_blank"
-                rel="noreferrer"
-              />
-            }
-          >
-            Open GitLab pipeline →
-          </Button>
-        )}
-      </div>
-      <Timeline
-        render={<ol />}
-        value={current}
-        className="p-5 ps-9"
-      >
-        {list.map((step, index) => (
-          <TimelineItem
-            key={step.label}
-            step={index + 1}
-            render={<li />}
-            className="flex-row flex-wrap items-start gap-3"
-          >
-            {index < list.length - 1 && <TimelineSeparator className={connector[step.state]} />}
-            <TimelineIndicator className={indicator[step.state]} />
-            <div className="min-w-0 flex-1">
-              <TimelineHeader>
-                <TimelineTitle>
-                  {step.label}{" "}
-                  <span className="sr-only">: {stateLabel[step.state]}</span>
-                </TimelineTitle>
-              </TimelineHeader>
-              <TimelineContent className="text-xs leading-5">
-                {step.detail}
-              </TimelineContent>
+    <Card size="sm" aria-label="Publishing progress">
+      <Card.Header className="flex flex-wrap items-start gap-3">
+        <Card.Title as="h2" className="min-w-0 flex-1 basis-40">Publishing progress</Card.Title>
+        <Card.Action className="flex flex-wrap items-center gap-2">
+          {publication.pipelineUrl && <Button size="sm" variant="outline" nativeButton={false} render={<a href={publication.pipelineUrl} target="_blank" rel="noreferrer" />}>Open GitLab pipeline<HugeiconsIcon icon={ArrowUpRight01Icon} strokeWidth={2} aria-hidden="true" /></Button>}
+          {reviewable && <Button type="button" size="sm" onClick={onReview}>Review changes<HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} aria-hidden="true" /></Button>}
+        </Card.Action>
+      </Card.Header>
+      <Card.Content>
+      <Steps orientation={wide ? "horizontal" : "vertical"} value={current} aria-label="Publishing stages">
+        {list.map((step, index) => {
+          const chip = step.label === "Review and apply" && step.state === "active" ? { label: "Ready", variant: "info" as const } : chipFor[step.state]
+          return <Steps.Item key={step.label} step={index + 1} completed={step.state === "done"} loading={step.state === "active" && step.label !== "Review and apply"}>
+            <div className={wide ? "flex w-full min-w-0 flex-col items-center gap-2 px-2 text-center" : "grid w-full grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1"}>
+              <Steps.Indicator className={`${wide ? "" : "row-span-2"} ${step.state === "failed" ? "bg-destructive text-destructive-foreground ring-destructive/20" : step.state === "done" ? "bg-success text-success-foreground" : ""}`}>{step.state === "failed" ? <HugeiconsIcon icon={Cancel01Icon} className="size-4" aria-hidden="true" /> : undefined}</Steps.Indicator>
+              <div className={wide ? "flex min-w-0 flex-col items-center gap-1" : "flex min-w-0 flex-col items-start gap-1"}>
+                <Steps.Title className={`${wide ? "" : "mt-1.5"} ${step.state === "failed" ? "text-destructive" : ""}`}>{step.label}<span className="sr-only">: {stateLabel[step.state]}</span></Steps.Title>
+                <Badge size="sm" variant={chip.variant} dot aria-hidden="true">{chip.label}</Badge>
+                <Steps.Description className="text-xs">{step.detail}</Steps.Description>
+              </div>
             </div>
-            {step.label === "Review and apply" && step.state === "active" && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={onReview}
-              >
-                Review changes →
-              </Button>
-            )}
-            {step.state === "failed" && (
-              <Badge size="sm" radius="full" variant="destructive-light">
-                {stateLabel[step.state]}
-              </Badge>
-            )}
-          </TimelineItem>
-        ))}
-      </Timeline>
-      {publication.completionError && (
-        <p
-          role="alert"
-          className="border-t px-5 py-3 text-xs leading-5 text-destructive"
-        >
-          {publication.completionError}
-        </p>
-      )}
-    </section>
+            {index < list.length - 1 && <Steps.Separator className={step.state === "done" ? "bg-success/60" : "bg-border"} />}
+          </Steps.Item>
+        })}
+      </Steps>
+      {publication.completionError && <Alert tone="destructive" variant="plain" role="alert" className="mt-4"><Alert.Icon /><Alert.Title>{publication.completionError}</Alert.Title></Alert>}
+      </Card.Content>
+    </Card>
   )
 }

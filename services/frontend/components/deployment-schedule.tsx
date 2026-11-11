@@ -1,17 +1,19 @@
 "use client"
 
+import { Section } from "@/components/section"
+
 import { useEffect, useId, useState } from "react"
 import { api, apiPost, errorMessage } from "@/lib/api"
 import type { DeploymentFreeze, DeploymentPolicy, DeploymentSchedule, DeploymentWindow, Operation } from "@/lib/types"
-import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { FormSelect } from "@/components/ui/form-select"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
-import { Badge } from "@/components/reui/badge"
+import { Button } from "@/components/panelui/button"
+import { Checkbox } from "@/components/panelui/checkbox"
+import { Input } from "@/components/panelui/input"
+import { Textarea } from "@/components/panelui/textarea"
+import { FormSelect } from "@/components/form-select"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
+import { Badge } from "@/components/panelui/badge"
 import { SettingsGroup, SettingsRow } from "@/components/settings/settings-section"
-import { FormField, Panel } from "@/components/ui-kit"
+import { FormField } from "@/components/ui-kit"
 import { ErrorDetailsButton } from "@/components/error-details"
 import { ScheduleWarning } from "@/components/deployment-schedule-notice"
 import { useToast } from "@/components/toast-provider"
@@ -22,7 +24,7 @@ const newWindow = (): DeploymentWindow => ({ timeZone: "UTC", days: [1, 2, 3, 4,
 function WindowEditor({ window: value, onChange, disabled }: { window: DeploymentWindow; onChange: (value: DeploymentWindow) => void; disabled: boolean }) {
   const id = useId()
   return <div className="space-y-3">
-    <div className="grid gap-3 sm:grid-cols-3">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
       <FormField label="Time zone" htmlFor={`${id}-zone`} hint="IANA name, e.g. Europe/Berlin"><Input id={`${id}-zone`} required value={value.timeZone} disabled={disabled} onChange={(event) => onChange({ ...value, timeZone: event.target.value })} /></FormField>
       <FormField label="Start time" htmlFor={`${id}-start`}><Input id={`${id}-start`} type="time" required value={value.start} disabled={disabled} onChange={(event) => onChange({ ...value, start: event.target.value })} /></FormField>
       <FormField label="End time" htmlFor={`${id}-end`}><Input id={`${id}-end`} type="time" required value={value.end} disabled={disabled} onChange={(event) => onChange({ ...value, end: event.target.value })} /></FormField>
@@ -40,11 +42,11 @@ function FreezeEditor({ freeze, onChange, disabled }: { freeze: DeploymentFreeze
   const mode = freeze.schedule ? "recurring" : freeze.start || freeze.end ? "fixed" : "indefinite"
   const timestamp = (value?: string) => value ? new Date(value).toISOString().slice(0, 16) : ""
   return <div className="space-y-3">
-    <div className="grid gap-3 sm:grid-cols-2">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <FormField label="Freeze reason" htmlFor={`${id}-reason`}><Input id={`${id}-reason`} required maxLength={1000} value={freeze.reason} disabled={disabled} onChange={(event) => onChange({ ...freeze, reason: event.target.value })} /></FormField>
       <FormField label="Freeze type" htmlFor={`${id}-mode`}><FormSelect id={`${id}-mode`} value={mode} disabled={disabled} items={[{ value: "indefinite", label: "Until removed" }, { value: "fixed", label: "Date range (UTC)" }, { value: "recurring", label: "Weekly recurring" }]} onValueChange={(next) => onChange(next === "recurring" ? { reason: freeze.reason, schedule: newWindow() } : next === "fixed" ? { reason: freeze.reason, start: new Date().toISOString() } : { reason: freeze.reason })} /></FormField>
     </div>
-    {freeze.schedule ? <WindowEditor window={freeze.schedule} disabled={disabled} onChange={(schedule) => onChange({ reason: freeze.reason, schedule })} /> : mode === "fixed" && <div className="grid gap-3 sm:grid-cols-2">
+    {freeze.schedule ? <WindowEditor window={freeze.schedule} disabled={disabled} onChange={(schedule) => onChange({ reason: freeze.reason, schedule })} /> : mode === "fixed" && <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <FormField label="Start (UTC)" htmlFor={`${id}-from`} hint="Empty means immediately"><Input id={`${id}-from`} type="datetime-local" value={timestamp(freeze.start)} disabled={disabled} onChange={(event) => onChange({ ...freeze, start: event.target.value ? new Date(`${event.target.value}Z`).toISOString() : undefined })} /></FormField>
       <FormField label="End (UTC)" htmlFor={`${id}-until`} hint="Empty means until removed"><Input id={`${id}-until`} type="datetime-local" value={timestamp(freeze.end)} disabled={disabled} onChange={(event) => onChange({ ...freeze, end: event.target.value ? new Date(`${event.target.value}Z`).toISOString() : undefined })} /></FormField>
     </div>}
@@ -97,15 +99,15 @@ export function DeploymentSchedulePanel({ scope, id, canEdit, layout = "panel" }
   const windows = data?.policy.windows ?? []
   const freezes = data?.policy.freezes ?? []
   const content = <>
-    {error !== null && <div role="alert" className="mb-3 flex items-center gap-2 text-sm text-destructive">{errorMessage(error)}<ErrorDetailsButton error={error} /></div>}
-    <SettingsGroup>
+    {error !== null && <div role="alert" className="m-5 mb-0 flex items-center gap-2 text-sm text-destructive">{errorMessage(error)}<ErrorDetailsButton error={error} /></div>}
+    <SettingsGroup bare={layout === "panel"}>
       {!data ? <SettingsRow label={error === null ? "Loading deployment schedule…" : "Deployment schedule unavailable"} /> : <>
         <SettingsRow label="Current availability" description={<div role="status" aria-live="polite" className="space-y-1">
           {data.decision.allowed ? <p>{windows.length === 0 && freezes.length === 0 ? (scope === "workspaces" ? "No workspace time restrictions are configured." : "Workspace and application schedules allow deployments now.") : "The current time is within the allowed deployment schedule."}</p> : <>
             {data.decision.reasons.map((reason, index) => <p key={`${index}-${reason}`}>{reason}</p>)}
             <p>{data.decision.nextAllowedAt ? `Next allowed start: ${new Date(data.decision.nextAllowedAt).toLocaleString()} (${Intl.DateTimeFormat().resolvedOptions().timeZone})` : "No allowed start in the next weekly cycle."}</p>
           </>}
-        </div>} value={<Badge variant={data.decision.allowed ? "success-light" : "warning-light"} radius="full"><span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${data.decision.allowed ? "bg-success" : "bg-warning"}`} />{data.decision.allowed ? "Deployments allowed" : "Deployments restricted"}</Badge>} />
+        </div>} value={<Badge variant={data.decision.allowed ? "success" : "warning"}><span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${data.decision.allowed ? "bg-success" : "bg-warning"}`} />{data.decision.allowed ? "Deployments allowed" : "Deployments restricted"}</Badge>} />
         <SettingsRow label="Maintenance windows" description={windows.length ? windows.slice(0, 2).map(windowSummary).join("; ") + (windows.length > 2 ? `; +${windows.length - 2} more` : "") : scope === "workspaces" ? "Deploy at any time, unless a freeze is active." : "No application windows. Workspace restrictions still apply."}
           value={<span className="whitespace-nowrap text-muted-foreground">{windows.length ? `${windows.length} window${windows.length === 1 ? "" : "s"}` : "Any time"}</span>}
           action={<Button variant="outline" size="sm" onClick={() => openEditor("windows")}>{editable ? "Edit windows" : "View windows"}</Button>} />
@@ -114,23 +116,23 @@ export function DeploymentSchedulePanel({ scope, id, canEdit, layout = "panel" }
           action={<Button variant="outline" size="sm" onClick={() => openEditor("freezes")}>{editable ? "Edit freezes" : "View freezes"}</Button>} />
       </>}
     </SettingsGroup>
-    {data?.managedByGit && <p className="mt-3 text-sm text-muted-foreground">Managed in Git. Edit <code>spec.deploymentSchedule</code> in <code>justcd.yaml</code>.</p>}
+    {data?.managedByGit && <p className={layout === "panel" ? "px-5 py-3 text-sm text-muted-foreground" : "mt-3 text-sm text-muted-foreground"}>Managed in Git. Edit <code>spec.deploymentSchedule</code> in <code>justcd.yaml</code>.</p>}
 
     <AppDialog open={editor !== null} onOpenChange={(open) => { if (!open) setEditor(null) }} busy={busy} variant={editable ? "form" : "info"} size="lg"
       title={editor === "freezes" ? "Deployment freezes" : "Maintenance windows"}
       description={editor === "freezes" ? "Pause deployments during incidents or scheduled maintenance. Every freeze needs a reason." : "Choose the days, times, and time zones when deployments may start. No windows means unrestricted hours."}>
       <form className="space-y-5" onSubmit={(event) => { if (editable) void save(event); else event.preventDefault() }}>
         {editor === "windows" ? <div className="space-y-4">
-          {policy.windows.length === 0 && <div className="rounded-lg bg-muted/50 p-4 text-sm"><p className="font-medium">No maintenance windows</p><p className="mt-1 text-muted-foreground">Deployments can start at any time, subject to active freezes{scope === "applications" ? " and workspace restrictions" : ""}.</p></div>}
-          {policy.windows.map((value, index) => <section key={index} aria-label={`Maintenance window ${index + 1}`} className="space-y-3 rounded-lg border p-4">
+          {policy.windows.length === 0 && <div className="text-sm"><p className="font-medium">No maintenance windows</p><p className="mt-1 text-muted-foreground">Deployments can start at any time, subject to active freezes{scope === "applications" ? " and workspace restrictions" : ""}.</p></div>}
+          {policy.windows.map((value, index) => <section key={index} aria-label={`Maintenance window ${index + 1}`} className="space-y-3 py-3">
             <p className="text-sm font-semibold">Window {index + 1}</p>
             <WindowEditor window={value} disabled={disabled} onChange={(next) => setPolicy({ ...policy, windows: policy.windows.map((item, i) => i === index ? next : item) })} />
             {editable && <Button type="button" variant="destructive" size="sm" disabled={busy} onClick={() => setPolicy({ ...policy, windows: policy.windows.filter((_, i) => i !== index) })}>Remove window {index + 1}</Button>}
           </section>)}
           {editable && <Button type="button" variant="outline" size="sm" disabled={busy || policy.windows.length >= 16} onClick={() => setPolicy({ ...policy, windows: [...policy.windows, newWindow()] })}>Add maintenance window</Button>}
         </div> : <div className="space-y-4">
-          {policy.freezes.length === 0 && <div className="rounded-lg bg-muted/50 p-4 text-sm"><p className="font-medium">No deployment freezes</p><p className="mt-1 text-muted-foreground">Add a freeze to block deployments until it is removed, during a date range, or on a weekly schedule.</p></div>}
-          {policy.freezes.map((freeze, index) => <section key={index} aria-label={`Deployment freeze ${index + 1}`} className="space-y-3 rounded-lg border p-4">
+          {policy.freezes.length === 0 && <div className="text-sm"><p className="font-medium">No deployment freezes</p><p className="mt-1 text-muted-foreground">Add a freeze to block deployments until it is removed, during a date range, or on a weekly schedule.</p></div>}
+          {policy.freezes.map((freeze, index) => <section key={index} aria-label={`Deployment freeze ${index + 1}`} className="space-y-3 py-3">
             <p className="text-sm font-semibold">Freeze {index + 1}</p>
             <FreezeEditor freeze={freeze} disabled={disabled} onChange={(next) => setPolicy({ ...policy, freezes: policy.freezes.map((item, i) => i === index ? next : item) })} />
             {editable && <Button type="button" variant="destructive" size="sm" disabled={busy} onClick={() => setPolicy({ ...policy, freezes: policy.freezes.filter((_, i) => i !== index) })}>Remove freeze {index + 1}</Button>}
@@ -138,11 +140,11 @@ export function DeploymentSchedulePanel({ scope, id, canEdit, layout = "panel" }
           {editable && <Button type="button" variant="outline" size="sm" disabled={busy || policy.freezes.length >= 16} onClick={() => setPolicy({ ...policy, freezes: [...policy.freezes, { reason: "" }] })}>Add deployment freeze</Button>}
         </div>}
         {saveError !== null && <div role="alert" className="flex items-center gap-2 text-sm text-destructive">{errorMessage(saveError)}<ErrorDetailsButton error={saveError} /></div>}
-        {editable && <DialogFooter><DialogCancel disabled={busy} /><Button type="submit" loading={busy} loadingText="Saving…">{editor === "windows" ? "Save windows" : "Save freezes"}</Button></DialogFooter>}
+        {editable && <DialogFooter><DialogCancel disabled={busy} /><Button type="submit" loading={busy}>{editor === "windows" ? "Save windows" : "Save freezes"}</Button></DialogFooter>}
       </form>
     </AppDialog>
   </>
-  return layout === "settings" ? content : <Panel title="Deployment schedule" description="When deployments can start, and any freezes that take precedence."><div className="p-5">{content}</div></Panel>
+  return layout === "settings" ? content : <Section title="Deployment schedule" description="When deployments can start, and any freezes that take precedence.">{content}</Section>
 }
 
 export function ScheduledOperationActions({ operation, canOverride, canCancel, onUpdated }: { operation: Operation; canOverride: boolean; canCancel: boolean; onUpdated: () => Promise<void> }) {
@@ -180,7 +182,7 @@ export function ScheduledOperationActions({ operation, canOverride, canCancel, o
       <form className="space-y-4" onSubmit={(event) => void override(event)}>
         <FormField label="Required reason" htmlFor={id}><Textarea id={id} required maxLength={1000} value={reason} disabled={busy} onChange={(event) => setReason(event.target.value)} /></FormField>
         {error !== null && <p role="alert" className="text-destructive">{errorMessage(error)}</p>}
-        <DialogFooter><DialogCancel disabled={busy} /><Button type="submit" disabled={!reason.trim()} loading={busy} loadingText="Recording…">Record emergency override</Button></DialogFooter>
+        <DialogFooter><DialogCancel disabled={busy} /><Button type="submit" disabled={!reason.trim()} loading={busy}>Record emergency override</Button></DialogFooter>
       </form>
     </AppDialog>
   </div>

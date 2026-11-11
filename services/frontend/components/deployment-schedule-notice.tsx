@@ -5,9 +5,9 @@ import { HugeiconsIcon } from "@hugeicons/react"
 import { Alert02Icon } from "@hugeicons/core-free-icons"
 import { api } from "@/lib/api"
 import type { DeploymentSchedule } from "@/lib/types"
-import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/reui/badge"
+import { Alert } from "@/components/panelui/alert"
+import { Button } from "@/components/panelui/button"
+import { Badge } from "@/components/panelui/badge"
 
 export function ScheduleWarning({
   reasons,
@@ -20,14 +20,14 @@ export function ScheduleWarning({
 }) {
   const frozen = reasons.some((reason) => reason.includes("deployment freeze"))
   return (
-    <Alert className="border-warning/30 bg-warning/10 p-4 text-warning-foreground dark:text-warning">
-      <HugeiconsIcon icon={Alert02Icon} strokeWidth={1.8} aria-hidden="true" />
-      <AlertTitle>
+    <Alert tone="warning">
+      <Alert.Icon />
+      <Alert.Title>
         {frozen
           ? "Deployment freeze active"
           : "Waiting for deployment schedule"}
-      </AlertTitle>
-      <AlertDescription className="space-y-2 text-foreground">
+      </Alert.Title>
+      <Alert.Description className="space-y-2">
         <p>
           {frozen
             ? "New deployments are blocked by an active freeze. Existing workloads continue running."
@@ -40,13 +40,13 @@ export function ScheduleWarning({
             </li>
           ))}
         </ul>
-        <p className="text-sm">
+        <p>
           {nextAllowedAt
             ? `Next allowed start: ${new Date(nextAllowedAt).toLocaleString()} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`
             : "No allowed start in the next weekly cycle. Review the deployment schedule."}
         </p>
-        {children}
-      </AlertDescription>
+      </Alert.Description>
+      {children && <Alert.Actions>{children}</Alert.Actions>}
     </Alert>
   )
 }
@@ -99,14 +99,14 @@ export function DeploymentScheduleNotice({
         : "Deployments restricted"
     return (
       <Badge
-        variant={unavailable ? "secondary" : "warning-light"}
-        radius="full"
+        variant={unavailable ? "secondary" : "warning"}
+        size="sm"
         render={
           onViewSchedule ? (
             <Button
               type="button"
               variant="ghost"
-              size="xs"
+              size="sm"
               onClick={onViewSchedule}
               aria-label={`${label}. View deployment schedule`}
             />
@@ -124,12 +124,13 @@ export function DeploymentScheduleNotice({
   }
   if (unavailable)
     return (
-      <Alert className="mb-5">
-        <AlertTitle>Deployment availability unavailable</AlertTitle>
-        <AlertDescription>
+      <Alert tone="neutral" className="mb-5">
+        <Alert.Icon />
+        <Alert.Title>Deployment availability unavailable</Alert.Title>
+        <Alert.Description>
           The deployment schedule could not be refreshed. Availability will be
           checked again automatically.
-        </AlertDescription>
+        </Alert.Description>
       </Alert>
     )
   if (!data || data.decision.allowed) return null

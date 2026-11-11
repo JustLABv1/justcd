@@ -1,8 +1,8 @@
 "use client"
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/panelui/button"
 import { Calendar } from "@/components/ui/calendar"
-import { Input } from "@/components/ui/input"
+import { Input } from "@/components/panelui/input"
 import type { FilterEditorProps } from "@/components/reui/filters/filters-types"
 import { dateTimePresets, describeDateTime, formatLocalDateTime, parseLocalDateTime, timePart, withDay, withTime } from "@/lib/filter-datetime"
 
@@ -15,7 +15,7 @@ export function FilterDateTimeEditor({ value, onValueChange, commit, cancel, aut
   const complete = selected !== null
   return <div className="w-72 space-y-3 p-3" onKeyDown={(event) => { if (event.key === "Enter" && complete && event.target instanceof HTMLInputElement) { event.preventDefault(); commit(value) } }}>
     <div role="group" aria-label="Quick picks" className="flex flex-wrap gap-1.5">
-      {dateTimePresets.map((preset) => <Button key={preset.id} type="button" size="xs" variant="outline" onClick={() => onValueChange(formatLocalDateTime(preset.at(new Date())))}>{preset.label}</Button>)}
+      {dateTimePresets.map((preset) => <Button key={preset.id} type="button" size="sm" variant="outline" onClick={() => onValueChange(formatLocalDateTime(preset.at(new Date())))}>{preset.label}</Button>)}
     </div>
     <Calendar mode="single" selected={selected ?? undefined} defaultMonth={selected ?? undefined} onSelect={(day) => { if (day) onValueChange(withDay(value, day)) }} className="mx-auto p-0 [--cell-size:--spacing(9)]" />
     <div className="flex items-center gap-2">

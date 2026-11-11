@@ -2,12 +2,13 @@
 
 import { useRef, useState } from "react"
 import { RowActions } from "@/components/action-menu"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
-import { FormSelect } from "@/components/ui/form-select"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
+import { Card } from "@/components/panelui/card"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
+import { FormSelect } from "@/components/form-select"
+import { Input } from "@/components/panelui/input"
+import { Textarea } from "@/components/panelui/textarea"
 import { FormField } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { api, apiPost } from "@/lib/api"
@@ -159,7 +160,7 @@ export function TemplateLibrary({
 
   return (
     <>
-      <SettingsPanel
+      <SettingsPanel surface="flat"
         title="Application templates"
         description="The files JustCD generates for each application type: Dockerfile, build pipeline and Kubernetes manifest. Customize them for your platform, or create your own template; every save is a new, immutable version that profiles can select."
         action={
@@ -170,10 +171,10 @@ export function TemplateLibrary({
             >
               Import
             </Button>
-            <Button onClick={() => setMode({ kind: "new" })}>
+            <Button variant="outline" onClick={() => setMode({ kind: "new" })}>
               New template
             </Button>
-            <input
+            <Input
               ref={fileInput}
               type="file"
               accept="application/json,.json"
@@ -188,12 +189,9 @@ export function TemplateLibrary({
           </div>
         }
       >
-        <div className="divide-y">
+        <div className="space-y-3">
           {templates.map(({ template, versions }) => (
-            <div
-              key={template.id}
-              className="flex flex-wrap items-center justify-between gap-4 px-5 py-4"
-            >
+            <Card key={template.id} size="sm"><Card.Content className="flex flex-wrap items-center justify-between gap-4">
               <div className="min-w-0 space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-sm font-medium">{template.name}</h3>
@@ -201,7 +199,7 @@ export function TemplateLibrary({
                     {template.category}
                   </Badge>
                   {template.custom && (
-                    <Badge variant="info-light" size="sm">
+                    <Badge variant="info" size="sm">
                       Custom
                     </Badge>
                   )}
@@ -258,7 +256,7 @@ export function TemplateLibrary({
                     : []),
                 ]}
               />
-            </div>
+            </Card.Content></Card>
           ))}
           {!templates.length && (
             <p className="p-5 text-sm text-muted-foreground">
@@ -540,7 +538,7 @@ function TemplateDialog({
             </FormField>
           </>
         )}
-        {error != null && <ErrorNotice error={error} />}
+        {error != null && <ErrorNotice inline error={error} />}
         <DialogFooter>
           <DialogCancel disabled={busy} />
           <Button type="submit" loading={busy} loadingText="Saving…">

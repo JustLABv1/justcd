@@ -2,13 +2,15 @@
 
 import { PublishingProgress, usePublication } from "@/components/applications/publishing-progress"
 import { isPublishingInProgress } from "@/lib/publishing-status"
-import { Badge } from "@/components/reui/badge"
+import { Alert } from "@/components/panelui/alert"
+import { Badge } from "@/components/panelui/badge"
 import { AIAssistant } from "@/components/ai-assistant"
 import { DeploymentScheduleNotice } from "@/components/deployment-schedule-notice"
 import { DeploymentSchedulePanel, ScheduledOperationActions } from "@/components/deployment-schedule"
+import { SettingsSection } from "@/components/settings/settings-section"
 import { useParams, useRouter } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { Tabs, TabsBadge, TabsList, TabsTrigger, TabsContent } from "@/components/panelui/tabs"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { ArrowDataTransferHorizontalIcon, Edit02Icon, PauseIcon, RefreshIcon, TestTubeIcon, Upload01Icon, Wrench01Icon } from "@hugeicons/core-free-icons"
 import { ActionMenu } from "@/components/action-menu"
@@ -27,9 +29,9 @@ import { SettingsTab } from "@/components/application/settings-tab"
 import { ApplicationDetailSkeleton } from "@/components/application-detail-skeleton"
 import { BackgroundTaskStatus } from "@/components/background-task-status"
 import { useBackgroundTasks } from "@/hooks/background-tasks"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/panelui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/panelui/tooltip"
 import { ResourceMap } from "@/components/resource-map"
 import { PageHeading } from "@/components/ui-kit"
 import { ErrorDetailsButton } from "@/components/error-details"
@@ -57,7 +59,6 @@ export default function ApplicationDetailPage() {
   const [plans, setPlans] = useState<PlanRecord[]>([])
   const [activePlan, setActivePlan] = useState<PlanRecord | null>(null)
   const [resources, setResources] = useState<ManagedResource[]>([])
-  const [topologyView, setTopologyView] = useState<"map" | "list">("map")
   const [topology, setTopology] = useState<ResourceTopology | null>(null)
   const [topologyError, setTopologyError] = useState<unknown | null>(null)
   const [topologyRefreshing, setTopologyRefreshing] = useState(false)
@@ -127,8 +128,6 @@ export default function ApplicationDetailPage() {
   useEffect(() => {
     const readTab = () => {
       const value = new URLSearchParams(window.location.search).get("tab")
-      const viewParam = new URLSearchParams(window.location.search).get("view")
-      setTopologyView(value === "components" || viewParam === "list" ? "list" : "map")
       setActiveTab(value === "components" ? "topology" : ["overview", "topology", "changes", "activity", "pull-requests", "publishing", "settings"].includes(value ?? "") ? value! : "overview")
     }
     readTab()
@@ -755,16 +754,18 @@ export default function ApplicationDetailPage() {
   const appStatus = application ? deriveApplicationStatus(application, { plan: latestPlan ?? null, conflictCount: ownershipConflict ? ownershipConflicts.length : 0 }) : null
   const planBlockedByNamespace = Boolean(application && namespaceMismatch && !application.kustomizeNamespaceOverride)
 
+  const operationBar = (embedded: boolean) => visibleOperation && application ? <OperationBar embedded={embedded} aiAction={visibleOperation.status === "failed" ? <AIAssistant key={`ai-op-${visibleOperation.id}`} workspaceId={application.workspaceId} applicationId={application.id} features={["summary", "diagnose"]} operations={[visibleOperation]} initialOperationId={visibleOperation.id} autoRun="summary" buttonLabel="Explain failure" /> : undefined} onCreatePlan={() => void createPlan()} canCreatePlan={!createPlanDisabled} key={visibleOperation.id} operation={visibleOperation} plan={plans.find((plan) => plan.id === visibleOperation.planId)} checkpointId={visibleOperationCheckpoint} canRestore={canApprove} disabled={busy || hasPendingOperation} onRestore={(target) => void createRollbackPlan(target)} canCancel={canDeploy && !busy} scheduleActions={visibleOperation.status === "queued" ? <ScheduledOperationActions operation={visibleOperation} canOverride={canApprove} canCancel={canDeploy} onUpdated={loadData} /> : undefined} onUpdated={loadData} onReviewResource={(identity) => { const operationPlan = plans.find((plan) => plan.id === visibleOperation.planId); if (operationPlan) setActivePlan(operationPlan); setReviewResource(diffId(identity)); selectTab("changes") }} /> : null
+
   return <>
-    <PageHeading title={application?.name ?? "Application not found"} description={application ? <>Cluster <span className="text-foreground">{application.clusterName || application.clusterId}</span> · {application.namespaces.length === 1 ? "Namespace" : "Namespaces"} <span className="text-foreground">{application.namespaces.map((binding) => binding.namespace).join(", ") || "none"}</span></> : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><DeploymentScheduleNotice key={application.id} layout="chip" scope="applications" id={application.id} onViewSchedule={() => { selectTab("overview"); window.setTimeout(() => document.getElementById("deployment-schedule")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" }), 0) }} /></div>} metadata={application && <RuntimeHealthStrip application={application} status={appStatus!} healthHistory={healthHistory} reconnecting={Boolean(topologyError)} />} actions={application && <>
+    <PageHeading title={application?.name ?? "Application not found"} description={application ? <>Cluster <span className="text-foreground">{application.clusterName || application.clusterId}</span> · {application.namespaces.length === 1 ? "Namespace" : "Namespaces"} <span className="text-foreground">{application.namespaces.map((binding) => binding.namespace).join(", ") || "none"}</span></> : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><DeploymentScheduleNotice key={application.id} layout="chip" scope="applications" id={application.id} onViewSchedule={() => { selectTab("settings"); window.setTimeout(() => document.getElementById("deployment-schedule")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" }), 0) }} /></div>} metadata={application && <RuntimeHealthStrip application={application} status={appStatus!} healthHistory={healthHistory} reconnecting={Boolean(topologyError)} />} actions={application && <>
       {!aiInAttention && <AIAssistant key={`ai-${application.id}-${activeTab}-${activePlan?.id}-${activePlan?.plan.digest}`} workspaceId={application.workspaceId} applicationId={application.id} planId={activePlan?.id} features={activeTab === "changes" ? ["plan", "drift", "ask"] : activeTab === "activity" ? ["summary", "ask"] : ["diagnose", "ask"]} operations={activeTab === "activity" ? operations : undefined} />}
       {pendingData.workspace && <span role="status" className="text-sm text-muted-foreground">Loading permissions…</span>}
       {planBlockedByNamespace && !application.configurationMissing && !application.decommissioning && canDeploy
         ? <Tooltip>
-          <TooltipTrigger render={<span tabIndex={0} className="inline-flex" />}><Button loading={pendingAction === "create-plan"} loadingText="Calculating plan…" disabled><HugeiconsIcon icon={RefreshIcon} strokeWidth={1.8} aria-hidden="true" />Refresh plan</Button></TooltipTrigger>
+          <TooltipTrigger render={<span tabIndex={0} className="inline-flex" />}><Button variant={activeTab === "overview" || activeTab === "activity" ? "default" : "outline"} loading={pendingAction === "create-plan"} disabled><HugeiconsIcon icon={RefreshIcon} strokeWidth={1.8} aria-hidden="true" />Refresh plan</Button></TooltipTrigger>
           <TooltipContent>Choose a namespace override before refreshing the plan</TooltipContent>
         </Tooltip>
-        : <Button loading={pendingAction === "create-plan"} loadingText="Calculating plan…" onClick={() => void createPlan()} disabled={createPlanDisabled}><HugeiconsIcon icon={RefreshIcon} strokeWidth={1.8} aria-hidden="true" />Refresh plan</Button>}
+        : <Button variant={activeTab === "overview" || activeTab === "activity" ? "default" : "outline"} loading={pendingAction === "create-plan"} onClick={() => void createPlan()} disabled={createPlanDisabled}><HugeiconsIcon icon={RefreshIcon} strokeWidth={1.8} aria-hidden="true" />Refresh plan</Button>}
       {(canApprove || canUploadSource) && <ActionMenu label="More actions" items={[
         ...(canUploadSource ? [{ label: "Upload new version", icon: Upload01Icon, disabled: busy || application.decommissioning, onSelect: () => router.push(`/applications/${applicationID}/publish`) }] : []),
         ...(canApprove && manualPublication && !application.decommissioning ? [
@@ -778,14 +779,14 @@ export default function ApplicationDetailPage() {
     </>} />
     <BackgroundTaskStatus tasks={backgroundTasks.tasks} operations={operations} error={backgroundTasks.error} onRefresh={() => void backgroundTasks.refresh()} />
     {error != null && <ErrorNotice error={error} />}
-    {application && <AttentionBar application={application} latestOperation={latestOperation} canDeploy={canDeploy} onRetryReconciliation={() => void retryReconciliation()} onViewActivity={activeTab === "activity" ? undefined : () => selectTab("activity")} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} plansError={plansError} retryingPlans={retryingPlans} onRetryPlans={() => void retryPlans()}
+    {application && <AttentionBar operation={!loading && visibleOperation?.status === "failed" ? operationBar(true) : undefined} application={application} latestOperation={latestOperation} canDeploy={canDeploy} onRetryReconciliation={() => void retryReconciliation()} onViewActivity={activeTab === "activity" ? undefined : () => selectTab("activity")} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} plansError={plansError} retryingPlans={retryingPlans} onRetryPlans={() => void retryPlans()}
         conflictCount={ownershipConflict ? ownershipConflicts.length : 0} onReviewConflicts={() => setConflictOpen(true)}
         namespaceMismatch={namespaceMismatch} kustomizeNamespace={kustomization?.namespace} onReviewNamespaceSetting={() => selectTab("settings")}
         onCancelDecommission={() => void cancelDecommission()}
         aiAction={aiInAttention ? <AIAssistant key={`ai-${application.id}-${activeTab}-${activePlan?.id}-${activePlan?.plan.digest}`} workspaceId={application.workspaceId} applicationId={application.id} planId={activePlan?.id} features={activeTab === "changes" ? ["plan", "drift", "ask"] : activeTab === "activity" ? ["summary", "ask"] : ["diagnose", "ask"]} operations={activeTab === "activity" ? operations : undefined} /> : undefined} onConfigureExclusion={(issue) => configureIgnore({ mode: "kind", ...(issue.resource ? { version: issue.resource.apiVersion, kind: issue.resource.kind } : {}) })}
         resumeRevision={resumeRevision} onResumeRevisionChange={setResumeRevision} onKeepPin={() => void updateRollbackTracking("keep")} onResume={() => void updateRollbackTracking("resume")} />}
     {!loading && application && <>
-      {visibleOperation && <OperationBar aiAction={visibleOperation.status === "failed" ? <AIAssistant key={`ai-op-${visibleOperation.id}`} workspaceId={application.workspaceId} applicationId={application.id} features={["summary", "diagnose"]} operations={[visibleOperation]} initialOperationId={visibleOperation.id} autoRun="summary" buttonLabel="Explain failure" /> : undefined} onCreatePlan={() => void createPlan()} canCreatePlan={!createPlanDisabled} key={visibleOperation.id} operation={visibleOperation} plan={plans.find((plan) => plan.id === visibleOperation.planId)} checkpointId={visibleOperationCheckpoint} canRestore={canApprove} disabled={busy || hasPendingOperation} onRestore={(target) => void createRollbackPlan(target)} canCancel={canDeploy && !busy} scheduleActions={visibleOperation.status === "queued" ? <ScheduledOperationActions operation={visibleOperation} canOverride={canApprove} canCancel={canDeploy} onUpdated={loadData} /> : undefined} onUpdated={loadData} onReviewResource={(identity) => { const operationPlan = plans.find((plan) => plan.id === visibleOperation.planId); if (operationPlan) setActivePlan(operationPlan); setReviewResource(diffId(identity)); selectTab("changes") }} />}
+      {visibleOperation && visibleOperation.status !== "failed" && operationBar(false)}
 
     </>}
       <Tabs value={activeTab} onValueChange={(value) => selectTab(String(value))} className="min-w-0">
@@ -799,7 +800,7 @@ export default function ApplicationDetailPage() {
             { id: "pull-requests", label: "Pull requests" },
             { id: "settings", label: "Settings" },
           ].map((tab) => <TabsTrigger key={tab.id} value={tab.id} className={tab.id === "publishing" && publishingInProgress ? "text-primary" : undefined}>
-            {tab.label}{tab.id === "publishing" && publishingInProgress && <Badge variant="info-light" size="sm"><span aria-hidden="true" className="size-1.5 rounded-full bg-primary motion-safe:animate-pulse" />In progress</Badge>}{tab.count !== undefined && <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs tabular-nums text-muted-foreground">{tab.count}</span>}
+            {tab.label}{tab.id === "publishing" && publishingInProgress && <Badge variant="info" size="sm"><span aria-hidden="true" className="size-1.5 rounded-full bg-primary motion-safe:animate-pulse" />In progress</Badge>}{tab.count !== undefined && <TabsBadge>{tab.count}</TabsBadge>}
           </TabsTrigger>)}
         </TabsList>}
 
@@ -817,7 +818,6 @@ export default function ApplicationDetailPage() {
     {!loading && application && <>
         <TabsContent value="overview" className="outline-none">
           <OverviewTab canUpgradeProfile={canDeploy} status={appStatus!} application={application} latestPlan={latestPlan} plansError={plansError} retryingPlans={retryingPlans} topology={topology} topologyError={topologyError} pending={{ topology: pendingData.topology, plans: pendingData.plans, operations: pendingData.operations }} operations={operations} operationsError={operationsError} canRefreshPlan={!createPlanDisabled} creatingPlan={pendingAction === "create-plan"} onCreatePlan={() => void createPlan()} onRetryPlans={() => void retryPlans()} onSelectTab={selectTab} />
-          <div id="deployment-schedule" className="mt-5 scroll-mt-5"><DeploymentSchedulePanel key={application.id} scope="applications" id={application.id} canEdit={canApprove} /></div>
         </TabsContent>
 
         {application.labels?.["justcd.io/published"] === "true" && canDeploy && <TabsContent value="publishing" className="outline-none">
@@ -826,8 +826,8 @@ export default function ApplicationDetailPage() {
 
         <TabsContent value="topology" className="outline-none">
       {pendingData.topology || pendingData.resources || pendingData.plans || pendingData.operations ? <SectionLoading label="Loading the resource map" /> : <>
-      {topologyError && <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 p-3 text-sm"><span>Runtime updates interrupted. Retrying automatically; the map retains the last available observation.</span><ErrorDetailsButton error={topologyError} /></div>}
-      <ResourceMap stalePlan={plans[0] && plans[0].status !== "current" && plans[0].status !== "applied" ? plans[0] : null} conflicts={ownershipConflict ? ownershipConflicts.map((item) => item.identity) : []} onReviewConflicts={() => setConflictOpen(true)} view={topologyView} onViewChange={(view) => { setTopologyView(view); const url = new URL(window.location.href); url.searchParams.set("tab", "topology"); if (view !== "map") url.searchParams.set("view", view); else url.searchParams.delete("view"); window.history.pushState(null, "", url) }} canManageResources={canApprove} resourceActionsDisabled={busy || hasPendingOperation} onResourceActionComplete={async () => { setApplication(await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`)); await refreshSummary() }} application={application} plan={plans[0]?.status === "current" ? plans[0] : null} inventory={resources} operations={operations} topology={topology} refreshing={topologyRefreshing} onRefresh={() => {
+      {topologyError && <Alert tone="warning" className="mb-4"><Alert.Icon /><Alert.Title>Runtime updates interrupted. Retrying automatically; the map retains the last available observation.</Alert.Title><Alert.Actions><ErrorDetailsButton error={topologyError} /></Alert.Actions></Alert>}
+      <ResourceMap stalePlan={plans[0] && plans[0].status !== "current" && plans[0].status !== "applied" ? plans[0] : null} conflicts={ownershipConflict ? ownershipConflicts.map((item) => item.identity) : []} onReviewConflicts={() => setConflictOpen(true)} canManageResources={canApprove} resourceActionsDisabled={busy || hasPendingOperation} onResourceActionComplete={async () => { setApplication(await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`)); await refreshSummary() }} application={application} plan={plans[0]?.status === "current" ? plans[0] : null} inventory={resources} operations={operations} topology={topology} refreshing={topologyRefreshing} onRefresh={() => {
         setTopologyRefreshing(true)
         void api<ResourceTopology>(`/api/v1/applications/${encodeURIComponent(applicationID)}/topology?refresh=1`).then((result) => {
           setTopology(result); setTopologyError(null)
@@ -864,7 +864,7 @@ export default function ApplicationDetailPage() {
         </TabsContent>
 
         <TabsContent value="settings" keepMounted className="outline-none">
-          <SettingsTab application={application} kustomization={kustomization} kustomizationError={kustomizationError} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} rulesLoading={pendingData.rules || pendingData.selectors} ignoreRules={ignoreRules} ignoreSelectors={ignoreSelectors} managedResourceCount={resources.length} deletionApprovalCount={deletionApprovalCount} prefill={ignorePrefill} onSaveRenderSettings={saveRenderSettings} onAddIgnore={addIgnore} onRemoveRule={removeIgnoreRule} onRemoveSelector={removeIgnoreSelector} onDeleteApplication={deleteApplication} onCancelDecommission={() => void cancelDecommission()} />
+          <SettingsTab schedule={<div id="deployment-schedule" className="scroll-mt-5"><SettingsSection title="Deployment schedule" description="When deployments can start, and any freezes that take precedence."><DeploymentSchedulePanel key={application.id} scope="applications" id={application.id} canEdit={canApprove} layout="settings" /></SettingsSection></div>} application={application} kustomization={kustomization} kustomizationError={kustomizationError} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} rulesLoading={pendingData.rules || pendingData.selectors} ignoreRules={ignoreRules} ignoreSelectors={ignoreSelectors} managedResourceCount={resources.length} deletionApprovalCount={deletionApprovalCount} prefill={ignorePrefill} onSaveRenderSettings={saveRenderSettings} onAddIgnore={addIgnore} onRemoveRule={removeIgnoreRule} onRemoveSelector={removeIgnoreSelector} onDeleteApplication={deleteApplication} onCancelDecommission={() => void cancelDecommission()} />
         </TabsContent>
     </>}
       </Tabs>

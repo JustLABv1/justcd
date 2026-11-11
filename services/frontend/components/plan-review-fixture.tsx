@@ -6,7 +6,7 @@ import { diffId, sameIdentity } from "@/components/application/helpers"
 import { PlanReview } from "@/components/plan-review"
 import { ManifestDiff } from "@/components/manifest-diff"
 import { makeEntry, resourceKey } from "@/lib/plan-review"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/panelui/button"
 
 const iniBefore = [
   "[analytics]",

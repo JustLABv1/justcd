@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from "react"
 import { api, errorMessage } from "@/lib/api"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Switch } from "@/components/ui/switch"
-import { Checkbox } from "@/components/ui/checkbox"
-import { FormField } from "@/components/ui-kit"
+import { Button } from "@/components/panelui/button"
+import { Input } from "@/components/panelui/input"
+import { Switch } from "@/components/panelui/switch"
+import { Checkbox } from "@/components/panelui/checkbox"
+import { CheckboxField, FormField } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
 import { SectionSkeleton } from "./shared"
@@ -106,18 +106,8 @@ export function AIPanel() {
           void save()
         }}
       >
-        {error != null && <ErrorNotice error={error} />}
-        <div className="flex items-center justify-between gap-5">
-          <label htmlFor="ai-enabled" className="text-sm font-medium">
-            Enable AI features
-          </label>
-          <Switch
-            id="ai-enabled"
-            checked={settings.enabled}
-            onCheckedChange={(enabled) => update({ enabled })}
-            disabled={busy}
-          />
-        </div>
+        {error != null && <ErrorNotice inline error={error} />}
+        <CheckboxField id="ai-enabled" label="Enable AI features" checked={settings.enabled} onCheckedChange={(enabled) => update({ enabled })} disabled={busy} />
         <FormField
           label="API base URL"
           htmlFor="ai-url"
@@ -270,7 +260,7 @@ export function WorkspaceAIPolicy({ workspaceId }: { workspaceId: string }) {
       description="Choose whether workspace members can send deployment context to the instance AI connection."
     >
       <div className="space-y-4 p-5">
-        {error != null && <ErrorNotice error={error} />}
+        {error != null && <ErrorNotice inline error={error} />}
         {!policy && !error && (
           <SectionSkeleton label="Loading workspace AI policy" />
         )}

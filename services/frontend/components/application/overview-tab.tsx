@@ -3,10 +3,14 @@
 import Link from "next/link"
 import { ProfileVersionNotice } from "@/components/applications/profile-version-notice"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { ArrowRight01Icon } from "@hugeicons/core-free-icons"
+import { ArrowRight01Icon, Layers01Icon, RefreshIcon, Rocket01Icon } from "@hugeicons/core-free-icons"
+import type { ReactNode } from "react"
+import { Kpi } from "@/components/panelui/kpi"
 import { ErrorDetailsButton } from "@/components/error-details"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
+import { Alert } from "@/components/panelui/alert"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
+import { Card } from "@/components/panelui/card"
 import { Disclosure } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
 import { StatusBadge } from "@/components/ui-kit"
@@ -41,6 +45,14 @@ function SectionLoading({ label }: { label: string }) {
         <Skeleton className="h-4 w-full max-w-lg motion-reduce:animate-none" />
       </div>
     </div>
+  )
+}
+
+function OverviewKpi({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+  return (
+    <Kpi surface render={<Button type="button" variant="ghost" onClick={onClick} />} className="h-full w-full items-stretch text-left whitespace-normal hover:shadow-md">
+      {children}
+    </Kpi>
   )
 }
 
@@ -114,10 +126,10 @@ export function OverviewTab({
   return (
     <div className="space-y-5">
       {application.configurationMissing && (
-        <div
-          role="alert"
-          className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm"
-        >
+        <Alert tone="destructive" role="alert">
+          <Alert.Icon />
+          <Alert.Title>Removed from Git</Alert.Title>
+          <Alert.Description>
           {application.health === "decommissioned" ? (
             <>
               This application was removed from Git and its managed resources
@@ -132,25 +144,20 @@ export function OverviewTab({
               cancel deletion.
             </>
           )}
-        </div>
+          </Alert.Description>
+        </Alert>
       )}
-      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)]">
-        <div className="min-w-0 space-y-5">
-          <section
-            aria-label={planLabel}
-            className="min-w-0 rounded-xl border bg-card"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
-              <h2 className="text-sm font-semibold">{planLabel}</h2>
-            </div>
-            <div className="space-y-4 p-5">
+          <Card size="sm" aria-label={planLabel} className="min-w-0">
+            <Card.Content className="flex flex-wrap items-center justify-between gap-x-6 gap-y-4">
+
               {pending.plans ? (
-                <Skeleton className="h-16 w-full max-w-sm motion-reduce:animate-none" />
+                <Skeleton className="h-14 w-full max-w-sm motion-reduce:animate-none" />
               ) : (
                 <>
-                  <div>
+                  <div className="min-w-0 space-y-1">
+                    <h2 className="text-xs font-medium text-muted-foreground">{planLabel}</h2>
                     <p
-                      className={`text-2xl font-semibold tracking-tight${current && blocked ? "text-muted-foreground" : ""}`}
+                      className={`text-base font-semibold${current && blocked ? "text-muted-foreground" : ""}`}
                     >
                       {headline}
                     </p>
@@ -163,12 +170,12 @@ export function OverviewTab({
                         {(["create", "update", "delete"] as const)
                           .filter((kind) => counts?.[kind])
                           .map((kind) => (
-                            <Badge key={kind} variant="outline" radius="full">
+                            <Badge key={kind} variant="outline">
                               {counts?.[kind]} {kind}
                             </Badge>
                           ))}
                         {latestPlan.plan.requiresApproval && (
-                          <Badge variant="warning-light" radius="full">
+                          <Badge variant="warning">
                             Approval required
                           </Badge>
                         )}
@@ -224,8 +231,27 @@ export function OverviewTab({
                   </div>
                 </>
               )}
-            </div>
-          </section>
+            </Card.Content>
+          </Card>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <OverviewKpi onClick={() => onSelectTab("topology")}>
+          <Kpi.Header><Kpi.Icon tone={blocked ? "bad" : "neutral"}><HugeiconsIcon icon={Layers01Icon} strokeWidth={1.8} /></Kpi.Icon><Kpi.Title>Resources</Kpi.Title></Kpi.Header>
+          <Kpi.Content><Kpi.Value>{topologyError ? "–" : pending.topology || !topology ? "–" : blocked ? resources.length : observed}<span className="ml-1 text-base font-medium text-muted-foreground">{topologyError || pending.topology || !topology ? "" : blocked ? "declared" : `of ${resources.length} observed`}</span></Kpi.Value></Kpi.Content>
+          {!topologyError && !pending.topology && topology && !blocked && <Kpi.Progress value={observed} maxValue={Math.max(resources.length, 1)} color="success" aria-label={`${observed} of ${resources.length} resources observed`} />}
+        </OverviewKpi>
+        <OverviewKpi onClick={() => onSelectTab("activity")}>
+          <Kpi.Header><Kpi.Icon tone="neutral"><HugeiconsIcon icon={Rocket01Icon} strokeWidth={1.8} /></Kpi.Icon><Kpi.Title>Last sync</Kpi.Title></Kpi.Header>
+          <Kpi.Content><Kpi.Value>{lastSync?.finishedAt ? ago(lastSync.finishedAt) : application.lastSyncedRevision ? "Synced" : "Never"}</Kpi.Value></Kpi.Content>
+          <Kpi.Footer>{application.lastSyncedRevision ? <span className="font-mono" title={application.lastSyncedRevision}>{application.lastSyncedRevision.slice(0, 12)}</span> : "Not synced yet"}</Kpi.Footer>
+        </OverviewKpi>
+        <OverviewKpi onClick={() => onSelectTab("settings")}>
+          <Kpi.Header><Kpi.Icon tone={application.autoSyncPaused ? "bad" : "neutral"}><HugeiconsIcon icon={RefreshIcon} strokeWidth={1.8} /></Kpi.Icon><Kpi.Title>Sync policy</Kpi.Title></Kpi.Header>
+          <Kpi.Content><Kpi.Value className="text-2xl">{application.syncPolicy === "auto" ? "Auto" : application.syncPolicy === "auto-safe" ? "Auto-safe" : "Manual"}</Kpi.Value></Kpi.Content>
+          <Kpi.Footer>{application.autoSyncPaused ? "Auto-sync paused" : application.syncPolicy === "auto" ? "Approve deletions only" : application.syncPolicy === "auto-safe" ? "Safe changes apply automatically" : "Changes wait for you to sync"}</Kpi.Footer>
+        </OverviewKpi>
+      </div>
+      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)]">
+        <div className="min-w-0 space-y-5">
           <SyncHistoryChart
             applicationID={application.id}
             revision={operations
@@ -235,75 +261,29 @@ export function OverviewTab({
             onViewActivity={() => onSelectTab("activity")}
           />
         </div>
-        <section
-          aria-label="Source"
-          className="min-w-0 rounded-xl border bg-card"
-        >
-          <div className="flex items-center justify-between gap-3 border-b px-5 py-4">
-            <h2 className="text-sm font-semibold">Source</h2>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => onSelectTab("activity")}
-            >
-              Source details{trailingArrow}
-            </Button>
-          </div>
-          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-3 p-5 text-sm">
+        <div className="min-w-0 space-y-5">
+        <Card size="sm" aria-label="Source" className="min-w-0">
+          <Card.Header className="items-center">
+            <Card.Title as="h2">Source</Card.Title>
+            <Card.Action>
+              <Button size="sm" variant="outline" onClick={() => onSelectTab("settings")}>
+                Configure{trailingArrow}
+              </Button>
+            </Card.Action>
+          </Card.Header>
+          <Card.Content>
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-3 text-sm">
             <dt className="text-muted-foreground">Revision</dt>
             <dd className="font-medium break-all">{application.revision}</dd>
-            <dt className="text-muted-foreground">Source</dt>
-            <dd className="break-all">
-              {application.repositoryConfigurationId
-                ? `Git-managed${application.configurationCommit ? ` · ${application.configurationCommit.slice(0, 7)}` : ""}`
-                : application.renderer}
-            </dd>
-            <dt className="text-muted-foreground">Sync policy</dt>
-            <dd>
-              {application.syncPolicy === "auto"
-                ? "Auto · approve deletions only"
-                : application.syncPolicy === "auto-safe"
-                  ? "Auto-safe"
-                  : "Manual sync"}
-              {application.autoSyncPaused ? " · Auto-sync paused" : ""}
-            </dd>
-            <dt className="text-muted-foreground">Resources</dt>
-            <dd>
-              {topologyError ? (
-                "Unavailable"
-              ) : pending.topology || !topology ? (
-                "—"
-              ) : (
-                <button
-                  type="button"
-                  className="underline-offset-4 hover:underline"
-                  onClick={() => onSelectTab("topology")}
-                >
-                  {blocked
-                    ? `${resources.length} declared`
-                    : `${observed} of ${resources.length} observed`}
-                </button>
-              )}
-            </dd>
-            {application.lastSyncedRevision && (
-              <>
-                <dt className="text-muted-foreground">Last synced</dt>
-                <dd className="break-all">
-                  {lastSync?.finishedAt && (
-                    <span>{ago(lastSync.finishedAt)} · </span>
-                  )}
-                  <span
-                    className="font-mono text-xs"
-                    title={application.lastSyncedRevision}
-                  >
-                    {application.lastSyncedRevision.slice(0, 12)}
-                  </span>
-                </dd>
-              </>
-            )}
-          </dl>
+            <dt className="text-muted-foreground">Renderer</dt>
+            <dd className="break-all">{application.renderer === "yaml" ? "YAML" : application.renderer === "kustomize" ? "Kustomize" : application.renderer === "helm" ? "Helm" : application.renderer}</dd>
+            {application.repositoryConfigurationId && <>
+              <dt className="text-muted-foreground">Managed by</dt>
+              <dd className="break-all">Git{application.configurationCommit ? ` · ${application.configurationCommit.slice(0, 7)}` : ""}</dd>
+            </>}
+            </dl>
           {application.publishingProfile && (
-            <div className="border-t p-5">
+            <div className="pt-4">
               <ProfileVersionNotice
                 application={application}
                 canUpgrade={canUpgradeProfile}
@@ -321,69 +301,68 @@ export function OverviewTab({
             </>
           )}
           {application.repositoryConfigurationId && (
-            <div className="border-t px-5 py-3">
+            <div className="pt-4">
               <Disclosure summary="Application definition">
                 <p className="text-sm break-all text-muted-foreground">
                   {application.configurationPath}
                 </p>
-                <Link
-                  className="mt-2 inline-block text-sm text-primary underline underline-offset-4"
-                  href={`/workspaces/${application.workspaceId}/connections/git-sources`}
-                >
-                  Repository discovery settings
-                </Link>
+                <Button variant="outline" size="sm" className="mt-2" nativeButton={false} render={<Link href={`/workspaces/${application.workspaceId}/connections/git-sources`} />}>Repository discovery settings</Button>
               </Disclosure>
             </div>
           )}
-        </section>
-      </div>
+          </Card.Content>
+        </Card>
       {(pending.operations ||
         operationsError != null ||
         operations.length > 0) && (
-        <section
-          aria-label="Recent activity"
-          className="rounded-xl border bg-card"
-        >
-          <div className="flex items-center justify-between gap-3 px-5 py-4">
-            <h2 className="text-sm font-semibold">Recent activity</h2>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => onSelectTab("activity")}
-            >
-              View all{trailingArrow}
-            </Button>
-          </div>
+        <Card size="sm" aria-label="Recent activity">
+          <Card.Header>
+            <Card.Title as="h2">Recent activity</Card.Title>
+            <Card.Action>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => onSelectTab("activity")}
+              >
+                View all{trailingArrow}
+              </Button>
+            </Card.Action>
+          </Card.Header>
+          <Card.Content>
           {pending.operations ? (
             <SectionLoading label="Loading recent activity" />
           ) : operationsError != null ? (
-            <div className="flex flex-wrap items-center justify-between gap-3 px-5 pb-5 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
               <span>Recent activity could not be loaded.</span>
               <ErrorDetailsButton error={operationsError} />
             </div>
           ) : operations.length ? (
-            <ol className="divide-y border-t">
+            <ol className="divide-y">
               {operations.slice(0, 3).map((operation) => (
                 <li
                   key={operation.id}
-                  className="flex flex-wrap items-center gap-3 px-5 py-4 text-sm"
+                  className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-sm first:pt-0 last:pb-0"
                 >
                   <StatusBadge status={operation.status} />
                   <span className="min-w-0 flex-1 break-words">
                     {operation.message || `${operation.type} operation`}
                   </span>
                   <time
-                    className="text-sm text-muted-foreground"
+                    className="shrink-0 text-xs text-muted-foreground"
                     dateTime={operation.startedAt}
+                    title={new Date(operation.startedAt).toLocaleString()}
                   >
-                    {new Date(operation.startedAt).toLocaleString()}
+                    {ago(operation.startedAt)}
                   </time>
                 </li>
               ))}
             </ol>
           ) : null}
-        </section>
+          </Card.Content>
+        </Card>
       )}
+        </div>
+      </div>
     </div>
   )
 }

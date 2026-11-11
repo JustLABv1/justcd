@@ -3,12 +3,12 @@
 import { useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { PlusSignIcon, SecurityLockIcon } from "@hugeicons/core-free-icons"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
-import { FormSelect } from "@/components/ui/form-select"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
+import { FormSelect } from "@/components/form-select"
+import { Input } from "@/components/panelui/input"
+import { Textarea } from "@/components/panelui/textarea"
 import { RowActions } from "@/components/action-menu"
 import { ConnectionRow, FormField } from "@/components/ui-kit"
 import { WorkspaceIcon } from "@/components/workspace-ui"
@@ -74,10 +74,10 @@ export function CredentialPanel({
         count={credentials.length}
       >
         {credentials.length ? (
-          <div className="divide-y">
+          <div className="space-y-6">
             {groups.filter((group) => group.items.length > 0).map((group) => <section key={group.title} aria-label={group.title}>
-              <h3 className="bg-muted/30 px-5 py-3 text-sm font-medium">{group.title} <span className="ml-2 text-muted-foreground">{group.items.length}</span></h3>
-              <ul className="divide-y">
+              <h3 className="mb-3 text-sm font-medium">{group.title} <span className="ml-2 text-muted-foreground">{group.items.length}</span></h3>
+              <ul className="space-y-3">
             {group.items.map((credential) => {
               const expired = credential.expiresAt ? new Date(credential.expiresAt).getTime() < now : false
               return (
@@ -88,9 +88,9 @@ export function CredentialPanel({
                   subtitle={credentialKindLabels[credential.kind]}
                   badges={
                     <>
-                      <Badge variant="outline" radius="full">{credential.workspaceId ? "Private to this workspace" : "Instance-wide"}</Badge>
+                      <Badge variant="outline" >{credential.workspaceId ? "Private to this workspace" : "Instance-wide"}</Badge>
                       {credential.expiresAt && (
-                        <Badge variant={expired ? "destructive-light" : "outline"} radius="full">
+                        <Badge variant={expired ? "destructive" : "outline"} >
                           {expired ? "Expired" : "Expires"} {new Date(credential.expiresAt).toLocaleDateString()}
                         </Badge>
                       )}
@@ -145,7 +145,7 @@ export function CredentialPanel({
             </p>
             <p className="mt-1 text-sm text-muted-foreground">Workspace credentials stay private when a Git source or cluster is shared with another workspace.</p>
           </div>
-          <Badge variant="success-light" radius="full" size="lg">
+          <Badge variant="success"  size="lg">
             <HugeiconsIcon icon={SecurityLockIcon} strokeWidth={2} aria-hidden="true" />
             Encrypted
           </Badge>

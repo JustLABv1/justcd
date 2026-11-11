@@ -1,7 +1,7 @@
 "use client"
 import { useState } from "react"
 import Link from "next/link"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/panelui/button"
 import { Disclosure } from "@/components/ui/collapsible"
 import type { Identity, Plan } from "@/lib/types"
 
@@ -11,12 +11,14 @@ export function ApprovalEvidence({
   prefix,
   workspaceId,
   embedded = false,
+  inline = false,
 }: {
   plan: Plan
   onResource: (identity: Identity) => void
   workspaceId?: string
   prefix: string
   embedded?: boolean
+  inline?: boolean
 }) {
   if (!plan.requiresApproval) return null
   const reasons = plan.approvalReasons?.length
@@ -33,7 +35,7 @@ export function ApprovalEvidence({
   return (
     <section
       aria-label="Why approval is required"
-      className={embedded ? "" : "mb-4 rounded-lg border bg-muted/20 p-3"}
+      className={embedded || inline ? "" : "mb-4 rounded-2xl bg-muted/30 p-4"}
     >
       {!embedded && (
         <h4 className="text-sm font-semibold">Why approval is required</h4>
@@ -74,7 +76,7 @@ export function ApprovalEvidence({
           )}
           {workspaceId && reason.rule.startsWith("workspace.") && (
             <Button
-              variant="link"
+              variant="outline"
               render={
                 <Link href={`/workspaces/${encodeURIComponent(workspaceId)}`} />
               }
@@ -85,7 +87,7 @@ export function ApprovalEvidence({
           )}
           {reason.rule.startsWith("application.") && (
             <Button
-              variant="link"
+              variant="outline"
               render={
                 <Link
                   href={`/applications/${encodeURIComponent(plan.applicationId)}/edit`}
@@ -124,7 +126,7 @@ export function AffectedResources({
             {onResource ? (
               <Button
                 type="button"
-                variant="link"
+                variant="outline"
                 className="h-auto justify-start text-left whitespace-normal"
                 onClick={() => onResource(id)}
               >

@@ -4,7 +4,7 @@ import { useState } from "react"
 import { ArrowExpand01Icon, Delete02Icon, RefreshIcon } from "@hugeicons/core-free-icons"
 import { ActionMenu, type ActionItem } from "@/components/action-menu"
 import { FormField } from "@/components/ui-kit"
-import { Input } from "@/components/ui/input"
+import { Input } from "@/components/panelui/input"
 import { apiPost } from "@/lib/api"
 import { useToast } from "@/components/toast-provider"
 import type { ManagedResource } from "@/lib/types"
@@ -31,5 +31,5 @@ export function ResourceActions({ applicationID, resource, disabled, onComplete 
     ...(restartable ? [{ label: "Redeploy…", icon: RefreshIcon, disabled: disabled || busy, confirm: { title: `Redeploy ${identity.name}`, description: `This restarts the workload's pods using its current configuration. ${description}`, confirmLabel: "Pause auto-sync and redeploy", onConfirm: () => run("redeploy") } }] : []),
     { label: "Delete…", icon: Delete02Icon, destructive: true, disabled: disabled || busy, confirm: { title: `Delete ${identity.name}?`, description: `This deletes the live Kubernetes resource and may interrupt service or remove data. ${description}`, confirmLabel: `Delete ${identity.kind} ${identity.name}`, onConfirm: () => run("delete") } },
   ]
-  return <section aria-label="Resource actions" className="space-y-3 border-t pt-4"><h4 className="text-sm font-semibold">Resource actions</h4><p className="text-sm leading-5 text-muted-foreground">Actions pause auto-sync for this application until you resume it.</p><ActionMenu label="Actions" size="sm" items={items} /></section>
+  return <section aria-label="Resource actions" className="space-y-3 pt-1"><h4 className="text-sm font-semibold">Resource actions</h4><p className="text-sm leading-5 text-muted-foreground">Actions pause auto-sync for this application until you resume it.</p><ActionMenu label="Actions" size="sm" items={items} /></section>
 }

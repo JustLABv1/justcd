@@ -1,17 +1,9 @@
 "use client"
 
-import { useMemo } from "react"
-import {
-  createColumnHelper,
-  useTable,
-} from "@tanstack/react-table"
-import {
-  DataGrid,
-  DataGridContainer,
-  dataGridFeatures,
-} from "@/components/reui/data-grid/data-grid"
-import { DataGridTable } from "@/components/reui/data-grid/data-grid-table"
-import { DataGridPagination } from "@/components/reui/data-grid/data-grid-pagination"
+import { useState } from "react"
+import { Button } from "@/components/panelui/button"
+import { Card } from "@/components/panelui/card"
+import { Table } from "@/components/panelui/table"
 import { EmptyState } from "@/components/ui-kit"
 
 export type GridColumn<T extends object> = {
@@ -20,6 +12,8 @@ export type GridColumn<T extends object> = {
   cell: (row: T) => React.ReactNode
   size?: number
 }
+
+const PAGE = 25
 
 export function DataGridList<T extends object>({
   rows,
@@ -35,47 +29,33 @@ export function DataGridList<T extends object>({
   emptyTitle?: string
   emptyDescription?: string
 }) {
-  const definitions = useMemo(
-    () => {
-      const helper = createColumnHelper<typeof dataGridFeatures, T>()
-      return helper.columns(
-        columns.map((column) =>
-          helper.display({
-            id: column.id,
-            header: column.title,
-            cell: ({ row }) => column.cell(row.original),
-            size: column.size,
-            meta: { headerTitle: column.title },
-          }),
-        ),
-      )
-    },
-    [columns],
-  )
-  const table = useTable({
-    features: dataGridFeatures,
-    data: rows,
-    columns: definitions,
-  })
-
+  const [shown, setShown] = useState(PAGE)
+  if (rows.length === 0) {
+    return <EmptyState title={emptyTitle} description={emptyDescription ?? empty} />
+  }
+  const visible = rows.slice(0, shown)
   return (
-    <div className="min-w-0 overflow-hidden rounded-xl border bg-card">
-      {rows.length === 0 ? (
-        <EmptyState title={emptyTitle} description={emptyDescription ?? empty} />
-      ) : (
-        <DataGrid
-          table={table}
-          recordCount={rows.length}
-          tableLayout={{ dense: true, rowBorder: true, width: "fixed", headerSticky: true }}
-        >
-          <DataGridContainer className="max-h-[460px] overflow-auto">
-            <DataGridTable />
-          </DataGridContainer>
-          <div className="border-t px-4 py-1">
-            <DataGridPagination sizes={[10, 25, 50]} />
-          </div>
-        </DataGrid>
+    <Card className="min-w-0 overflow-hidden">
+      <Table density="compact" maxHeight={520} framed>
+        <Table.Header>
+          <Table.Row>
+            {columns.map((column) => <Table.Head key={column.id} style={column.size ? { minWidth: column.size } : undefined}>{column.title}</Table.Head>)}
+          </Table.Row>
+        </Table.Header>
+        <Table.Body>
+          {visible.map((row, index) => (
+            <Table.Row key={index}>
+              {columns.map((column) => <Table.Cell key={column.id}>{column.cell(row)}</Table.Cell>)}
+            </Table.Row>
+          ))}
+        </Table.Body>
+      </Table>
+      {rows.length > shown && (
+        <div className="flex items-center justify-between gap-3 border-t px-4 py-2 text-sm text-muted-foreground">
+          <span>Showing {shown} of {rows.length}</span>
+          <Button type="button" size="sm" variant="outline" onClick={() => setShown((current) => current + PAGE)}>Show more</Button>
+        </div>
       )}
-    </div>
+    </Card>
   )
 }

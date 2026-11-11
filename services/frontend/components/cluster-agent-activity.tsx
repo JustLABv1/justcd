@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { AppDialog } from "@/components/ui/dialog"
+import { Card } from "@/components/panelui/card"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
+import { AppDialog } from "@/components/app-dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import { DataGridList, type GridColumn } from "@/components/data-grid-table"
 import { LoadErrorNotice } from "@/components/settings/shared"
@@ -138,10 +139,10 @@ export function ClusterAgentActivity({
           <Badge
             variant={
               task.state === "succeeded"
-                ? "success-light"
+                ? "success"
                 : ["failed", "unknown"].includes(task.state)
-                  ? "destructive-light"
-                  : "warning-light"
+                  ? "destructive"
+                  : "warning"
             }
           >
             {stateLabel(task.state)}
@@ -189,13 +190,13 @@ export function ClusterAgentActivity({
           ) : (
             <div className="flex flex-wrap items-center gap-2">
               <Badge
-                radius="full"
+
                 variant={
                   error || status?.agent?.revoked
-                    ? "destructive-light"
+                    ? "destructive"
                     : status?.online
-                      ? "success-light"
-                      : "warning-light"
+                      ? "success"
+                      : "warning"
                 }
               >
                 {error
@@ -243,7 +244,7 @@ export function ClusterAgentActivity({
         description="Latest 100 tasks from the last seven days, scoped to this workspace. Unknown outcomes require checking live state before retrying."
       >
         {error ? (
-          <LoadErrorNotice
+          <LoadErrorNotice inline
             error={error}
             title="Could not load agent activity"
             onRetry={() => setRefreshKey((key) => key + 1)}
@@ -270,7 +271,7 @@ export function ClusterAgentActivity({
                 emptyDescription="Tasks appear here when JustCD requests Kubernetes discovery, tests, or deployment work."
               />
             </div>
-            <ul className="divide-y rounded-xl border sm:hidden">
+            <Card size="sm" className="sm:hidden"><ul className="divide-y">
               {(status?.activity ?? []).map((task) => (
                 <li key={task.id} className="space-y-3 p-3 text-sm">
                   <div className="space-y-1">
@@ -296,7 +297,7 @@ export function ClusterAgentActivity({
                   Kubernetes discovery, tests, or deployment work.
                 </li>
               )}
-            </ul>
+            </ul></Card>
           </div>
         )}
       </AppDialog>

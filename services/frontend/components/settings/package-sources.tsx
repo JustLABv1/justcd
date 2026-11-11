@@ -1,10 +1,10 @@
 "use client"
 
 import { FeatureCard } from "@/components/feature-card"
-import { Button } from "@/components/ui/button"
-import { FormSelect } from "@/components/ui/form-select"
-import { Input } from "@/components/ui/input"
-import { FormField, SwitchField } from "@/components/ui-kit"
+import { Button } from "@/components/panelui/button"
+import { FormSelect } from "@/components/form-select"
+import { Input } from "@/components/panelui/input"
+import { FormField, CheckboxField } from "@/components/ui-kit"
 import { packageEcosystems, type PackageSource } from "@/lib/publishing"
 
 function parse(value: string): PackageSource[] {
@@ -89,7 +89,7 @@ export function PackageSourcesCard({
           (e) => e.value === source.ecosystem
         )
         return (
-          <div key={index} className="space-y-3 rounded-xl border p-4">
+          <div key={index} className="space-y-3 py-3">
             <div className="grid gap-3 sm:grid-cols-[14rem_1fr]">
               <FormField
                 label="Package manager"
@@ -127,7 +127,7 @@ export function PackageSourcesCard({
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0 flex-1">
-                <SwitchField
+                <CheckboxField
                   id={`package-auth-${index}`}
                   label="Requires sign-in"
                   checked={!!source.authenticated}
@@ -169,7 +169,7 @@ export function PackageSourcesCard({
       </Button>
       {authenticated &&
         (secretMode === "vault" ? (
-          <p className="rounded-xl border p-4 text-sm leading-6 text-muted-foreground">
+          <p className="text-sm leading-6 text-muted-foreground">
             Package credentials come from the profile&apos;s Vault secret. Add
             the fields{" "}
             <code className="font-mono text-xs">package_username</code> and{" "}
@@ -177,7 +177,7 @@ export function PackageSourcesCard({
             registry fields.
           </p>
         ) : (
-          <div className="space-y-3 rounded-xl border p-4">
+          <div className="space-y-3 py-3">
             <p className="text-sm font-medium">Package credentials</p>
             <p className="text-xs leading-5 text-muted-foreground">
               Use a read-only account. Installing packages runs project code, so

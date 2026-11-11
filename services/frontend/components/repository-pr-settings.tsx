@@ -3,15 +3,15 @@
 import Link from "next/link"
 import { PRCommentSettings } from "@/components/pr-comment-settings"
 import { useEffect, useState } from "react"
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/panelui/tabs"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Add01Icon, Delete02Icon } from "@hugeicons/core-free-icons"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/ui/dialog"
-import { FormSelect } from "@/components/ui/form-select"
-import { Input } from "@/components/ui/input"
-import { CheckboxCard, FormField, SwitchField } from "@/components/ui-kit"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
+import { FormSelect } from "@/components/form-select"
+import { Input } from "@/components/panelui/input"
+import { CheckboxCard, FormField, CheckboxField } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
 import { api, errorMessage } from "@/lib/api"
 import type {
@@ -394,7 +394,7 @@ function SettingsDialogContent({
               <TabsTrigger value="policy">Policy</TabsTrigger>
               <TabsTrigger value="destinations">
                 Destinations
-                <Badge size="xs" variant="secondary">
+                <Badge size="sm" variant="secondary">
                   {settings.destinations.length}
                 </Badge>
               </TabsTrigger>
@@ -402,14 +402,14 @@ function SettingsDialogContent({
               <TabsTrigger value="approvals">Approvals</TabsTrigger>
               <TabsTrigger value="discovered">
                 Discovered PRs
-                <Badge size="xs" variant="secondary">
+                <Badge size="sm" variant="secondary">
                   {entries.length}
                 </Badge>
               </TabsTrigger>
             </TabsList>
 
             <TabsContent value="policy" className="space-y-4 outline-none">
-              <SwitchField
+              <CheckboxField
                 id="repo-pr-enabled"
                 label="Discover new applications in pull requests"
                 description="Find justcd.yaml definitions added in open pull requests, including drafts."
@@ -445,7 +445,7 @@ function SettingsDialogContent({
                     commentOnDrafts={settings.commentOnDrafts ?? false}
                     onDraftsChange={(commentOnDrafts) => setSettings((s) => ({ ...s, commentOnDrafts }))}
                   />
-                  <SwitchField
+                  <CheckboxField
                     id="repo-pr-pipeline-status-reporting"
                     label="Report commit statuses"
                     description="Off by default; independent of PR comments. Enabling this can block merges. GitLab adds an external job to a pipeline for the commit, and JustCD failures can fail that pipeline."
@@ -490,7 +490,7 @@ function SettingsDialogContent({
                         title="Authorize changes to approved dev environments and their data"
                         description="On merge, the app keeps its ID and resource ownership. Unmerged pull requests require reviewed cleanup."
                       />
-                      <SwitchField
+                      <CheckboxField
                         id="repo-pr-namespace-creation"
                         label="Allow creation of matching dev namespaces"
                         description="Applications with createNamespaces: true set up matching namespaces during discovery, before planning. OpenShift project requests grant the requesting account access. Workload deployment still uses normal approvals."
@@ -526,7 +526,7 @@ function SettingsDialogContent({
                     </p>
                   </div>
                   {settings.destinations.length === 0 && (
-                    <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+                    <p className="py-3 text-sm text-muted-foreground">
                       No destinations yet.
                       {loaded &&
                       !destinations.length &&
@@ -538,7 +538,7 @@ function SettingsDialogContent({
                   {settings.destinations.map((d, index) => (
                     <div
                       key={index}
-                      className="flex items-start gap-2 rounded-lg border p-3"
+                      className="flex items-start gap-3 py-3"
                     >
                       <div className="min-w-0 flex-1 space-y-3">
                         <FormField
@@ -913,11 +913,11 @@ function SettingsDialogContent({
                   Loading…
                 </p>
               ) : entries.length === 0 ? (
-                <p className="mt-3 rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+                <p className="mt-3 py-3 text-sm text-muted-foreground">
                   No pull request applications discovered yet.
                 </p>
               ) : (
-                <ul className="mt-3 divide-y rounded-lg border">
+                <ul className="mt-3 divide-y">
                   {entries.map((entry) => (
                     <li key={entry.id} className="px-4 py-3 text-sm">
                       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -935,9 +935,9 @@ function SettingsDialogContent({
                         )}
                         <Badge
                           size="sm"
-                          radius="full"
+
                           variant={
-                            entry.error ? "destructive-light" : "outline"
+                            entry.error ? "destructive" : "outline"
                           }
                           className="capitalize"
                         >

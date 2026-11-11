@@ -1,13 +1,17 @@
 "use client"
 
+import { Section } from "@/components/section"
+
 import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { Card } from "@/components/panelui/card"
+import { Alert } from "@/components/panelui/alert"
+import { Button } from "@/components/panelui/button"
+import { Input } from "@/components/panelui/input"
 import { PublishingServicesEditor } from "@/components/settings/publishing-services"
 import { ArchiveUpload } from "@/components/applications/archive-upload"
-import { FormSelect } from "@/components/ui/form-select"
-import { Textarea } from "@/components/ui/textarea"
+import { FormSelect } from "@/components/form-select"
+import { Textarea } from "@/components/panelui/textarea"
 import { PageHeading } from "@/components/ui-kit"
 import {
   SummaryList,
@@ -17,7 +21,7 @@ import {
 } from "@/components/applications/wizard"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { ArrowLeft01Icon } from "@hugeicons/core-free-icons"
+import { ArrowLeft01Icon, ArrowUpRight01Icon } from "@hugeicons/core-free-icons"
 import {
   TemplateCatalog,
   TemplateGlyph,
@@ -27,7 +31,6 @@ import {
 import {
   PublishingCheckbox,
   PublishingField as FormField,
-  PublishingSection as Panel,
 } from "@/components/applications/publishing-fields"
 import { api } from "@/lib/api"
 import { publishProject, publishingSize, selectedWorkspaceId, templatesUrl } from "@/lib/publishing"
@@ -361,37 +364,23 @@ export default function PublishApplicationPage() {
           title="Your application is being built"
           description="The private repository and JustCD application are ready. GitLab is building and publishing the first image."
         />
-        <Panel
+        <Section
           title={config.name}
           description="Follow the build, then review the deployment in JustCD."
         >
-          <div className="space-y-5 rounded-2xl border border-border bg-card p-5 dark:border-transparent dark:bg-muted/45">
+          <Card size="sm"><Card.Content className="space-y-5">
             <SummaryList
               items={[
                 {
                   label: "Repository",
                   value: (
-                    <a
-                      href={result.projectUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-primary hover:underline"
-                    >
-                      Open GitLab project
-                    </a>
+                    <Button variant="outline" size="sm" nativeButton={false} render={<a href={result.projectUrl} target="_blank" rel="noreferrer" />}>Open GitLab project<HugeiconsIcon icon={ArrowUpRight01Icon} className="size-4" aria-hidden="true" /></Button>
                   ),
                 },
                 {
                   label: "Build",
                   value: (
-                    <a
-                      href={result.pipelineUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-primary hover:underline"
-                    >
-                      Follow pipeline progress
-                    </a>
+                    <Button variant="outline" size="sm" nativeButton={false} render={<a href={result.pipelineUrl} target="_blank" rel="noreferrer" />}>Follow pipeline progress<HugeiconsIcon icon={ArrowUpRight01Icon} className="size-4" aria-hidden="true" /></Button>
                   ),
                 },
                 {
@@ -400,20 +389,17 @@ export default function PublishApplicationPage() {
                 },
               ]}
             />
-            <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
+            <p className="self-start text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
               The build commits the immutable image digest into
               deploy/application.yaml. JustCD will discover that revision.
               Review and apply the plan to make the app available. Before the
               first successful build, no deployment manifest exists.
             </p>
-            <Link
-              href={`/applications/${result.applicationId}`}
-              className="font-medium text-primary hover:underline"
-            >
-              Open application →
-            </Link>
-          </div>
-        </Panel>
+            <Button className="self-start" nativeButton={false} render={<Link href={`/applications/${result.applicationId}`} />}>
+              Open application
+            </Button>
+          </Card.Content></Card>
+        </Section>
       </>
     )
 
@@ -454,7 +440,7 @@ export default function PublishApplicationPage() {
         <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={1.8} />
         All templates
       </Button>
-      <header className="flex items-start gap-4">
+      <header className="flex flex-wrap items-start gap-x-4 gap-y-3">
         <TemplateGlyph
           template={selectedTemplate}
           className="size-11 bg-muted/50"
@@ -467,10 +453,10 @@ export default function PublishApplicationPage() {
             {selectedTemplate.description}
           </p>
         </div>
+        <div className="ml-auto">
+          <WorkspaceNote name={workspaces.find((item) => item.id === workspaceId)?.name} />
+        </div>
       </header>
-      <WorkspaceNote
-        name={workspaces.find((item) => item.id === workspaceId)?.name}
-      />
       <div ref={errorRef} tabIndex={-1}>
         {(error ?? limitsError) != null && (
           <ErrorNotice error={error ?? limitsError} />
@@ -499,11 +485,12 @@ export default function PublishApplicationPage() {
               {
                 title: "Application",
                 content: (
-                  <Panel
+                  <Section
+                    surface
                     title="Bring your application"
                     description="Upload the contents of your project directory, with dependency files at the archive root."
                   >
-                    <div className="grid gap-4 md:grid-cols-2">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                       {textField(
                         "name",
                         "Application name",
@@ -571,17 +558,18 @@ export default function PublishApplicationPage() {
                         />
                       </FormField>
                     </div>
-                  </Panel>
+                  </Section>
                 ),
               },
               {
                 title: "Repository",
                 content: (
-                  <Panel
+                  <Section
+                    surface
                     title="Where should the Git repository live?"
                     description="JustCD creates a private project in your GitLab group. Existing unrelated repositories are never overwritten."
                   >
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                       <FormField label="GitLab URL" htmlFor="publish-gitlab">
                         <Input
                           id="publish-gitlab"
@@ -638,25 +626,26 @@ export default function PublishApplicationPage() {
                           }
                         />
                       </FormField>
-                      <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
+                      <Alert tone="info" variant="plain" className="md:col-span-2 lg:col-span-3"><Alert.Icon /><Alert.Description>
                         JustCD retains the API token encrypted to update
                         deployment manifests after builds. It must permit Git
                         repository writes to the protected main branch. GitLab
                         18.4 or newer is recommended. The protected main branch
                         is the publishing branch.
-                      </p>
+                      </Alert.Description></Alert>
                     </div>
-                  </Panel>
+                  </Section>
                 ),
               },
               {
                 title: "Build",
                 content: (
-                  <Panel
+                  <Section
+                    surface
                     title="How should the app be built?"
                     description="Your platform team supplies approved image references. JustCD generates the Dockerfile and GitLab pipeline."
                   >
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                       {config.runtime !== "static" &&
                         textField(
                           "baseImage",
@@ -773,7 +762,7 @@ export default function PublishApplicationPage() {
                           credentialsNote="Builds use these mirrors. The token is stored as a masked, protected CI variable in the new GitLab project; JustCD does not keep it."
                         />
                       </div>
-                      <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
+                      <p className="self-start text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
                         {config.runtime === "static" ? (
                           "Your website files are copied directly into the approved webserver image. No dependencies are installed and no build command is run."
                         ) : (
@@ -787,18 +776,19 @@ export default function PublishApplicationPage() {
                         )}
                       </p>
                     </div>
-                  </Panel>
+                  </Section>
                 ),
               },
               {
                 title: "Secrets",
                 content: (
                   <>
-                  <Panel
+                  <Section
+                    surface
                     title="Where should build secrets come from?"
                     description="Registry credentials are used by CI to push images. They are never committed to Git or included in the application image."
                   >
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                       <FormField
                         label="Secret storage"
                         htmlFor="publish-secret-mode"
@@ -858,11 +848,11 @@ export default function PublishApplicationPage() {
                               }
                             />
                           </FormField>
-                          <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
+                          <Alert tone="info" variant="plain" className="md:col-span-2 lg:col-span-3"><Alert.Icon /><Alert.Description>
                             JustCD sends REGISTRY_USER and REGISTRY_PASSWORD
                             through the GitLab API. GitLab stores the values;
                             JustCD does not retain them.
-                          </p>
+                          </Alert.Description></Alert>
                         </>
                       ) : (
                         <>
@@ -885,7 +875,7 @@ export default function PublishApplicationPage() {
                             true,
                             "secret/data/analytics/registry"
                           )}
-                          <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
+                          <p className="self-start text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
                             This workflow references an existing Vault secret.
                             It does not create Vault policies or upload secret
                             values into Vault.
@@ -893,7 +883,7 @@ export default function PublishApplicationPage() {
                         </>
                       )}
                     </div>
-                  </Panel>
+                  </Section>
                   <PublishingServicesEditor value={config.services ?? ""} onChange={services => patch({ services })} />
                   <p className="text-xs text-muted-foreground">Every service configured here is included for this application. Use approved publishing profiles to offer end users optional services.</p>
                   </>
@@ -902,11 +892,12 @@ export default function PublishApplicationPage() {
               {
                 title: "Deployment",
                 content: (
-                  <Panel
+                  <Section
+                    surface
                     title="Where should the app run?"
                     description="Choose an existing workspace namespace or create one through the deployment flow. Cluster credentials remain managed by JustCD."
                   >
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                       <div className="md:col-span-2 lg:col-span-3">
                         <PublishingCheckbox
                           id="publish-create-namespace"
@@ -966,7 +957,7 @@ export default function PublishApplicationPage() {
                         )}
                       </FormField>
                       {!bindings.length && !config.createNamespace && (
-                        <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
+                        <p className="self-start text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
                           Configure namespace access in workspace Connections
                           before publishing.
                         </p>
@@ -1059,28 +1050,29 @@ export default function PublishApplicationPage() {
                         />
                       </FormField>
                       {!config.host && (
-                        <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
+                        <p className="self-start text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
                           Route or Ingress settings apply once an application
                           hostname is set.
                         </p>
                       )}
-                      <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
+                      <p className="self-start text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
                         Deployment starts in manual mode. After the build
                         succeeds, review and apply the plan under your workspace
                         approval policy.
                       </p>
                     </div>
-                  </Panel>
+                  </Section>
                 ),
               },
               {
                 title: "Review",
                 content: (
-                  <Panel
+                  <Section
+                    surface
                     title="Ready to create your application?"
                     description="Review the destinations and actions before JustCD writes to GitLab."
                   >
-                    <div className="space-y-5 rounded-2xl border border-border bg-card p-5 dark:border-transparent dark:bg-muted/45">
+                    <div className="space-y-5">
                       <SummaryList
                         items={[
                           {
@@ -1129,21 +1121,21 @@ export default function PublishApplicationPage() {
                         title="Create the repository and start the build"
                         description="JustCD will upload this source to a private GitLab project, configure CI, register the application, and start its pipeline. I have removed credentials from the source and reviewed the access settings."
                       />
-                      <p className="self-start px-1 text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
+                      <p className="self-start text-sm leading-6 text-muted-foreground md:col-span-2 lg:col-span-3">
                         If setup fails, the private repository is retained.
                         Retry the same archive and settings to resume. For
                         updates, choose Upload new version on the application
                         page. Each upload replaces the complete source snapshot.
                       </p>
                     </div>
-                  </Panel>
+                  </Section>
                 ),
               },
             ]}
           />
-          <div className="space-y-3 rounded-2xl border border-border bg-card p-3 dark:border-transparent dark:bg-muted/30 [&_button]:h-10 [&_button]:rounded-lg [&_button]:px-4">
-            <PublishingDraftNotice draft={draft} inline />
-            <div className="border-t pt-3">
+          <div className="space-y-5">
+            <PublishingDraftNotice draft={draft} />
+            <div>
             <WizardFooter
               step={wizard.step}
               isLast={wizard.isLast}
@@ -1156,10 +1148,9 @@ export default function PublishApplicationPage() {
                 <Button
                   type="submit"
                   loading={busy}
-                  loadingText="Creating repository and pipeline…"
                   disabled={!acknowledged}
                 >
-                  Create and build app
+                  {busy ? "Creating repository and pipeline…" : "Create and build app"}
                 </Button>
               }
             />

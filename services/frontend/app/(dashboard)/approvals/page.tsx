@@ -4,19 +4,22 @@ import Link from "next/link"
 import { formatDistanceToNow } from "date-fns"
 import { ago } from "@/lib/relative-time"
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Spinner } from "@/components/ui/spinner"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Button } from "@/components/panelui/button"
+import { Checkbox } from "@/components/panelui/checkbox"
+import { Spinner } from "@/components/panelui/spinner"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/panelui/tooltip"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { ArrowRight01Icon, Refresh01Icon } from "@hugeicons/core-free-icons"
 import { ConfirmDisclosure } from "@/components/confirm-disclosure"
-import { Input } from "@/components/ui/input"
+import { Input } from "@/components/panelui/input"
 import { Filters } from "@/components/reui/filters/filters"
 import { createFilterQuery, flattenFilterConditions, flattenFilterRules } from "@/components/reui/filters/filters-query"
 import type { FilterField, FilterQuery } from "@/components/reui/filters/filters-types"
 import { EmptyState, PageHeading } from "@/components/ui-kit"
-import { Badge } from "@/components/reui/badge"
+import { Alert } from "@/components/panelui/alert"
+import { Pagination } from "@/components/panelui/pagination"
+import { Card } from "@/components/panelui/card"
+import { Badge } from "@/components/panelui/badge"
 import { ErrorDetailsButton } from "@/components/error-details"
 import { ApprovalRequestPeople } from "@/components/approval-request-people"
 import { BackgroundTaskStatus } from "@/components/background-task-status"
@@ -41,7 +44,7 @@ const maxSelection = 20
 
 export default function ApprovalInboxPage() {
   const { workspace, workspaceId } = useWorkspaceSelection()
-  if (!workspaceId || !workspace) return <><PageHeading title="Approvals" description="Select a workspace to review its plans." /><div className="rounded-xl border bg-card"><EmptyState title="No workspace selected" description="Choose a workspace from the sidebar to see its pending plans." /></div></>
+  if (!workspaceId || !workspace) return <><PageHeading title="Approvals" description="Select a workspace to review its plans." /><EmptyState title="No workspace selected" description="Choose a workspace from the sidebar to see its pending plans." /></>
   return <WorkspaceApprovalInbox key={workspaceId} workspace={workspace} workspaceId={workspaceId} />
 }
 
@@ -166,19 +169,19 @@ function WorkspaceApprovalInbox({ workspace, workspaceId }: { workspace: Workspa
   return <>
     <PageHeading title="Approvals" description={workspace ? `Plans waiting for review in ${workspace.name}.` : "Select a workspace to review its plans."} actions={<Button variant="outline" onClick={refresh} disabled={loading || busy}><HugeiconsIcon icon={Refresh01Icon} strokeWidth={1.8} aria-hidden="true" />Refresh</Button>} />
     <BackgroundTaskStatus tasks={backgroundTasks.tasks.filter(task => task.kind === "approval")} error={backgroundTasks.error} onRefresh={() => void backgroundTasks.refresh()} showApplication />
-    {error != null && <div role="alert" className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm"><span>{errorMessage(error)}</span><ErrorDetailsButton error={error} /><Button variant="outline" size="sm" onClick={refresh}>Try again</Button></div>}
+    {error != null && <Alert tone="destructive" role="alert" className="mb-5"><Alert.Icon /><Alert.Title>{errorMessage(error)}</Alert.Title><Alert.Actions><ErrorDetailsButton error={error} /><Button variant="outline" size="sm" onClick={refresh}>Try again</Button></Alert.Actions></Alert>}
     <section aria-label="Approval request toolbar" className="mb-3 flex flex-wrap items-center justify-between gap-3">
       <p className="text-sm text-muted-foreground">{loading ? "Loading requests…" : `${pendingTotal} request${pendingTotal === 1 ? "" : "s"} · page ${page}`}</p>
       <div className="min-w-0 max-w-full"><Filters fields={fields} query={filterQuery} onQueryChange={changeFilters} onBeforeQueryChange={(next) => { const paths = flattenFilterRules(next).map((rule) => rule.path.join(".")); return new Set(paths).size === paths.length }} size="sm" /></div>
     </section>
-    {loading ? <div role="status" aria-label="Loading approval requests" className="space-y-3">{[0, 1, 2].map(value => <div key={value} className="h-32 animate-pulse rounded-xl border bg-card motion-reduce:animate-none" />)}</div> : error && !inbox ? null : pendingItems.length === 0 ? <div className="rounded-xl border bg-card"><EmptyState title="No requests to review" description="Try a different filter or check back when a new plan needs your approval." /></div> : <div className="space-y-3">{pendingItems.map(item => <article key={item.planId} aria-label={`Approval request for ${item.applicationName}`} className="rounded-xl border bg-card p-4">
+    {loading ? <div role="status" aria-label="Loading approval requests" className="space-y-3">{[0, 1, 2].map(value => <div key={value} className="h-32 animate-pulse rounded-xl border bg-card motion-reduce:animate-none" />)}</div> : error && !inbox ? null : pendingItems.length === 0 ? <EmptyState title="No requests to review" description="Try a different filter or check back when a new plan needs your approval." /> : <div className="space-y-3">{pendingItems.map(item => <Card key={item.planId} aria-label={`Approval request for ${item.applicationName}`} className="min-w-0"><Card.Content className="p-4">
       <div className="flex flex-wrap items-start gap-3">{(() => {
         const mixedRisk = !!selectedRisk && selectedRisk !== riskKey(item)
         const limitReached = selected.length >= maxSelection && !selected.includes(item.planId)
         const reason = mixedRisk ? "Only requests with the same approval kind and risk profile can be approved together." : limitReached ? `You can select at most ${maxSelection} requests at a time.` : ""
         const checkbox = <Checkbox aria-label={`Select approval request for ${item.applicationName}`} checked={selected.includes(item.planId)} disabled={busy || !!reason} onCheckedChange={() => toggle(item)} />
         return reason ? <Tooltip><TooltipTrigger render={<span className="mt-1 inline-flex" tabIndex={0} />}>{checkbox}</TooltipTrigger><TooltipContent>{reason}</TooltipContent></Tooltip> : <span className="mt-1 inline-flex">{checkbox}</span>
-      })()}<div className="min-w-48 flex-1"><div className="flex flex-wrap items-center gap-2"><h2 className="text-sm font-semibold"><Link href={`/applications/${item.applicationId}?tab=changes`} className="hover:underline">{item.applicationName}</Link></h2>{item.applicationGroupId && <Badge size="xs" radius="full" variant="secondary">Group child</Badge>}<span className="text-xs text-muted-foreground">{item.workspaceName}</span></div><p className="mt-1 text-sm text-muted-foreground">{item.changeCount} changes · Requested {ago(item.createdAt)}</p><p className="mt-1 text-xs text-muted-foreground"><time dateTime={item.expiresAt} title={new Date(item.expiresAt).toLocaleString()}>Expires {formatDistanceToNow(new Date(item.expiresAt), { addSuffix: true })}</time></p></div><div className="flex shrink-0 flex-wrap items-center justify-end gap-2"><Badge size="sm" radius="full" variant={item.kind === "deletion" ? "destructive-light" : item.kind === "takeover" || item.kind === "rollback" ? "warning-light" : "primary-light"} className="capitalize">{item.kind || "sync"}</Badge><Button render={<Link href={`/applications/${item.applicationId}?tab=changes`} aria-label={`Open plan for ${item.applicationName}`} />} nativeButton={false} size="xs" variant="outline">Open plan<HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={1.8} aria-hidden="true" /></Button></div></div>
+      })()}<div className="min-w-48 flex-1"><div className="flex flex-wrap items-center gap-2"><h2 className="text-sm font-semibold"><Link href={`/applications/${item.applicationId}?tab=changes`} className="hover:underline">{item.applicationName}</Link></h2>{item.applicationGroupId && <Badge size="sm" variant="secondary">Group child</Badge>}<span className="text-xs text-muted-foreground">{item.workspaceName}</span></div><p className="mt-1 text-sm text-muted-foreground">{item.changeCount} changes · Requested {ago(item.createdAt)}</p><p className="mt-1 text-xs text-muted-foreground"><time dateTime={item.expiresAt} title={new Date(item.expiresAt).toLocaleString()}>Expires {formatDistanceToNow(new Date(item.expiresAt), { addSuffix: true })}</time></p></div><div className="flex shrink-0 flex-wrap items-center justify-end gap-2"><Badge size="sm" variant={item.kind === "deletion" ? "destructive" : item.kind === "takeover" || item.kind === "rollback" ? "warning" : "info"} className="capitalize">{item.kind || "sync"}</Badge><Button render={<Link href={`/applications/${item.applicationId}?tab=changes`} aria-label={`Open plan for ${item.applicationName}`} />} nativeButton={false} size="sm" variant="outline">Open plan<HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={1.8} aria-hidden="true" /></Button></div></div>
       {(item.deletions.length > 0 || item.clusterScoped.length > 0 || item.takeovers.length > 0) && <div className="mt-3 flex flex-wrap gap-x-6 gap-y-3 pl-7">{item.deletions.length > 0 && <Risk title={`${item.deletions.length} deletion${item.deletions.length === 1 ? "" : "s"}`} items={item.deletions} tone="destructive" />}{item.clusterScoped.length > 0 && <Risk title={`${item.clusterScoped.length} cluster scoped change${item.clusterScoped.length === 1 ? "" : "s"}`} items={item.clusterScoped} tone="warning" />}{item.takeovers.length > 0 && <Risk title={`${item.takeovers.length} takeover${item.takeovers.length === 1 ? "" : "s"}`} items={item.takeovers} tone="warning" />}</div>}
       <ApprovalRequestPeople planId={item.planId} approved={item.approvedApprovals} required={item.requiredApprovals} />
       {attempts[item.planId] && <div role={attempts[item.planId].status === "failed" ? "alert" : "status"} className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3 text-sm">
@@ -187,9 +190,9 @@ function WorkspaceApprovalInbox({ workspace, workspaceId }: { workspace: Workspa
           <ErrorDetailsButton error={attempts[item.planId].error} />
         </> : <><Spinner className="size-4" aria-hidden="true" /><span>{attempts[item.planId].status === "submitting" ? "Submitting approval…" : backgroundTasks.tasks.find(task => task.id === attempts[item.planId].taskId)?.status === "running" ? "Approving plan…" : "Approval queued…"}</span><span className="text-muted-foreground">This request will leave your inbox once your approval is recorded.</span></>}
       </div>}
-    </article>)}</div>}
-    {inbox && (inbox.total > pageSize || page > 1) && <nav aria-label="Approval pages" className="mt-5 flex items-center justify-end gap-3"><Button variant="outline" size="sm" disabled={page === 1 || loading} onClick={() => { setLoading(true); setPage(value => value - 1) }}>Previous</Button><span className="text-xs text-muted-foreground">{page} of {Math.ceil(inbox.total / pageSize)}</span><Button variant="outline" size="sm" disabled={!inbox.hasMore || loading} onClick={() => { setLoading(true); setPage(value => value + 1) }}>Next</Button></nav>}
-    {(pendingApprovals > 0 || (results && chosen.length === 0)) && <section aria-label="Approval progress" role="status" className="sticky bottom-[max(1rem,var(--toast-clearance,0px))] z-10 mt-6 space-y-2 rounded-xl border bg-card p-4 shadow-lg">
+    </Card.Content></Card>)}</div>}
+    {inbox && (inbox.total > pageSize || page > 1) && <Pagination aria-label="Approval pages" className="mt-5" count={Math.max(1, Math.ceil(inbox.total / pageSize))} page={page} disabled={loading} onPageChange={(next) => { setLoading(true); setPage(next) }} />}
+    {(pendingApprovals > 0 || (results && chosen.length === 0)) && <section aria-label="Approval progress" role="status" className="sticky bottom-[max(1rem,var(--toast-clearance,0px))] z-10 mt-6 space-y-2 rounded-2xl bg-popover p-4 shadow-lg ring-1 ring-foreground/10">
       <div className="flex flex-wrap items-center gap-3">
         {pendingApprovals > 0 && <Spinner className="size-4" aria-hidden="true" />}
         <p className="min-w-0 flex-1 text-sm"><strong>{pendingApprovals > 0 ? `Approving ${pendingApprovals} plan${pendingApprovals === 1 ? "" : "s"}…` : "Approval processing complete"}</strong>{results && <span className="ml-2">{results.succeeded} approved · {results.failed} failed</span>}</p>
@@ -198,7 +201,7 @@ function WorkspaceApprovalInbox({ workspace, workspaceId }: { workspace: Workspa
       {results?.results.filter(item => item.success).slice(-1).map(item => <p key={item.planId} className="text-sm text-muted-foreground">{item.message}</p>)}
       {!!results?.failed && <ul className="max-h-24 space-y-1 overflow-auto text-xs text-destructive">{results.results.filter(item => !item.success).map(item => <li key={item.planId}>{item.error || `HTTP ${item.status}`}</li>)}</ul>}
     </section>}
-    {chosen.length > 0 && pendingApprovals === 0 && <section aria-label="Approve selected plans" className="sticky bottom-4 z-10 mt-6 flex flex-wrap items-center gap-3 rounded-xl border bg-card p-4 shadow-lg"><p className="min-w-0 flex-1 text-sm"><strong>{chosen.length} selected</strong><span className="ml-2 text-sm text-muted-foreground">Same approval kind and risk profile. Every plan is rechecked independently.</span></p><Input aria-label="Approval comment" value={comment} maxLength={1000} onChange={event => setComment(event.target.value)} placeholder="Comment (optional)" className="w-full sm:w-64" /><ConfirmDisclosure trigger={`Review ${chosen.length} approval${chosen.length === 1 ? "" : "s"}`} triggerVariant="default" confirmVariant="default" title="Approve these exact plans?" description="Each plan will be checked again for current authorization, expiry, and changes. Successful approvals remain recorded if another plan fails." confirmLabel="Approve selected plans" disabled={busy} onConfirm={() => approve(chosen)}><ul className="max-h-48 space-y-2 overflow-y-auto text-xs">{chosen.map(item => <li key={item.planId}><strong>{item.applicationName}</strong> · {item.changeCount} changes · {item.deletions.length} deletions · {item.clusterScoped.length} cluster scoped · {item.takeovers.length} takeovers</li>)}</ul>{comment.trim() && <p className="mt-3 text-sm text-muted-foreground">Comment: {comment.trim()}</p>}</ConfirmDisclosure></section>}
+    {chosen.length > 0 && pendingApprovals === 0 && <section aria-label="Approve selected plans" className="sticky bottom-4 z-10 mt-6 flex flex-wrap items-center gap-3 rounded-2xl bg-popover p-4 shadow-lg ring-1 ring-foreground/10"><p className="min-w-0 flex-1 text-sm"><strong>{chosen.length} selected</strong><span className="ml-2 text-sm text-muted-foreground">Same approval kind and risk profile. Every plan is rechecked independently.</span></p><Input aria-label="Approval comment" value={comment} maxLength={1000} onChange={event => setComment(event.target.value)} placeholder="Comment (optional)" className="w-full sm:w-64" /><ConfirmDisclosure trigger={`Review ${chosen.length} approval${chosen.length === 1 ? "" : "s"}`} triggerVariant="default" confirmVariant="default" title="Approve these exact plans?" description="Each plan will be checked again for current authorization, expiry, and changes. Successful approvals remain recorded if another plan fails." confirmLabel="Approve selected plans" disabled={busy} onConfirm={() => approve(chosen)}><ul className="max-h-48 space-y-2 overflow-y-auto text-xs">{chosen.map(item => <li key={item.planId}><strong>{item.applicationName}</strong> · {item.changeCount} changes · {item.deletions.length} deletions · {item.clusterScoped.length} cluster scoped · {item.takeovers.length} takeovers</li>)}</ul>{comment.trim() && <p className="mt-3 text-sm text-muted-foreground">Comment: {comment.trim()}</p>}</ConfirmDisclosure></section>}
   </>
 }
 function Risk({ title, items, tone }: { title: string; items: string[]; tone: "destructive" | "warning" }) {

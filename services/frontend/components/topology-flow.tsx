@@ -1,31 +1,18 @@
 "use client"
 
-import { useMemo } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { ArrowRight01Icon } from "@hugeicons/core-free-icons"
-import { Button } from "@/components/ui/button"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Badge } from "@/components/panelui/badge"
+import { Flow } from "@/components/panelui/flow"
 import { EmptyState } from "@/components/ui-kit"
-import { flowModel, type FlowPodGroup, type FlowRow } from "@/lib/topology-flow"
-import { podSummary, runtimeSignal, type RuntimeSignal } from "@/lib/topology-map"
-import { parseImage } from "@/lib/container-image"
+import { flowModel, type FlowRow } from "@/lib/topology-flow"
+import { runtimeSignal, type RuntimeSignal } from "@/lib/topology-map"
 import { podLabel, podState, type PodState } from "@/lib/runtime-health"
 import type { SyncState } from "@/lib/topology-view"
 import type { ResourceTopology, TopologyNode } from "@/lib/types"
 
 type Icon = Parameters<typeof HugeiconsIcon>[0]["icon"]
 
-const signalDot: Record<RuntimeSignal, string> = { healthy: "bg-success", progressing: "bg-warning", degraded: "bg-destructive", unknown: "bg-muted-foreground/40" }
-const podTone: Record<PodState, string> = {
-  ready: "border-success/50 bg-success/10",
-  starting: "border-warning/60 bg-warning/10",
-  failing: "border-destructive/60 bg-destructive/10",
-  terminating: "border-dashed border-muted-foreground/50 bg-muted/40 opacity-70",
-  completed: "border-info/50 bg-info/10",
-  unknown: "border-border bg-muted/30",
-  sample: "border-dashed border-border bg-muted/30",
-}
-const podDot: Record<PodState, string> = { ready: "bg-success", starting: "bg-warning", failing: "bg-destructive", terminating: "bg-muted-foreground", completed: "bg-info", unknown: "bg-muted-foreground/40", sample: "bg-muted-foreground/40" }
 
 type Props = {
   graph: ResourceTopology
@@ -44,22 +31,52 @@ type Props = {
   isConflict: (node: TopologyNode) => boolean
 }
 
-function Arrow() {
-  return <span aria-hidden="true" className="grid shrink-0 place-items-center text-muted-foreground/60 @max-3xl:rotate-90 @max-3xl:py-0.5"><HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={1.8} className="size-5" /></span>
+const NODE_W = 256
+const NODE_H = 112
+const GAP_X = 80
+const GAP_Y = 20
+const ROW_GAP = 48
+const MARGIN = 8
+
+type Chip = { label: string; color: "success" | "warning" | "destructive" | "muted" }
+const signalChip: Record<RuntimeSignal, Chip> = {
+  healthy: { label: "Healthy", color: "success" },
+  progressing: { label: "Progressing", color: "warning" },
+  degraded: { label: "Degraded", color: "destructive" },
+  unknown: { label: "Not observed", color: "muted" },
+}
+const podChip: Record<PodState, Chip["color"]> = { ready: "success", starting: "warning", failing: "destructive", terminating: "muted", completed: "muted", unknown: "muted", sample: "muted" }
+
+/** Workload rollout in a few words, from the replica counts Kubernetes reports. */
+function rollout(node: TopologyNode, olderRevisions: number) {
+  const health = node.healthSummary
+  const parts: string[] = []
+  if (health?.desiredReplicas !== undefined) {
+    parts.push(`${health.readyReplicas ?? 0}/${health.desiredReplicas} ready`)
+    if (health.updatedReplicas !== undefined && health.updatedReplicas < health.desiredReplicas) parts.push(`${health.updatedReplicas} updated`)
+  }
+  if (olderRevisions > 0) parts.push(`${olderRevisions} older ${olderRevisions === 1 ? "revision" : "revisions"} at zero`)
+  const rolling = health?.desiredReplicas !== undefined && health.updatedReplicas !== undefined && health.updatedReplicas < health.desiredReplicas
+  return { text: parts.join(" · "), rolling }
 }
 
-function Lane({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div className="flex min-w-0 flex-col gap-1.5"><h4 className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">{label}</h4>{children}</div>
-}
-
-function Placeholder({ children }: { children: React.ReactNode }) {
-  return <p className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">{children}</p>
-}
-
-/** Left-to-right pipeline per workload: traffic → services → replica sets and their pods. */
+/** One card per resource, left to right: traffic → service → workload → pods, joined by the topology's own relations. */
 export function TopologyFlow(props: Props) {
   const { graph, selectedId, onSelect, query, mode, focus, related, stateFor, syncLabels, healthFor, toneFor, iconFor, isChanged, isConflict } = props
   const model = useMemo(() => flowModel(graph), [graph])
+  const stage = useRef<HTMLDivElement>(null)
+  const [box, setBox] = useState<{ width: number; height: number } | null>(null)
+  useEffect(() => {
+    const element = stage.current
+    if (!element) return
+    // The workbench's columns animate open, so wait until the stage has stopped changing size.
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const settle = () => { clearTimeout(timer); timer = setTimeout(() => setBox((current) => current ?? { width: element.clientWidth, height: element.clientHeight }), 250) }
+    const observer = new ResizeObserver(settle)
+    observer.observe(element)
+    settle()
+    return () => { observer.disconnect(); clearTimeout(timer) }
+  })
   const needle = query.trim().toLowerCase()
   const matches = (node: TopologyNode) =>
     (!needle || `${node.identity.kind} ${node.identity.namespace} ${node.identity.name}`.toLowerCase().includes(needle)) &&
@@ -72,84 +89,82 @@ export function TopologyFlow(props: Props) {
   }
   const rows = model.rows.filter(rowVisible)
   const other = focus && selectedId ? [] : model.other.filter((node) => !filtering || matches(node))
+  const isBad = (node: TopologyNode) => isConflict(node) || toneFor(node).includes("text-destructive")
 
-  const chip = (node: TopologyNode) => {
-    const bad = isConflict(node) || toneFor(node).includes("text-destructive")
-    return <Button key={node.id} type="button" variant={selectedId === node.id ? "secondary" : "outline"} aria-pressed={selectedId === node.id} className="h-auto w-full items-start justify-start gap-2.5 px-3 py-2 text-left whitespace-normal" onClick={() => onSelect(node.id)}>
-      <HugeiconsIcon icon={iconFor(node.identity.kind)} strokeWidth={1.6} className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1.5"><i aria-hidden="true" className={`size-2 shrink-0 rounded-full ${signalDot[runtimeSignal(node)]}`} /><span className="min-w-0 text-sm font-medium break-words">{node.identity.name}</span></span>
-        <span className="block text-xs text-muted-foreground">{node.identity.kind}{stateFor(node) !== "unknown" && stateFor(node) !== "observed" && ` · ${syncLabels[stateFor(node)]}`}</span>
-        <span className={`block text-xs break-words line-clamp-2 ${bad ? "text-destructive" : "text-muted-foreground"}`}>{isConflict(node) ? "Owned elsewhere" : healthFor(node)}</span>
-      </span>
-    </Button>
+  type Placed = { node: TopologyNode; x: number; y: number; older?: number }
+  const edgeColor = (target: TopologyNode) => {
+    if (target.identity.kind === "Pod") { const state = podState(target); return state === "failing" ? "destructive" as const : state === "starting" ? "warning" as const : state === "ready" ? "success" as const : undefined }
+    const signal = runtimeSignal(target)
+    return isBad(target) || signal === "degraded" ? "destructive" as const : signal === "progressing" ? "warning" as const : signal === "healthy" ? "success" as const : undefined
   }
 
-  const podTile = (pod: TopologyNode, prefix: string) => {
-    const state = podState(pod)
-    const short = pod.identity.name.startsWith(prefix) ? pod.identity.name.slice(prefix.length).replace(/^-/, "") || pod.identity.name : pod.identity.name
-    const restarts = pod.healthSummary?.restartCount ?? 0
-    const containers = pod.healthSummary ? `${pod.healthSummary.readyContainers ?? 0}/${pod.healthSummary.totalContainers ?? 0} containers ready` : ""
-    return <Tooltip key={pod.id}>
-      <TooltipTrigger render={<Button type="button" variant="ghost" aria-pressed={selectedId === pod.id} aria-label={`Pod ${pod.identity.name}: ${podLabel(pod)}`} onClick={() => onSelect(pod.id)} className={`h-auto min-w-28 flex-col items-start gap-0.5 rounded-lg border px-2.5 py-1.5 text-left whitespace-normal ${podTone[state]} ${selectedId === pod.id ? "ring-2 ring-info" : ""}`} />}>
-        <span className="flex w-full items-center gap-1.5"><i aria-hidden="true" className={`size-2 shrink-0 rounded-full ${podDot[state]} ${state === "starting" ? "animate-pulse" : ""}`} /><span className="truncate font-mono text-xs font-medium">{short}</span></span>
-        <span className={`text-[11px] leading-4 ${state === "failing" ? "font-medium text-destructive" : "text-muted-foreground"}`}>{podLabel(pod)}{restarts > 0 && ` · ${restarts}↻`}</span>
-      </TooltipTrigger>
-      <TooltipContent>{pod.identity.name} · {podLabel(pod)}{containers && ` · ${containers}`}{restarts > 0 && ` · ${restarts} restarts`}</TooltipContent>
-    </Tooltip>
+  const card = ({ node, x, y, older = 0 }: Placed) => {
+    const pod = node.identity.kind === "Pod"
+    const workload = ["Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "Job", "CronJob"].includes(node.identity.kind)
+    const state = pod ? podState(node) : null
+    const bad = isBad(node)
+    const sync = stateFor(node)
+    const flow = workload ? rollout(node, older) : null
+    const chip: Chip = isConflict(node) ? { label: "Owned elsewhere", color: "warning" } : pod && state ? { label: podLabel(node), color: podChip[state] } : flow?.rolling ? { label: "Rolling out", color: "warning" } : signalChip[runtimeSignal(node)]
+    const detail = pod ? [(node.healthSummary?.restartCount ?? 0) > 0 ? `${node.healthSummary?.restartCount} restarts` : "", node.healthSummary ? `${node.healthSummary.readyContainers ?? 0}/${node.healthSummary.totalContainers ?? 0} containers ready` : ""].filter(Boolean).join(" · ") : flow?.text || healthFor(node)
+    const extra = !pod && flow?.text ? healthFor(node) : ""
+    const edge = bad || state === "failing" ? "border-destructive/50" : ""
+    return <Flow.Node key={node.id} id={node.id} position={{ x, y }} selected={selectedId === node.id} onPress={() => onSelect(node.id)} aria-label={`${node.identity.kind} ${node.identity.name}: ${chip.label}`} className={`overflow-hidden ${edge}`} style={{ width: NODE_W, height: NODE_H }}>
+      <Flow.NodeHeader className="py-2">
+        <span className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground"><HugeiconsIcon icon={iconFor(node.identity.kind)} strokeWidth={1.6} className="size-4 shrink-0" aria-hidden="true" /><span className="truncate">{node.identity.kind}</span></span>
+        <span className="flex shrink-0 items-center gap-1">{sync !== "unknown" && sync !== "observed" && <Flow.NodeBadge color="muted">{syncLabels[sync]}</Flow.NodeBadge>}<Flow.NodeBadge color={chip.color} className={state === "starting" ? "animate-pulse" : ""}>{chip.label}</Flow.NodeBadge></span>
+      </Flow.NodeHeader>
+      <Flow.NodeContent className="px-4 py-2.5">
+        <Flow.NodeTitle className="truncate" title={node.identity.name}>{node.identity.name}</Flow.NodeTitle>
+        <Flow.NodeDescription className={`line-clamp-2 ${bad && !flow?.text ? "text-destructive" : ""}`}>{detail}{extra && <span className={bad ? "block truncate text-destructive" : "block truncate"}>{extra}</span>}</Flow.NodeDescription>
+      </Flow.NodeContent>
+    </Flow.Node>
   }
 
-  const podGroup = (group: FlowPodGroup, row: FlowRow) => {
-    const prefix = group.replicaSet?.identity.name ?? row.workload.identity.name
-    const hidden = group.pods.length === 0
-    const versions = [...new Set((group.replicaSet?.healthSummary?.containers ?? group.pods[0]?.healthSummary?.containers ?? []).filter((container) => !container.init && container.image).map((container) => parseImage(container.image).version))].join(", ")
-    return <div key={group.id} className={`flex min-w-0 flex-col gap-1.5 ${hidden ? "opacity-60" : ""}`}>
-      {group.replicaSet && <button type="button" onClick={() => onSelect(group.replicaSet!.id)} className="w-fit rounded text-left text-[11px] text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"><span className="font-mono">{group.replicaSet.identity.name.slice(row.workload.identity.name.length).replace(/^-/, "") || group.replicaSet.identity.name}</span> · {group.pods.length === 0 ? "scaled down" : `${group.pods.length} ${group.pods.length === 1 ? "pod" : "pods"}`}{versions && <> · <span className="font-mono text-foreground">{versions}</span></>}</button>}
-      {group.pods.length > 0 && <div className="flex flex-wrap gap-2">{group.pods.map((pod) => podTile(pod, prefix))}</div>}
-    </div>
-  }
-
-  const flowRow = (row: FlowRow) => {
+  const layout = rows.reduce<{ items: { placed: Placed[]; edges: { from: string; to: string; color: ReturnType<typeof edgeColor>; animated: boolean }[] }[]; top: number }>((acc, row) => {
     const { workload } = row
-    const summary = podSummary(row.pods)
-    const bad = isConflict(workload) || toneFor(workload).includes("text-destructive")
-    const showGroups = row.groups.filter((group) => group.pods.length > 0 || row.groups.length === 1)
-    const scaledDown = row.groups.length - showGroups.length
-    return <section key={row.id} aria-label={workload.identity.name} className="@container min-w-0 rounded-xl border bg-card">
-      <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b px-4 py-3">
-        <button type="button" onClick={() => onSelect(workload.id)} className={`flex min-w-0 items-center gap-2 rounded text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${selectedId === workload.id ? "text-info" : ""}`}>
-          <HugeiconsIcon icon={iconFor(workload.identity.kind)} strokeWidth={1.6} className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-          <i aria-hidden="true" className={`size-2 shrink-0 rounded-full ${signalDot[runtimeSignal(workload)]}`} />
-          <h3 className="truncate text-sm font-semibold">{workload.identity.name}</h3>
-          <span className="text-xs text-muted-foreground">{workload.identity.kind}</span>
-        </button>
-        <p className={`text-xs ${bad ? "text-destructive" : "text-muted-foreground"}`}>{summary ?? healthFor(workload)}{stateFor(workload) !== "unknown" && stateFor(workload) !== "observed" && ` · ${syncLabels[stateFor(workload)]}`}</p>
-      </header>
-      <div className="grid gap-3 p-4 @3xl:grid-cols-[minmax(13rem,24rem)_auto_minmax(13rem,24rem)_auto_minmax(0,1fr)] @3xl:items-start">
-        <Lane label="Traffic">{row.traffic.length ? row.traffic.map(chip) : <Placeholder>No ingress or route</Placeholder>}</Lane>
-        <Arrow />
-        <Lane label="Service">{row.services.length ? row.services.map(chip) : <Placeholder>No service selects these pods</Placeholder>}</Lane>
-        <Arrow />
-        <Lane label={workload.identity.kind === "Pod" ? "Pod" : "Pods"}>
-          {showGroups.length ? <div className="flex flex-col gap-3">{showGroups.map((group) => podGroup(group, row))}{scaledDown > 0 && <p className="text-[11px] text-muted-foreground">{scaledDown} older {scaledDown === 1 ? "revision" : "revisions"} scaled to zero</p>}</div> : <Placeholder>{workload.uid ? "No pods running" : "Not observed in the cluster yet"}</Placeholder>}
-        </Lane>
-      </div>
-      {row.config.length > 0 && <div className="flex flex-wrap items-center gap-2 border-t px-4 py-2.5"><span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Uses</span>{row.config.map((node) => <Button key={node.id} type="button" size="xs" variant={selectedId === node.id ? "secondary" : "outline"} aria-pressed={selectedId === node.id} onClick={() => onSelect(node.id)}><i aria-hidden="true" className={`size-1.5 rounded-full ${signalDot[runtimeSignal(node)]}`} />{node.identity.name}<span className="text-muted-foreground">{node.identity.kind}</span></Button>)}</div>}
-    </section>
-  }
+    const pods = workload.identity.kind === "Pod" ? [] : row.pods
+    const older = row.groups.filter((group) => group.pods.length === 0).length
+    const columns = [row.traffic, row.services, [workload], pods].filter((column) => column.length > 0)
+    const placed: Placed[] = []
+    columns.forEach((column, c) => column.forEach((node, r) => placed.push({ node, x: MARGIN + c * (NODE_W + GAP_X), y: acc.top + r * (NODE_H + GAP_Y), older: node.id === workload.id ? older : 0 })))
+    const tallest = Math.max(...columns.map((column) => column.length))
+    let bottom = acc.top + tallest * (NODE_H + GAP_Y) - GAP_Y
+    if (row.config.length) { bottom += GAP_Y * 2; row.config.forEach((node, i) => placed.push({ node, x: MARGIN + i * (NODE_W + GAP_X), y: bottom })); bottom += NODE_H }
+    const edges: { from: string; to: string; color: ReturnType<typeof edgeColor>; animated: boolean }[] = []
+    const add = (from: string, to: TopologyNode) => edges.push({ from, to: to.id, color: edgeColor(to), animated: runtimeSignal(to) === "progressing" || (to.identity.kind === "Pod" && podState(to) === "starting") })
+    for (const edge of graph.edges) if (edge.relation === "routes to" && row.traffic.some((node) => node.id === edge.from) && row.services.some((node) => node.id === edge.to)) add(edge.from, nodeIndex.get(edge.to)!)
+    for (const service of row.services) add(service.id, workload)
+    for (const pod of pods) add(workload.id, pod)
+    return { items: [...acc.items, { placed, edges }], top: bottom + ROW_GAP }
+  }, { items: [], top: MARGIN })
+  const otherCols = 4
+  const otherPlaced: Placed[] = other.map((node, i) => ({ node, x: MARGIN + (i % otherCols) * (NODE_W + GAP_X), y: layout.top + Math.floor(i / otherCols) * (NODE_H + GAP_Y) }))
+  const placedAll = [...layout.items.flatMap((item) => item.placed), ...otherPlaced]
 
-  if (!rows.length && !other.length) return <div className="min-w-0 p-6"><EmptyState title={graph.nodes.length ? "No matching resources" : "No resources to show yet"} description={graph.nodes.length ? "Try another filter or search term." : "Build a plan to discover resources and their relationships."} /></div>
+  if (!rows.length && !other.length) return <div className="min-w-0 p-6"><EmptyState title={graph.nodes.length ? "No matching resources" : "No resources to show yet"} description={graph.nodes.length ? "Try another filter or search term." : "Build a plan to discover resources, or refresh the cluster once the application is deployed."} /></div>
 
   const workloadsNeedingAttention = rows.filter((row) => [row.workload, ...row.pods].some((node) => runtimeSignal(node) === "degraded" || isConflict(node))).length
   const podsReady = rows.flatMap((row) => row.pods).filter((pod) => podState(pod) === "ready" || podState(pod) === "completed").length
   const podTotal = rows.reduce((total, row) => total + row.pods.length, 0)
   const toChange = graph.nodes.filter(isChanged).length
-  return <div className="flex min-w-0 flex-col gap-4 p-4">
-    {rows.length > 0 && <p role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground"><span className="font-medium text-foreground">{rows.length} {rows.length === 1 ? "workload" : "workloads"}</span><span>{podsReady}/{podTotal} pods ready</span>{workloadsNeedingAttention > 0 ? <span className="text-destructive">{workloadsNeedingAttention} need attention</span> : <span>None need attention</span>}{toChange > 0 && <span>{toChange} to change</span>}</p>}
-    {rows.map(flowRow)}
-    {other.length > 0 && <section aria-label="Other resources" className="min-w-0 rounded-xl border bg-card">
-      <header className="border-b px-4 py-3"><h3 className="text-sm font-semibold">Other resources</h3><p className="mt-0.5 text-xs text-muted-foreground">Not attached to a workload.</p></header>
-      <div className="grid gap-2 p-4 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">{other.map(chip)}</div>
-    </section>}
+  const totalWidth = Math.max(...placedAll.map((item) => item.x + NODE_W)) + MARGIN
+  const totalHeight = Math.max(...placedAll.map((item) => item.y + NODE_H)) + MARGIN
+  const zoom = box ? Math.min(1, (box.width - 48) / totalWidth, (box.height - 48) / totalHeight) : 1
+  const viewport = box ? { zoom, x: Math.max(24, (box.width - totalWidth * zoom) / 2), y: 24 } : undefined
+  const layoutKey = [...rows.map((row) => row.id), other.length].join("|")
+  return <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+    {rows.length > 1 && <div role="status" className="flex flex-wrap items-center gap-2">
+      <Badge variant="secondary">{rows.length} {rows.length === 1 ? "workload" : "workloads"}</Badge>
+      <Badge variant="outline" className="bg-background">{podsReady}/{podTotal} pods ready</Badge>
+      {workloadsNeedingAttention > 0 ? <Badge variant="destructive" dot>{workloadsNeedingAttention} need attention</Badge> : <Badge variant="success" dot>None need attention</Badge>}
+      {toChange > 0 && <Badge variant="warning" dot>{toChange} to change</Badge>}
+    </div>}
+    <div ref={stage} className="min-h-80 flex-1">{viewport && <Flow key={layoutKey} label="Resource topology" defaultViewport={viewport} minZoom={0.2} className="h-full rounded-none border-0 bg-transparent">
+      <Flow.Background variant="dots" />
+      {placedAll.map(card)}
+      {layout.items.flatMap((item) => item.edges).map((edge) => <Flow.Edge key={`${edge.from}>${edge.to}`} from={edge.from} to={edge.to} variant="smoothstep" arrow animated={edge.animated} color={edge.color} width={1.5} />)}
+      <Flow.Controls position="bottom-left" />
+    </Flow>}</div>
   </div>
 }

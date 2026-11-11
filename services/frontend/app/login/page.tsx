@@ -5,9 +5,9 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Login01Icon } from "@hugeicons/core-free-icons"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/panelui/button"
 import { AuthShell } from "@/components/auth-shell"
-import { Input } from "@/components/ui/input"
+import { Input } from "@/components/panelui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { FormField } from "@/components/ui-kit"
 import { ErrorDetailsButton } from "@/components/error-details"
@@ -66,16 +66,16 @@ export default function LoginPage() {
 
   return (
     <AuthShell eyebrow="Welcome back" title="Sign in to JustCD" description="Your next deployment starts here.">
-      {passwordLogin && <form className="mt-7 space-y-4" onSubmit={submit}>
+      {passwordLogin && <form className="space-y-4" onSubmit={submit}>
         <FormField label="Email address" htmlFor="email"><Input id="email" type="email" autoComplete="username" value={email} disabled={busy} onChange={(event) => { setEmail(event.target.value); setMfaRequired(false); setCode("") }} required /></FormField>
         <FormField label="Password" htmlFor="password"><Input id="password" type="password" autoComplete="current-password" value={password} disabled={busy} onChange={(event) => { setPassword(event.target.value); setMfaRequired(false); setCode("") }} required /></FormField>
         {mfaRequired && <FormField label="Authenticator or recovery code" htmlFor="login-code"><Input id="login-code" autoComplete="one-time-code" value={code} onChange={e => setCode(e.target.value)} required autoFocus disabled={busy} /></FormField>}
         <Button className="w-full" type="submit" loading={busy} loadingText="Signing in…">Sign in</Button>
       </form>}
-      {!loadingOptions && !passwordLogin && providers.length === 0 && <p role="status" className="mt-7 rounded-lg border bg-muted/30 p-4 text-sm leading-6 text-muted-foreground">Password sign-in is turned off and no single sign-on provider is available. Contact your JustCD administrator.</p>}
+      {!loadingOptions && !passwordLogin && providers.length === 0 && <p role="status" className=" text-sm leading-6 text-muted-foreground">Password sign-in is turned off and no single sign-on provider is available. Contact your JustCD administrator.</p>}
 
       {loadingOptions && <div role="status" aria-label="Loading sign-in options" className="mt-6 space-y-3"><Skeleton className="mx-auto h-4 w-32" /><Skeleton className="h-11 w-full rounded-lg" /></div>}
-      {!loadingOptions && loadError != null && <div role="alert" className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive"><span>Sign-in options could not be loaded. {errorMessage(loadError)}</span><ErrorDetailsButton error={loadError} /></div>}
+      {!loadingOptions && loadError != null && <div role="alert" className="mt-6 flex flex-wrap items-center justify-between gap-3 text-sm text-destructive"><span>Sign-in options could not be loaded. {errorMessage(loadError)}</span><ErrorDetailsButton error={loadError} /></div>}
       {!loadingOptions && providers.length > 0 && <div className={passwordLogin ? "mt-6" : "mt-7"}><div className="relative mb-4 text-center"><span className="relative z-10 bg-card px-3 text-xs uppercase tracking-wider text-muted-foreground">{passwordLogin ? "or continue with" : "continue with"}</span><span className="absolute inset-x-0 top-1/2 border-t" /></div><div className="space-y-2">{providers.map((provider) => <Button key={provider.id} render={<a href={`/api/v1/auth/oidc/${encodeURIComponent(provider.id)}/start`} />} nativeButton={false} variant="outline" className="h-11 w-full"><HugeiconsIcon icon={Login01Icon} strokeWidth={1.8} aria-hidden="true" />{provider.name}</Button>)}</div></div>}
 
       <div className="mt-8 text-center text-sm leading-5 text-muted-foreground">{loadingOptions ? <Skeleton className="mx-auto h-4 w-56" /> : signupAvailable ? <Link href="/signup" className="font-medium text-primary hover:underline">Set up the first administrator</Link> : registrationOpen ? <>New here? <Link href="/register" className="font-medium text-primary hover:underline">Create an account</Link></> : "Access is managed by your JustCD administrator. OIDC accounts need a verified email address."}</div>

@@ -1,10 +1,11 @@
 "use client"
 import { useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { Card } from "@/components/panelui/card"
+import { Button } from "@/components/panelui/button"
+import { Input } from "@/components/panelui/input"
 import { FormField } from "@/components/ui-kit"
-import { ScopeBadge, SettingsLayout } from "@/components/settings/layout"
+import { ScopeBadge, SettingsLayout, SettingsNotice } from "@/components/settings/layout"
 import { SettingsPanel } from "@/components/settings/settings-section"
 import { api, apiPost, errorMessage } from "@/lib/api"
 type Session = {
@@ -65,37 +66,33 @@ export function AccountSecurity() {
       scope={<ScopeBadge scope="account" />}
     >
       {error && (
-        <p role="alert" className="text-sm text-destructive">
+        <SettingsNotice tone="destructive" title="Could not update account security">
           {error}
           <Button
-            variant="ghost"
+            variant="outline"
             disabled={busy}
             onClick={() => void run(load, "Refreshed.")}
           >
             Retry
           </Button>
-        </p>
+        </SettingsNotice>
       )}
       {notice && (
-        <p role="status" className="text-sm text-muted-foreground">
-          {notice}
-        </p>
+        <SettingsNotice tone="success">{notice}</SettingsNotice>
       )}
       <SettingsPanel
+        surface="flat"
         title="Active sessions"
         description="Revoking a session signs that device out."
       >
-        <div className="space-y-3 p-5">
+        <div className="space-y-3">
           {!mfa && (
             <p className="text-sm text-muted-foreground">
               Loading account security…
             </p>
           )}
           {sessions.map((s) => (
-            <div
-              key={s.id}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
-            >
+            <Card key={s.id} size="sm"><Card.Content className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-sm">
                 <p className="font-medium">
                   {s.current ? "Current session" : "Other session"}
@@ -123,7 +120,7 @@ export function AccountSecurity() {
               >
                 Revoke{s.current ? " and sign out" : ""}
               </Button>
-            </div>
+            </Card.Content></Card>
           ))}
         </div>
       </SettingsPanel>
@@ -146,7 +143,7 @@ export function AccountSecurity() {
                   : "Not enabled"}
               </p>
               {recovery.length > 0 && (
-                <div role="status" className="space-y-3 rounded-lg border p-4">
+                <div role="status" className="space-y-3">
                   <p className="text-sm font-medium">
                     Save these recovery codes now. Each code works once and will
                     not be shown again.
@@ -213,7 +210,7 @@ export function AccountSecurity() {
                   />
                 </FormField>
                 {enrollment && (
-                  <div className="space-y-2 rounded-lg border p-3">
+                  <div className="space-y-2">
                     <p className="text-sm font-medium">
                       Authenticator setup key
                     </p>

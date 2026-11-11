@@ -1,13 +1,14 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
+import { Workbench } from "@/components/panelui/workbench"
+import { Button } from "@/components/panelui/button"
+import { Input } from "@/components/panelui/input"
+import { Textarea } from "@/components/panelui/textarea"
 import { Disclosure } from "@/components/ui/collapsible"
-import { FormSelect } from "@/components/ui/form-select"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Badge } from "@/components/reui/badge"
+import { FormSelect } from "@/components/form-select"
+import { Tabs, TabsList, TabsTrigger } from "@/components/panelui/tabs"
+import { Badge } from "@/components/panelui/badge"
 import { FormField } from "@/components/ui-kit"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { api, apiPost } from "@/lib/api"
@@ -59,7 +60,7 @@ spec:
 `
 
 const editorClass =
-  "h-[32rem] min-h-[20rem] resize-y [field-sizing:fixed] rounded-none border-0 font-mono text-xs leading-5 whitespace-pre focus-visible:ring-inset"
+  "h-full min-h-0 max-h-none flex-1 resize-none [field-sizing:fixed] rounded-none border-0 font-mono text-xs leading-5 whitespace-pre focus-visible:ring-inset"
 
 /**
  * Admins see the files of an application template with their placeholders,
@@ -214,7 +215,7 @@ export function TemplateEditor({
     )
   return (
     <div className="space-y-5">
-      <SettingsPanel
+      <SettingsPanel padded
         title={`${detail.template.custom ? "Edit" : "Customize"} ${detail.template.name}`}
         description="Edit the files JustCD generates for this application template. Saving creates a new immutable version; profiles choose which version to use."
         action={
@@ -227,8 +228,8 @@ export function TemplateEditor({
           </Button>
         }
       >
-        <div className="space-y-4 p-5">
-          <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <FormField
               label="Start from"
               htmlFor="template-base"
@@ -257,9 +258,9 @@ export function TemplateEditor({
               <FormSelect
                 id="template-preview-profile"
                 value={previewProfile}
+                emptyOption="Sample values"
                 onValueChange={value => { setPreviewProfile(value); setPreviewServices({ database: false, vaultSecrets: [] }) }}
                 items={[
-                  { value: "", label: "Sample values" },
                   ...profiles
                     .filter((p) => p.settings.templateId === templateId)
                     .map((p) => ({ value: p.id, label: p.name })),
@@ -268,7 +269,7 @@ export function TemplateEditor({
             </FormField>
           </div>
           <PublishingServicesPicker preview options={serviceOptions} value={previewServices} onChange={setPreviewServices} />
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/20 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 py-3">
             <p className="max-w-2xl text-xs leading-5 text-muted-foreground">
               Optional manifests are included in the deployment plan. An ingress
               policy isolates incoming traffic for this app; configure
@@ -338,7 +339,7 @@ export function TemplateEditor({
             onValueChange={(value) => setActive(String(value))}
           >
             <TabsList
-              variant="default"
+
               aria-label="Template files"
               className="flex-wrap"
             >
@@ -366,9 +367,9 @@ export function TemplateEditor({
             </TabsList>
           </Tabs>
           {view === "edit" ? (
-            <div className="grid overflow-hidden rounded-xl border bg-background lg:grid-cols-2">
-              <div className="min-w-0">
-                <div className="flex items-center justify-between border-b bg-muted/40 px-3 py-2">
+            <Workbench className="h-[56rem] lg:h-[32rem]" focusShortcut={false}><Workbench.Canvas className="!items-stretch !justify-stretch !p-0 !bg-none"><div className="grid w-full min-w-0 grid-cols-1 lg:grid-cols-2">
+              <div className="flex min-h-0 min-w-0 flex-col">
+                <div className="flex shrink-0 items-center justify-between bg-muted/40 px-3 py-2">
                   <label
                     htmlFor="template-file"
                     className="text-xs font-medium"
@@ -377,7 +378,7 @@ export function TemplateEditor({
                   </label>
                   <Badge
                     variant={
-                      changed.includes(active) ? "info-light" : "outline"
+                      changed.includes(active) ? "info" : "outline"
                     }
                     size="sm"
                   >
@@ -390,6 +391,7 @@ export function TemplateEditor({
                 </div>
                 <Textarea
                   id="template-file"
+                  autoResize={false}
                   ref={editor}
                   spellCheck={false}
                   wrap="off"
@@ -400,8 +402,8 @@ export function TemplateEditor({
                   }
                 />
               </div>
-              <div className="min-w-0 border-t lg:border-t-0 lg:border-l">
-                <div className="flex items-center justify-between gap-2 border-b bg-muted/40 px-3 py-2">
+              <div className="flex min-h-0 min-w-0 flex-col border-t lg:border-t-0 lg:border-l">
+                <div className="flex shrink-0 items-center justify-between gap-2 bg-muted/40 px-3 py-2">
                   <label
                     htmlFor="template-rendered"
                     className="text-xs font-medium"
@@ -415,6 +417,7 @@ export function TemplateEditor({
                 </div>
                 <Textarea
                   id="template-rendered"
+                  autoResize={false}
                   readOnly
                   spellCheck={false}
                   wrap="off"
@@ -438,9 +441,9 @@ export function TemplateEditor({
                       : "Preview unavailable"}
                 </span>
               </div>
-            </div>
+            </div></Workbench.Canvas></Workbench>
           ) : (
-            <DiffView rows={rows} />
+            <Workbench className="h-[34rem]" focusShortcut={false}><Workbench.Canvas className="!items-stretch !justify-stretch !p-0 !bg-none"><DiffView rows={rows} /></Workbench.Canvas></Workbench>
           )}
           <p className="text-xs text-muted-foreground">
             Go template syntax:{" "}
@@ -478,11 +481,11 @@ export function TemplateEditor({
             )}
           </div>
           <Disclosure summary="Placeholders and helper functions">
-            <ul className="grid gap-2 md:grid-cols-2">
+            <ul className="grid grid-cols-1 gap-2 md:grid-cols-2">
               {detail.placeholders.map((item) => {
                 const isValue = item.name.startsWith(".")
                 return (
-                  <li key={item.name} className="rounded-lg border p-2.5">
+                  <li key={item.name} className="py-2.5">
                     <div className="flex items-center justify-between gap-2">
                       <code className="text-xs font-medium">{item.name}</code>
                       {isValue && (
@@ -507,9 +510,9 @@ export function TemplateEditor({
         </div>
       </SettingsPanel>
       {error != null && <ErrorNotice error={error} />}
-      <SettingsPanel title="Save as a new version">
-        <div className="flex flex-wrap items-end gap-4 p-5">
-          <div className="min-w-64 flex-1">
+      <SettingsPanel padded title="Save as a new version">
+        <div className="flex flex-wrap items-end gap-4">
+          <div className="min-w-0 flex-1 basis-64">
             <FormField
               label="Version label (optional)"
               htmlFor="template-label"
@@ -540,7 +543,7 @@ export function TemplateEditor({
             </span>
           </div>
         </div>
-        <p className="px-5 pb-5 text-xs leading-5 text-muted-foreground">
+        <p className="mt-3 text-xs leading-5 text-muted-foreground">
           Versions are immutable. JustCD renders the template for many
           configurations and rejects unsafe or broken results (privileged
           containers, host access, root, foreign images, a pipeline that no
@@ -555,20 +558,20 @@ export function TemplateEditor({
 function DiffView({ rows }: { rows: ReviewRow[] }) {
   return (
     <div
-      className="max-h-[32rem] overflow-auto rounded-lg border bg-background"
+      className="max-h-[32rem] w-full overflow-auto bg-background"
       tabIndex={0}
       role="region"
-      aria-label="Side-by-side template changes"
+      aria-label="Template changes"
     >
-      <div className="min-w-[40rem]">
-        <div className="sticky top-0 z-10 grid grid-cols-2 border-b bg-muted text-xs font-medium">
-          <div className="border-r px-3 py-2">Original</div>
-          <div className="px-3 py-2">Your changes</div>
+      <div className="min-w-0 sm:min-w-[40rem]">
+        <div className="sticky top-0 z-10 grid grid-cols-1 bg-muted text-xs font-medium sm:grid-cols-2">
+          <div className="hidden border-r px-3 py-2 sm:block">Original</div>
+          <div className="px-3 py-2"><span className="sm:hidden">Template changes</span><span className="hidden sm:inline">Your changes</span></div>
         </div>
         {rows.map((row, index) => (
           <div
             key={index}
-            className="grid grid-cols-2 font-mono text-xs leading-5"
+            className="grid grid-cols-1 font-mono text-xs leading-5 sm:grid-cols-2"
           >
             {(["before", "after"] as const).map((side) => {
               const line = side === "before" ? row.oldLine : row.newLine
@@ -576,7 +579,7 @@ function DiffView({ rows }: { rows: ReviewRow[] }) {
               return (
                 <div
                   key={side}
-                  className={`flex min-w-0 ${side === "before" ? "border-r" : ""} ${row.changed && content !== undefined ? (side === "before" ? "bg-destructive/10" : "bg-success/10") : ""}`}
+                  className={`${content === undefined || (side === "before" && !row.changed) ? "hidden sm:flex" : "flex"} min-w-0 ${side === "before" ? "sm:border-r" : ""} ${row.changed && content !== undefined ? (side === "before" ? "bg-destructive/10" : "bg-success/10") : ""}`}
                 >
                   <span className="w-10 shrink-0 border-r px-2 text-right text-muted-foreground select-none">
                     {line}
@@ -603,7 +606,7 @@ function DiffView({ rows }: { rows: ReviewRow[] }) {
 
 export function TemplateBadge({ version }: { version: number | undefined }) {
   return (
-    <Badge variant={version ? "info-light" : "outline"} size="sm">
+    <Badge variant={version ? "info" : "outline"} size="sm">
       {version ? `Custom v${version}` : "Built-in"}
     </Badge>
   )

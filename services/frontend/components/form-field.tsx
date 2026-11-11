@@ -1,6 +1,8 @@
 "use client"
 
 import { useState, type ReactNode } from "react"
+import { Field } from "@/components/panelui/field"
+import { Label } from "@/components/panelui/label"
 
 function nativeMessage(control: HTMLInputElement) {
   const v = control.validity
@@ -33,22 +35,23 @@ export function FormField({
   const [native, setNative] = useState("")
   const shown = error || native
   return (
-    <div
-      className="space-y-1.5"
+    <Field
+      invalid={Boolean(shown)}
       onInvalid={(event) => {
         event.preventDefault()
         const control = event.target as HTMLInputElement
         control.setAttribute("aria-invalid", "true")
         setNative(nativeMessage(control))
+        if (!document.activeElement?.matches(":invalid")) control.focus()
       }}
       onInput={(event) => {
         ;(event.target as HTMLElement).removeAttribute?.("aria-invalid")
         setNative("")
       }}
     >
-      <label htmlFor={htmlFor} className="block text-sm font-medium">{label}</label>
+      <Label htmlFor={htmlFor}>{label}</Label>
       {children}
-      {shown ? <p role="alert" className="text-sm leading-4 text-destructive">{shown}</p> : hint && <p className="text-sm leading-4 text-muted-foreground">{hint}</p>}
-    </div>
+      {shown ? <Field.Error match role="alert">{shown}</Field.Error> : hint && <Field.Description>{hint}</Field.Description>}
+    </Field>
   )
 }

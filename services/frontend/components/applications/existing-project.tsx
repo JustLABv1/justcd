@@ -17,12 +17,13 @@ import type { ApprovedPublishingProfile } from "@/lib/publishing"
 import type { ApplicationTemplate } from "./template-catalog"
 import {
   PublishingCard,
+  PublishingSection,
   PublishingField,
   PublishingCheckbox,
 } from "./publishing-fields"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { FormSelect } from "@/components/ui/form-select"
+import { Button } from "@/components/panelui/button"
+import { Input } from "@/components/panelui/input"
+import { FormSelect } from "@/components/form-select"
 import { Disclosure } from "@/components/ui/collapsible"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
@@ -380,6 +381,7 @@ export function ExistingProject({
         className="space-y-4 disabled:opacity-70"
         onChange={() => setPlan(null)}
       >
+        <PublishingSection title="Repository" description="Choose the Git repository to inspect and how it should be published.">
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           <PublishingField
             label="Git source"
@@ -474,6 +476,7 @@ export function ExistingProject({
               "password"
             )}
         </div>
+        </PublishingSection>
         {!owner && !profiles.length && (
           <PublishingCard>
             <p className="text-sm text-muted-foreground">

@@ -35,4 +35,16 @@ function Disclosure({ summary, children, defaultOpen, className }: { summary: Re
   </Collapsible>
 }
 
-export { Collapsible, CollapsibleTrigger, CollapsibleContent, Disclosure }
+/**
+ * A collapsible group of surfaces (application cards, a table): one bordered tray whose header is
+ * the trigger. The tray keeps every group visibly bounded, open or closed, so a page of several
+ * groups reads as a list of containers rather than loose headings between cards.
+ */
+function CollapsibleGroup({ header, children, className, ...props }: Omit<CollapsiblePrimitive.Root.Props, "children" | "className"> & { header: ReactNode; children: ReactNode; className?: string }) {
+  return <Collapsible {...props} className={cn("min-w-0 overflow-hidden rounded-3xl border bg-tray dark:border-transparent", className)}>
+    <CollapsibleTrigger className="w-full justify-between gap-3 rounded-none px-4 py-3 transition-colors hover:bg-foreground/[0.03] focus-visible:ring-inset">{header}</CollapsibleTrigger>
+    <CollapsibleContent><div className="px-3 pb-3">{children}</div></CollapsibleContent>
+  </Collapsible>
+}
+
+export { Collapsible, CollapsibleTrigger, CollapsibleContent, CollapsibleGroup, Disclosure }

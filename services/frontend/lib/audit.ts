@@ -97,11 +97,11 @@ export function wherePath(event: AuditEvent, showWorkspace: boolean) {
 }
 export function eventStatus(action: string) {
   if (action.endsWith("failed"))
-    return { label: "Failed", variant: "destructive-light" as const }
+    return { label: "Failed", variant: "destructive" as const }
   if (action.endsWith("succeeded"))
-    return { label: "Succeeded", variant: "success-light" as const }
+    return { label: "Succeeded", variant: "success" as const }
   if (action.endsWith("queued"))
-    return { label: "Queued", variant: "warning-light" as const }
+    return { label: "Queued", variant: "warning" as const }
   if (action.endsWith("cancelled"))
     return { label: "Cancelled", variant: "secondary" as const }
   return null

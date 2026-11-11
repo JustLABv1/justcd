@@ -1,6 +1,6 @@
 "use client"
 
-import { AppDialog } from "@/components/ui/dialog"
+import { AppDialog } from "@/components/app-dialog"
 
 export function ConnectionDialog({ open, onOpenChange, title, description, busy = false, size = "lg", children }: {
   open: boolean

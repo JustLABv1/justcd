@@ -7,9 +7,10 @@ import {
   CloudUploadIcon,
   FileZipIcon,
 } from "@hugeicons/core-free-icons"
-import { Button } from "@/components/ui/button"
+import { Card } from "@/components/panelui/card"
+import { Button } from "@/components/panelui/button"
 import { api, errorMessage } from "@/lib/api"
-import { Input } from "@/components/ui/input"
+import { Input } from "@/components/panelui/input"
 
 function fileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
@@ -174,7 +175,7 @@ export function ArchiveUpload({
           event.target.value = ""
         }}
       />
-      <div
+      <Card size="sm"
         role="group"
         aria-label="Application ZIP upload"
         aria-describedby={error ? `${id}-error` : undefined}
@@ -190,8 +191,8 @@ export function ArchiveUpload({
           if (!dragDepth.current) setDragging(false)
         }}
         onDrop={drop}
-        className={`flex min-w-0 flex-wrap items-center gap-x-4 gap-y-3 rounded-xl border border-dashed px-4 py-4 transition-colors duration-150 sm:flex-nowrap ${disabled ? "opacity-50" : ""} ${dragging ? "border-primary bg-primary/5 ring-2 ring-primary/15" : error ? "border-destructive bg-destructive/5" : "border-border bg-muted/25 dark:bg-background/40"}`}
-      >
+        className={`min-w-0 border-dashed dark:border-border transition-colors duration-150 ${disabled ? "opacity-50" : ""} ${dragging ? "border-primary dark:border-primary bg-primary/5 ring-2 ring-primary/15" : error ? "border-destructive dark:border-destructive bg-destructive/5" : "border-border bg-muted/25 dark:bg-background/40"}`}
+      ><Card.Content className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-3 sm:flex-nowrap">
         <span
           aria-hidden="true"
           className={`flex size-10 shrink-0 items-center justify-center rounded-xl ${file ? "bg-muted text-muted-foreground" : "bg-primary/10 text-primary"}`}
@@ -257,7 +258,7 @@ export function ArchiveUpload({
             </Button>
           )}
         </div>
-      </div>
+      </Card.Content></Card>
       {file && inspection && (
         <p
           role={inspection.state === "invalid" ? "alert" : "status"}

@@ -3,81 +3,37 @@
 import { DeploymentScheduleNotice } from "@/components/deployment-schedule-notice"
 import { AIAssistant } from "@/components/ai-assistant"
 import { WorkspaceDigest } from "@/components/ai-digest"
-import { TriageList, TriageStatus, useTriage } from "@/components/ai-triage"
+import { TriageStatus, useTriage } from "@/components/ai-triage"
 import Link from "next/link"
 import { useEffect, useMemo, useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
-import {
-  Add01Icon,
-  ArrowRight01Icon,
-} from "@hugeicons/core-free-icons"
-import { Badge } from "@/components/reui/badge"
-import { Button } from "@/components/ui/button"
-import { PageHeading, EmptyState, Panel, StatusBadge } from "@/components/ui-kit"
-import { ActionLink, CollectionSkeleton, LoadError, WorkspaceIcon } from "@/components/workspace-ui"
+import { Add01Icon, Alert02Icon, Refresh01Icon } from "@hugeicons/core-free-icons"
+import { Alert } from "@/components/panelui/alert"
+import { Badge } from "@/components/panelui/badge"
+import { Button } from "@/components/panelui/button"
+import { Card } from "@/components/panelui/card"
+import { Frame } from "@/components/panelui/frame"
+import { Tabs } from "@/components/panelui/tabs"
+import { FrameLink, LinkRow, StatusPill, SummaryKpis } from "@/components/overview/overview-parts"
+import { PageHeading } from "@/components/ui-kit"
+import { CollectionSkeleton, LoadError } from "@/components/workspace-ui"
 import { useWorkspace, needsAttention, isApplicationHealthy } from "@/hooks/use-workspace"
 import { useWorkspaceHealth } from "@/hooks/use-workspace-health"
 import { useWorkspaceSelection } from "@/hooks/workspace-selection"
-import { WorkspaceMetrics } from "@/components/workspace-metrics"
 import { SyncHistoryChartView } from "@/components/application/sync-history-chart"
-import { LatestSyncs } from "@/components/latest-syncs"
 import { useSyncHistory } from "@/hooks/use-sync-history"
-import { tone } from "@/components/health-tone"
+import { summarizeSyncHistory } from "@/lib/sync-history"
 import { ago } from "@/lib/relative-time"
 import { applicationAttentionReason } from "@/lib/application-status"
-import { clusterHealth, gitSourceHealth, isCheckStalled, type ConnectionHealth, type HealthLevel } from "@/lib/connection-health"
-
-function TrailingLink({ href, children }: { href: string; children: React.ReactNode }) {
-  return (
-    <Button render={<Link href={href} />} nativeButton={false} variant="link" size="sm" className="px-0">
-      {children}
-      <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={1.8} aria-hidden="true" />
-    </Button>
-  )
-}
-
-function LevelIcon({ level, className = "size-4" }: { level: HealthLevel; className?: string }) {
-  return (
-    <>
-      <HugeiconsIcon icon={tone[level].icon} strokeWidth={2} className={`${className} ${tone[level].text}`} aria-hidden="true" />
-      <span className="sr-only">{level}: </span>
-    </>
-  )
-}
+import { clusterHealth, gitSourceHealth, isCheckStalled, type ConnectionHealth } from "@/lib/connection-health"
+import type { TriageSeverity } from "@/lib/types"
 
 type ConnectionRow = { key: string; kind: "Cluster" | "Git source"; name: string; sub: string; health: ConnectionHealth }
 
-function ConnectionList({ rows, href }: { rows: ConnectionRow[]; href: string }) {
-  if (!rows.length) {
-    return <EmptyState title="No connections yet" description="Connect a Git source and a cluster to start delivering applications." href={href} action="Add connections" actionVariant="outline" />
-  }
-  return (
-    <ul className="divide-y">
-      {rows.map((row) => (
-        <li key={row.key} className="flex items-start gap-3 px-5 py-3.5">
-          <span aria-hidden="true" className={`mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg ${tone[row.health.level].bg} ${tone[row.health.level].text}`}>
-            <WorkspaceIcon name={row.kind === "Cluster" ? "server" : "branch"} className="size-4" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span className="truncate text-sm font-medium">{row.name}</span>
-              <span className="text-xs text-muted-foreground">{row.kind}</span>
-            </div>
-            <p className={`mt-0.5 text-sm ${row.health.level === "healthy" ? "text-muted-foreground" : tone[row.health.level].text}`}>
-              <LevelIcon level={row.health.level} className="mr-1 inline size-3.5 align-[-2px]" />
-              <span className="font-medium">{row.health.label}</span> · {row.health.detail}
-            </p>
-            {row.health.affectedApplications.length > 0 && (
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                Affects {row.health.affectedApplications.length} application{row.health.affectedApplications.length === 1 ? "" : "s"}: {row.health.affectedApplications.map((app) => app.name).join(", ")}
-              </p>
-            )}
-          </div>
-        </li>
-      ))}
-    </ul>
-  )
-}
+const severityLabel: Record<TriageSeverity, string> = { critical: "Critical", high: "High", medium: "Medium", low: "Low" }
+const severityVariant = { critical: "destructive", high: "warning", medium: "info", low: "success" } as const
+const ATTENTION_LIMIT = 5
+const SYNC_LIMIT = 5
 
 export default function OverviewPage() {
   const { applications, loading, error, refresh } = useWorkspace()
@@ -117,26 +73,54 @@ export default function OverviewPage() {
   const total = applications.length
   const qs = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : ""
   const listHref = (status?: string) => (workspaceId ? `/applications${qs}${status ? `&status=${status}` : ""}` : "/workspaces")
-  const connectionsHref = workspaceId ? `/workspaces/${workspaceId}?tab=connections` : "/workspaces"
-  const { attention, synced, other, stalled, rows } = model
+  const connectionsHref = workspaceId ? `/workspaces/${workspaceId}/connections/git-sources` : "/workspaces"
+  const { attention, synced, stalled, rows } = model
   const triage = useTriage(workspaceId ?? "")
   const ranked = new Set(triage.triage?.items.map((item) => item.applicationId) ?? [])
   // Applications ranked by triage are shown there; the rest (for example stalled checks) keep the plain rows.
   const rest = [...attention, ...stalled].filter((app) => !ranked.has(app.id))
   const failedLabels = { clusters: "clusters", gitSources: "Git sources", approvals: "approvals" } as const
 
+  const syncHistoryData = syncHistory.result.history
+  const syncSummary = syncHistoryData
+    ? { ...summarizeSyncHistory(syncHistoryData), series: syncHistoryData.buckets.map((bucket) => bucket.succeeded + bucket.failed + bucket.cancelled + bucket.active) }
+    : null
+  const problems = rows.filter((row) => row.health.level !== "healthy")
+  const syncApplications = syncHistory.result.history?.applications ?? []
+  // Ranked applications first, then whatever else needs a look (for example stalled checks).
+  const attentionItems = [
+    ...(triage.triage?.items ?? []).map((item) => ({
+      id: item.applicationId,
+      name: item.applicationName,
+      href: `/applications/${item.applicationId}${item.actionTab && item.actionTab !== "overview" ? `?tab=${item.actionTab}` : ""}`,
+      severity: item.severity,
+      headline: item.headline.replace(new RegExp(`^${item.applicationName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:\\-–—]\\s*`, "i"), ""),
+      next: item.action,
+    })),
+    ...rest.map((app) => ({
+      id: app.id,
+      name: app.name,
+      href: `/applications/${app.id}`,
+      severity: undefined,
+      headline: applicationAttentionReason(app) ?? `No check ${ago(app.lastCheckedAt || app.createdAt, now)} (every ${app.pollSeconds}s expected)`,
+      next: undefined,
+    })),
+  ]
+  const visibleAttention = attentionItems.slice(0, ATTENTION_LIMIT)
+  const urgent = attentionItems.some((item) => item.severity === "critical" || item.severity === "high")
+
   return (
     <>
       <PageHeading
-        title={workspace ? `${workspace.name} overview` : "Overview"}
-        description={workspace ? "Live health of connections, deployments, and pending reviews in this workspace." : "Select a workspace to view its delivery status."}
+        title={workspace ? workspace.name : "Overview"}
+        description={workspace ? "What needs you right now, and how delivery is going." : "Select a workspace to view its delivery status."}
         actions={
           <>
             {workspaceId && <AIAssistant key={`ask-${workspaceId}`} workspaceId={workspaceId} features={["ask"]} buttonLabel="Ask AI" />}
-            <Button type="button" variant="outline" onClick={refreshOverview}>Refresh</Button>
-            <ActionLink href={workspaceId ? `/applications/new${qs}` : "/workspaces"}>
-              <HugeiconsIcon icon={Add01Icon} strokeWidth={1.8} aria-hidden="true" /> New application
-            </ActionLink>
+            <Button type="button" variant="ghost" onClick={refreshOverview}><HugeiconsIcon icon={Refresh01Icon} strokeWidth={1.8} aria-hidden="true" />Refresh</Button>
+            <Button render={<Link href={workspaceId ? `/applications/new${qs}` : "/workspaces"} />} nativeButton={false}>
+              <HugeiconsIcon icon={Add01Icon} strokeWidth={1.8} aria-hidden="true" />New application
+            </Button>
           </>
         }
       />
@@ -147,135 +131,134 @@ export default function OverviewPage() {
         <CollectionSkeleton />
       ) : (
         <div className="space-y-6">
-          {health.failed.length > 0 && <p role="status" className="text-sm text-muted-foreground">Could not load {health.failed.map((key) => failedLabels[key]).join(", ")}. Some metrics may be incomplete.</p>}
+          {health.failed.length > 0 && <p role="status" className="text-sm text-muted-foreground">Could not load {health.failed.map((key) => failedLabels[key]).join(", ")}. Some numbers may be incomplete.</p>}
 
-          <WorkspaceMetrics total={total} healthy={synced} other={other} attention={attention} stalled={stalled} connections={rows} health={health} now={now} applicationsHref={listHref("synced")} attentionHref={listHref("attention")} connectionsHref={connectionsHref} />
+          {problems.length > 0 && (
+            <Alert tone={problems.some((row) => row.health.level === "critical") ? "destructive" : "warning"}>
+              <Alert.Icon />
+              <Alert.Title>{problems.length === 1 ? `${problems[0].name} needs attention` : `${problems.length} connections need attention`}</Alert.Title>
+              <Alert.Description>
+                {problems.slice(0, 2).map((row) => `${row.name}: ${row.health.label.toLowerCase()}`).join(" · ")}
+                {problems.length > 2 ? ` · +${problems.length - 2} more` : ""}
+              </Alert.Description>
+              <Alert.Actions><Button render={<Link href={connectionsHref} />} nativeButton={false} size="sm" variant="outline">Review connections</Button></Alert.Actions>
+            </Alert>
+          )}
 
-          <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,420px)] xl:grid-rows-[min-content_1fr]">
-            <Panel
-              title="Priorities"
-              description="Applications that need attention, most important first."
-              action={<div className="flex flex-wrap items-center justify-end gap-3"><TriageStatus triage={triage.triage} starting={triage.starting} onRun={() => void triage.run()} /><TrailingLink href={listHref("attention")}>View all</TrailingLink></div>}
-            >
-              {triage.triage && triage.triage.items.length > 0 && <TriageList triage={triage.triage} attentionHref={listHref("attention")} />}
-              {triage.error && !triage.triage && <p role="status" className="px-5 py-3 text-xs text-muted-foreground">Priority ranking is unavailable right now.</p>}
-              {rest.length ? (
-                <ul className={`divide-y ${triage.triage?.items.length ? "border-t" : ""}`}>
-                  {rest.slice(0, 6).map((app) => {
-                    const reason = applicationAttentionReason(app) ?? `No check ${ago(app.lastCheckedAt || app.createdAt, now)} (every ${app.pollSeconds}s expected)`
-                    return (
-                      <li key={app.id}>
-                        <Link href={`/applications/${app.id}`} className="flex flex-wrap items-center gap-3 px-5 py-4 transition-colors hover:bg-muted/40">
-                          <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-lg bg-warning/10 text-warning-foreground dark:text-warning">
-                            <WorkspaceIcon name="app" className="size-4" />
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-medium">{app.name}</span>
-                            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                              {app.clusterName ?? "cluster"} · {app.revision}
-                            </span>
-                            <span className="mt-1 block text-sm text-warning-foreground dark:text-warning">{reason}</span>
-                            {app.statusIssues?.[0] && (
-                              <span className="mt-0.5 block text-xs text-muted-foreground">{app.statusIssues[0].summary}</span>
-                            )}
-                          </span>
-                          <StatusBadge status={app.health} />
-                          {app.autoSyncPaused && <StatusBadge status="Reconciliation paused" />}
-                          <WorkspaceIcon name="arrow" className="size-4 text-muted-foreground" />
-                        </Link>
-                      </li>
-                    )
-                  })}
-                </ul>
-              ) : triage.triage?.items.length ? null : (
-                <EmptyState
-                  title={total ? "Nothing needs attention" : "A fresh start"}
-                  description={total ? "No drift, degradation, pauses, or stalled checks." : "Create your first application to start delivering."}
-                  href={total || !workspaceId ? undefined : `/applications/new${qs}`}
-                  action="Create application"
-                />
-              )}
-            </Panel>
+          <SummaryKpis
+            total={total}
+            healthy={synced}
+            attention={attention.length + stalled.length}
+            approvals={health.approvals.length}
+            syncs={syncSummary}
+            hrefs={{ healthy: listHref("synced"), attention: listHref("attention"), approvals: "/approvals", syncs: "#insights" }}
+          />
 
-            <div className="min-w-0 space-y-6 xl:col-start-2 xl:row-span-2 xl:row-start-1">
-              <Panel
-                title="Pending approvals"
-                description="Plans waiting for a decision."
-                action={<TrailingLink href="/approvals">Open inbox</TrailingLink>}
-              >
-                {health.approvals.length ? (
-                  <ul className="divide-y">
-                    {health.approvals.map((item) => (
-                      <li key={item.planId}>
-                        <Link href={`/applications/${item.applicationId}?tab=changes`} className="flex flex-wrap items-center gap-3 px-5 py-3.5 transition-colors hover:bg-muted/40">
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-medium">{item.applicationName}</span>
-                            <span className="mt-0.5 block text-xs text-muted-foreground">
-                              {item.changeCount} changes · {item.approvedApprovals}/{item.requiredApprovals} approvals · requested {ago(item.createdAt, now)} · expires {new Date(item.expiresAt).toLocaleString()}
-                            </span>
-                          </span>
-                          {item.deletions.length > 0 && <Badge size="sm" radius="full" variant="destructive-light">{item.deletions.length} deletion{item.deletions.length === 1 ? "" : "s"}</Badge>}
-                          {item.clusterScoped.length > 0 && <Badge size="sm" radius="full" variant="warning-light">Cluster scoped</Badge>}
-                          <Badge size="sm" radius="full" variant="primary-light" className="capitalize">{item.kind || "sync"}</Badge>
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="px-5 py-8 text-center text-sm text-muted-foreground">
-                    {health.failed.includes("approvals") ? "Approvals could not be loaded." : "No plans are waiting for review."}
-                  </p>
-                )}
-              </Panel>
-
-              <Panel
-                title="Connection health"
-                description="Clusters, agents, and Git sources used by this workspace."
-                action={<TrailingLink href={connectionsHref}>Manage</TrailingLink>}
-              >
-                {!health.loaded ? <p className="px-5 py-8 text-center text-sm text-muted-foreground">Checking connections…</p> : <ConnectionList rows={rows} href={connectionsHref} />}
-              </Panel>
-
-              {workspaceId && <LatestSyncs key={workspaceId} state={syncHistory} now={now} />}
-
-              <Panel title="Delivery status" description={`${total} application${total === 1 ? "" : "s"}`}>
-                <div className="p-5">
-                  <div
-                    role="img"
-                    aria-label={`${synced} in sync, ${attention.length} need attention, ${other} in other states`}
-                    className="flex h-2.5 overflow-hidden rounded-full bg-muted"
-                  >
-                    {total > 0 && [
-                      { n: synced, c: "bg-success" },
-                      { n: attention.length, c: "bg-warning" },
-                      { n: other, c: "bg-muted-foreground/40" },
-                    ].map((segment, index) => segment.n > 0 && <span key={index} className={segment.c} style={{ width: `${(segment.n / total) * 100}%` }} />)}
+          <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,380px)]">
+            <Frame>
+              <Frame.Header>
+                <Frame.Title as="h2" className="flex items-center gap-2">
+                  {attentionItems.length > 0 && <HugeiconsIcon icon={Alert02Icon} strokeWidth={1.8} aria-hidden="true" className={`size-4 ${urgent ? "text-destructive" : "text-warning"}`} />}
+                  Needs attention
+                  {attentionItems.length > 0 && <Badge variant={urgent ? "destructive" : "warning"} size="sm">{attentionItems.length}</Badge>}
+                </Frame.Title>
+                <Frame.Description>{triage.triage?.source === "ai" && triage.triage.summary ? triage.triage.summary : "Most important first."}</Frame.Description>
+                <Frame.Action><TriageStatus triage={triage.triage} starting={triage.starting} onRun={() => void triage.run()} /></Frame.Action>
+              </Frame.Header>
+              <Frame.Panel>
+                {visibleAttention.length ? visibleAttention.map((item) => (
+                  <LinkRow key={item.id} href={item.href}>
+                    <Frame.Content>
+                      <span className="flex flex-wrap items-center gap-2">
+                        <Frame.Title as="p">{item.name}</Frame.Title>
+                        {item.severity && <Badge variant={severityVariant[item.severity]} size="sm">{severityLabel[item.severity]}</Badge>}
+                      </span>
+                      <span className="text-sm">{item.headline}</span>
+                      {item.next && <span className="text-sm text-muted-foreground">Next: {item.next}</span>}
+                    </Frame.Content>
+                  </LinkRow>
+                )) : (
+                  <div className="px-4 py-10 text-center">
+                    <p className="text-sm font-medium">{total ? "Nothing needs attention" : "A fresh start"}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">{total ? "No drift, degradation, pauses, or stalled checks." : "Create your first application to start delivering."}</p>
+                    {!total && workspaceId && <Button render={<Link href={`/applications/new${qs}`} />} nativeButton={false} size="sm" className="mt-4">Create application</Button>}
                   </div>
-                  <ul className="mt-4 grid grid-cols-3 gap-2">
-                    {[
-                      { label: "In sync", n: synced, dot: "bg-success", href: listHref("synced") },
-                      { label: "Attention", n: attention.length, dot: "bg-warning", href: listHref("attention") },
-                      { label: "Other", n: other, dot: "bg-muted-foreground/40", href: listHref("other") },
-                    ].map((item) => (
-                      <li key={item.label}>
-                        <Link href={item.href} className="block rounded-lg border px-3 py-2 transition-colors hover:bg-muted/40">
-                          <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><span aria-hidden="true" className={`size-2 rounded-full ${item.dot}`} />{item.label}</span>
-                          <span className="mt-1 block text-xl font-semibold tabular-nums">{item.n}</span>
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </Panel>
-            </div>
+                )}
+                {attentionItems.length > ATTENTION_LIMIT && (
+                  <Frame.Row className="justify-between text-sm text-muted-foreground">
+                    <span>{attentionItems.length - ATTENTION_LIMIT} more</span>
+                    <FrameLink href={listHref("attention")}>View all</FrameLink>
+                  </Frame.Row>
+                )}
+              </Frame.Panel>
+              {triage.error && !triage.triage && <p role="status" className="px-4 py-2 text-xs text-muted-foreground">Priority ranking is unavailable right now.</p>}
+            </Frame>
 
-            {workspaceId && (
-              <div className="min-w-0 space-y-6 xl:col-start-1 xl:row-start-2">
-                <SyncHistoryChartView state={syncHistory} />
-                {total > 0 && <WorkspaceDigest key={workspaceId} workspaceId={workspaceId} />}
-              </div>
-            )}
+            <div className="min-w-0 space-y-6">
+              {health.approvals.length > 0 && (
+                <Frame>
+                  <Frame.Header>
+                    <Frame.Title as="h2" className="flex items-center gap-2">Waiting for review<Badge variant="secondary" size="sm">{health.approvals.length}</Badge></Frame.Title>
+                    <Frame.Action><FrameLink href="/approvals">Open inbox</FrameLink></Frame.Action>
+                  </Frame.Header>
+                  <Frame.Panel>
+                    {health.approvals.slice(0, 4).map((item) => (
+                      <LinkRow key={item.planId} href={`/applications/${item.applicationId}?tab=changes`}>
+                        <Frame.Content>
+                          <Frame.Title as="p">{item.applicationName}</Frame.Title>
+                          <Frame.Description>{item.changeCount} change{item.changeCount === 1 ? "" : "s"} · {item.approvedApprovals}/{item.requiredApprovals} approvals · {ago(item.createdAt, now)}</Frame.Description>
+                        </Frame.Content>
+                        {item.deletions.length > 0 && <Frame.Actions><Badge variant="destructive" size="sm">{item.deletions.length} deletion{item.deletions.length === 1 ? "" : "s"}</Badge></Frame.Actions>}
+                      </LinkRow>
+                    ))}
+                  </Frame.Panel>
+                </Frame>
+              )}
+
+              <Frame>
+                <Frame.Header>
+                  <Frame.Title as="h2">Recent syncs</Frame.Title>
+                  <Frame.Action><FrameLink href={listHref()}>Applications</FrameLink></Frame.Action>
+                </Frame.Header>
+                <Frame.Panel>
+                  {syncHistory.result.loading ? <p role="status" className="px-4 py-6 text-sm text-muted-foreground">Loading syncs…</p>
+                    : syncHistory.result.error ? (
+                      <div role="status" className="flex items-center justify-between gap-3 px-4 py-4 text-sm text-muted-foreground">
+                        <span>Syncs could not be loaded.</span>
+                        <Button size="sm" variant="outline" onClick={syncHistory.retry}>Retry</Button>
+                      </div>
+                    ) : syncApplications.filter((app) => app.startedAt).length ? syncApplications.filter((app) => app.startedAt).slice(0, SYNC_LIMIT).map((app) => (
+                      <LinkRow key={app.applicationId} href={`/applications/${encodeURIComponent(app.applicationId)}?tab=activity`}>
+                        <Frame.Content>
+                          <Frame.Title as="p">{app.name}</Frame.Title>
+                          <Frame.Description>{app.type === "rollback" ? "Rollback" : "Sync"} · {ago(app.startedAt!, now)}</Frame.Description>
+                        </Frame.Content>
+                        <Frame.Actions><StatusPill status={app.status || "Not run"} /></Frame.Actions>
+                      </LinkRow>
+                    )) : <p className="px-4 py-6 text-center text-sm text-muted-foreground">No syncs yet.</p>}
+                </Frame.Panel>
+              </Frame>
+
+              {health.loaded && <Card size="sm">
+                <Card.Header>
+                  <Card.Title as="h2">Connections</Card.Title>
+                  <Card.Description>{rows.length ? (problems.length ? `${rows.length - problems.length} of ${rows.length} reachable` : `All ${rows.length} reachable`) : "None connected yet"}</Card.Description>
+                  <Card.Action><Button variant="outline" size="sm" nativeButton={false} render={<Link href={connectionsHref} />}>Manage</Button></Card.Action>
+                </Card.Header>
+              </Card>}
+            </div>
           </div>
+
+          {workspaceId && (
+            <Tabs defaultValue="activity" id="insights">
+              <Tabs.List>
+                <Tabs.Trigger value="activity">Sync activity</Tabs.Trigger>
+                {total > 0 && <Tabs.Trigger value="digest">Activity digest</Tabs.Trigger>}
+              </Tabs.List>
+              <Tabs.Content value="activity"><SyncHistoryChartView state={syncHistory} /></Tabs.Content>
+              {total > 0 && <Tabs.Content value="digest"><WorkspaceDigest key={workspaceId} workspaceId={workspaceId} /></Tabs.Content>}
+            </Tabs>
+          )}
         </div>
       )}
     </>

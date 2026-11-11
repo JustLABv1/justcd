@@ -1,10 +1,11 @@
 "use client"
 
+import { Alert } from "@/components/panelui/alert"
 import { useEffect, useId, useState } from "react"
-import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
-import { FormSelect } from "@/components/ui/form-select"
-import { Input } from "@/components/ui/input"
+import { Button } from "@/components/panelui/button"
+import { Checkbox } from "@/components/panelui/checkbox"
+import { FormSelect } from "@/components/form-select"
+import { Input } from "@/components/panelui/input"
 import { Disclosure } from "@/components/ui/collapsible"
 import { FormField } from "@/components/ui-kit"
 import {
@@ -184,31 +185,34 @@ export function GuardrailPolicyPanel({ workspaceId }: { workspaceId: string }) {
   )
 }
 
-export function PolicyEvidence({ plan }: { plan: Plan }) {
+export function PolicyEvidence({ plan, inline = false }: { plan: Plan; inline?: boolean }) {
   const evaluation = plan.policyEvaluation
   if (!evaluation) return null
   const blocked = evaluation.mode === "block" && evaluation.results.length > 0
   return (
-    <section
+    <Alert
       aria-label="Deployment policy results"
-      className={`mb-4 rounded-lg border p-3 ${blocked ? "border-destructive/30 bg-destructive/5" : evaluation.mode === "warn" && evaluation.results.length ? "border-warning/30 bg-warning/10" : "bg-muted/20"}`}
+      variant={inline ? "inline" : "plain"}
+      className="mb-4"
+      tone={blocked ? "destructive" : evaluation.mode === "warn" && evaluation.results.length ? "warning" : "success"}
     >
-      <h4 className="text-sm font-semibold">
+      <Alert.Icon />
+      <Alert.Title>
         Deployment policies · {evaluation.mode} · {evaluation.results.length}{" "}
         finding(s)
-      </h4>
-      <p className="mt-1 text-sm text-muted-foreground">
+      </Alert.Title>
+      <Alert.Description>
         {blocked
           ? "Deployment is blocked. Approval cannot override these violations."
           : evaluation.results.length
             ? "These findings allow deployment under the saved enforcement mode."
             : "All enabled policy checks passed."}
-      </p>
+      </Alert.Description>
       {evaluation.results.length > 0 && (
-        <Disclosure summary="Review policy findings" className="mt-3">
+        <Disclosure summary="Review policy findings" className="col-span-2 col-start-2 mt-3 min-w-0">
           <ul className="space-y-3">
             {evaluation.results.map((result, index) => (
-              <li key={index} className="rounded-md border p-3 text-sm">
+              <li key={index} className="text-sm">
                 <p className="font-medium break-words">
                   {result.resource.kind}{" "}
                   {result.resource.namespace
@@ -228,6 +232,6 @@ export function PolicyEvidence({ plan }: { plan: Plan }) {
           </ul>
         </Disclosure>
       )}
-    </section>
+    </Alert>
   )
 }

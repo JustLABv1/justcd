@@ -1,13 +1,12 @@
 "use client"
 
-import { AIAssistant } from "@/components/ai-assistant"
 import { WorkspaceAIPolicy } from "@/components/settings/ai-panel"
 import Link from "next/link"
 import { useParams, useRouter, useSearchParams } from "next/navigation"
 import { Suspense, useEffect, useState } from "react"
 import { SectionSkeleton } from "@/components/settings/shared"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Audit01Icon, Delete02Icon, UserAdd01Icon } from "@hugeicons/core-free-icons"
+import { Delete02Icon, UserAdd01Icon } from "@hugeicons/core-free-icons"
 import { RowActions } from "@/components/action-menu"
 import { Avatar } from "@/components/panelui/avatar"
 import { Alert } from "@/components/panelui/alert"
@@ -58,13 +57,13 @@ function WorkspaceSettingsContent({ section }: { section?: string }) {
   const isOwner = workspace?.role === "owner"
   const activeTab = isOwner
     ? (settingsTabs.includes(requestedTab ?? "") ? requestedTab! : "general")
-    : requestedTab === "ai" ? "ai" : "members"
+    : "members"
 
   // Forward the bare workspace URL and old ?tab= bookmarks to their own path.
   useEffect(() => {
     if (section || !workspace || loadedWorkspaceId !== workspaceID) return
     if (legacyTab === "connections") { router.replace(workspace.role === "viewer" ? `/workspaces/${workspaceID}/settings/members` : `/workspaces/${workspaceID}/connections/git-sources`); return }
-    const target = workspace.role === "owner" ? (settingsTabs.includes(legacyTab ?? "") ? legacyTab! : "general") : legacyTab === "ai" ? "ai" : "members"
+    const target = workspace.role === "owner" ? (settingsTabs.includes(legacyTab ?? "") ? legacyTab! : "general") : "members"
     router.replace(`/workspaces/${workspaceID}/settings/${target}`)
   }, [section, legacyTab, workspace, workspaceID, loadedWorkspaceId, router])
 
@@ -138,13 +137,12 @@ function WorkspaceSettingsContent({ section }: { section?: string }) {
       { id: "policies", label: "Deployment policies", href: `/workspaces/${workspaceID}/settings/policies` },
       { id: "notifications", label: "Notifications", href: `/workspaces/${workspaceID}/settings/notifications` },
     ] }] : []),
-    { label: "Assistant", items: [{ id: "ai", label: "AI", href: `/workspaces/${workspaceID}/settings/ai` }] },
+    ...(isOwner ? [{ label: "Assistant", items: [{ id: "ai", label: "AI", href: `/workspaces/${workspaceID}/settings/ai` }] }] : []),
   ]
 
   return <SettingsLayout
     title="Workspace settings"
     description={`Manage ${workspace.name} · ${workspace.description || "Members, deployment policies, and notifications."}`}
-    actions={<Button variant="outline" render={<Link href={`/audit?workspaceId=${encodeURIComponent(workspaceID)}`} />} nativeButton={false}><HugeiconsIcon icon={Audit01Icon} strokeWidth={1.8} aria-hidden="true" />Audit trail</Button>}
     nav={navGroups}
     activeId={activeTab}
     navLabel="Workspace settings sections"
@@ -153,7 +151,7 @@ function WorkspaceSettingsContent({ section }: { section?: string }) {
     {deletionPlans.length > 0 && <Alert tone="warning" variant="plain"><Alert.Icon /><Alert.Title>Deletion plans are ready for review.</Alert.Title><Alert.Description>Approve and apply each application plan. Once all managed resources are gone, choose “Delete workspace” again to remove the workspace record.</Alert.Description><ul className="col-start-2 mt-3 space-y-2">{deletionPlans.map((item) => <li key={item.applicationId}><Button variant="outline" size="sm" nativeButton={false} render={<Link href={`/applications/${item.applicationId}?tab=changes`} />} className="h-auto max-w-full whitespace-normal break-words text-left">{item.applicationName} · {item.managedResources} resources</Button></li>)}</ul></Alert>}
 
     {isOwner && activeTab === "publishing" && <PublishingProfiles key={workspaceID} workspaceId={workspaceID} />}
-    {activeTab === "ai" && <div className="space-y-6">{isOwner && <WorkspaceAIPolicy key={workspaceID} workspaceId={workspaceID} />}<AIAssistant presentation="inline" key={`chat-${workspaceID}`} workspaceId={workspaceID} /></div>}
+    {isOwner && activeTab === "ai" && <WorkspaceAIPolicy key={workspaceID} workspaceId={workspaceID} />}
     {activeTab === "members" && <div className="min-w-0">
         <AppDialog open={memberOpen} onOpenChange={setMemberOpen} busy={memberBusy} size="md" title="Add member" description="Give a teammate access to this workspace.">
           <form className="space-y-4" onSubmit={addMember}>

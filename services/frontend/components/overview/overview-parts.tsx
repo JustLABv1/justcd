@@ -39,7 +39,7 @@ export function FrameLink({ href, children }: { href: string; children: ReactNod
 export function KpiLink({ href, children }: { href: string; children: ReactNode }) {
   return (
     <Link href={href} className="block rounded-2xl outline-none transition-shadow hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring">
-      <Kpi surface className="h-full">{children}</Kpi>
+      <Kpi surface className="h-full flex-row items-center gap-3 !rounded-2xl !p-3.5">{children}</Kpi>
     </Link>
   )
 }
@@ -55,42 +55,28 @@ type SummaryProps = {
 
 /** The four numbers that matter first, each with an icon, a bar or a sparkline so the page has something to look at. */
 export function SummaryKpis({ total, healthy, attention, approvals, syncs, hrefs }: SummaryProps) {
+  const tile = (icon: typeof Task01Icon, tone: "good" | "bad" | "neutral", title: string, value: ReactNode, hint?: ReactNode, trailing?: ReactNode) => <>
+    <Kpi.Icon tone={tone}><HugeiconsIcon icon={icon} strokeWidth={1.8} /></Kpi.Icon>
+    <div className="min-w-0 flex-1">
+      <Kpi.Title>{title}</Kpi.Title>
+      <div className="flex items-baseline gap-2"><Kpi.Value className="text-xl leading-7">{value}</Kpi.Value>{hint && <span className="truncate text-xs text-muted-foreground">{hint}</span>}</div>
+    </div>
+    {trailing}
+  </>
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <KpiLink href={hrefs.healthy}>
-        <Kpi.Header>
-          <Kpi.Icon tone={total > 0 && healthy === total ? "good" : "neutral"}><HugeiconsIcon icon={CheckmarkCircle02Icon} strokeWidth={1.8} /></Kpi.Icon>
-          <Kpi.Title>Healthy</Kpi.Title>
-        </Kpi.Header>
-        <Kpi.Content><Kpi.Value>{healthy}<span className="ml-1 text-base font-medium text-muted-foreground">of {total}</span></Kpi.Value></Kpi.Content>
-        <Kpi.Progress value={healthy} maxValue={Math.max(total, 1)} color="success" aria-label={`${healthy} of ${total} applications healthy`} />
+        {tile(CheckmarkCircle02Icon, total > 0 && healthy === total ? "good" : "neutral", "Healthy", healthy, `of ${total}`)}
       </KpiLink>
       <KpiLink href={hrefs.attention}>
-        <Kpi.Header>
-          <Kpi.Icon tone={attention > 0 ? "bad" : "good"}><HugeiconsIcon icon={Alert02Icon} strokeWidth={1.8} /></Kpi.Icon>
-          <Kpi.Title>Needs attention</Kpi.Title>
-        </Kpi.Header>
-        <Kpi.Content><Kpi.Value>{attention}</Kpi.Value></Kpi.Content>
-        <Kpi.Footer>{attention > 0 ? "Review what is blocking delivery" : "Nothing is blocking delivery"}</Kpi.Footer>
+        {tile(Alert02Icon, attention > 0 ? "bad" : "good", "Needs attention", attention, attention > 0 ? "blocking delivery" : "all clear")}
       </KpiLink>
       <KpiLink href={hrefs.approvals}>
-        <Kpi.Header>
-          <Kpi.Icon tone={approvals > 0 ? "bad" : "neutral"}><HugeiconsIcon icon={Task01Icon} strokeWidth={1.8} /></Kpi.Icon>
-          <Kpi.Title>Awaiting approval</Kpi.Title>
-        </Kpi.Header>
-        <Kpi.Content><Kpi.Value>{approvals}</Kpi.Value></Kpi.Content>
-        <Kpi.Footer>{approvals > 0 ? "Plans waiting for a decision" : "No plans waiting"}</Kpi.Footer>
+        {tile(Task01Icon, approvals > 0 ? "bad" : "neutral", "Awaiting approval", approvals, approvals > 0 ? "plans waiting" : "none waiting")}
       </KpiLink>
       <KpiLink href={hrefs.syncs}>
-        <Kpi.Header>
-          <Kpi.Icon tone="neutral"><HugeiconsIcon icon={Rocket01Icon} strokeWidth={1.8} /></Kpi.Icon>
-          <Kpi.Title>Syncs, last 24 h</Kpi.Title>
-        </Kpi.Header>
-        <Kpi.Content layout="inline">
-          <Kpi.Stat><Kpi.Value>{syncs?.total ?? "–"}</Kpi.Value></Kpi.Stat>
-          {syncs && syncs.series.length > 1 && <Kpi.Chart data={syncs.series} color="primary" filled inline aria-hidden="true" />}
-        </Kpi.Content>
-        <Kpi.Footer>{syncs?.successRate != null ? `${syncs.successRate.toFixed(0)}% succeeded` : "No runs yet"}</Kpi.Footer>
+        {tile(Rocket01Icon, "neutral", "Syncs, last 24 h", syncs?.total ?? "–", syncs?.successRate != null ? `${syncs.successRate.toFixed(0)}% succeeded` : "No runs yet",
+          syncs && syncs.series.length > 1 && syncs.series.some((value) => value > 0) ? <Kpi.Chart data={syncs.series} color="primary" filled inline height={28} style={{ width: 72 }} aria-hidden="true" /> : null)}
       </KpiLink>
     </div>
   )

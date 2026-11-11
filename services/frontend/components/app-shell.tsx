@@ -19,7 +19,8 @@ import type { Application, ListResponse, OnboardingStatus, Workspace, User } fro
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Home01Icon, Folder01Icon, Layers01Icon, Task01Icon, Settings02Icon, Audit01Icon, Link01Icon, Add01Icon, Rocket01Icon, Search01Icon, BookOpen01Icon } from "@hugeicons/core-free-icons"
 
-type NavItem = { href: string; label: string; icon: typeof Home01Icon; badge?: number; dot?: boolean }
+type NavChild = { href: string; label: string }
+type NavItem = { href: string; label: string; icon: typeof Home01Icon; badge?: number; dot?: boolean; children?: NavChild[] }
 
 const deliveryNavigation: NavItem[] = [
   { href: "/", label: "Overview", icon: Home01Icon },
@@ -29,7 +30,13 @@ const deliveryNavigation: NavItem[] = [
 
 const adminNavigation: NavItem[] = [
   { href: "/onboarding", label: "Get started", icon: Rocket01Icon },
-  { href: "/settings", label: "Instance settings", icon: Settings02Icon },
+  { href: "/settings", label: "Instance settings", icon: Settings02Icon, children: [
+    { href: "/settings/maintenance", label: "Maintenance" },
+    { href: "/settings/ai", label: "AI" },
+    { href: "/settings/access", label: "Sign-in & access" },
+    { href: "/settings/oidc", label: "OIDC providers" },
+    { href: "/settings/users", label: "Platform users" },
+  ] },
   { href: "/audit", label: "Audit trail", icon: Audit01Icon },
 ]
 
@@ -221,9 +228,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
   }
 
+  const workspaceOwner = workspaces.find((item) => item.id === selectedWorkspaceId)?.role === "owner"
+  const settingsBase = `/workspaces/${selectedWorkspaceId}/settings`
   const workspaceNavigation: NavItem[] = [
-    { href: `/workspaces/${selectedWorkspaceId}/connections`, label: "Connections", icon: Link01Icon },
-    { href: `/workspaces/${selectedWorkspaceId}/settings`, label: "Workspace settings", icon: Settings02Icon },
+    { href: `/workspaces/${selectedWorkspaceId}/connections`, label: "Connections", icon: Link01Icon, children: [
+      { href: `/workspaces/${selectedWorkspaceId}/connections/git-sources`, label: "Git sources" },
+      { href: `/workspaces/${selectedWorkspaceId}/connections/clusters`, label: "Kubernetes" },
+      { href: `/workspaces/${selectedWorkspaceId}/connections/credentials`, label: "Credentials" },
+      { href: `/workspaces/${selectedWorkspaceId}/connections/shares`, label: "Sharing" },
+    ] },
+    { href: settingsBase, label: "Workspace settings", icon: Settings02Icon, children: [
+      ...(workspaceOwner ? [{ href: `${settingsBase}/general`, label: "General" }] : []),
+      { href: `${settingsBase}/members`, label: "Members & access" },
+      ...(workspaceOwner ? [
+        { href: `${settingsBase}/publishing`, label: "Publishing profiles" },
+        { href: `${settingsBase}/policies`, label: "Deployment policies" },
+        { href: `${settingsBase}/notifications`, label: "Notifications" },
+        { href: `${settingsBase}/ai`, label: "AI" },
+      ] : []),
+    ] },
     ...(!user?.isAdmin ? [{ href: "/audit", label: "Audit trail", icon: Audit01Icon }] : []),
   ]
   const administration = adminNavigation.filter((item) => item.href !== "/onboarding" || onboardingIncomplete).map((item) => item.href === "/onboarding" ? { ...item, dot: true } : item.href === "/settings" ? { ...item, badge: pendingAccounts } : item)
@@ -384,18 +407,27 @@ function WorkspaceSelector({
 }
 
 function RailGroup({ label, items, pathname }: { label: string; items: NavItem[]; pathname: string }) {
+  // A destination with sections opens on its own while the page is inside it; opening or closing it by hand wins.
+  const [overrides, setOverrides] = useState<Record<string, boolean>>({})
   return <NavRail.Group label={label}>
-    {items.map((item) => <NavRail.Item
-      key={item.href}
-      href={item.href}
-      render={<Link href={item.href} />}
-      active={isNavSelected(item.href, pathname)}
-      icon={<HugeiconsIcon icon={item.icon} strokeWidth={1.8} aria-hidden="true" />}
-      label={item.badge ? `${item.label} (${item.badge} pending)` : item.label}
-    >
-      {item.label}
-      {item.badge ? <NavRail.Badge aria-label={`${item.badge} pending`}>{item.badge > 99 ? "99+" : item.badge}</NavRail.Badge> : item.dot ? <NavRail.Badge aria-label="Setup incomplete">!</NavRail.Badge> : null}
-    </NavRail.Item>)}
+    {items.map((item) => {
+      const childActive = item.children?.some((child) => pathname === child.href) ?? false
+      const inside = isNavSelected(item.href, pathname)
+      return <NavRail.Item
+        key={item.href}
+        href={item.href}
+        render={<Link href={item.href} />}
+        active={item.children ? inside && !childActive : inside}
+        icon={<HugeiconsIcon icon={item.icon} strokeWidth={1.8} aria-hidden="true" />}
+        label={item.badge ? `${item.label} (${item.badge} pending)` : item.label}
+      >
+        {item.label}
+        {item.badge ? <NavRail.Badge aria-label={`${item.badge} pending`}>{item.badge > 99 ? "99+" : item.badge}</NavRail.Badge> : item.dot ? <NavRail.Badge aria-label="Setup incomplete">!</NavRail.Badge> : null}
+        {item.children && <NavRail.Sub label={`${item.label} sections`} open={overrides[item.href] ?? inside} onOpenChange={(open) => setOverrides((current) => ({ ...current, [item.href]: open }))}>
+          {item.children.map((child) => <NavRail.Item key={child.href} href={child.href} render={<Link href={child.href} />} active={pathname === child.href}>{child.label}</NavRail.Item>)}
+        </NavRail.Sub>}
+      </NavRail.Item>
+    })}
   </NavRail.Group>
 }
 

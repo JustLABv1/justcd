@@ -82,8 +82,9 @@ export function SettingsLayout({ title, description, scope, actions, nav, active
   return <div className="min-w-0">
     <PageHeading title={title} description={description} badge={scope} actions={actions} />
     {hasNav
-      ? <div className="grid items-start gap-6 lg:grid-cols-[176px_minmax(0,1fr)] lg:gap-8">
-          <SettingsNav groups={nav!} activeId={activeId ?? ""} label={navLabel} />
+      // From `lg` up the sections are children of their destination in the app's navigation rail; the strip is for narrow screens.
+      ? <div className="min-w-0 space-y-6 lg:space-y-0">
+          <div className="lg:hidden"><SettingsNav groups={nav!} activeId={activeId ?? ""} label={navLabel} /></div>
           <div className="min-w-0 space-y-8">{children}</div>
         </div>
       : <div className="max-w-4xl space-y-8">{children}</div>}

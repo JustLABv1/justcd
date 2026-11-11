@@ -255,8 +255,8 @@ export default function OverviewPage() {
                 <Tabs.Trigger value="activity">Sync activity</Tabs.Trigger>
                 {total > 0 && <Tabs.Trigger value="digest">Activity digest</Tabs.Trigger>}
               </Tabs.List>
-              <Tabs.Content value="activity" className="pt-4"><SyncHistoryChartView state={syncHistory} /></Tabs.Content>
-              {total > 0 && <Tabs.Content value="digest" className="pt-4"><WorkspaceDigest key={workspaceId} workspaceId={workspaceId} /></Tabs.Content>}
+              <Tabs.Content value="activity"><SyncHistoryChartView state={syncHistory} /></Tabs.Content>
+              {total > 0 && <Tabs.Content value="digest"><WorkspaceDigest key={workspaceId} workspaceId={workspaceId} /></Tabs.Content>}
             </Tabs>
           )}
         </div>

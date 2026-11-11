@@ -247,8 +247,19 @@ function AuditPageContent() {
             : "As a viewer you see deployment activity. Workspace owners and deployers can see more, and owners can export audit evidence."}
         </p>
       )}
-      <div className="mb-4 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <Card
+        aria-label="Audit events"
+        aria-busy={loading}
+        className="min-h-0 flex-1 overflow-hidden"
+      >
+        <Card.Header className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold">Activity</h2>
+          <span className="text-xs text-muted-foreground">
+            {loading ? "Loading…" : `${events.length} events loaded${hasMore ? " · More available" : ""}`} · Newest first · Local time
+          </span>
+        </Card.Header>
+      <div className="flex flex-wrap items-center gap-3 border-b px-6 pb-4">
+        <div className="contents">
           <ChipGroup multiple={false}
             value={[tabAllowed ? filter : "all"]}
             onValueChange={(next) => {
@@ -265,7 +276,7 @@ function AuditPageContent() {
             ))}
           </ChipGroup>
           <Input
-            className="w-full sm:max-w-72"
+            className="w-full sm:ml-auto sm:w-64"
             aria-label="Search audit events"
             placeholder="Search actions, actors, resources…"
             value={query}
@@ -274,8 +285,8 @@ function AuditPageContent() {
             onChange={(event) => setQuery(event.target.value)}
           />
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="w-full sm:w-60">
+        <div className="contents">
+          <div className="w-full sm:w-52">
             <FormSelect
               value={workspace}
               onValueChange={setWorkspace}
@@ -308,24 +319,8 @@ function AuditPageContent() {
               Clear resource filter
             </Button>
           )}
-          <p className="ml-auto text-xs text-muted-foreground">
-            {loading
-              ? "Loading…"
-              : `${events.length} events loaded${hasMore ? " · More available" : ""}`}
-          </p>
         </div>
       </div>
-      <Card
-        aria-label="Audit events"
-        aria-busy={loading}
-        className="min-h-0 flex-1 overflow-hidden"
-      >
-        <Card.Header className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold">Activity</h2>
-          <span className="text-xs text-muted-foreground">
-            Newest first · Local time
-          </span>
-        </Card.Header>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
           {loading ? (
             <div

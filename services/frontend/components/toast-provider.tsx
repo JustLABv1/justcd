@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, type ReactNode } from "react"
-import { createToaster, Toast, useToast as usePanelToasts } from "@/components/panelui/toast"
+import { createToaster, Toast } from "@/components/panelui/toast"
 import { errorMessage } from "@/lib/api"
 import { ErrorDetailsDialog } from "@/components/error-details"
 
@@ -9,42 +9,6 @@ type ToastKind = "success" | "error" | "info" | "warning"
 
 // A manager outside React lets non-component code raise toasts too.
 const toast = createToaster()
-
-function ToastClearance() {
-  const { toasts } = usePanelToasts()
-  useEffect(() => {
-    let frame = 0
-    let until = 0
-    const measure = () => {
-      const elements = document.querySelectorAll<HTMLElement>('[data-slot="toast"]:not([data-limited])')
-      const top = Math.min(window.innerHeight, ...Array.from(elements, element => element.getBoundingClientRect().top))
-      const clearance = elements.length ? Math.max(0, window.innerHeight - top + 12) : 0
-      document.documentElement.style.setProperty("--toast-clearance", `${clearance}px`)
-      if (performance.now() < until) frame = requestAnimationFrame(measure)
-    }
-    const update = () => {
-      cancelAnimationFrame(frame)
-      until = performance.now() + 600
-      frame = requestAnimationFrame(measure)
-    }
-    const viewport = document.querySelector('[data-slot="toast-viewport"]')
-    const observer = new ResizeObserver(update)
-    document.querySelectorAll('[data-slot="toast"]').forEach(element => observer.observe(element))
-    viewport?.addEventListener("pointerenter", update)
-    viewport?.addEventListener("pointerleave", update)
-    window.addEventListener("resize", update)
-    update()
-    return () => {
-      cancelAnimationFrame(frame)
-      observer.disconnect()
-      viewport?.removeEventListener("pointerenter", update)
-      viewport?.removeEventListener("pointerleave", update)
-      window.removeEventListener("resize", update)
-    }
-  }, [toasts])
-  useEffect(() => () => { document.documentElement.style.removeProperty("--toast-clearance") }, [])
-  return null
-}
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<unknown>(null)
@@ -54,9 +18,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     window.addEventListener("justcd-toast-details", show)
     return () => window.removeEventListener("justcd-toast-details", show)
   }, [])
-  return <Toast.Provider toastManager={toast} limit={3} position="bottom-right" timeout={5500}>
+  return <Toast.Provider toastManager={toast} limit={3} position="top-right" timeout={5500}>
     {children}
-    <ToastClearance />
     <ErrorDetailsDialog error={error} open={open} onOpenChange={setOpen} />
   </Toast.Provider>
 }

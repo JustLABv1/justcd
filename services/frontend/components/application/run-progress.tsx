@@ -51,13 +51,14 @@ export function RunProgressStages({ progress, label }: { progress: RunProgress; 
   const move = (direction: number) => viewport.current?.scrollBy({ left: direction * viewport.current.clientWidth * 0.75, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" })
   return <div className="min-w-0 space-y-3">
     <div ref={viewport} role="region" aria-label={label} tabIndex={0} className="overflow-x-auto rounded-lg py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring">
-      <Steps value={current} className="min-w-max" aria-label={label}>
-        {stages.map((stage, index) => <Steps.Item key={stage.id} step={index + 1} completed={stage.status === "complete"} loading={stage.status === "running"} data-run-step={index + 1} className="w-52 shrink-0 items-start">
+      <Steps value={current} separators={false} className="gap-6" aria-label={label}>
+        {stages.map((stage, index) => <Steps.Item key={stage.id} step={index + 1} completed={stage.status === "complete"} loading={stage.status === "running"} data-run-step={index + 1} className="min-w-52 flex-1 items-stretch">
           <div className="flex items-center gap-2">
             <Steps.Indicator>{stage.status === "failed" || stage.status === "cancelled" ? <HugeiconsIcon icon={Cancel01Icon} className="size-4 text-destructive" /> : stage.status === "skipped" ? <HugeiconsIcon icon={MinusSignIcon} className="size-4" /> : undefined}</Steps.Indicator>
-            <Steps.Title>{stage.title}</Steps.Title>
+            <Steps.Title className="shrink-0">{stage.title}</Steps.Title>
+            {index < stages.length - 1 && <span aria-hidden className={`h-0.5 min-w-6 flex-1 rounded-full ${stage.status === "complete" ? "bg-primary" : "bg-border"}`} />}
           </div>
-          <dl className="mt-3 space-y-2 pr-5 text-xs">
+          <dl className="mt-3 space-y-2 text-xs">
             <div className="flex items-center justify-between gap-3"><dt className="text-muted-foreground">Status</dt><dd><Badge size="sm" variant={statusVariants[stage.status]}>{statusLabels[stage.status]}</Badge></dd></div>
             {stage.time && <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Time</dt><dd><time dateTime={stage.time}>{new Date(stage.time).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</time></dd></div>}
             {stage.details.map((detail) => <div key={detail.label} className="flex items-baseline justify-between gap-3"><dt className="text-muted-foreground">{detail.label}</dt><dd className="min-w-0 break-words text-right">{detail.value}</dd></div>)}

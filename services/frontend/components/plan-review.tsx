@@ -14,6 +14,7 @@ import { FullScreenIcon, Settings02Icon } from "@hugeicons/core-free-icons"
 import { Button } from "@/components/panelui/button"
 import { Chip } from "@/components/panelui/chip"
 import { Toolbar } from "@/components/panelui/toolbar"
+import { DiffToolbarHost, DiffToolbarSlot } from "@/components/manifest-diff"
 import { Menu } from "@/components/panelui/menu"
 import { Dialog } from "@/components/panelui/dialog"
 import { Workbench, useWorkbench } from "@/components/panelui/workbench"
@@ -198,30 +199,34 @@ export function PlanReview({
         )}
       </div>
       <div ref={root} className={`min-w-0 ${fullscreen ? "h-screen bg-background p-3" : ""}`}>
+      <DiffToolbarHost>
       <Workbench className={fullscreen ? "h-full" : "h-[min(82svh,920px)]"} sidebarWidth={340} focusShortcut={false}>
         <Workbench.Bar>
           <Toolbar aria-label="Plan review controls" className="max-w-full">
             <span className="hidden px-2 text-sm font-medium sm:inline">Review resources <span className="font-normal text-muted-foreground">({entries.length})</span></span>
             <ReviewNavigationTrigger onClick={() => setNavigatorOpen(true)} />
-            <Menu>
-              <Menu.Trigger render={<Toolbar.Button label="Review options" />}>
-                <HugeiconsIcon icon={Settings02Icon} strokeWidth={1.8} aria-hidden="true" />
-              </Menu.Trigger>
-              <Menu.Content align="end" className="min-w-56">
-                {entries.length > 1 && (
-                  <Menu.Group>
-                    <Menu.GroupLabel>Group by</Menu.GroupLabel>
-                    <Menu.RadioGroup value={group} onValueChange={(value) => setGroup(value as ReviewGroup)}>
-                      <Menu.RadioItem value="risk">Risk</Menu.RadioItem>
-                      <Menu.RadioItem value="action">Action</Menu.RadioItem>
-                      <Menu.RadioItem value="namespace">Namespace</Menu.RadioItem>
-                      <Menu.RadioItem value="kind">Kind</Menu.RadioItem>
-                      <Menu.RadioItem value="child">Application child</Menu.RadioItem>
-                    </Menu.RadioGroup>
-                  </Menu.Group>
-                )}
-              </Menu.Content>
-            </Menu>
+            {entries.length > 1 && (
+              <Menu>
+                <Menu.Trigger render={<Toolbar.Button label="Review options" />}>
+                  <HugeiconsIcon icon={Settings02Icon} strokeWidth={1.8} aria-hidden="true" />
+                </Menu.Trigger>
+                <Menu.Content align="end" className="min-w-56">
+                  {entries.length > 1 && (
+                    <Menu.Group>
+                      <Menu.GroupLabel>Group by</Menu.GroupLabel>
+                      <Menu.RadioGroup value={group} onValueChange={(value) => setGroup(value as ReviewGroup)}>
+                        <Menu.RadioItem value="risk">Risk</Menu.RadioItem>
+                        <Menu.RadioItem value="action">Action</Menu.RadioItem>
+                        <Menu.RadioItem value="namespace">Namespace</Menu.RadioItem>
+                        <Menu.RadioItem value="kind">Kind</Menu.RadioItem>
+                        <Menu.RadioItem value="child">Application child</Menu.RadioItem>
+                      </Menu.RadioGroup>
+                    </Menu.Group>
+                  )}
+                </Menu.Content>
+              </Menu>
+            )}
+            <DiffToolbarSlot />
             <Toolbar.Button label={fullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={() => void toggleFullscreen()}>
               <HugeiconsIcon icon={FullScreenIcon} strokeWidth={1.8} aria-hidden="true" />
             </Toolbar.Button>
@@ -374,6 +379,7 @@ export function PlanReview({
           </div>
         </Workbench.Canvas>
       </Workbench>
+      </DiffToolbarHost>
       </div>
     </section>
   )

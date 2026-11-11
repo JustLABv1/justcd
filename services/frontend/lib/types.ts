@@ -653,7 +653,7 @@ export type ListResponse<T> = { items: T[] }
 export type BackgroundTask<T = unknown> = {
   id: string
   applicationId: string
-  kind: "plan" | "approval"
+  kind: "plan" | "approval" | "adopt"
   status: "queued" | "running" | "succeeded" | "failed"
   result?: T
   httpStatus?: number

@@ -288,11 +288,8 @@ export function OperationBar({
       }
       className="mb-5 min-w-0"
     >
-      <Card.Header>
-        <Card.Title as="h2">{operation.type === "rollback" ? "Rollback" : "Sync"}</Card.Title>
-      </Card.Header>
       <Card.Content>
-      <div className="min-w-0 space-y-4 p-4">
+      <div className="min-w-0 space-y-4">
       <div
         role="status"
         aria-live="polite"

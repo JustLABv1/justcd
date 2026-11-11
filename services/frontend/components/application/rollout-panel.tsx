@@ -3,6 +3,8 @@
 import { useEffect, useId, useRef, useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
+  ArrowDown01Icon,
+  ArrowUp01Icon,
   Cancel01Icon,
   CircleDashedIcon,
   MinusSignIcon,
@@ -32,6 +34,7 @@ import { Button } from "@/components/panelui/button"
 import { Input } from "@/components/panelui/input"
 import { FormSelect } from "@/components/form-select"
 import { Sheet } from "@/components/panelui/sheet"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/panelui/tooltip"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/panelui/tabs"
 import { Badge } from "@/components/panelui/badge"
 import { StatusBadge } from "@/components/ui-kit"
@@ -140,6 +143,10 @@ export function RolloutPanel({
   const index = selected ? filtered.indexOf(selected) : -1
   const position = selected ? resources.indexOf(selected) + 1 : 0
   const live = operation.status === "running" || operation.status === "queued"
+  // Controls only earn their place when there is something to filter, follow or step through.
+  const showFilters = resources.length > 3
+  const showFollow = live || !following
+  const showNav = filtered.length > 1
 
   function selectResource(resource: RolloutResource) {
     viewport?.scrollTo({ top: viewport.scrollTop, behavior: "instant" })
@@ -267,12 +274,13 @@ export function RolloutPanel({
           </Sheet.Description>
         </Sheet.Header>
         <Tabs
+          variant="underline"
           value={tab}
           onValueChange={(value) => setTab(String(value))}
           className="flex min-h-0 flex-1 flex-col"
         >
           <TabsList
-            className="mb-0 shrink-0 px-5 pt-2"
+            className="mb-0 shrink-0 px-5"
             aria-label="Rollout views"
           >
             <TabsTrigger value="resources">
@@ -284,87 +292,111 @@ export function RolloutPanel({
             value="resources"
             className="flex min-h-0 flex-1 flex-col"
           >
-            <div className="shrink-0 space-y-3 p-5">
-              <div className="grid gap-2 sm:grid-cols-[1fr_160px]">
-                <Input
-                  aria-label="Search rollout resources"
-                  placeholder="Search resources…"
-                  value={query}
-                  onChange={(event) => {
-                    const value = event.target.value
-                    pauseFollowing()
-                    setQuery(value)
-                  }}
-                />
-                <FormSelect
-                  ariaLabel="Filter resource status"
-                  value={status}
-                  onValueChange={(value) => {
-                    pauseFollowing()
-                    setStatus(value)
-                  }}
-                  items={[
-                    { value: "all", label: "All statuses" },
-                    { value: "partial", label: "Applied · follow-up failed" },
-                    ...[
-                      "failed",
-                      "running",
-                      "retrying",
-                      "queued",
-                      "succeeded",
-                      "skipped",
-                    ].map((value) => ({
-                      value,
-                      label: value[0].toUpperCase() + value.slice(1),
-                    })),
-                  ]}
-                />
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <label
-                  htmlFor={followId}
-                  className="flex items-center gap-2 text-sm"
-                >
-                  <Switch
-                    id={followId}
-                    checked={following}
-                    onCheckedChange={changeFollowing}
+            <div className={`shrink-0 space-y-3 px-5 pt-5 ${showFilters || showFollow || showNav ? "" : "hidden"}`}>
+              {showFilters && (
+                <div className="grid gap-2 sm:grid-cols-[1fr_180px]">
+                  <Input
+                    aria-label="Search rollout resources"
+                    placeholder="Search resources…"
+                    value={query}
+                    onChange={(event) => {
+                      const value = event.target.value
+                      pauseFollowing()
+                      setQuery(value)
+                    }}
                   />
-                  Follow rollout
-                </label>
-                <div className="flex items-center gap-1">
-                  {selected && (
-                    <span className="mr-1 text-xs text-muted-foreground">
-                      {position} / {resources.length}
-                    </span>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    aria-label="Previous resource"
-                    disabled={index <= 0}
-                    onClick={() => selectResource(filtered[index - 1])}
-                  >
-                    Previous
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    aria-label="Next resource"
-                    disabled={index < 0 || index >= filtered.length - 1}
-                    onClick={() => selectResource(filtered[index + 1])}
-                  >
-                    Next
-                  </Button>
+                  <FormSelect
+                    ariaLabel="Filter resource status"
+                    value={status}
+                    onValueChange={(value) => {
+                      pauseFollowing()
+                      setStatus(value)
+                    }}
+                    items={[
+                      { value: "all", label: "All statuses" },
+                      { value: "partial", label: "Applied · follow-up failed" },
+                      ...[
+                        "failed",
+                        "running",
+                        "retrying",
+                        "queued",
+                        "succeeded",
+                        "skipped",
+                      ].map((value) => ({
+                        value,
+                        label: value[0].toUpperCase() + value.slice(1),
+                      })),
+                    ]}
+                  />
                 </div>
-              </div>
-              <p role="status" className="text-xs text-muted-foreground">
-                {following
-                  ? live
+              )}
+              {(showFollow || showNav) && (
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  {showFollow ? (
+                    <label
+                      htmlFor={followId}
+                      className="flex items-center gap-2 text-sm"
+                    >
+                      <Switch
+                        id={followId}
+                        checked={following}
+                        onCheckedChange={changeFollowing}
+                      />
+                      Follow rollout
+                    </label>
+                  ) : (
+                    <span />
+                  )}
+                  {showNav && (
+                    <div className="flex items-center gap-1">
+                      {selected && (
+                        <span className="mr-1 text-xs text-muted-foreground tabular-nums">
+                          {position} / {resources.length}
+                        </span>
+                      )}
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              aria-label="Previous resource"
+                              disabled={index <= 0}
+                              onClick={() => selectResource(filtered[index - 1])}
+                            />
+                          }
+                        >
+                          <HugeiconsIcon icon={ArrowUp01Icon} strokeWidth={2} aria-hidden="true" />
+                        </TooltipTrigger>
+                        <TooltipContent>Previous resource</TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              aria-label="Next resource"
+                              disabled={index < 0 || index >= filtered.length - 1}
+                              onClick={() => selectResource(filtered[index + 1])}
+                            />
+                          }
+                        >
+                          <HugeiconsIcon icon={ArrowDown01Icon} strokeWidth={2} aria-hidden="true" />
+                        </TooltipTrigger>
+                        <TooltipContent>Next resource</TooltipContent>
+                      </Tooltip>
+                    </div>
+                  )}
+                </div>
+              )}
+              {showFollow && (
+                <p role="status" className="text-xs text-muted-foreground">
+                  {following
                     ? "Following the active resource"
-                    : "Showing the final result"
-                  : "Following paused · inspect any resource or turn following back on"}
-              </p>
+                    : "Following paused · inspect any resource or turn following back on"}
+                </p>
+              )}
               <p aria-live="polite" className="sr-only">
                 {following && selected
                   ? `${selected.identity.name}: ${rolloutStatus(selected)}`

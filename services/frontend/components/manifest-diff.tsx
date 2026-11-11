@@ -1,6 +1,8 @@
 "use client"
 
 import {
+  createContext,
+  useContext,
   useDeferredValue,
   useEffect,
   useId,
@@ -8,11 +10,14 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
   ArrowDown01Icon,
   ArrowUp01Icon,
+  LayoutTwoColumnIcon,
+  Rows2Icon,
   Settings02Icon,
 } from "@hugeicons/core-free-icons"
 import { Input } from "@/components/panelui/input"
@@ -41,6 +46,43 @@ type ManifestDiffProps = {
   excluded?: boolean
   changedPaths?: string[]
   takeover?: boolean
+}
+
+type DiffToolbarApi = { hosted: boolean; setControls: (node: ReactNode) => void }
+const DiffToolbarApiContext = createContext<DiffToolbarApi | null>(null)
+const DiffToolbarControlsContext = createContext<{
+  controls: ReactNode
+  setHosted: (hosted: boolean) => void
+} | null>(null)
+
+/**
+ * Lets a surrounding toolbar host the diff controls instead of the diff drawing its own bar.
+ * The controls are rendered by the slot, inside the toolbar's own React tree, so they can use
+ * its context.
+ */
+export function DiffToolbarHost({ children }: { children: ReactNode }) {
+  const [hosted, setHosted] = useState(false)
+  const [controls, setControls] = useState<ReactNode>(null)
+  const api = useMemo(() => ({ hosted, setControls }), [hosted])
+  const slot = useMemo(() => ({ controls, setHosted }), [controls])
+  return (
+    <DiffToolbarApiContext.Provider value={api}>
+      <DiffToolbarControlsContext.Provider value={slot}>
+        {children}
+      </DiffToolbarControlsContext.Provider>
+    </DiffToolbarApiContext.Provider>
+  )
+}
+
+/** Place inside the host toolbar where the diff controls should appear. */
+export function DiffToolbarSlot() {
+  const host = useContext(DiffToolbarControlsContext)
+  const setHosted = host?.setHosted
+  useEffect(() => {
+    setHosted?.(true)
+    return () => setHosted?.(false)
+  }, [setHosted])
+  return <>{host?.controls}</>
 }
 
 const wideDiffQuery = "(min-width: 768px)"
@@ -258,7 +300,7 @@ function ManifestDiffView({
           {tone === "removed" ? "−" : tone === "added" ? "+" : ""}
         </span>
         <span
-          className={`min-w-0 flex-1 pr-4 ${wrap ? "[overflow-wrap:anywhere] break-words whitespace-pre-wrap" : "overflow-x-auto whitespace-pre"}`}
+          className={`min-w-0 flex-1 pr-4 ${wrap || split ? "[overflow-wrap:anywhere] break-words whitespace-pre-wrap" : "overflow-x-auto whitespace-pre"}`}
         >
           <DiffText
             text={text ?? " "}
@@ -284,76 +326,83 @@ function ManifestDiffView({
         {excluded ? " This entry is excluded and will not be applied." : ""}
       </section>
     )
-  return (
-    <section aria-label="Manifest comparison">
-      <Toolbar variant="inline" aria-label="Manifest comparison tools" className="flex-wrap gap-2 p-3">
-        {!singleSide && (
-          <Toolbar.Group aria-label="Diff layout" value={split ? "split" : "unified"} onValueChange={setMode}>
-            <Toolbar.Tool value="split" disabled={!wide}>Side by side</Toolbar.Tool>
-            <Toolbar.Tool value="unified">Unified</Toolbar.Tool>
-          </Toolbar.Group>
-        )}
-        <Dialog>
-          <Dialog.Trigger render={<Toolbar.Button label={`Diff options${query ? " · Search active" : ""}`} />}>
-            <HugeiconsIcon icon={Settings02Icon} strokeWidth={1.8} aria-hidden="true" />
-          </Dialog.Trigger>
-          <Dialog.Content variant="plain" size="sm"><Dialog.Header title="Diff options" /><Dialog.Body>
-            <label
-              htmlFor={`${optionsId}-search`}
-              className="text-sm font-medium"
-            >
-              Search diff text
-            </label>
-            <Input
-              id={`${optionsId}-search`}
-              aria-label="Search manifest diff"
-              placeholder="Search diff text…"
-              className="w-full"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-            <div className="space-y-1.5">
-              <p id={`${optionsId}-font`} className="text-sm font-medium">
-                Code font size
-              </p>
-              <RadioGroup orientation="horizontal" aria-labelledby={`${optionsId}-font`} value={fontSize} onValueChange={setFontSize}>
-                {[14, 16, 18].map(n => <Label key={n} className="flex w-auto items-center gap-2"><Radio value={String(n)} />{n} px</Label>)}
-              </RadioGroup>
-            </div>
-            <SwitchField
-              id={`${optionsId}-wrap`}
-              label="Wrap lines"
-              description="Wrap long lines instead of scrolling horizontally."
-              checked={wrap}
-              onCheckedChange={setWrap}
-            />
-            <SwitchField
-              id={`${optionsId}-expand`}
-              label="Show all lines"
-              description="Include unchanged context lines."
-              checked={expanded}
-              onCheckedChange={setExpanded}
-            />
-          </Dialog.Body></Dialog.Content>
-        </Dialog>
+  const toolbarApi = useContext(DiffToolbarApiContext)
+  const host = toolbarApi?.hosted ?? false
+  const compact = !host && singleSide && hunks.length <= 1
+  const optionsDialog = (
+    <Dialog>
+      <Dialog.Trigger render={compact ? <Button variant="ghost" size="icon" aria-label={`Diff options${query ? " · Search active" : ""}`} /> : <Toolbar.Button label={`Diff options${query ? " · Search active" : ""}`} />}>
+        <HugeiconsIcon icon={Settings02Icon} strokeWidth={1.8} aria-hidden="true" />
+      </Dialog.Trigger>
+      <Dialog.Content variant="plain" size="sm"><Dialog.Header title="Diff options" /><Dialog.Body>
+        <label
+          htmlFor={`${optionsId}-search`}
+          className="text-sm font-medium"
+        >
+          Search diff text
+        </label>
+        <Input
+          id={`${optionsId}-search`}
+          aria-label="Search manifest diff"
+          placeholder="Search diff text…"
+          className="w-full"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        <div className="space-y-1.5">
+          <p id={`${optionsId}-font`} className="text-sm font-medium">
+            Code font size
+          </p>
+          <RadioGroup orientation="horizontal" aria-labelledby={`${optionsId}-font`} value={fontSize} onValueChange={setFontSize}>
+            {[14, 16, 18].map(n => <Label key={n} className="flex w-auto items-center gap-2"><Radio value={String(n)} />{n} px</Label>)}
+          </RadioGroup>
+        </div>
+        <SwitchField
+          id={`${optionsId}-wrap`}
+          label="Wrap lines"
+          description="Wrap long lines instead of scrolling horizontally."
+          checked={wrap}
+          onCheckedChange={setWrap}
+        />
+        <SwitchField
+          id={`${optionsId}-expand`}
+          label="Show all lines"
+          description="Include unchanged context lines."
+          checked={expanded}
+          onCheckedChange={setExpanded}
+        />
+      </Dialog.Body></Dialog.Content>
+    </Dialog>
+  )
+  const toolbarControls = (
+    <>
+    {!singleSide && (
+      <Toolbar.Group aria-label="Diff layout" value={split ? "split" : "unified"} onValueChange={setMode}>
+        <Toolbar.Tool value="split" label="Side by side" disabled={!wide}><HugeiconsIcon icon={LayoutTwoColumnIcon} strokeWidth={1.8} aria-hidden="true" /></Toolbar.Tool>
+        <Toolbar.Tool value="unified" label="Unified"><HugeiconsIcon icon={Rows2Icon} strokeWidth={1.8} aria-hidden="true" /></Toolbar.Tool>
+      </Toolbar.Group>
+    )}
+    {!compact && optionsDialog}
 
-        {search && (
-          <span role="status" className="text-sm text-muted-foreground">
-            {matches.length} matching lines
-          </span>
-        )}
-        <div className="ml-auto flex items-center gap-2">
-          <span className="text-sm text-muted-foreground" aria-live="polite">
-            {hunks.length
-              ? position < 0
-                ? `${hunks.length} ${hunks.length === 1 ? "change" : "changes"}`
-                : `${position + 1} of ${hunks.length}`
-              : hiddenPaths.length
-                ? `${hiddenPaths.length} hidden field ${hiddenPaths.length === 1 ? "change" : "changes"}`
-                : takeover
-                  ? "Ownership change only"
-                  : "No text changes"}
-          </span>
+    {search && (
+      <span role="status" className="text-sm text-muted-foreground">
+        {matches.length} matching lines
+      </span>
+    )}
+    <div className={`flex items-center gap-2 ${!host && hunks.length > 1 ? "ml-auto" : ""}`}>
+      <span className="text-sm text-muted-foreground" aria-live="polite">
+        {hunks.length
+          ? position < 0
+            ? `${hunks.length} ${hunks.length === 1 ? "change" : "changes"}`
+            : `${position + 1} of ${hunks.length}`
+          : hiddenPaths.length
+            ? `${hiddenPaths.length} hidden field ${hiddenPaths.length === 1 ? "change" : "changes"}`
+            : takeover
+              ? "Ownership change only"
+              : "No text changes"}
+      </span>
+      {hunks.length > 1 && (
+        <>
           <Toolbar.Button
             label="Previous change"
             disabled={!hunks.length}
@@ -376,8 +425,23 @@ function ManifestDiffView({
               aria-hidden="true"
             />
           </Toolbar.Button>
-        </div>
-      </Toolbar>
+        </>
+      )}
+    </div>
+    </>
+  )
+  const setToolbarControls = toolbarApi?.setControls
+  useEffect(() => {
+    if (host) setToolbarControls?.(toolbarControls)
+  })
+  useEffect(() => () => setToolbarControls?.(null), [setToolbarControls])
+  return (
+    <section aria-label="Manifest comparison">
+      {host ? null : !compact && (
+        <Toolbar variant="inline" aria-label="Manifest comparison tools" className="w-full flex-wrap gap-2 p-3">
+          {toolbarControls}
+        </Toolbar>
+      )}
       {hiddenPaths.length > 0 && (
         <div className="p-3">
           <Alert tone="info" role="status" variant="inline">
@@ -405,7 +469,7 @@ function ManifestDiffView({
         style={{ fontSize: Number(fontSize) }}
       >
         <div
-          className={`grid border-b bg-muted px-3 py-2 font-sans text-sm font-medium grid-cols-2`}
+          className={`border-b bg-muted px-3 py-2 font-sans text-sm font-medium ${compact ? "flex items-center justify-between" : "grid grid-cols-2"}`}
         >
           {!(singleSide && beforeMissing) && (
             <span>
@@ -419,6 +483,7 @@ function ManifestDiffView({
               {file && file.after === undefined ? " · file absent" : ""}
             </span>
           )}
+          {compact && optionsDialog}
         </div>
         {singleSide && excluded && (
           <p className="border-b px-4 py-3 font-sans text-sm text-muted-foreground">

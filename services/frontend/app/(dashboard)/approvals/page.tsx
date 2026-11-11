@@ -192,7 +192,7 @@ function WorkspaceApprovalInbox({ workspace, workspaceId }: { workspace: Workspa
       </div>}
     </Card.Content></Card>)}</div>}
     {inbox && (inbox.total > pageSize || page > 1) && <Pagination aria-label="Approval pages" className="mt-5" count={Math.max(1, Math.ceil(inbox.total / pageSize))} page={page} disabled={loading} onPageChange={(next) => { setLoading(true); setPage(next) }} />}
-    {(pendingApprovals > 0 || (results && chosen.length === 0)) && <section aria-label="Approval progress" role="status" className="sticky bottom-[max(1rem,var(--toast-clearance,0px))] z-10 mt-6 space-y-2 rounded-2xl bg-popover p-4 shadow-lg ring-1 ring-foreground/10">
+    {(pendingApprovals > 0 || (results && chosen.length === 0)) && <section aria-label="Approval progress" role="status" className="sticky bottom-4 z-10 mt-6 space-y-2 rounded-2xl bg-popover p-4 shadow-lg ring-1 ring-foreground/10">
       <div className="flex flex-wrap items-center gap-3">
         {pendingApprovals > 0 && <Spinner className="size-4" aria-hidden="true" />}
         <p className="min-w-0 flex-1 text-sm"><strong>{pendingApprovals > 0 ? `Approving ${pendingApprovals} plan${pendingApprovals === 1 ? "" : "s"}…` : "Approval processing complete"}</strong>{results && <span className="ml-2">{results.succeeded} approved · {results.failed} failed</span>}</p>

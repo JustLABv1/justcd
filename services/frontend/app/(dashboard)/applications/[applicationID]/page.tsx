@@ -394,7 +394,7 @@ export default function ApplicationDetailPage() {
     setBusy(true); setPendingAction("adopt-batch")
     const progress = toast.loading(`Claiming ${selected.length} resource${selected.length === 1 ? "" : "s"}…`)
     try {
-      const result = await apiPost<{ claimed: number; failed: number; results: { identity: Identity; status: string; error?: string }[] }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/adopt-batch`, {
+      const result = await backgroundTasks.run<{ claimed: number; failed: number; results: { identity: Identity; status: string; error?: string }[] }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/adopt-batch`, {
         conflicts: selected,
         reason: reason.trim(),
         previousControllerDisabled,

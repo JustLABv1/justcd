@@ -1167,7 +1167,7 @@ paths:
       summary: Claim selected, freshly reviewed resources for this application (workspace owner only)
       description: Validates the full selection against the reviewed UID, live configuration, ownership, and source inputs before claiming any resource. Status-only updates do not invalidate the review. Each claim uses the latest UID and resource-version preconditions, with up to three attempts for harmless concurrent updates; a configuration or ownership change is reported as a partial result. Auto-sync is paused and a fresh approved plan is required before workload changes.
       responses:
-        '200': { description: Per-resource claimed or failed results }
+        '202': { description: Queued as a background task; the finished task result lists per-resource claimed or failed results }
         '409': { description: The review set became stale or contains an unsafe resource }
   /applications/{applicationID}/ignore-rules:
     get:

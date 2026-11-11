@@ -58,7 +58,7 @@ export function RunProgressStages({ progress, label }: { progress: RunProgress; 
             <Steps.Title className="shrink-0">{stage.title}</Steps.Title>
             {index < stages.length - 1 && <span aria-hidden className={`h-0.5 min-w-6 flex-1 rounded-full ${stage.status === "complete" ? "bg-primary" : "bg-border"}`} />}
           </div>
-          <dl className="mt-3 max-w-52 space-y-2 text-xs">
+          <dl className="mt-3 space-y-2 text-xs">
             <div className="flex items-center justify-between gap-3"><dt className="text-muted-foreground">Status</dt><dd><Badge size="sm" variant={statusVariants[stage.status]}>{statusLabels[stage.status]}</Badge></dd></div>
             {stage.time && <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Time</dt><dd><time dateTime={stage.time}>{new Date(stage.time).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</time></dd></div>}
             {stage.details.map((detail) => <div key={detail.label} className="flex items-baseline justify-between gap-3"><dt className="text-muted-foreground">{detail.label}</dt><dd className="min-w-0 break-words text-right">{detail.value}</dd></div>)}

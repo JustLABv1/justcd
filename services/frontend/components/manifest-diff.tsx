@@ -284,58 +284,62 @@ function ManifestDiffView({
         {excluded ? " This entry is excluded and will not be applied." : ""}
       </section>
     )
+  const compact = singleSide && hunks.length <= 1
+  const optionsDialog = (
+    <Dialog>
+      <Dialog.Trigger render={compact ? <Button variant="ghost" size="icon" aria-label={`Diff options${query ? " · Search active" : ""}`} /> : <Toolbar.Button label={`Diff options${query ? " · Search active" : ""}`} />}>
+        <HugeiconsIcon icon={Settings02Icon} strokeWidth={1.8} aria-hidden="true" />
+      </Dialog.Trigger>
+      <Dialog.Content variant="plain" size="sm"><Dialog.Header title="Diff options" /><Dialog.Body>
+        <label
+          htmlFor={`${optionsId}-search`}
+          className="text-sm font-medium"
+        >
+          Search diff text
+        </label>
+        <Input
+          id={`${optionsId}-search`}
+          aria-label="Search manifest diff"
+          placeholder="Search diff text…"
+          className="w-full"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        <div className="space-y-1.5">
+          <p id={`${optionsId}-font`} className="text-sm font-medium">
+            Code font size
+          </p>
+          <RadioGroup orientation="horizontal" aria-labelledby={`${optionsId}-font`} value={fontSize} onValueChange={setFontSize}>
+            {[14, 16, 18].map(n => <Label key={n} className="flex w-auto items-center gap-2"><Radio value={String(n)} />{n} px</Label>)}
+          </RadioGroup>
+        </div>
+        <SwitchField
+          id={`${optionsId}-wrap`}
+          label="Wrap lines"
+          description="Wrap long lines instead of scrolling horizontally."
+          checked={wrap}
+          onCheckedChange={setWrap}
+        />
+        <SwitchField
+          id={`${optionsId}-expand`}
+          label="Show all lines"
+          description="Include unchanged context lines."
+          checked={expanded}
+          onCheckedChange={setExpanded}
+        />
+      </Dialog.Body></Dialog.Content>
+    </Dialog>
+  )
   return (
     <section aria-label="Manifest comparison">
-      <Toolbar variant="inline" aria-label="Manifest comparison tools" className="flex-wrap gap-2 p-3">
+      {!compact && <Toolbar variant="inline" aria-label="Manifest comparison tools" className="w-full flex-wrap gap-2 p-3">
         {!singleSide && (
           <Toolbar.Group aria-label="Diff layout" value={split ? "split" : "unified"} onValueChange={setMode}>
             <Toolbar.Tool value="split" disabled={!wide}>Side by side</Toolbar.Tool>
             <Toolbar.Tool value="unified">Unified</Toolbar.Tool>
           </Toolbar.Group>
         )}
-        <Dialog>
-          <Dialog.Trigger render={<Toolbar.Button label={`Diff options${query ? " · Search active" : ""}`} />}>
-            <HugeiconsIcon icon={Settings02Icon} strokeWidth={1.8} aria-hidden="true" />
-          </Dialog.Trigger>
-          <Dialog.Content variant="plain" size="sm"><Dialog.Header title="Diff options" /><Dialog.Body>
-            <label
-              htmlFor={`${optionsId}-search`}
-              className="text-sm font-medium"
-            >
-              Search diff text
-            </label>
-            <Input
-              id={`${optionsId}-search`}
-              aria-label="Search manifest diff"
-              placeholder="Search diff text…"
-              className="w-full"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-            <div className="space-y-1.5">
-              <p id={`${optionsId}-font`} className="text-sm font-medium">
-                Code font size
-              </p>
-              <RadioGroup orientation="horizontal" aria-labelledby={`${optionsId}-font`} value={fontSize} onValueChange={setFontSize}>
-                {[14, 16, 18].map(n => <Label key={n} className="flex w-auto items-center gap-2"><Radio value={String(n)} />{n} px</Label>)}
-              </RadioGroup>
-            </div>
-            <SwitchField
-              id={`${optionsId}-wrap`}
-              label="Wrap lines"
-              description="Wrap long lines instead of scrolling horizontally."
-              checked={wrap}
-              onCheckedChange={setWrap}
-            />
-            <SwitchField
-              id={`${optionsId}-expand`}
-              label="Show all lines"
-              description="Include unchanged context lines."
-              checked={expanded}
-              onCheckedChange={setExpanded}
-            />
-          </Dialog.Body></Dialog.Content>
-        </Dialog>
+        {!compact && optionsDialog}
 
         {search && (
           <span role="status" className="text-sm text-muted-foreground">
@@ -354,30 +358,34 @@ function ManifestDiffView({
                   ? "Ownership change only"
                   : "No text changes"}
           </span>
-          <Toolbar.Button
-            label="Previous change"
-            disabled={!hunks.length}
-            onClick={() => jump(-1)}
-          >
-            <HugeiconsIcon
-              icon={ArrowUp01Icon}
-              strokeWidth={2}
-              aria-hidden="true"
-            />
-          </Toolbar.Button>
-          <Toolbar.Button
-            label="Next change"
-            disabled={!hunks.length}
-            onClick={() => jump(1)}
-          >
-            <HugeiconsIcon
-              icon={ArrowDown01Icon}
-              strokeWidth={2}
-              aria-hidden="true"
-            />
-          </Toolbar.Button>
+          {hunks.length > 1 && (
+            <>
+              <Toolbar.Button
+                label="Previous change"
+                disabled={!hunks.length}
+                onClick={() => jump(-1)}
+              >
+                <HugeiconsIcon
+                  icon={ArrowUp01Icon}
+                  strokeWidth={2}
+                  aria-hidden="true"
+                />
+              </Toolbar.Button>
+              <Toolbar.Button
+                label="Next change"
+                disabled={!hunks.length}
+                onClick={() => jump(1)}
+              >
+                <HugeiconsIcon
+                  icon={ArrowDown01Icon}
+                  strokeWidth={2}
+                  aria-hidden="true"
+                />
+              </Toolbar.Button>
+            </>
+          )}
         </div>
-      </Toolbar>
+      </Toolbar>}
       {hiddenPaths.length > 0 && (
         <div className="p-3">
           <Alert tone="info" role="status" variant="inline">
@@ -405,7 +413,7 @@ function ManifestDiffView({
         style={{ fontSize: Number(fontSize) }}
       >
         <div
-          className={`grid border-b bg-muted px-3 py-2 font-sans text-sm font-medium grid-cols-2`}
+          className={`border-b bg-muted px-3 py-2 font-sans text-sm font-medium ${compact ? "flex items-center justify-between" : "grid grid-cols-2"}`}
         >
           {!(singleSide && beforeMissing) && (
             <span>
@@ -419,6 +427,7 @@ function ManifestDiffView({
               {file && file.after === undefined ? " · file absent" : ""}
             </span>
           )}
+          {compact && optionsDialog}
         </div>
         {singleSide && excluded && (
           <p className="border-b px-4 py-3 font-sans text-sm text-muted-foreground">

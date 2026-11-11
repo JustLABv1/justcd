@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { FullScreenIcon, Settings02Icon } from "@hugeicons/core-free-icons"
+import { CheckmarkCircle02Icon, FullScreenIcon, Settings02Icon } from "@hugeicons/core-free-icons"
 import { Button } from "@/components/panelui/button"
 import { Chip } from "@/components/panelui/chip"
 import { Toolbar } from "@/components/panelui/toolbar"
@@ -21,7 +21,7 @@ import { Workbench, useWorkbench } from "@/components/panelui/workbench"
 import { useToast } from "@/components/toast-provider"
 import { Input } from "@/components/panelui/input"
 import { EmptyState } from "@/components/ui-kit"
-import { PolicyEvidence } from "@/components/guardrail-policy"
+import { PolicyEvidence, PolicySummary } from "@/components/guardrail-policy"
 import { ApprovalEvidence } from "@/components/approval-evidence"
 import { VirtualReviewList } from "@/components/virtual-review-list"
 import {
@@ -37,12 +37,31 @@ import type { Change, Plan } from "@/lib/types"
 
 function ReviewNavigation({ children, open, onOpenChange }: { children: ReactNode; open: boolean; onOpenChange: (open: boolean) => void }) {
   const { compact } = useWorkbench()
-  if (!compact) return <Workbench.Sidebar>{children}</Workbench.Sidebar>
+  // The right padding is the gutter that holds the control rail between the list and the diff.
+  if (!compact) return <Workbench.Sidebar className="pe-[3.875rem]">{children}</Workbench.Sidebar>
   return <Dialog open={open} onOpenChange={onOpenChange}>
     <Dialog.Content variant="plain" size="lg"><Dialog.Header title="Plan resources" />
       <Dialog.Body className="h-[70svh] min-h-0 [&>nav]:rounded-none [&>nav]:bg-transparent [&>nav]:p-0 [&>nav]:shadow-none [&>nav]:ring-0">{children}</Dialog.Body>
     </Dialog.Content>
   </Dialog>
+}
+
+/**
+ * Wide: a vertical rail in the gutter between the resource list and the diff, so
+ * it covers neither. Narrow: the list is a dialog, so it floats above the diff.
+ */
+function ReviewBar({ count, children }: { count: number; children: ReactNode }) {
+  const { compact } = useWorkbench()
+  const label = `Plan review controls, ${count} ${count === 1 ? "resource" : "resources"}`
+  if (compact) return <Workbench.Bar>
+    <Toolbar aria-label={label} className="max-w-full">
+      <span className="hidden px-2 text-sm font-medium sm:inline">Review resources <span className="font-normal text-muted-foreground">({count})</span></span>
+      {children}
+    </Toolbar>
+  </Workbench.Bar>
+  return <Workbench.Bar className="mt-0 -ms-[3.375rem] self-center justify-self-start">
+    <Toolbar orientation="vertical" aria-label={label} className="max-h-full">{children}</Toolbar>
+  </Workbench.Bar>
 }
 
 function ReviewNavigationTrigger({ onClick }: { onClick: () => void }) {
@@ -62,6 +81,8 @@ export function PlanReview({
   workspaceId,
   entries: supplied,
   showApprovalEvidence = true,
+  canvasHeader,
+  emptyDescription = "This plan contains no resource changes.",
   renderApprovalReview,
 }: {
   changes: Change[]
@@ -80,6 +101,10 @@ export function PlanReview({
   plan?: Plan
   entries?: ReviewEntry[]
   showApprovalEvidence?: boolean
+  /** Shown at the top of the review canvas, above the selected diff. */
+  canvasHeader?: ReactNode
+  /** Shown in place of the review workspace when the plan has nothing to review. */
+  emptyDescription?: string
   renderApprovalReview?: (
     review: (identity: Change["identity"]) => void
   ) => ReactNode
@@ -184,11 +209,35 @@ export function PlanReview({
       )
     }
   }
+  // Nothing to review: a list, a canvas and a toolbar around nothing only add chrome.
+  if (entries.length === 0) {
+    const findings = plan?.policyEvaluation && plan.policyEvaluation.results.length > 0
+    return (
+      <section aria-label="Resource review" className="min-w-0 space-y-4">
+        {renderApprovalReview?.(reviewIdentity)}
+        <div className="space-y-3 rounded-[26px] bg-muted/60 p-4 ring-1 ring-foreground/[0.06] dark:bg-muted/40 dark:ring-foreground/10">
+          {(canvasHeader || plan?.policyEvaluation) && (
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+              {canvasHeader}
+              {plan && <span className="ms-auto"><PolicySummary plan={plan} /></span>}
+            </div>
+          )}
+          {findings && plan && <PolicyEvidence plan={plan} className="mb-0" />}
+          <div className="flex items-center gap-3 rounded-2xl bg-card px-4 py-3.5 ring-1 ring-foreground/[0.06] dark:ring-foreground/10">
+            <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-full bg-success/15 text-success"><HugeiconsIcon icon={CheckmarkCircle02Icon} strokeWidth={1.8} className="size-5" /></span>
+            <div className="min-w-0">
+              <p className="text-sm font-medium">No changes to review</p>
+              <p className="text-sm text-muted-foreground">{emptyDescription}</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    )
+  }
   return (
     <section aria-label="Resource review" className="min-w-0 space-y-4">
       {renderApprovalReview?.(reviewIdentity)}
       <div>
-        {plan && <PolicyEvidence plan={plan} />}
         {plan && showApprovalEvidence && (
           <ApprovalEvidence
             plan={plan}
@@ -200,10 +249,13 @@ export function PlanReview({
       </div>
       <div ref={root} className={`min-w-0 ${fullscreen ? "h-screen bg-background p-3" : ""}`}>
       <DiffToolbarHost>
-      <Workbench className={fullscreen ? "h-full" : "h-[min(82svh,920px)]"} sidebarWidth={340} focusShortcut={false}>
-        <Workbench.Bar>
-          <Toolbar aria-label="Plan review controls" className="max-w-full">
-            <span className="hidden px-2 text-sm font-medium sm:inline">Review resources <span className="font-normal text-muted-foreground">({entries.length})</span></span>
+      <Workbench className={fullscreen ? "h-full" : "h-[min(82svh,920px)]"} sidebarWidth={402} focusShortcut={false}>
+        {(canvasHeader || plan?.policyEvaluation) && <Workbench.Header>
+          {canvasHeader}
+          {plan && <span className="ms-auto"><PolicySummary plan={plan} /></span>}
+          {plan?.policyEvaluation && plan.policyEvaluation.results.length > 0 && <div className="basis-full"><PolicyEvidence plan={plan} className="mb-0" /></div>}
+        </Workbench.Header>}
+        <ReviewBar count={entries.length}>
             <ReviewNavigationTrigger onClick={() => setNavigatorOpen(true)} />
             {entries.length > 1 && (
               <Menu>
@@ -230,8 +282,7 @@ export function PlanReview({
             <Toolbar.Button label={fullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={() => void toggleFullscreen()}>
               <HugeiconsIcon icon={FullScreenIcon} strokeWidth={1.8} aria-hidden="true" />
             </Toolbar.Button>
-          </Toolbar>
-        </Workbench.Bar>
+        </ReviewBar>
         <ReviewNavigation open={navigatorOpen} onOpenChange={setNavigatorOpen}>
         <nav
           aria-label="Plan resources"
@@ -356,7 +407,7 @@ export function PlanReview({
           />
         </nav>
         </ReviewNavigation>
-        <Workbench.Canvas className="!items-stretch !justify-stretch !px-0 !pb-0">
+        <Workbench.Canvas className="!items-stretch !justify-stretch !px-0 !pt-0 !pb-0">
           <div className="min-h-0 w-full overflow-auto px-4 pb-4">
           {active ? (
             renderChange(active.change, active.ignored, active, (identity) =>

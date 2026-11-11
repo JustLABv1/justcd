@@ -66,8 +66,8 @@ const workbenchVariants = tv({
     root: [
       'group/workbench relative grid w-full min-w-0 overflow-hidden rounded-[26px] bg-muted/60 p-2 text-foreground',
       'ring-1 ring-foreground/[0.06] dark:bg-muted/40 dark:ring-foreground/10',
-      '[grid-template-areas:"sidebar_canvas_inspector""timeline_timeline_timeline"]',
-      'grid-cols-[var(--wb-sidebar)_minmax(0,1fr)_var(--wb-inspector)] grid-rows-[minmax(0,1fr)_var(--wb-timeline)]',
+      '[grid-template-areas:"header_header_header""sidebar_canvas_inspector""timeline_timeline_timeline"]',
+      'grid-cols-[var(--wb-sidebar)_minmax(0,1fr)_var(--wb-inspector)] grid-rows-[auto_minmax(0,1fr)_var(--wb-timeline)]',
       // No grid gap: each panel carries its own 8px on the canvas side, so a
       // column that closes takes its gap with it.
       `transition-[grid-template-columns,grid-template-rows] duration-500 ${EASE} motion-reduce:transition-none`,
@@ -89,6 +89,8 @@ const workbenchVariants = tv({
       'aspect-(--wb-aspect) w-[min(100cqw,100cqh*var(--wb-ratio))]',
       `transition-[width] duration-500 ${EASE} motion-reduce:transition-none`,
     ],
+    // A row across the top of the card, over the sidebar and the canvas. It takes no room when empty.
+    header: 'flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 px-2 pb-2.5 pt-1 [grid-area:header] empty:hidden',
     bar: 'pointer-events-none z-10 mt-3 flex justify-center self-start justify-self-center [grid-area:canvas] *:pointer-events-auto',
     inspector: [
       'flex min-h-0 min-w-0 justify-end overflow-hidden ps-2 [grid-area:inspector]',
@@ -294,6 +296,20 @@ function usePresence(register: (present: boolean) => void) {
     return () => register(false);
   }, []);
 }
+
+export interface WorkbenchHeaderProps extends ComponentProps<'div'> {}
+
+/** A row across the top of the whole workbench, over the sidebar and the canvas, for status and summaries. */
+function WorkbenchHeader({ className, render, ...props }: WorkbenchHeaderProps & RenderProp<'div'>) {
+  useWorkbenchContext('Workbench.Header');
+  const slots = workbenchVariants();
+  return useRender({
+    defaultTagName: 'div',
+    render,
+    props: mergeProps({ 'data-slot': 'workbench-header', className: slots.header({ className }) }, props),
+  });
+}
+WorkbenchHeader.displayName = 'Workbench.Header';
 
 export interface WorkbenchBarProps extends ComponentProps<'div'> {}
 
@@ -574,6 +590,7 @@ function WorkbenchTimeline({
 WorkbenchTimeline.displayName = 'Workbench.Timeline';
 
 export const Workbench = Object.assign(WorkbenchRoot, {
+  Header: WorkbenchHeader,
   Bar: WorkbenchBar,
   Sidebar: WorkbenchSidebar,
   Canvas: WorkbenchCanvas,
@@ -584,6 +601,7 @@ export const Workbench = Object.assign(WorkbenchRoot, {
 });
 
 export {
+  WorkbenchHeader,
   WorkbenchBar,
   WorkbenchSidebar,
   WorkbenchCanvas,

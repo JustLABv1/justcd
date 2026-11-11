@@ -39,9 +39,9 @@ export type StatusTone = "success" | "destructive" | "warning" | "neutral"
 /** Maps a free-form status string (sync, health, check result, …) to a semantic tone. Matching is substring based on purpose. */
 export function statusTone(status: string): StatusTone {
   const normalized = status.toLowerCase().replaceAll("_", " ")
-  if (normalized.includes("synced") || normalized.includes("succeeded") || normalized === "healthy" || normalized === "true") return "success"
+  if (normalized.includes("synced") || normalized.includes("succeeded") || normalized === "applied" || normalized === "healthy" || normalized === "true") return "success"
   if (normalized.includes("delet") || normalized.includes("failed") || normalized.includes("degrad") || normalized.includes("error") || normalized === "missing" || normalized === "false") return "destructive"
-  if (normalized.includes("sync") || normalized.includes("pending") || normalized.includes("running") || normalized.includes("out of") || normalized.includes("progress") || normalized === "partial" || normalized === "suspended" || normalized.includes("paused")) return "warning"
+  if (normalized.includes("sync") || normalized.includes("pending") || normalized.includes("running") || normalized.includes("out of") || normalized.includes("progress") || normalized === "partial" || normalized === "suspended" || normalized === "stale" || normalized === "expired" || normalized.includes("paused")) return "warning"
   return "neutral"
 }
 

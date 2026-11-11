@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useRef, useState } from "react"
 import { BarChart } from "@/components/panelui/bar-chart"
 import { Button } from "@/components/panelui/button"
 import { Card } from "@/components/panelui/card"
@@ -14,6 +15,24 @@ const config = {
   failed: { label: "Failed", color: "var(--destructive)" },
   cancelled: { label: "Cancelled", color: "var(--warning)" },
   active: { label: "Active", color: "var(--info)" },
+}
+// The plot reserves a box from width ÷ height, so a fixed ratio makes wide cards
+// very tall. Aim for a steady plot height instead.
+const PLOT_HEIGHT = 260
+
+function useAspectRatio() {
+  const ref = useRef<HTMLDivElement>(null)
+  const [ratio, setRatio] = useState(2)
+  useEffect(() => {
+    const node = ref.current
+    if (!node) return
+    const read = () => setRatio(Math.min(6, Math.max(1.5, node.clientWidth / PLOT_HEIGHT)))
+    read()
+    const observer = new ResizeObserver(read)
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [])
+  return { ref, ratio }
 }
 const outcomes = ["succeeded", "failed", "cancelled", "active"] as const
 
@@ -45,6 +64,7 @@ export function SyncHistoryChartView({
   onViewActivity?: () => void
 }) {
   const { result, range, setRange, retry } = state
+  const { ref: plotRef, ratio } = useAspectRatio()
   const history = result.history
   const totals = history ? summarizeSyncHistory(history) : null
   const showData = !result.loading && !result.error && Boolean(totals && totals.total > 0)
@@ -92,7 +112,7 @@ export function SyncHistoryChartView({
         </Card.Action>
       </Card.Header>
       <Card.Content>
-      <div className="space-y-4">
+      <div ref={plotRef} className="space-y-4">
       {showData && (
         <ul aria-label="Run outcomes" className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
           {outcomes.map((outcome) => (
@@ -128,7 +148,7 @@ export function SyncHistoryChartView({
       ) : (
         history && (
           <div className="px-2 pt-4">
-            <BarChart data={history.buckets} xDataKey="startedAt" stacked barWidth={28} barGap={0.24}
+            <BarChart aspectRatio={ratio} data={history.buckets} xDataKey="startedAt" stacked barWidth={28} barGap={0.24}
               yDomain={[0, max]} animationDuration={0} domainDuration={0}
               label={`Sync and rollback outcomes over the last ${label}`}
               labelForDatum={(datum) => `${bucketLabel(String(datum.startedAt))}. ${outcomes.map(outcome => `${config[outcome].label}: ${datum[outcome]}`).join(". ")}`}>

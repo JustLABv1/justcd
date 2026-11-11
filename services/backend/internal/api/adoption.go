@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/justlab/justcd/services/backend/internal/syncer"
 )
@@ -56,7 +58,10 @@ func (s *Server) adoptApplicationResources(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "confirm that the previous controller has stopped reconciling")
 		return
 	}
-	results, err := s.Syncer.AdoptResources(r.Context(), app, currentUser(r).ID, input.Reason, input.Conflicts)
+	// A client or proxy disconnect must not abort a batch halfway through.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Minute)
+	defer cancel()
+	results, err := s.Syncer.AdoptResources(ctx, app, currentUser(r).ID, input.Reason, input.Conflicts)
 	if err != nil {
 		if errors.Is(err, syncer.ErrAdoptionStale) || errors.Is(err, syncer.ErrAdoptionUnsafe) {
 			writeError(w, http.StatusConflict, err.Error())
@@ -104,7 +109,9 @@ func (s *Server) adoptApplicationResource(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "confirm that the previous controller has stopped reconciling")
 		return
 	}
-	resource, err := s.Syncer.AdoptResource(r.Context(), app, currentUser(r).ID, input.Reason, input.Conflict)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Minute)
+	defer cancel()
+	resource, err := s.Syncer.AdoptResource(ctx, app, currentUser(r).ID, input.Reason, input.Conflict)
 	if err != nil {
 		if errors.Is(err, syncer.ErrAdoptionStale) || errors.Is(err, syncer.ErrAdoptionUnsafe) {
 			writeError(w, http.StatusConflict, err.Error())

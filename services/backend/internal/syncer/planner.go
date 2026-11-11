@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/justlab/justcd/services/backend/internal/core"
@@ -1087,6 +1089,7 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 	liveByKey := map[string]core.Resource{}
 	changedIgnoredFields := map[string][]string{}
 	conflicts := make([]*OwnershipConflict, 0)
+	prefetched := prefetchLiveObjects(ctx, input, keys, identities)
 	for _, key := range keys {
 		identity := identities[key]
 		if identity.Namespace != "" && input.MissingNamespaces[identity.Namespace] {
@@ -1120,7 +1123,12 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 		} else {
 			resourceInterface = client.Dynamic.Resource(mapping.Resource)
 		}
-		object, err := resourceInterface.Get(ctx, identity.Name, v1.GetOptions{})
+		var object *unstructured.Unstructured
+		if fetched, ok := prefetched[key]; ok {
+			object, err = fetched.object, fetched.err
+		} else {
+			object, err = resourceInterface.Get(ctx, identity.Name, v1.GetOptions{})
+		}
 		if apierrors.IsNotFound(err) {
 			if _, tracked := managedByKey[identity.Key()]; tracked {
 				if err := s.Store.DeleteManagedResource(ctx, input.Application.ID, identity); err != nil {
@@ -1333,4 +1341,57 @@ func groupKind(identity core.Identity) schema.GroupKind {
 }
 func kindKey(identity core.Identity) string {
 	return strings.Join([]string{identity.APIVersion, identity.Kind, fmt.Sprint(identity.ClusterScoped)}, "\x00")
+}
+
+type prefetchedObject struct {
+	object *unstructured.Unstructured
+	err    error
+}
+
+// Every Get through a cluster agent is a queued task, so reading a large
+// application one object at a time can outlast the request. Fetch the live
+// objects concurrently; the caller still processes them in sorted order.
+// Anything that cannot be prefetched falls back to the sequential path.
+func prefetchLiveObjects(ctx context.Context, input planInput, keys []string, identities map[string]core.Identity) map[string]prefetchedObject {
+	const workers = 8
+	results := make(map[string]prefetchedObject, len(keys))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	jobs := make(chan string)
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for key := range jobs {
+				identity := identities[key]
+				if identity.Namespace != "" && input.MissingNamespaces[identity.Namespace] {
+					continue
+				}
+				mapping, err := input.Mapper.Mapper.RESTMapping(groupKind(identity), groupVersion(identity))
+				if err != nil || (mapping.Scope.Name() == "namespace") == identity.ClusterScoped {
+					continue
+				}
+				client, err := clientFor(input, identity)
+				if err != nil {
+					continue
+				}
+				var resourceInterface dynamic.ResourceInterface
+				if mapping.Scope.Name() == "namespace" {
+					resourceInterface = client.Dynamic.Resource(mapping.Resource).Namespace(identity.Namespace)
+				} else {
+					resourceInterface = client.Dynamic.Resource(mapping.Resource)
+				}
+				object, err := resourceInterface.Get(ctx, identity.Name, v1.GetOptions{})
+				mu.Lock()
+				results[key] = prefetchedObject{object: object, err: err}
+				mu.Unlock()
+			}
+		}()
+	}
+	for _, key := range keys {
+		jobs <- key
+	}
+	close(jobs)
+	wg.Wait()
+	return results
 }

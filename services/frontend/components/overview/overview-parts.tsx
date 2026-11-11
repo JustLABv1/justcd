@@ -51,7 +51,7 @@ export function SummaryKpis({ total, healthy, attention, approvals, syncs, syncR
     <Kpi surface render={<Link href={href} />} className="h-full gap-3 outline-none transition-shadow hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring">
       <Kpi.Header><Kpi.Icon tone={tone}><HugeiconsIcon icon={icon} strokeWidth={1.8} /></Kpi.Icon><Kpi.Title>{title}</Kpi.Title></Kpi.Header>
       <Kpi.Content layout={chart ? "inline" : "below"}>
-        <Kpi.Stat><Kpi.Value>{value}</Kpi.Value><Kpi.Footer>{caption}</Kpi.Footer></Kpi.Stat>
+        <Kpi.Stat className="w-full"><Kpi.Value>{value}</Kpi.Value><Kpi.Footer className="w-full">{caption}</Kpi.Footer></Kpi.Stat>
         {chart}
       </Kpi.Content>
     </Kpi>
@@ -59,8 +59,7 @@ export function SummaryKpis({ total, healthy, attention, approvals, syncs, syncR
   const showSeries = Boolean(syncs && syncs.series.length > 1 && syncs.series.some((value) => value > 0))
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      {tile(hrefs.healthy, CheckmarkCircle02Icon, total > 0 && healthy === total ? "good" : "neutral", "Healthy", healthy, `of ${total}`,
-        <div className="w-24 shrink-0"><Kpi.Progress value={healthy} maxValue={Math.max(total, 1)} color={total > 0 && healthy === total ? "success" : healthy === 0 && total > 0 ? "destructive" : "warning"} aria-label={`${healthy} of ${total} applications healthy`} /></div>)}
+      {tile(hrefs.healthy, CheckmarkCircle02Icon, total > 0 && healthy === total ? "good" : "neutral", "Healthy", healthy, <span className="flex w-full items-center gap-3"><span className="shrink-0">of {total}</span><Kpi.Progress className="min-w-0 flex-1" value={healthy} maxValue={Math.max(total, 1)} color={total > 0 && healthy === total ? "success" : healthy === 0 && total > 0 ? "destructive" : "warning"} aria-label={`${healthy} of ${total} applications healthy`} /></span>)}
       {tile(hrefs.attention, Alert02Icon, attention > 0 ? "bad" : "good", "Needs attention", attention, attention > 0 ? "blocking delivery" : "all clear")}
       {tile(hrefs.approvals, Task01Icon, approvals > 0 ? "bad" : "neutral", "Awaiting approval", approvals, approvals > 0 ? "plans waiting" : "none waiting")}
       {tile(hrefs.syncs, Rocket01Icon, "neutral", `Syncs, last ${syncRange === "7d" ? "7 days" : "24 h"}`, syncs?.total ?? "–", syncs?.successRate != null ? `${syncs.successRate.toFixed(0)}% succeeded` : "No runs yet",

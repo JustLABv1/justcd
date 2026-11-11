@@ -13,9 +13,9 @@ import { CheckboxCard, CheckboxField } from "@/components/ui-kit"
  * validation stay in `useWizard` (see wizard.tsx); this file only draws them.
  */
 
-/** One wizard step on the page canvas, with no enclosing surface. */
+/** One wizard step, drawn as a card so the fields never float on the page canvas. */
 export function PanelStep({ title, description, children, className = "space-y-5" }: { title: string; description?: string; children: ReactNode; className?: string }) {
-  return <Section title={title} description={description}>
+  return <Section surface title={title} description={description}>
     <div className={`min-w-0 ${className}`}>{children}</div>
   </Section>
 }

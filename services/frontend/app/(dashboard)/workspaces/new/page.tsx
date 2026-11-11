@@ -32,7 +32,7 @@ export default function NewWorkspacePage() {
   if (!canCreateWorkspace) return <EmptyState title="Workspace creation is limited to administrators" description="Ask an instance administrator to create a workspace for your team or to add you to an existing one." href="/workspaces" action="View workspaces" />
   return <>
     <PageHeading title="Create workspace" description="A workspace groups your connections, applications, and members." />
-    <div className="max-w-2xl"><Section><form className="space-y-5" onSubmit={submit}>
+    <div className="max-w-2xl"><Section surface><form className="space-y-5" onSubmit={submit}>
       <FormField label="Workspace name" htmlFor="workspace-name"><Input id="workspace-name" placeholder="payments-platform" value={name} onChange={(event) => setName(event.target.value)} required maxLength={100} /></FormField>
       <FormField label="Description" htmlFor="workspace-description" hint="Optional. Shown to workspace members."><Textarea id="workspace-description" className="min-h-24" placeholder="Services and infrastructure for…" value={description} onChange={(event) => setDescription(event.target.value)} maxLength={500} /></FormField>
       <div className="flex justify-end gap-2 pt-4"><Button nativeButton={false} variant="outline" disabled={busy} render={<Link href="/workspaces" />}>Cancel</Button><Button type="submit" loading={busy} loadingText="Creating workspace…">Create workspace</Button></div>

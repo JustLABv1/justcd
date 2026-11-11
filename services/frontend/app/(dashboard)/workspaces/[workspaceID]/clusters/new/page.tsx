@@ -16,6 +16,7 @@ import { Button } from "@/components/panelui/button"
 import { FormSelect } from "@/components/form-select"
 import { Input } from "@/components/panelui/input"
 import { Textarea } from "@/components/panelui/textarea"
+import { Card } from "@/components/panelui/card"
 import { ChoiceCards } from "@/components/panelui/choice-cards"
 import { CheckboxCard, EmptyState, FormField, PageHeading } from "@/components/ui-kit"
 import { useToast } from "@/components/toast-provider"
@@ -193,14 +194,14 @@ export default function ConnectClusterPage() {
     <PageHeading title="Connect cluster" description={`Connect a Kubernetes cluster to ${workspace?.name ?? "this workspace"} and verify access. Secret values never return to the browser.`} actions={<Button variant="outline" render={<Link href={`/workspaces/${workspaceID}/connections/clusters`} />}>Cancel</Button>} />
     {!loading && error && <div className="mb-5"><ErrorNotice error={error} /></div>}
     {loading ? <Skeleton role="status" aria-label="Loading workspace connections" className="h-44 motion-reduce:animate-none" /> : !workspace ? <Alert tone="destructive" variant="plain"><Alert.Icon /><Alert.Title>Workspace unavailable</Alert.Title><Alert.Description>Workspace not found or unavailable to your account.</Alert.Description></Alert> : workspace.role !== "owner" ? <Alert tone="warning" variant="plain"><Alert.Icon /><Alert.Title>Workspace owner access required</Alert.Title><Alert.Description>Only a workspace owner can add credentials, cluster endpoints, or namespace access. Ask an owner to connect this cluster or accept a shared connection.</Alert.Description></Alert> : <div className="grid grid-cols-1 items-start gap-7 lg:grid-cols-[240px_minmax(0,1fr)]">
-      <aside className="min-w-0 lg:sticky lg:top-8">
+      <aside className="min-w-0 lg:sticky lg:top-8"><Card size="sm"><Card.Content>
         <div className="mb-6 hidden items-center gap-4 lg:flex">
           <span aria-hidden="true" className="inline-flex shrink-0 items-center justify-center rounded-2xl bg-primary/10 p-3 cluster-icon-stack h-14 w-12 text-primary lg:h-16 lg:w-14"><HugeiconsIcon icon={ServerStack02Icon} className="size-5" /></span>
           <div><p className="text-sm font-semibold">Cluster connection</p><p className="mt-1 text-sm text-muted-foreground">Four focused steps</p></div>
         </div>
         <ConnectionSteps steps={steps} value={step} highestStep={highestStep} onValueChange={setStep} />
         <div className="mt-6 hidden text-xs leading-5 text-muted-foreground sm:block"><strong className="text-foreground">Safe by design.</strong> Verification uses discovery and permission reviews only—never workload mutations.</div>
-      </aside>
+      </Card.Content></Card></aside>
       <div className="min-w-0">
         <div hidden={step !== 1}><WorkflowPanel icon={ServerStack02Icon} eyebrow="Step 1 of 4" title="How would you like to connect?" description="Use a cluster already available to this workspace, or register a new one.">
           <div className="space-y-5">
@@ -242,7 +243,7 @@ export default function ConnectClusterPage() {
 }
 
 function WorkflowPanel({ eyebrow, title, description, children }: { icon: typeof Key01Icon; eyebrow: string; title: string; description: string; children: React.ReactNode }) {
-  return <div className="space-y-3"><p className="text-xs font-medium text-muted-foreground">{eyebrow}</p><Section title={title} description={description}>{children}</Section></div>
+  return <Section surface title={title} description={description} action={<span className="text-xs font-medium text-muted-foreground">{eyebrow}</span>}>{children}</Section>
 }
 
 function WorkflowActions({ back, children }: { back?: () => void; children: React.ReactNode }) { return <div className="flex flex-wrap justify-end gap-2 pt-3">{back && <Button type="button" variant="outline" onClick={back}>Back</Button>}{children}</div> }

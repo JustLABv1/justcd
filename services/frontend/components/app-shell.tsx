@@ -223,7 +223,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const workspaceNavigation: NavItem[] = [
     { href: `/workspaces/${selectedWorkspaceId}/connections`, label: "Connections", icon: Link01Icon },
-    { href: `/workspaces/${selectedWorkspaceId}`, label: "Workspace settings", icon: Settings02Icon },
+    { href: `/workspaces/${selectedWorkspaceId}/settings`, label: "Workspace settings", icon: Settings02Icon },
     ...(!user?.isAdmin ? [{ href: "/audit", label: "Audit trail", icon: Audit01Icon }] : []),
   ]
   const administration = adminNavigation.filter((item) => item.href !== "/onboarding" || onboardingIncomplete).map((item) => item.href === "/onboarding" ? { ...item, dot: true } : item.href === "/settings" ? { ...item, badge: pendingAccounts } : item)
@@ -356,7 +356,7 @@ function WorkspaceSelector({
   const items = workspaces.map((workspace) => ({ value: workspace.id, label: workspace.name }))
   // The two shortcut entries are not workspaces, so they navigate instead of changing the selection.
   function choose(value: string | null) {
-    if (value === "__settings") router.push(`/workspaces/${selectedId}`)
+    if (value === "__settings") router.push(`/workspaces/${selectedId}/settings`)
     else if (value === "__new") router.push("/workspaces/new")
     else if (value) onChange(value)
   }
@@ -425,6 +425,10 @@ function pageCrumbs(pathname: string, workspace: Workspace | null, application: 
     const parent = { label: workspace?.name ?? "Workspace", href: `/workspaces/${parts[1]}` }
     const connectionsParent = { label: "Connections", href: `/workspaces/${parts[1]}/connections` }
     const connectionsLabels: Record<string, string> = { "git-sources": "Git sources", clusters: "Kubernetes", namespaces: "Kubernetes", credentials: "Credentials", shares: "Sharing" }
+    if (parts[2] === "settings") {
+      const labels: Record<string, string> = { general: "General", members: "Members & access", publishing: "Publishing profiles", policies: "Deployment policies", notifications: "Notifications", ai: "AI" }
+      return parts[3] ? [parent, { label: "Settings", href: `/workspaces/${parts[1]}/settings` }, { label: labels[parts[3]] ?? "Settings" }] : [parent, { label: "Settings" }]
+    }
     if (parts[2] === "connections") return parts[3] ? [parent, connectionsParent, { label: connectionsLabels[parts[3]] ?? "Connections" }] : [parent, { label: "Connections" }]
     if (parts[2] === "clusters" && parts[3] === "new") return [parent, connectionsParent, { label: "Connect cluster" }]
     if (parts[2] === "git-sources" && parts[3] === "new") return [parent, connectionsParent, { label: "Connect Git source" }]

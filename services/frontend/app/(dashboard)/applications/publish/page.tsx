@@ -204,7 +204,7 @@ export default function PublishApplicationPage() {
         variant="outline"
         size="sm"
         nativeButton={false}
-        render={<Link href={`/workspaces/${workspaceId}?tab=publishing`} />}
+        render={<Link href={`/workspaces/${workspaceId}/settings/publishing`} />}
       >
         <HugeiconsIcon icon={Settings02Icon} strokeWidth={1.8} aria-hidden="true" />
         Manage publishing profiles

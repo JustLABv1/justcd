@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { PublishingServicesEditor } from "./publishing-services"
 import { PackageSourcesCard } from "./package-sources"
 import { TemplateLibrary, type TemplateSummary } from "./template-library"
@@ -67,13 +68,27 @@ const emptySettings: PublishingProfileSettings = {
 export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
   const [templates, setTemplates] = useState<TemplateSummary[]>([])
   const [templatesReload, setTemplatesReload] = useState(0)
-  const [editingTemplate, setEditingTemplate] = useState<string | null>(null)
+  // The editors have their own URLs (?template=, ?profile=, ?copy=), so they can be linked and Back leaves them.
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const go = (next: Record<string, string | null>) => {
+    const query = new URLSearchParams(searchParams.toString())
+    for (const [key, value] of Object.entries(next)) { if (value === null) query.delete(key); else query.set(key, value) }
+    const text = query.toString()
+    router.push(text ? `${pathname}?${text}` : pathname)
+  }
+  const editingTemplate = searchParams.get("template")
+  const setEditingTemplate = (id: string | null) => go({ template: id })
   const [profiles, setProfiles] = useState<PublishingProfile[]>([])
-  const [editing, setEditing] = useState<PublishingProfile | null>(null)
-  const [copying, setCopying] = useState<PublishingProfile | null>(null)
-  const [creating, setCreating] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [loading, setLoading] = useState(true)
+  const profileParam = searchParams.get("profile")
+  const copyParam = searchParams.get("copy")
+  const creating = profileParam === "new"
+  const editing = profileParam && profileParam !== "new" ? profiles.find((item) => item.id === profileParam) ?? null : null
+  const copying = copyParam ? profiles.find((item) => item.id === copyParam) ?? null : null
+  const closeProfileEditor = () => go({ profile: null, copy: null })
   const [deleteTarget, setDeleteTarget] = useState<PublishingProfile | null>(
     null
   )
@@ -157,20 +172,14 @@ export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
         workspaceId={workspaceId}
         profile={editing}
         copyFrom={copying}
-        onCancel={() => {
-          setCreating(false)
-          setEditing(null)
-          setCopying(null)
-        }}
+        onCancel={closeProfileEditor}
         onSaved={(profile) => {
           setProfiles((items) =>
             [...items.filter((item) => item.id !== profile.id), profile].sort(
               (a, b) => a.name.localeCompare(b.name)
             )
           )
-          setCreating(false)
-          setEditing(null)
-          setCopying(null)
+          closeProfileEditor()
           setNotice("Publishing profile saved.")
         }}
       />
@@ -183,7 +192,7 @@ export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
         action={
           <Button
             onClick={() => {
-              setCreating(true)
+              go({ profile: "new", copy: null })
               setNotice("")
             }}
           >
@@ -236,11 +245,11 @@ export function PublishingProfiles({ workspaceId }: { workspaceId: string }) {
                   )}
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => { setCopying(profile); setNotice("") }}>Copy profile</Button>
+                  <Button variant="outline" onClick={() => { go({ copy: profile.id, profile: null }); setNotice("") }}>Copy profile</Button>
                   <Button
                     variant="outline"
                     onClick={() => {
-                      setEditing(profile)
+                      go({ profile: profile.id, copy: null })
                       setNotice("")
                     }}
                   >

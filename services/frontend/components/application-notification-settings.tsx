@@ -176,7 +176,7 @@ export function ApplicationNotificationSettings({
                   variant="outline"
                   size="sm"
                   render={
-                    <Link href={`/workspaces/${workspaceId}?tab=notifications`} />
+                    <Link href={`/workspaces/${workspaceId}/settings/notifications`} />
                   }
                   nativeButton={false}
                 >

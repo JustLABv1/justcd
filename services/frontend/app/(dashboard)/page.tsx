@@ -73,7 +73,7 @@ export default function OverviewPage() {
   const total = applications.length
   const qs = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : ""
   const listHref = (status?: string) => (workspaceId ? `/applications${qs}${status ? `&status=${status}` : ""}` : "/workspaces")
-  const connectionsHref = workspaceId ? `/workspaces/${workspaceId}?tab=connections` : "/workspaces"
+  const connectionsHref = workspaceId ? `/workspaces/${workspaceId}/connections/git-sources` : "/workspaces"
   const { attention, synced, stalled, rows } = model
   const triage = useTriage(workspaceId ?? "")
   const ranked = new Set(triage.triage?.items.map((item) => item.applicationId) ?? [])

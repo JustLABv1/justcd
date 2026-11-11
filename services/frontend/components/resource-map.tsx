@@ -1,11 +1,12 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { ArrowUpRight01Icon, ArrowLeft01Icon, ArrowRight01Icon, Cancel01Icon, FocusPointIcon, FullScreenIcon, RefreshIcon, Layers01Icon, Settings02Icon, Globe02Icon, DatabaseIcon, CubeIcon, Router02Icon, ServerStack01Icon, Files01Icon, FileTextIcon, Key01Icon, Shield01Icon, Clock01Icon, PlayIcon, Route01Icon, WorkflowSquare04Icon, Folder01Icon } from "@hugeicons/core-free-icons"
+import { ArrowUpRight01Icon, ArrowLeft01Icon, ArrowRight01Icon, Alert02Icon, Cancel01Icon, FilterHorizontalIcon, Search01Icon, FocusPointIcon, FullScreenIcon, RefreshIcon, Layers01Icon, Settings02Icon, Globe02Icon, DatabaseIcon, CubeIcon, Router02Icon, ServerStack01Icon, Files01Icon, FileTextIcon, Key01Icon, Shield01Icon, Clock01Icon, PlayIcon, Route01Icon, WorkflowSquare04Icon, Folder01Icon } from "@hugeicons/core-free-icons"
 import { Alert } from "@/components/panelui/alert"
 import { Badge } from "@/components/panelui/badge"
-import { Chip } from "@/components/panelui/chip"
+import { Menu } from "@/components/panelui/menu"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Button } from "@/components/panelui/button"
 import { Inspector } from "@/components/panelui/inspector"
 import { Toolbar } from "@/components/panelui/toolbar"
@@ -81,6 +82,27 @@ function fallback(plan: PlanRecord | null, inventory: ManagedResource[]): Resour
   return { nodes: [...nodes.values()], edges: [], warnings: ["Topology unavailable. Showing inventory without inferred relationships."] }
 }
 
+/** On a narrow workbench there is no room for a side rail, so the tools float over the top of the canvas. */
+function MapBar({ children }: { children: ReactNode }) {
+  const { compact } = useWorkbench()
+  return compact ? <Workbench.Bar>{children}</Workbench.Bar> : null
+}
+
+/** The right edge on a wide workbench: resource details, then the tool rail, then a handle that folds the rail away. */
+function MapSide({ children, rail, railOpen, onToggleRail }: { children: ReactNode; rail: ReactNode; railOpen: boolean; onToggleRail: () => void }) {
+  const { compact } = useWorkbench()
+  if (compact) return <>{children}</>
+  return <div className="flex h-full min-w-0 flex-1 items-stretch justify-end gap-2">
+    {children ? <div className="flex min-w-0 flex-1 [&>*]:h-full">{children}</div> : null}
+    <div className="flex shrink-0 items-start gap-1">
+      <button type="button" aria-label={railOpen ? "Hide tools" : "Show tools"} aria-expanded={railOpen} onClick={onToggleRail} className="group/handle flex h-full w-4 cursor-pointer items-center justify-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <span className="h-10 w-1 rounded-full bg-foreground/20 transition-[background-color,height] group-hover/handle:h-14 group-hover/handle:bg-foreground/40" />
+      </button>
+      {rail}
+    </div>
+  </div>
+}
+
 /** Opens the inspector sheet on a narrow workbench when something is selected. */
 function ResourceDetailsClose({ onClose }: { onClose: () => void }) {
   const { compact } = useWorkbench()
@@ -106,6 +128,8 @@ export function ResourceMap({ application, plan, inventory, operations, topology
   const [focus, setFocus] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
   const [notice, setNotice] = useState("")
+  const [railOpen, setRailOpen] = useState(true)
+  const [showAttention, setShowAttention] = useState(false)
   const root = useRef<HTMLDivElement>(null)
   const graph = useMemo(() => topology ?? fallback(plan, inventory), [topology, plan, inventory])
   const healthFor = (node: TopologyNode) => health(node)
@@ -177,39 +201,56 @@ export function ResourceMap({ application, plan, inventory, operations, topology
       </aside>
   ) : null
 
+  const attentionPanel = showAttention ? (
+    <aside aria-label="Needs attention" className="space-y-4 p-4">
+      <div className="flex items-start justify-between gap-2"><div className="flex items-center gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-destructive/10 text-destructive"><HugeiconsIcon icon={Alert02Icon} strokeWidth={1.6} className="size-5" aria-hidden="true" /></span><div><p className="text-sm font-medium uppercase tracking-widest text-muted-foreground">Needs attention</p><h3 className="mt-1 text-base font-semibold">{attention.length} {attention.length === 1 ? "resource" : "resources"}</h3></div></div><ResourceDetailsClose onClose={() => setShowAttention(false)} /></div>
+      <ul className="space-y-2">{attention.map((node) => <li key={node.id}><Button type="button" variant="outline" className="h-auto w-full justify-start gap-3 whitespace-normal rounded-lg py-2.5 text-left text-xs" onClick={() => { setSelectedId(node.id); setShowAttention(false); setMode("all"); setQuery("") }}><i aria-hidden="true" className={`size-2 shrink-0 rounded-full ${runtimeDot(node)}`} /><span className="min-w-0"><span className="block break-all font-medium">{node.identity.kind}/{node.identity.name}</span><span className={`mt-0.5 block ${isConflict(node) ? "text-warning" : toneFor(node)}`}>{isConflict(node) ? "Owned by another application" : stateFor(node) === "failed" ? "Failed" : healthFor(node)}</span></span></Button></li>)}</ul>
+      {conflictKeys.size > 0 && onReviewConflicts && <Button type="button" variant="outline" onClick={onReviewConflicts}>Review conflicts</Button>}
+    </aside>
+  ) : null
+
+  const tools = (orientation: "horizontal" | "vertical") => {
+    const vertical = orientation === "vertical"
+    return <Toolbar aria-label="Resource map tools" orientation={orientation} className={vertical ? "" : "max-w-full flex-wrap justify-center gap-2"}>
+      <Popover>
+        <PopoverTrigger render={<Button type="button" variant={query ? "secondary" : "ghost"} size="icon-sm" aria-label="Search resources" title="Search resources" />}><HugeiconsIcon icon={Search01Icon} strokeWidth={1.8} aria-hidden="true" /></PopoverTrigger>
+        <PopoverContent side={vertical ? "left" : "bottom"} align="start" className="w-64"><Input aria-label="Search resources" placeholder="Find a resource…" autoFocus value={query} onChange={(event) => { setQuery(event.target.value); setMode("all"); setFocus(false) }} /></PopoverContent>
+      </Popover>
+      <Menu>
+        <Menu.Trigger render={<Button type="button" variant={mode !== "all" ? "secondary" : "ghost"} size="icon-sm" aria-label="Filter resources" title="Filter resources" />}><HugeiconsIcon icon={FilterHorizontalIcon} strokeWidth={1.8} aria-hidden="true" /></Menu.Trigger>
+        <Menu.Content side={vertical ? "left" : "bottom"} align="start">
+          <Menu.RadioGroup value={mode} onValueChange={(next) => setMode(String(next))}>
+            {filters.filter(([value, , count]) => value === "all" || count > 0 || value === mode).map(([value, label, count]) => <Menu.RadioItem key={value} value={value}>{label}{count > 0 && <Menu.Badge>{count}</Menu.Badge>}</Menu.RadioItem>)}
+          </Menu.RadioGroup>
+        </Menu.Content>
+      </Menu>
+      {attention.length > 0 && <Button type="button" variant={showAttention ? "secondary" : "ghost"} size="icon-sm" aria-label={`Needs attention (${attention.length})`} title={`Needs attention (${attention.length})`} aria-pressed={showAttention} className="relative text-destructive hover:text-destructive" onClick={() => { setShowAttention(!showAttention); setSelectedId(null); setFocus(false) }}><HugeiconsIcon icon={Alert02Icon} strokeWidth={1.8} aria-hidden="true" /><span aria-hidden="true" className="absolute -right-0.5 -top-0.5 grid min-w-3.5 place-items-center rounded-full bg-destructive px-1 text-[10px] font-semibold leading-3.5 text-white">{attention.length}</span></Button>}
+      <Toolbar.Separator />
+      <Toolbar.Button label="Refresh cluster" onClick={onRefresh} disabled={refreshing} render={<Button type="button" variant="ghost" size="icon-sm" loading={refreshing} />}><HugeiconsIcon icon={RefreshIcon} strokeWidth={1.8} aria-hidden="true" /></Toolbar.Button>
+      <Toolbar.Button label={focus ? "Show all resources" : "Focus selection"} aria-pressed={focus} disabled={!selected} onClick={() => setFocus(!focus)} render={<Button type="button" variant={focus ? "secondary" : "ghost"} size="icon-sm" />}><HugeiconsIcon icon={FocusPointIcon} strokeWidth={1.8} aria-hidden="true" /></Toolbar.Button>
+      <Toolbar.Button label={fullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={() => void toggleFullscreen()} render={<Button type="button" variant="ghost" size="icon-sm" />}><HugeiconsIcon icon={FullScreenIcon} strokeWidth={1.8} aria-hidden="true" /></Toolbar.Button>
+    </Toolbar>
+  }
+
   return <section aria-label="Application resource topology" className="mb-6 min-w-0">
     <div ref={root} className={`min-w-0 ${fullscreen ? "h-screen bg-background p-3" : ""}`}>
-    <Workbench className={fullscreen ? "h-full" : "h-[min(78svh,860px)]"} focusShortcut={false} inspectorWidth={392}>
-      <Workbench.Bar>
-    <Toolbar aria-label="Resource map tools" className="max-w-full flex-wrap justify-center gap-2">
-      <Input aria-label="Search resources" placeholder="Find a resource…" className="w-44 sm:w-56" value={query} onChange={(event) => { setQuery(event.target.value); setMode("all"); setFocus(false) }} />
-      <Chip.Group multiple={false} aria-label="Topology filter" value={[mode]} onValueChange={(next) => setMode(next[0] ?? "all")}>
-        {filters.filter(([value, , count]) => value === "all" || count > 0 || value === mode).map(([value, label, count]) => <Chip key={value} value={value} size="md" className="gap-1.5">{label}{count > 0 && <span className="tabular-nums text-muted-foreground">{count}</span>}</Chip>)}
-      </Chip.Group>
-      {focus && <Button type="button" variant="outline" size="sm" onClick={() => setFocus(false)}>Show all resources</Button>}
-      <div className="flex items-center gap-1">
-        <Toolbar.Button label="Refresh cluster" onClick={onRefresh} disabled={refreshing} render={<Button type="button" variant="ghost" size="icon-sm" loading={refreshing} />}><HugeiconsIcon icon={RefreshIcon} strokeWidth={1.8} aria-hidden="true" /></Toolbar.Button>
-        <Toolbar.Button label={focus ? "Show all resources" : "Focus selection"} aria-pressed={focus} disabled={!selected} onClick={() => setFocus(!focus)} render={<Button type="button" variant={focus ? "secondary" : "ghost"} size="icon-sm" />}><HugeiconsIcon icon={FocusPointIcon} strokeWidth={1.8} aria-hidden="true" /></Toolbar.Button>
-        <Toolbar.Button label={fullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={() => void toggleFullscreen()} render={<Button type="button" variant="ghost" size="icon-sm" />}><HugeiconsIcon icon={FullScreenIcon} strokeWidth={1.8} aria-hidden="true" /></Toolbar.Button>
-      </div>
-    </Toolbar>
-      </Workbench.Bar>
-      <Workbench.Canvas className="!items-stretch !justify-stretch !px-0 !pb-0 !pt-28 sm:!pt-18">
+    <Workbench className={fullscreen ? "h-full" : "h-[min(78svh,860px)]"} focusShortcut={false} inspectorWidth={(selected || showAttention ? 392 + 8 : 0) + (railOpen ? 62 : 24)}>
+      <MapBar>{tools("horizontal")}</MapBar>
+      <Workbench.Canvas className="!items-stretch !justify-stretch !px-0 !pb-0 !pt-4">
         <div className="flex min-h-0 w-full flex-col gap-4 overflow-auto px-4 pb-4">
           <div className="flex min-w-0 flex-col gap-3 empty:hidden">
     {query && <p role="status" className="text-sm text-muted-foreground">{matches.size} matching resources</p>}
     {(running || operation?.status === "failed") && <Alert tone={operation?.status === "failed" ? "destructive" : "info"} role="status" variant="plain"><Alert.Icon /><Alert.Title>{operation?.type === "rollback" ? "Rollback" : "Sync"} {operation?.status === "failed" ? "stopped" : operation?.status === "queued" ? "queued" : "running"} · {operation?.progress?.completed?.length ?? 0}/{operation?.progress?.total ?? 0} resource steps completed{operation?.progress?.current ? ` · ${operation.progress.current.kind}/${operation.progress.current.name}` : ""}</Alert.Title><Alert.Description>Applied does not mean Healthy. {operation?.status === "failed" ? operation.message : ""}</Alert.Description></Alert>}
-    {attention.length > 0 && <div role="region" aria-label="Needs attention" className="flex flex-wrap items-center gap-2"><span className="text-sm font-medium">Needs attention</span>{attention.slice(0, 6).map((node) => <Button key={node.id} type="button" size="sm" variant="outline" onClick={() => { setSelectedId(node.id); setMode("all"); setQuery("") }}>{node.identity.name}<span className="text-muted-foreground">{isConflict(node) ? "owned elsewhere" : stateFor(node) === "failed" ? "failed" : healthFor(node)}</span></Button>)}{attention.length > 6 && <span className="text-xs text-muted-foreground">+{attention.length - 6} more</span>}{conflictKeys.size > 0 && onReviewConflicts && <Button type="button" size="sm" variant="ghost" onClick={onReviewConflicts}>Review conflicts</Button>}</div>}
     {notices.length === 1 && <Alert tone={warnings.length > 0 ? "warning" : "info"} role="status" variant="plain"><Alert.Icon /><Alert.Title>{notices[0]}</Alert.Title></Alert>}
     {notices.length > 1 && <Alert tone={warnings.length > 0 ? "warning" : "info"} role="status" variant="plain"><Alert.Icon /><Alert.Title>Some of this map is not live yet</Alert.Title><Alert.Details label={`${notices.length} notes`} defaultOpen>{notices.map((notice) => <Alert.Item key={notice}>{notice}</Alert.Item>)}</Alert.Details></Alert>}
           </div>
           <TopologyFlow graph={graph} selectedId={selectedId} onSelect={setSelectedId} query={query} mode={mode} focus={focus} related={related} stateFor={stateFor} syncLabels={labels} healthFor={healthFor} toneFor={toneFor} iconFor={iconFor} isChanged={isChanged} isConflict={isConflict} />
         </div>
       </Workbench.Canvas>
-      {selected && <Workbench.Inspector title="Resource details">
-        <Inspector.Panel className="h-full w-full">{details}</Inspector.Panel>
-      </Workbench.Inspector>}
-      <OpenInspector open={Boolean(selected)} />
+      <Workbench.Inspector title="Resource details" className="!justify-end">
+        <MapSide rail={railOpen ? tools("vertical") : null} onToggleRail={() => setRailOpen(!railOpen)} railOpen={railOpen}>{selected || showAttention ? <Inspector.Panel className="h-full w-full [&_[style*='min-width']]:!min-w-0">{selected ? details : attentionPanel}</Inspector.Panel> : null}</MapSide>
+      </Workbench.Inspector>
+      <OpenInspector open={Boolean(selected) || showAttention} />
     </Workbench>
     </div>
     <footer className="mt-5 flex flex-wrap items-center gap-2 px-1 text-xs text-muted-foreground" aria-label="Topology status legend">

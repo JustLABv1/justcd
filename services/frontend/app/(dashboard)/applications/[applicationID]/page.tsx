@@ -387,35 +387,50 @@ export default function ApplicationDetailPage() {
     } finally { setBusy(false); setPendingAction("") }
   }
 
+  type AdoptBatchResult = { claimed: number; failed: number; results: { identity: Identity; status: string; error?: string }[] }
+
+  async function refreshConflictsAfterAdoption(clearSelection = false) {
+    const next = await api<{ conflict: OwnershipConflict | null; conflicts: OwnershipConflict[] }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ownership-conflict`).catch(() => null)
+    if (!next) return
+    setConflictReview(next.conflicts ?? (next.conflict ? [next.conflict] : []))
+    if (clearSelection) setSelectedConflictKeys([])
+  }
+
+  // Takeover of many resources runs as a background task. Queue it, close the review
+  // dialogs, and let the background-work card and a toast report progress.
   async function adoptSelectedConflicts(reason: string, previousControllerDisabled: boolean) {
     const selected = ownershipConflicts.filter((item) => isClaimable(item, applicationID) && selectedConflictKeys.includes(diffId(item.identity)))
     if (selected.length === 0) return
     conflictEpoch.current += 1
     setBusy(true); setPendingAction("adopt-batch")
-    const progress = toast.loading(`Claiming ${selected.length} resource${selected.length === 1 ? "" : "s"}…`)
     try {
-      const result = await backgroundTasks.run<{ claimed: number; failed: number; results: { identity: Identity; status: string; error?: string }[] }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/adopt-batch`, {
+      const task = await backgroundTasks.queue<AdoptBatchResult>(`/api/v1/applications/${encodeURIComponent(applicationID)}/adopt-batch`, {
         conflicts: selected,
         reason: reason.trim(),
         previousControllerDisabled,
       })
+      setConflictOpen(false)
+      void finishAdoption(task, selected.length)
+    } catch (cause) {
+      if (cause instanceof APIError && cause.status === 409) await refreshConflictsAfterAdoption(true)
+      throw cause
+    } finally { setBusy(false); setPendingAction("") }
+  }
+
+  async function finishAdoption(task: BackgroundTask<AdoptBatchResult>, count: number) {
+    const progress = toast.loading(`Taking over ${count} resource${count === 1 ? "" : "s"}…`)
+    try {
+      const result = await backgroundTasks.wait(task)
       setApprovalSummary(null)
       await loadData().catch(() => {})
-      const next = await api<{ conflict: OwnershipConflict | null; conflicts: OwnershipConflict[] }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ownership-conflict`).catch(() => null)
-      if (next) setConflictReview(next.conflicts ?? (next.conflict ? [next.conflict] : []))
+      await refreshConflictsAfterAdoption()
       if (result.failed) toast.finish(progress, "error", `${result.claimed} claimed; ${result.failed} failed. Refresh the conflict list and retry the remaining resources.`)
       else toast.finish(progress, "success", `${result.claimed} resources claimed without changing workloads. Auto-sync is paused; review a fresh plan before syncing.`)
     } catch (cause) {
-      toast.dismiss(progress)
-      if (cause instanceof APIError && cause.status === 409) {
-        const next = await api<{ conflict: OwnershipConflict | null; conflicts: OwnershipConflict[] }>(`/api/v1/applications/${encodeURIComponent(applicationID)}/ownership-conflict`).catch(() => null)
-        if (next) {
-          setConflictReview(next.conflicts ?? (next.conflict ? [next.conflict] : []))
-          setSelectedConflictKeys([])
-        }
-      }
-      throw cause
-    } finally { setBusy(false); setPendingAction("") }
+      if (cause instanceof Error && cause.name === "AbortError") { toast.dismiss(progress); return }
+      toast.finish(progress, "error", errorMessage(cause), cause)
+      if (cause instanceof APIError && cause.status === 409) await refreshConflictsAfterAdoption(true)
+    }
   }
 
   function configureIgnore(prefill: Omit<IgnorePrefill, "nonce">) {

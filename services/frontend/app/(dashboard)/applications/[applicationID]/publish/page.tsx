@@ -128,15 +128,13 @@ export default function PublishVersionPage() {
         }
       />
       {setup?.publication.completionError && (
-        <Section
-          title="Deployment update needs attention"
-          description={setup.publication.completionError}
-        >
-          <p className="px-5 pb-4 text-sm text-muted-foreground">
-            JustCD retries automatically. Check the publishing token permissions
-            and backend GitLab connectivity.
-          </p>
-        </Section>
+        <Alert tone="warning" role="alert" className="mb-5">
+          <Alert.Icon />
+          <Alert.Title>Deployment update needs attention</Alert.Title>
+          <Alert.Description>
+            {setup.publication.completionError} JustCD retries automatically. Check the publishing token permissions and backend GitLab connectivity.
+          </Alert.Description>
+        </Alert>
       )}
       {(error ?? limitsError) != null && (
         <ErrorNotice error={error ?? limitsError} />
@@ -158,6 +156,7 @@ export default function PublishVersionPage() {
       )}
       {pipeline ? (
         <Section
+          surface
           title="Build started"
           description="The running application keeps its current version until the new release is built and applied."
         >
@@ -177,6 +176,7 @@ export default function PublishVersionPage() {
       ) : (
         <form onSubmit={submit} className="space-y-5">
           <Section
+            surface
             title="Upload application source"
             description="Each upload is a complete source snapshot. Files absent from this archive are removed from source/ in Git."
           >
@@ -244,6 +244,7 @@ export default function PublishVersionPage() {
                   </FormField>
                 </>
               )}
+              <div className="rounded-xl border p-4">
               <CheckboxCard
                 id="version-confirm"
                 checked={confirmed}
@@ -251,6 +252,7 @@ export default function PublishVersionPage() {
                 title="Replace source and build a new release"
                 description="The complete source snapshot will be committed to GitLab. Existing CI secret settings are reused. Deployment still follows JustCD review and approval controls."
               />
+              </div>
               <Button
                 type="submit"
                 loading={busy}

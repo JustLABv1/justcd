@@ -132,7 +132,7 @@ const frameVariants = tv({
     variant: {
       default: {
         // `overflow-hidden` is what gives the panel the shell's bottom corners.
-        root: 'overflow-hidden rounded-3xl border bg-tray dark:border-transparent',
+        root: 'overflow-hidden rounded-3xl border bg-tray dark:border-foreground/10',
       },
       plain: {},
       band: {

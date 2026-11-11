@@ -31,7 +31,7 @@ export function BackgroundTaskStatus({
 }) {
   const { isDismissed, dismiss } = useProgressDismissals()
   const active = tasks.filter(taskPending)
-  const displayed = active.length ? active : tasks.slice(0, 1).filter((task) => (task.kind !== "approval" || task.status !== "succeeded") && !isDismissed(`task:${task.id}`) && !planTaskHasOperation(task, operations))
+  const displayed = active.length ? active : tasks.slice(0, 1).filter((task) => (task.kind === "plan" || task.status !== "succeeded") && !isDismissed(`task:${task.id}`) && !planTaskHasOperation(task, operations))
   if (!displayed.length && !error) return null
   return (
     <Card as="section" size="sm" aria-label="Background work" className="mb-5"><Card.Content className="space-y-3">
@@ -49,7 +49,7 @@ export function BackgroundTaskStatus({
             )}
             <div className="min-w-0 flex-1">
               <p className="font-medium">
-                {task.kind === "plan" ? "Plan generation" : "Approval"}{" "}
+                {task.kind === "plan" ? "Plan generation" : task.kind === "adopt" ? "Resource takeover" : "Approval"}{" "}
                 <Badge
                   size="sm"
                   variant={
@@ -82,7 +82,9 @@ export function BackgroundTaskStatus({
                     ? taskError(task).message
                     : task.kind === "plan"
                       ? "The plan is ready for review."
-                      : "Approval recorded."}
+                      : task.kind === "adopt"
+                        ? "Takeover finished. Auto-sync is paused; review a fresh plan before syncing."
+                        : "Approval recorded."}
               </p>
             </div>
             <div className="ml-auto flex shrink-0 items-center gap-2">

@@ -2,6 +2,7 @@
 
 import { Alert } from "@/components/panelui/alert"
 import { useEffect, useId, useState } from "react"
+import { Badge } from "@/components/panelui/badge"
 import { Button } from "@/components/panelui/button"
 import { Checkbox } from "@/components/panelui/checkbox"
 import { FormSelect } from "@/components/form-select"
@@ -185,7 +186,18 @@ export function GuardrailPolicyPanel({ workspaceId }: { workspaceId: string }) {
   )
 }
 
-export function PolicyEvidence({ plan, inline = false }: { plan: Plan; inline?: boolean }) {
+/**
+ * One chip for the policy outcome. Findings need room to be read, so they still
+ * open as the full evidence alert; a clean result is just a quiet chip.
+ */
+export function PolicySummary({ plan }: { plan: Plan }) {
+  const evaluation = plan.policyEvaluation
+  if (!evaluation) return null
+  if (evaluation.results.length > 0) return null
+  return <Badge variant="success" dot title="All enabled policy checks passed" aria-label={`Deployment policies, ${evaluation.mode} mode: all checks passed`}>Policies passed · {evaluation.mode}</Badge>
+}
+
+export function PolicyEvidence({ plan, inline = false, className = "mb-4" }: { plan: Plan; inline?: boolean; className?: string }) {
   const evaluation = plan.policyEvaluation
   if (!evaluation) return null
   const blocked = evaluation.mode === "block" && evaluation.results.length > 0
@@ -193,7 +205,7 @@ export function PolicyEvidence({ plan, inline = false }: { plan: Plan; inline?: 
     <Alert
       aria-label="Deployment policy results"
       variant={inline ? "inline" : "plain"}
-      className="mb-4"
+      className={className}
       tone={blocked ? "destructive" : evaluation.mode === "warn" && evaluation.results.length ? "warning" : "success"}
     >
       <Alert.Icon />

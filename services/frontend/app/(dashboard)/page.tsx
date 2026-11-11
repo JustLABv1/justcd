@@ -151,6 +151,7 @@ export default function OverviewPage() {
             attention={attention.length + stalled.length}
             approvals={health.approvals.length}
             syncs={syncSummary}
+            syncRange={syncHistory.range}
             hrefs={{ healthy: listHref("synced"), attention: listHref("attention"), approvals: "/approvals", syncs: "#insights" }}
           />
 

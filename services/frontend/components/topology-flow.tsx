@@ -37,6 +37,8 @@ const GAP_X = 80
 const GAP_Y = 20
 const ROW_GAP = 48
 const MARGIN = 8
+/** Smallest starting zoom at which node labels stay legible; larger graphs open here and are panned. */
+const MIN_READABLE_ZOOM = 0.6
 
 type Chip = { label: string; color: "success" | "warning" | "destructive" | "muted" }
 const signalChip: Record<RuntimeSignal, Chip> = {
@@ -150,7 +152,10 @@ export function TopologyFlow(props: Props) {
   const toChange = graph.nodes.filter(isChanged).length
   const totalWidth = Math.max(...placedAll.map((item) => item.x + NODE_W)) + MARGIN
   const totalHeight = Math.max(...placedAll.map((item) => item.y + NODE_H)) + MARGIN
-  const zoom = box ? Math.min(1, (box.width - 48) / totalWidth, (box.height - 48) / totalHeight) : 1
+  const fitWidth = box ? Math.min(1, (box.width - 48) / totalWidth) : 1
+  // Fitting a very tall graph to the screen shrinks it to an unreadable strip, so
+  // open at a legible zoom from the top instead and let the user pan down.
+  const zoom = box ? Math.max(Math.min(fitWidth, (box.height - 48) / totalHeight), Math.min(fitWidth, MIN_READABLE_ZOOM)) : 1
   const viewport = box ? { zoom, x: Math.max(24, (box.width - totalWidth * zoom) / 2), y: 24 } : undefined
   const layoutKey = [...rows.map((row) => row.id), other.length].join("|")
   return <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">

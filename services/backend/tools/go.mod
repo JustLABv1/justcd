@@ -1,6 +1,6 @@
 module github.com/justlab/justcd/services/backend/tools
 
-go 1.27.3
+go 1.27.4
 
 tool (
 	helm.sh/helm/v4/cmd/helm

@@ -1,4 +1,4 @@
-FROM golang:1.27.3-bookworm AS toolchain
+FROM golang:1.27.4-bookworm AS toolchain
 ENV GOTOOLCHAIN=local
 
 FROM toolchain AS tools

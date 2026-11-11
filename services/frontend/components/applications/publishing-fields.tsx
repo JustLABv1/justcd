@@ -1,5 +1,6 @@
 import type { ReactNode } from "react"
 import { Card } from "@/components/panelui/card"
+import { Section } from "@/components/section"
 import { CheckboxField } from "@/components/ui-kit"
 import { PanelField } from "@/components/applications/panel-wizard"
 
@@ -55,21 +56,7 @@ export function PublishingSection({
   children: ReactNode
   className?: string
 }) {
-  return (
-    <section className={`space-y-3 ${className}`}>
-      {title && (
-        <div>
-          <h2 className="text-base font-medium tracking-tight">{title}</h2>
-          {description && (
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">
-              {description}
-            </p>
-          )}
-        </div>
-      )}
-      {children}
-    </section>
-  )
+  return <Section surface title={title} description={description} className={className}>{children}</Section>
 }
 
 /** Boolean publishing options use the same surface as the surrounding fields. */

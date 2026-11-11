@@ -20,7 +20,9 @@ import { ArchiveUpload } from "@/components/applications/archive-upload"
 import {
   PublishingCard,
   PublishingField,
+  PublishingSection,
 } from "@/components/applications/publishing-fields"
+import { Alert } from "@/components/panelui/alert"
 import { Button } from "@/components/panelui/button"
 import { Input } from "@/components/panelui/input"
 import { PanelSelect } from "@/components/applications/panel-wizard"
@@ -310,9 +312,9 @@ export default function PublishApplicationPage() {
               repository.
             </p>
           </div>
+          <WorkspaceNote name={workspace?.name} className="ml-auto mt-1" />
         </header>
         {error != null && <ErrorNotice error={error} />}
-        <WorkspaceNote name={workspace?.name} />
         <div className="grid gap-4 md:grid-cols-3">
           <PublishingCard contentClassName="flex h-full flex-col items-start gap-3">
             <h2 className="text-base font-medium">
@@ -415,22 +417,23 @@ export default function PublishApplicationPage() {
             repository, build, and deployment.
           </p>
         </div>
+        <WorkspaceNote name={workspace?.name} className="ml-auto mt-1" />
       </header>
       {(error ?? limitsError) != null && (
         <ErrorNotice error={error ?? limitsError} />
       )}
-      <WorkspaceNote name={workspace?.name} />
       {!workspaces.length && (
         <p className="text-sm text-muted-foreground">
           Publishing requires the owner or deployer role in a workspace. Ask
           your administrator for access.
         </p>
       )}
-      <form onSubmit={publish} noValidate className="space-y-4">
+      <form onSubmit={publish} noValidate className="space-y-5">
         <fieldset
           disabled={busy || !limits || !draft.ready}
-          className="min-w-0 space-y-4"
+          className="min-w-0 space-y-5"
         >
+          <PublishingSection title="Application" description="Name your app and choose the shared build and deployment settings it publishes with.">
           <div className="grid gap-4 md:grid-cols-2">
             <PublishingField
               label="Application name"
@@ -473,6 +476,7 @@ export default function PublishApplicationPage() {
               />
             </PublishingField>
           </div>
+          </PublishingSection>
           {!loading && !choices.length && (
             <PublishingCard contentClassName="space-y-2">
               <p className="text-sm font-medium">
@@ -497,6 +501,8 @@ export default function PublishApplicationPage() {
               </div>
             </PublishingCard>
           )}
+          <PublishingSection title="Source" description="Upload your project as a ZIP archive. JustCD checks it before anything is created.">
+            <div className="space-y-4">
           <PublishingField
             label="Application ZIP"
             htmlFor="publish-archive"
@@ -587,6 +593,8 @@ export default function PublishApplicationPage() {
               </Disclosure>
             </PublishingCard>
           )}
+            </div>
+          </PublishingSection>
           <PublishingServicesPicker options={profile?.services} value={services} password={databasePassword} onPasswordChange={setDatabasePassword} onChange={value => { if (!value.database) setDatabasePassword(""); setServiceSelection(JSON.stringify(value)) }} />
           {profile && (
             <PublishingFlow
@@ -597,36 +605,39 @@ export default function PublishApplicationPage() {
             />
           )}
           {profile && (
-            <div className="space-y-1 px-1 text-sm leading-6 text-muted-foreground">
-              {profile.description && <p>{profile.description}</p>}
-              <p>
+            <Alert tone="info" variant="plain" role="status">
+              <Alert.Icon />
+              <Alert.Title>
                 {profile.syncPolicy === "auto-safe"
-                  ? "Successful builds deploy automatically when workspace approval rules allow."
-                  : "Successful builds wait for a deployment review and apply."}{" "}
+                  ? "Successful builds deploy automatically"
+                  : "Successful builds wait for a deployment review"}
+              </Alert.Title>
+              <Alert.Description>
+                {profile.syncPolicy === "auto-safe" ? "Workspace approval rules still apply. " : "You review and apply the plan before anything is deployed. "}
                 {profile.hostSuffix
                   ? `Your app will use https://${name || "application-name"}.${profile.hostSuffix}.`
                   : "This destination provides internal Service access."}
-              </p>
-            </div>
+              </Alert.Description>
+            </Alert>
           )}
-          <div className="space-y-4">
-            <PublishingDraftNotice draft={draft} inline />
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-3">
-              <p className="text-xs leading-5 text-muted-foreground">
-                {busy
-                  ? "Creating the repository, configuring the build, and starting CI…"
-                  : "Your administrator’s settings and credentials are applied securely."}
-              </p>
-              <Button
-                type="submit"
-                loading={busy}
-                disabled={!file || !archiveValid || !profile || !workspaceId || loading}
-                className="h-10 px-5"
+          <Card size="sm">
+            <Card.Content>
+              <PublishingDraftNotice
+                draft={draft}
+                inline
+                note={busy ? "Creating the repository, configuring the build, and starting CI…" : "Your administrator’s settings and credentials are applied securely."}
               >
-                {busy ? "Preparing your app…" : "Publish app"}
-              </Button>
-            </div>
-          </div>
+                <Button
+                  type="submit"
+                  loading={busy}
+                  disabled={!file || !archiveValid || !profile || !workspaceId || loading}
+                  className="h-10 px-5"
+                >
+                  {busy ? "Preparing your app…" : "Publish app"}
+                </Button>
+              </PublishingDraftNotice>
+            </Card.Content>
+          </Card>
         </fieldset>
       </form>
     </div>

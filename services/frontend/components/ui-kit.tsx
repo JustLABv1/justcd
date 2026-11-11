@@ -68,7 +68,7 @@ export function EmptyState({
   actionVariant?: "default" | "outline"
 }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-foreground/15 bg-muted/30 px-5 py-12 text-center">
+    <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-foreground/15 bg-muted/30 px-5 py-12 text-center in-data-[slot=card]:border-0 in-data-[slot=card]:bg-transparent">
       <span aria-hidden="true" className="inline-flex shrink-0 items-center justify-center rounded-2xl bg-primary/10 p-3 empty-state-icon-stack text-primary"><HugeiconsIcon icon={Layers01Icon} className="size-6" aria-hidden="true" /></span>
       <h3 className="mt-4 text-sm font-semibold">{title}</h3>
       <p className="mt-1 max-w-sm text-sm leading-5 text-muted-foreground">{description}</p>

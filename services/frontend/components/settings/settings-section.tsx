@@ -52,9 +52,9 @@ export function SettingsRow({ label, description, value, action, className = "" 
  * A section whose body holds arbitrary content. Drop-in for the generic `Panel` inside settings
  * pages: same title, description and action props.
  */
-export function SettingsPanel({ title, description, action, children, className = "", surface = "card" }: { title?: ReactNode; description?: ReactNode; action?: ReactNode; children: ReactNode; className?: string; /** `flat` drops the Card, for a panel nested inside another one. */ surface?: "card" | "flat" }) {
+export function SettingsPanel({ title, description, action, children, className = "", surface = "card", padded = false }: { title?: ReactNode; description?: ReactNode; action?: ReactNode; children: ReactNode; className?: string; /** `flat` drops the Card, for a panel nested inside another one. */ surface?: "card" | "flat"; /** Pad the content, for free-form content such as fields (rows and lists bring their own padding). */ padded?: boolean }) {
   if (surface === "flat") return <Section divided={false} title={title} description={description} action={action} className={className}>{children}</Section>
-  return <SettingsSurface title={title} description={description} action={action} className={className}>{children}</SettingsSurface>
+  return <SettingsSurface title={title} description={description} action={action} className={className}>{padded ? <div className="min-w-0 p-5">{children}</div> : children}</SettingsSurface>
 }
 
 /** Destructive actions. Rows inside use the destructive button variant. */

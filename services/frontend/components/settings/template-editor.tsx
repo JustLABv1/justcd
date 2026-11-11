@@ -215,8 +215,7 @@ export function TemplateEditor({
     )
   return (
     <div className="space-y-5">
-      <SettingsPanel
-        surface="flat"
+      <SettingsPanel padded
         title={`${detail.template.custom ? "Edit" : "Customize"} ${detail.template.name}`}
         description="Edit the files JustCD generates for this application template. Saving creates a new immutable version; profiles choose which version to use."
         action={
@@ -511,7 +510,7 @@ export function TemplateEditor({
         </div>
       </SettingsPanel>
       {error != null && <ErrorNotice error={error} />}
-      <SettingsPanel surface="flat" title="Save as a new version">
+      <SettingsPanel padded title="Save as a new version">
         <div className="flex flex-wrap items-end gap-4">
           <div className="min-w-0 flex-1 basis-64">
             <FormField

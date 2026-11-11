@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { ArrowUpRight01Icon, ArrowLeft01Icon, ArrowRight01Icon, Alert02Icon, Cancel01Icon, FilterHorizontalIcon, Search01Icon, FocusPointIcon, FullScreenIcon, RefreshIcon, Layers01Icon, Settings02Icon, Globe02Icon, DatabaseIcon, CubeIcon, Router02Icon, ServerStack01Icon, Files01Icon, FileTextIcon, Key01Icon, Shield01Icon, Clock01Icon, PlayIcon, Route01Icon, WorkflowSquare04Icon, Folder01Icon } from "@hugeicons/core-free-icons"
+import { ArrowUpRight01Icon, ArrowLeft01Icon, ArrowRight01Icon, Alert02Icon, InformationCircleIcon, Cancel01Icon, FilterHorizontalIcon, Search01Icon, FocusPointIcon, FullScreenIcon, RefreshIcon, Layers01Icon, Settings02Icon, Globe02Icon, DatabaseIcon, CubeIcon, Router02Icon, ServerStack01Icon, Files01Icon, FileTextIcon, Key01Icon, Shield01Icon, Clock01Icon, PlayIcon, Route01Icon, WorkflowSquare04Icon, Folder01Icon } from "@hugeicons/core-free-icons"
 import { Alert } from "@/components/panelui/alert"
 import { Badge } from "@/components/panelui/badge"
 import { Menu } from "@/components/panelui/menu"
@@ -88,18 +88,50 @@ function MapBar({ children }: { children: ReactNode }) {
   return compact ? <Workbench.Bar>{children}</Workbench.Bar> : null
 }
 
-/** The right edge on a wide workbench: resource details, then the tool rail, then a handle that folds the rail away. */
-function MapSide({ children, rail, railOpen, onToggleRail }: { children: ReactNode; rail: ReactNode; railOpen: boolean; onToggleRail: () => void }) {
+const MIN_DETAILS = 320
+const MAX_DETAILS = 720
+
+/** The right edge on a wide workbench: the tool rail beside the map, then a handle that resizes the resource details, then the details. */
+function MapSide({ children, rail, width, onWidth, onResizing }: { children: ReactNode; rail: ReactNode; width: number; onWidth: (width: number) => void; onResizing: (resizing: boolean) => void }) {
   const { compact } = useWorkbench()
+  const [active, setActive] = useState(false)
   if (compact) return <>{children}</>
-  return <div className="flex h-full min-w-0 flex-1 items-stretch justify-end gap-2">
-    {children ? <div className="flex min-w-0 flex-1 [&>*]:h-full">{children}</div> : null}
-    <div className="flex shrink-0 items-start gap-1">
-      <button type="button" aria-label={railOpen ? "Hide tools" : "Show tools"} aria-expanded={railOpen} onClick={onToggleRail} className="group/handle flex h-full w-4 cursor-pointer items-center justify-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring">
-        <span className="h-10 w-1 rounded-full bg-foreground/20 transition-[background-color,height] group-hover/handle:h-14 group-hover/handle:bg-foreground/40" />
-      </button>
-      {rail}
-    </div>
+  const clamp = (value: number) => Math.round(Math.min(Math.max(value, MIN_DETAILS), MAX_DETAILS))
+  const drag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    const target = event.currentTarget
+    target.setPointerCapture(event.pointerId)
+    const startX = event.clientX
+    const startWidth = width
+    setActive(true)
+    onResizing(true)
+    const move = (next: PointerEvent) => onWidth(clamp(startWidth + startX - next.clientX))
+    const end = () => {
+      setActive(false)
+      onResizing(false)
+      target.removeEventListener("pointermove", move)
+      target.removeEventListener("pointerup", end)
+      target.removeEventListener("pointercancel", end)
+    }
+    target.addEventListener("pointermove", move)
+    target.addEventListener("pointerup", end)
+    target.addEventListener("pointercancel", end)
+  }
+  const keys = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const by = event.key === "ArrowLeft" ? 24 : event.key === "ArrowRight" ? -24 : 0
+    if (!by) return
+    event.preventDefault()
+    onWidth(clamp(width + by))
+  }
+  return <div className="flex h-full min-w-0 flex-1 items-stretch justify-end">
+    <div className="flex shrink-0 items-start">{rail}</div>
+    {children ? <>
+      <div role="separator" tabIndex={0} aria-orientation="vertical" aria-label="Resource details width" aria-valuenow={width} aria-valuemin={MIN_DETAILS} aria-valuemax={MAX_DETAILS} data-active={active ? "" : undefined} onPointerDown={drag} onKeyDown={keys} onDoubleClick={() => onWidth(392)} className="group/handle flex w-3 shrink-0 cursor-col-resize touch-none items-center justify-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <span className="h-10 w-1 rounded-full bg-foreground/20 transition-[background-color,height] group-hover/handle:h-16 group-hover/handle:bg-foreground/40 group-focus-visible/handle:h-16 group-focus-visible/handle:bg-ring group-data-active/handle:h-16 group-data-active/handle:bg-foreground/50" />
+      </div>
+      <div className="flex min-w-0 flex-1 pe-2 [&>*]:h-full">{children}</div>
+    </> : null}
   </div>
 }
 
@@ -128,7 +160,8 @@ export function ResourceMap({ application, plan, inventory, operations, topology
   const [focus, setFocus] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
   const [notice, setNotice] = useState("")
-  const [railOpen, setRailOpen] = useState(true)
+  const [detailsWidth, setDetailsWidth] = useState(392)
+  const [resizing, setResizing] = useState(false)
   const [showAttention, setShowAttention] = useState(false)
   const root = useRef<HTMLDivElement>(null)
   const graph = useMemo(() => topology ?? fallback(plan, inventory), [topology, plan, inventory])
@@ -229,15 +262,25 @@ export function ResourceMap({ application, plan, inventory, operations, topology
       <Toolbar.Button label="Refresh cluster" onClick={onRefresh} disabled={refreshing} render={<Button type="button" variant="ghost" size="icon-sm" loading={refreshing} />}><HugeiconsIcon icon={RefreshIcon} strokeWidth={1.8} aria-hidden="true" /></Toolbar.Button>
       <Toolbar.Button label={focus ? "Show all resources" : "Focus selection"} aria-pressed={focus} disabled={!selected} onClick={() => setFocus(!focus)} render={<Button type="button" variant={focus ? "secondary" : "ghost"} size="icon-sm" />}><HugeiconsIcon icon={FocusPointIcon} strokeWidth={1.8} aria-hidden="true" /></Toolbar.Button>
       <Toolbar.Button label={fullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={() => void toggleFullscreen()} render={<Button type="button" variant="ghost" size="icon-sm" />}><HugeiconsIcon icon={FullScreenIcon} strokeWidth={1.8} aria-hidden="true" /></Toolbar.Button>
+      <Toolbar.Separator />
+      <Popover>
+        <PopoverTrigger render={<Button type="button" variant="ghost" size="icon-sm" aria-label="Legend" title="Legend" />}><HugeiconsIcon icon={InformationCircleIcon} strokeWidth={1.8} aria-hidden="true" /></PopoverTrigger>
+        <PopoverContent side={vertical ? "left" : "bottom"} align="end" className="w-80 gap-3" aria-label="Topology status legend">
+          <div className="space-y-1.5"><p className="text-xs font-medium text-foreground">Sync state</p><div className="flex flex-wrap gap-1.5">
+            <Badge variant="success" size="sm" dot>Deployed</Badge><Badge variant="warning" size="sm" dot>Out of sync</Badge><Badge variant="info" size="sm" dot>Will be created / applying</Badge><Badge variant="destructive" size="sm" dot>Will be destroyed / failed</Badge>
+          </div></div>
+          <div className="space-y-1.5"><p className="text-xs font-medium text-foreground">Runtime</p><div className="flex flex-wrap gap-1.5"><Badge variant="success" size="sm" dot>Ready</Badge></div><p className="text-xs text-muted-foreground">Runtime readiness is separate from sync. Configuration objects do not require workload health checks.</p></div>
+        </PopoverContent>
+      </Popover>
     </Toolbar>
   }
 
   return <section aria-label="Application resource topology" className="mb-6 min-w-0">
     <div ref={root} className={`min-w-0 ${fullscreen ? "h-screen bg-background p-3" : ""}`}>
-    <Workbench className={fullscreen ? "h-full" : "h-[min(78svh,860px)]"} focusShortcut={false} inspectorWidth={(selected || showAttention ? 392 + 8 : 0) + (railOpen ? 62 : 24)}>
+    <Workbench className={fullscreen ? "h-full" : "h-[min(78svh,860px)]"} focusShortcut={false} inspectorWidth={(selected || showAttention ? detailsWidth + 20 : 0) + 56} style={resizing ? { transition: "none" } : undefined}>
       <MapBar>{tools("horizontal")}</MapBar>
-      <Workbench.Canvas className="!items-stretch !justify-stretch !px-0 !pb-0 !pt-4">
-        <div className="flex min-h-0 w-full flex-col gap-4 overflow-auto px-4 pb-4">
+      <Workbench.Canvas className="!bg-none !items-stretch !justify-stretch !px-0 !pb-0 !pt-4">
+        <div className="flex h-full min-h-0 w-full flex-col gap-3 px-4 pb-4">
           <div className="flex min-w-0 flex-col gap-3 empty:hidden">
     {query && <p role="status" className="text-sm text-muted-foreground">{matches.size} matching resources</p>}
     {(running || operation?.status === "failed") && <Alert tone={operation?.status === "failed" ? "destructive" : "info"} role="status" variant="plain"><Alert.Icon /><Alert.Title>{operation?.type === "rollback" ? "Rollback" : "Sync"} {operation?.status === "failed" ? "stopped" : operation?.status === "queued" ? "queued" : "running"} · {operation?.progress?.completed?.length ?? 0}/{operation?.progress?.total ?? 0} resource steps completed{operation?.progress?.current ? ` · ${operation.progress.current.kind}/${operation.progress.current.name}` : ""}</Alert.Title><Alert.Description>Applied does not mean Healthy. {operation?.status === "failed" ? operation.message : ""}</Alert.Description></Alert>}
@@ -248,19 +291,10 @@ export function ResourceMap({ application, plan, inventory, operations, topology
         </div>
       </Workbench.Canvas>
       <Workbench.Inspector title="Resource details" className="!justify-end">
-        <MapSide rail={railOpen ? tools("vertical") : null} onToggleRail={() => setRailOpen(!railOpen)} railOpen={railOpen}>{selected || showAttention ? <Inspector.Panel className="h-full w-full [&_[style*='min-width']]:!min-w-0">{selected ? details : attentionPanel}</Inspector.Panel> : null}</MapSide>
+        <MapSide rail={tools("vertical")} width={detailsWidth} onWidth={setDetailsWidth} onResizing={setResizing}>{selected || showAttention ? <Inspector.Panel className="h-full w-full [&_[style*='min-width']]:!min-w-0">{selected ? details : attentionPanel}</Inspector.Panel> : null}</MapSide>
       </Workbench.Inspector>
       <OpenInspector open={Boolean(selected) || showAttention} />
     </Workbench>
     </div>
-    <footer className="mt-5 flex flex-wrap items-center gap-2 px-1 text-xs text-muted-foreground" aria-label="Topology status legend">
-      <span className="me-1 font-medium text-foreground">Sync state</span>
-      <Badge variant="success" size="sm" dot>Deployed</Badge>
-      <Badge variant="warning" size="sm" dot>Out of sync</Badge>
-      <Badge variant="info" size="sm" dot>Will be created / applying</Badge>
-      <Badge variant="destructive" size="sm" dot>Will be destroyed / failed</Badge>
-      <span className="basis-full" />
-      <span className="inline-flex items-center gap-1.5"><Badge variant="success" size="sm" dot>Ready</Badge>Runtime readiness is separate from sync. Configuration objects do not require workload health checks.</span>
-    </footer>
   </section>
 }

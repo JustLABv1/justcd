@@ -1,6 +1,8 @@
 "use client"
 
 import {
+  createContext,
+  useContext,
   useDeferredValue,
   useEffect,
   useId,
@@ -8,11 +10,14 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
   ArrowDown01Icon,
   ArrowUp01Icon,
+  LayoutTwoColumnIcon,
+  Rows2Icon,
   Settings02Icon,
 } from "@hugeicons/core-free-icons"
 import { Input } from "@/components/panelui/input"
@@ -41,6 +46,43 @@ type ManifestDiffProps = {
   excluded?: boolean
   changedPaths?: string[]
   takeover?: boolean
+}
+
+type DiffToolbarApi = { hosted: boolean; setControls: (node: ReactNode) => void }
+const DiffToolbarApiContext = createContext<DiffToolbarApi | null>(null)
+const DiffToolbarControlsContext = createContext<{
+  controls: ReactNode
+  setHosted: (hosted: boolean) => void
+} | null>(null)
+
+/**
+ * Lets a surrounding toolbar host the diff controls instead of the diff drawing its own bar.
+ * The controls are rendered by the slot, inside the toolbar's own React tree, so they can use
+ * its context.
+ */
+export function DiffToolbarHost({ children }: { children: ReactNode }) {
+  const [hosted, setHosted] = useState(false)
+  const [controls, setControls] = useState<ReactNode>(null)
+  const api = useMemo(() => ({ hosted, setControls }), [hosted])
+  const slot = useMemo(() => ({ controls, setHosted }), [controls])
+  return (
+    <DiffToolbarApiContext.Provider value={api}>
+      <DiffToolbarControlsContext.Provider value={slot}>
+        {children}
+      </DiffToolbarControlsContext.Provider>
+    </DiffToolbarApiContext.Provider>
+  )
+}
+
+/** Place inside the host toolbar where the diff controls should appear. */
+export function DiffToolbarSlot() {
+  const host = useContext(DiffToolbarControlsContext)
+  const setHosted = host?.setHosted
+  useEffect(() => {
+    setHosted?.(true)
+    return () => setHosted?.(false)
+  }, [setHosted])
+  return <>{host?.controls}</>
 }
 
 const wideDiffQuery = "(min-width: 768px)"
@@ -258,7 +300,7 @@ function ManifestDiffView({
           {tone === "removed" ? "−" : tone === "added" ? "+" : ""}
         </span>
         <span
-          className={`min-w-0 flex-1 pr-4 ${wrap ? "[overflow-wrap:anywhere] break-words whitespace-pre-wrap" : "overflow-x-auto whitespace-pre"}`}
+          className={`min-w-0 flex-1 pr-4 ${wrap || split ? "[overflow-wrap:anywhere] break-words whitespace-pre-wrap" : "overflow-x-auto whitespace-pre"}`}
         >
           <DiffText
             text={text ?? " "}
@@ -284,7 +326,9 @@ function ManifestDiffView({
         {excluded ? " This entry is excluded and will not be applied." : ""}
       </section>
     )
-  const compact = singleSide && hunks.length <= 1
+  const toolbarApi = useContext(DiffToolbarApiContext)
+  const host = toolbarApi?.hosted ?? false
+  const compact = !host && singleSide && hunks.length <= 1
   const optionsDialog = (
     <Dialog>
       <Dialog.Trigger render={compact ? <Button variant="ghost" size="icon" aria-label={`Diff options${query ? " · Search active" : ""}`} /> : <Toolbar.Button label={`Diff options${query ? " · Search active" : ""}`} />}>
@@ -330,62 +374,74 @@ function ManifestDiffView({
       </Dialog.Body></Dialog.Content>
     </Dialog>
   )
+  const toolbarControls = (
+    <>
+    {!singleSide && (
+      <Toolbar.Group aria-label="Diff layout" value={split ? "split" : "unified"} onValueChange={setMode}>
+        <Toolbar.Tool value="split" label="Side by side" disabled={!wide}><HugeiconsIcon icon={LayoutTwoColumnIcon} strokeWidth={1.8} aria-hidden="true" /></Toolbar.Tool>
+        <Toolbar.Tool value="unified" label="Unified"><HugeiconsIcon icon={Rows2Icon} strokeWidth={1.8} aria-hidden="true" /></Toolbar.Tool>
+      </Toolbar.Group>
+    )}
+    {!compact && optionsDialog}
+
+    {search && (
+      <span role="status" className="text-sm text-muted-foreground">
+        {matches.length} matching lines
+      </span>
+    )}
+    <div className={`flex items-center gap-2 ${!host && hunks.length > 1 ? "ml-auto" : ""}`}>
+      <span className="text-sm text-muted-foreground" aria-live="polite">
+        {hunks.length
+          ? position < 0
+            ? `${hunks.length} ${hunks.length === 1 ? "change" : "changes"}`
+            : `${position + 1} of ${hunks.length}`
+          : hiddenPaths.length
+            ? `${hiddenPaths.length} hidden field ${hiddenPaths.length === 1 ? "change" : "changes"}`
+            : takeover
+              ? "Ownership change only"
+              : "No text changes"}
+      </span>
+      {hunks.length > 1 && (
+        <>
+          <Toolbar.Button
+            label="Previous change"
+            disabled={!hunks.length}
+            onClick={() => jump(-1)}
+          >
+            <HugeiconsIcon
+              icon={ArrowUp01Icon}
+              strokeWidth={2}
+              aria-hidden="true"
+            />
+          </Toolbar.Button>
+          <Toolbar.Button
+            label="Next change"
+            disabled={!hunks.length}
+            onClick={() => jump(1)}
+          >
+            <HugeiconsIcon
+              icon={ArrowDown01Icon}
+              strokeWidth={2}
+              aria-hidden="true"
+            />
+          </Toolbar.Button>
+        </>
+      )}
+    </div>
+    </>
+  )
+  const setToolbarControls = toolbarApi?.setControls
+  useEffect(() => {
+    if (host) setToolbarControls?.(toolbarControls)
+  })
+  useEffect(() => () => setToolbarControls?.(null), [setToolbarControls])
   return (
     <section aria-label="Manifest comparison">
-      {!compact && <Toolbar variant="inline" aria-label="Manifest comparison tools" className="w-full flex-wrap gap-2 p-3">
-        {!singleSide && (
-          <Toolbar.Group aria-label="Diff layout" value={split ? "split" : "unified"} onValueChange={setMode}>
-            <Toolbar.Tool value="split" disabled={!wide}>Side by side</Toolbar.Tool>
-            <Toolbar.Tool value="unified">Unified</Toolbar.Tool>
-          </Toolbar.Group>
-        )}
-        {!compact && optionsDialog}
-
-        {search && (
-          <span role="status" className="text-sm text-muted-foreground">
-            {matches.length} matching lines
-          </span>
-        )}
-        <div className="ml-auto flex items-center gap-2">
-          <span className="text-sm text-muted-foreground" aria-live="polite">
-            {hunks.length
-              ? position < 0
-                ? `${hunks.length} ${hunks.length === 1 ? "change" : "changes"}`
-                : `${position + 1} of ${hunks.length}`
-              : hiddenPaths.length
-                ? `${hiddenPaths.length} hidden field ${hiddenPaths.length === 1 ? "change" : "changes"}`
-                : takeover
-                  ? "Ownership change only"
-                  : "No text changes"}
-          </span>
-          {hunks.length > 1 && (
-            <>
-              <Toolbar.Button
-                label="Previous change"
-                disabled={!hunks.length}
-                onClick={() => jump(-1)}
-              >
-                <HugeiconsIcon
-                  icon={ArrowUp01Icon}
-                  strokeWidth={2}
-                  aria-hidden="true"
-                />
-              </Toolbar.Button>
-              <Toolbar.Button
-                label="Next change"
-                disabled={!hunks.length}
-                onClick={() => jump(1)}
-              >
-                <HugeiconsIcon
-                  icon={ArrowDown01Icon}
-                  strokeWidth={2}
-                  aria-hidden="true"
-                />
-              </Toolbar.Button>
-            </>
-          )}
-        </div>
-      </Toolbar>}
+      {host ? null : !compact && (
+        <Toolbar variant="inline" aria-label="Manifest comparison tools" className="w-full flex-wrap gap-2 p-3">
+          {toolbarControls}
+        </Toolbar>
+      )}
       {hiddenPaths.length > 0 && (
         <div className="p-3">
           <Alert tone="info" role="status" variant="inline">

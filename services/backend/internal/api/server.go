@@ -62,6 +62,7 @@ func New(s *store.Store, cfg config.Config, logger *slog.Logger) (*Server, error
 }
 
 func (s *Server) routes() {
+	s.mcpRoutes()
 	s.aiRoutes()
 	s.notificationRoutes()
 	s.securityRoutes()

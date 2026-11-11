@@ -7,6 +7,7 @@ import { Input } from "@/components/panelui/input"
 import { FormField } from "@/components/ui-kit"
 import { ScopeBadge, SettingsLayout, SettingsNotice } from "@/components/settings/layout"
 import { SettingsPanel } from "@/components/settings/settings-section"
+import { accountSettingsNav } from "@/components/settings/account-nav"
 import { api, apiPost, errorMessage } from "@/lib/api"
 type Session = {
   id: string
@@ -61,6 +62,9 @@ export function AccountSecurity() {
   }
   return (
     <SettingsLayout
+      nav={accountSettingsNav}
+      activeId="security"
+      navLabel="Account settings"
       title="Account security"
       description="Manage your sign-in sessions and two-factor authentication."
       scope={<ScopeBadge scope="account" />}

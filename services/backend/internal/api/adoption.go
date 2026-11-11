@@ -1,8 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -31,6 +34,32 @@ func (s *Server) getOwnershipConflict(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"conflict": first, "conflicts": conflicts})
 }
 
+type adoptBatchInput struct {
+	Conflicts                  []syncer.OwnershipConflict `json:"conflicts"`
+	Reason                     string                     `json:"reason"`
+	PreviousControllerDisabled bool                       `json:"previousControllerDisabled"`
+}
+
+func decodeAdoptBatch(w http.ResponseWriter, r *http.Request) (adoptBatchInput, bool) {
+	var input adoptBatchInput
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return input, false
+	}
+	input.Reason = strings.TrimSpace(input.Reason)
+	if len(input.Reason) > 500 || len(input.Conflicts) == 0 || len(input.Conflicts) > 200 {
+		writeError(w, http.StatusBadRequest, "select between 1 and 200 resources and keep the optional reason to 500 characters")
+		return input, false
+	}
+	if !input.PreviousControllerDisabled {
+		writeError(w, http.StatusBadRequest, "confirm that the previous controller has stopped reconciling")
+		return input, false
+	}
+	return input, true
+}
+
+// Reviewing and claiming many resources takes one agent round trip each, which
+// outlasts gateway timeouts, so the work runs as a background task.
 func (s *Server) adoptApplicationResources(w http.ResponseWriter, r *http.Request) {
 	app, err := s.Store.ApplicationByID(r.Context(), r.PathValue("applicationID"))
 	if err != nil {
@@ -40,28 +69,32 @@ func (s *Server) adoptApplicationResources(w http.ResponseWriter, r *http.Reques
 	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
 		return
 	}
-	var input struct {
-		Conflicts                  []syncer.OwnershipConflict `json:"conflicts"`
-		Reason                     string                     `json:"reason"`
-		PreviousControllerDisabled bool                       `json:"previousControllerDisabled"`
-	}
-	if err := decodeJSON(w, r, &input); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 16<<20))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "request body is too large or unreadable")
 		return
 	}
-	input.Reason = strings.TrimSpace(input.Reason)
-	if len(input.Reason) > 500 || len(input.Conflicts) == 0 || len(input.Conflicts) > 200 {
-		writeError(w, http.StatusBadRequest, "select between 1 and 200 resources and keep the optional reason to 500 characters")
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	if _, ok := decodeAdoptBatch(w, r); !ok {
 		return
 	}
-	if !input.PreviousControllerDisabled {
-		writeError(w, http.StatusBadRequest, "confirm that the previous controller has stopped reconciling")
+	s.enqueueBackgroundTask(w, r, app.ID, "adopt", "", json.RawMessage(body))
+}
+
+func (s *Server) adoptApplicationResourcesNow(w http.ResponseWriter, r *http.Request) {
+	app, err := s.Store.ApplicationByID(r.Context(), r.PathValue("applicationID"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-	// A client or proxy disconnect must not abort a batch halfway through.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Minute)
-	defer cancel()
-	results, err := s.Syncer.AdoptResources(ctx, app, currentUser(r).ID, input.Reason, input.Conflicts)
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "owner") {
+		return
+	}
+	input, ok := decodeAdoptBatch(w, r)
+	if !ok {
+		return
+	}
+	results, err := s.Syncer.AdoptResources(r.Context(), app, currentUser(r).ID, input.Reason, input.Conflicts)
 	if err != nil {
 		if errors.Is(err, syncer.ErrAdoptionStale) || errors.Is(err, syncer.ErrAdoptionUnsafe) {
 			writeError(w, http.StatusConflict, err.Error())

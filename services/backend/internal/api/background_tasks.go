@@ -150,6 +150,9 @@ func (s *Server) executeBackgroundTask(ctx context.Context, task store.Backgroun
 	if task.Kind == "plan" {
 		r.SetPathValue("applicationID", task.ApplicationID)
 		s.createPlanNow(recorder, r)
+	} else if task.Kind == "adopt" {
+		r.SetPathValue("applicationID", task.ApplicationID)
+		s.adoptApplicationResourcesNow(recorder, r)
 	} else if task.Kind == "approval" {
 		planID, _, _ := strings.Cut(task.Target, ":")
 		r.SetPathValue("planID", planID)

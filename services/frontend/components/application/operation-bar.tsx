@@ -132,9 +132,8 @@ export function OperationBar({
     operation.type === "resource_action"
       ? null
       : syncRunProgress(operation, plan)
-  const actionBar = (failed || terminal) ? (
-    <div className="flex flex-wrap items-center gap-2">
-            {failed && aiAction}
+  const actionButtons = failed ? (
+    <>
             {failed && onCreatePlan && (
               <Button
                 size="sm"
@@ -144,6 +143,7 @@ export function OperationBar({
                 Create fresh plan
               </Button>
             )}
+            {failed && aiAction}
             {failed && (
               <div className="flex items-center gap-2">
                 {canRestoreState ? (
@@ -181,7 +181,9 @@ export function OperationBar({
                 )}
               </div>
             )}
-            {terminal && (
+    </>
+  ) : null
+  const dismissButton = terminal ? (
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -202,19 +204,24 @@ export function OperationBar({
                 </TooltipTrigger>
                 <TooltipContent>Dismiss progress</TooltipContent>
               </Tooltip>
-            )}
-          </div>
+  ) : null
+  const actionBar = (failed || terminal) ? (
+    <div className="flex flex-wrap items-center gap-2">
+      {actionButtons}
+      {dismissButton}
+    </div>
   ) : null
   if (failed && embedded) {
     return (
-      <Frame.Row role="alert" className="flex-wrap items-start gap-x-4 gap-y-3">
+      <Frame.Row role="alert" className="flex-wrap items-start gap-x-3 gap-y-3">
         <span aria-hidden="true" className="grid size-8 shrink-0 place-items-center rounded-full bg-destructive/15 text-destructive"><HugeiconsIcon icon={Alert02Icon} strokeWidth={2} className="size-4" /></span>
-        <div className="min-w-0 flex-1 basis-72 space-y-0.5">
+        <div className="min-w-0 flex-1 basis-60 space-y-0.5">
           <p className="text-sm font-medium">{operationPhaseLabel(operation.progress?.phase, operation.status)}</p>
           <p className="text-sm break-words text-muted-foreground">
-            {failedResource ? `${resourceLabel(failedResource.identity)} could not be applied. ` : ""}
-            {failureDetail ? <span className="font-mono text-xs text-destructive select-text">{failureDetail}</span> : failedResource?.message || operation.message}
+            {failedResource ? `${resourceLabel(failedResource.identity)} could not be applied.` : ""}
+            {!failureDetail && <>{failedResource ? " " : ""}{failedResource?.message || operation.message}</>}
           </p>
+          {failureDetail && <pre className="my-2 rounded-lg border border-destructive/30 border-l-4 border-l-destructive bg-destructive/10 px-3 py-2 font-mono text-xs leading-5 break-words whitespace-pre-wrap text-destructive select-text">{failureDetail}</pre>}
           <p className="text-sm text-muted-foreground">
             {total > 0 ? `${completed} of ${total} resources were applied and kept. Nothing was rolled back automatically.` : "No resources were applied."}
             {operation.nextRetryAt ? ` A fresh plan retry is scheduled for ${new Date(operation.nextRetryAt).toLocaleString()}.` : ""}
@@ -222,7 +229,25 @@ export function OperationBar({
           </p>
           {total > 0 && <div className="pt-1.5" role="img" aria-label={`${completed} of ${total} resources applied`}><div className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-success" style={{ width: `${Math.round((completed / total) * 100)}%` }} /></div></div>}
           {cancelError != null && <p role="alert" className="pt-1 text-sm text-destructive">{errorMessage(cancelError)}</p>}
-          <Disclosure className="pt-1" summary="Timeline and resource rollout">
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          {onCreatePlan && <Button size="sm" disabled={!canCreatePlan} onClick={onCreatePlan}>Create fresh plan</Button>}
+          {aiAction}
+          <ActionMenu
+            label="More"
+            size="sm"
+            variant="ghost"
+            items={[
+              ...(canRestoreState ? [{ label: `Restore state before this ${operation.type === "rollback" ? "rollback" : "sync"}`, disabled, onSelect: () => onRestore({ kind: "pre_operation", id: checkpointId }) }] : []),
+              { label: "Debug details", onSelect: () => setDetailsOpen(true) },
+            ]}
+          />
+          <ErrorDetailsDialog error={details} open={detailsOpen} onOpenChange={setDetailsOpen} />
+          {scheduleActions}
+          {dismissButton}
+        </div>
+        <div className="basis-full">
+          <Disclosure summary="Timeline and resource rollout">
             <div className="space-y-4">
               {progress && <RunProgressStages progress={progress} label="Sync stages" />}
               {Boolean(operation.progress?.resources?.length) && (
@@ -230,10 +255,6 @@ export function OperationBar({
               )}
             </div>
           </Disclosure>
-        </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          {actionBar}
-          {scheduleActions}
         </div>
       </Frame.Row>
     )

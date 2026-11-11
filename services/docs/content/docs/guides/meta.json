@@ -10,6 +10,7 @@
     "application-health",
     "plan-review",
     "notifications",
-    "ai"
+    "ai",
+    "mcp"
   ]
 }

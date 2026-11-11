@@ -34,6 +34,7 @@ export function AccountMenu({ user, onSignOut, compact = false, collapsed = fals
       </Menu.Group>
       <Menu.Separator />
       <Menu.Item onClick={() => router.push("/settings/security")} className="gap-2 py-2">Account security</Menu.Item>
+      <Menu.Item onClick={() => router.push("/settings/mcp")} className="gap-2 py-2">MCP access</Menu.Item>
       <Menu.Item onClick={() => void onSignOut()} className="gap-2 py-2"><HugeiconsIcon icon={Logout01Icon} className="size-4" aria-hidden="true" />Sign out</Menu.Item>
     </Menu.Content>
   </Menu>

@@ -24,14 +24,14 @@ async function proxy(
     "idempotency-key",
     "origin",
     "sec-fetch-site",
+    "mcp-protocol-version",
   ]) {
     const value = request.headers.get(name)
     if (value) headers.set(name, value)
   }
 
-  // Agent enrollment/polling uses a cluster-bound bearer identity, not a browser
-  // session. Forward it only to the agent protocol endpoints.
-  if (path[0] === "v1" && path[1] === "agents") {
+  // Only machine protocol endpoints accept bearer credentials.
+  if (path[0] === "v1" && (path[1] === "agents" || (path[1] === "mcp" && path.length === 2))) {
     const authorization = request.headers.get("authorization")
     if (authorization) headers.set("authorization", authorization)
   }

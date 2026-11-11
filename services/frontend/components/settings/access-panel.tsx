@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import { MCPPolicySettings } from "./mcp-policy"
 import { useCallback, useEffect, useState } from "react"
 import { Badge } from "@/components/panelui/badge"
 import { Button } from "@/components/panelui/button"
@@ -130,6 +131,7 @@ export function AccessPanel() {
       </SettingsGroup>
     </SettingsSection>
 
+    <MCPPolicySettings />
     <SettingsSection title="Workspaces" description="Who can start new workspaces on this instance.">
       <SettingsGroup>
         <SettingsRow

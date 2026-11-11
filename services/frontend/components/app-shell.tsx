@@ -475,6 +475,7 @@ function pageCrumbs(pathname: string, workspace: Workspace | null, application: 
     if (parts[2] === "publish") return [{ label: "Applications", href: "/applications" }, { label: application?.name ?? "Application", href: `/applications/${parts[1]}` }, { label: "Publish a new version" }]
     return [{ label: "Applications", href: "/applications" }, { label: application?.name ?? "Application" }]
   }
+  if (parts[0] === "settings" && parts[1] === "mcp") return [{ label: "MCP access" }]
   if (parts[0] === "settings" && parts[1] === "security") return [{ label: "Account security" }]
   if (parts[0] === "settings") {
     const section = { "git-sources": "Git sources", clusters: "Clusters", namespaces: "Namespace access", credentials: "Credentials", ai: "AI", maintenance: "Maintenance", access: "Sign-in & access", oidc: "OIDC providers", users: "Platform users" }[parts[1] as "git-sources"]

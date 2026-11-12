@@ -865,7 +865,12 @@ func (s *Server) listApplicationOperations(w http.ResponseWriter, r *http.Reques
 	if hasMore {
 		items = items[:limit]
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "hasMore": hasMore})
+	total, err := s.Store.CountOperationsFiltered(r.Context(), app.ID, status, operationType, query)
+	if err != nil {
+		writeStoreError(w, "could not load application operations")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "hasMore": hasMore, "total": total})
 }
 
 var _ = errors.Is

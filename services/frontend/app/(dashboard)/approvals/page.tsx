@@ -191,7 +191,7 @@ function WorkspaceApprovalInbox({ workspace, workspaceId }: { workspace: Workspa
         </> : <><Spinner className="size-4" aria-hidden="true" /><span>{attempts[item.planId].status === "submitting" ? "Submitting approval…" : backgroundTasks.tasks.find(task => task.id === attempts[item.planId].taskId)?.status === "running" ? "Approving plan…" : "Approval queued…"}</span><span className="text-muted-foreground">This request will leave your inbox once your approval is recorded.</span></>}
       </div>}
     </Card.Content></Card>)}</div>}
-    {inbox && (inbox.total > pageSize || page > 1) && <Pagination aria-label="Approval pages" className="mt-5" count={Math.max(1, Math.ceil(inbox.total / pageSize))} page={page} disabled={loading} onPageChange={(next) => { setLoading(true); setPage(next) }} />}
+    {inbox && (inbox.total > pageSize || page > 1) && <Pagination aria-label="Approval pages" className="mt-5" count={Math.max(1, Math.ceil(inbox.total / pageSize))} page={page} disabled={loading} onPageChange={(next) => { setLoading(true); setPage(next) }}><Pagination.Status page={page} pageSize={pageSize} total={inbox.total} /></Pagination>}
     {(pendingApprovals > 0 || (results && chosen.length === 0)) && <section aria-label="Approval progress" role="status" className="sticky bottom-4 z-10 mt-6 space-y-2 rounded-2xl bg-popover p-4 shadow-lg ring-1 ring-foreground/10">
       <div className="flex flex-wrap items-center gap-3">
         {pendingApprovals > 0 && <Spinner className="size-4" aria-hidden="true" />}

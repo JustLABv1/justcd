@@ -52,25 +52,21 @@ export function ProfileVersionNotice({
               ? "Profile build pending"
               : "Profile update available"}
         </Alert.Title>
-        <Alert.Description className="space-y-2">
-          <p className="font-medium break-words text-foreground">
-            {profile.name}
-          </p>
+        <Alert.Description className="space-y-3">
           <div
-            className="flex flex-wrap items-center gap-2"
-            aria-label={`Current version ${profile.revision}${profile.updateAvailable ? `, available version ${profile.latestRevision}` : ""}`}
+            className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5"
+            aria-label={`${profile.name}, current version ${profile.revision}${profile.updateAvailable ? `, available version ${profile.latestRevision}` : ""}`}
           >
-            <Badge variant="outline" size="sm">
-              Current v{profile.revision}
-            </Badge>
-            {profile.updateAvailable && !profile.adoptionPending && (
-              <>
-                <span aria-hidden="true">→</span>
-                <Badge variant="info" size="sm">
-                  Available v{profile.latestRevision}
-                </Badge>
-              </>
-            )}
+            <span className="min-w-0 font-medium break-words text-foreground">{profile.name}</span>
+            <span className="flex items-center gap-1.5">
+              <Badge variant="outline" size="sm">v{profile.revision}</Badge>
+              {profile.updateAvailable && !profile.adoptionPending && (
+                <>
+                  <span aria-hidden="true" className="text-muted-foreground">→</span>
+                  <Badge variant="info" size="sm">v{profile.latestRevision}</Badge>
+                </>
+              )}
+            </span>
           </div>
           <p>
             {!profile.enabled
@@ -81,24 +77,17 @@ export function ProfileVersionNotice({
                   ? "The profile build has not started. Review the pending update to retry."
                   : "Review the updated build settings before rebuilding your application."}
           </p>
+          <Button
+            size="sm"
+            // The description underlines links; this one is a button.
+            className="w-fit max-w-full no-underline! text-primary-foreground!"
+            nativeButton={false}
+            render={<Link href={`/applications/${application.id}/profile-update`} />}
+            disabled={!canUpgrade || !profile.enabled || application.decommissioning}
+          >
+            {profile.adoptionPending ? "Review conversion" : "Review profile update"}
+          </Button>
         </Alert.Description>
-        <Alert.Actions>
-        <Button
-          size="sm"
-          className="w-fit max-w-full"
-          nativeButton={false}
-          render={
-            <Link href={`/applications/${application.id}/profile-update`} />
-          }
-          disabled={
-            !canUpgrade || !profile.enabled || application.decommissioning
-          }
-        >
-          {profile.adoptionPending
-            ? "Review conversion"
-            : "Review profile update"}
-        </Button>
-        </Alert.Actions>
       </Alert>
     )
   }

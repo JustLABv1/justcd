@@ -3,13 +3,13 @@
 import { Card } from "@/components/panelui/card"
 import { Table } from "@/components/panelui/table"
 import { Pagination } from "@/components/panelui/pagination"
-import { ButtonGroup } from "@/components/panelui/button-group"
 import { Section } from "@/components/section"
 
 import { useEffect, useState } from "react"
 import { ActionMenu } from "@/components/action-menu"
 import { operationPhaseLabel, resourceLabel } from "@/components/application/helpers"
 import type { RollbackRequest } from "@/components/application/operation-bar"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
 import { ErrorDetailsButton, ErrorDetailsDialog } from "@/components/error-details"
 import { Button } from "@/components/panelui/button"
 import { FormSelect } from "@/components/form-select"
@@ -81,9 +81,10 @@ export function ActivityTab({ application, operations, operationsLoading, rollba
   onCreateRollbackPlan: (target: RollbackRequest) => Promise<boolean>
 }) {
   const [rollbackRevision, setRollbackRevision] = useState("")
+  const [revisionOpen, setRevisionOpen] = useState(false)
   const [page, setPage] = useState(0)
   const [retry, setRetry] = useState(0)
-  const [history, setHistory] = useState<{ key: string; items: Operation[]; hasMore: boolean } | null>(null)
+  const [history, setHistory] = useState<{ key: string; items: Operation[]; hasMore: boolean; total?: number } | null>(null)
   const [historyError, setHistoryError] = useState<unknown>(null)
   const [operationSearch, setOperationSearch] = useState("")
   const [operationStatus, setOperationStatus] = useState("")
@@ -103,13 +104,15 @@ export function ActivityTab({ application, operations, operationsLoading, rollba
     if (operationStatus) query.set("status", operationStatus)
     if (operationType) query.set("type", operationType)
     const timer = setTimeout(() => {
-      api<{ items: Operation[]; hasMore: boolean }>(`/api/v1/applications/${encodeURIComponent(application.id)}/operations?${query}`, { signal: controller.signal })
+      api<{ items: Operation[]; hasMore: boolean; total?: number }>(`/api/v1/applications/${encodeURIComponent(application.id)}/operations?${query}`, { signal: controller.signal })
         .then((result) => { if (!controller.signal.aborted) { setHistory({ key: historyKey, ...result }); setHistoryError(null) } })
         .catch((cause) => { if (!controller.signal.aborted) setHistoryError(cause) })
     }, operationSearch.trim() ? 250 : 0)
     return () => { clearTimeout(timer); controller.abort() }
   }, [application.id, page, operationSearch, operationStatus, operationType, historyKey, operations, retry])
   const historyLoading = operationsLoading || history?.key !== historyKey
+  // A server that does not report a total still pages: assume one more page while there is more.
+  const historyTotal = history ? history.total ?? page * pageSize + history.items.length + (history.hasMore ? 1 : 0) : 0
   const operationFiltersActive = Boolean(operationSearch.trim() || operationStatus || operationType)
   const rollbackFiltersActive = Boolean(rollbackSearch.trim() || rollbackKind)
   const blocked = busy || hasPendingOperation
@@ -136,15 +139,13 @@ export function ActivityTab({ application, operations, operationsLoading, rollba
 
           </Table.Cell><Table.Cell><StatusBadge status={operation.status} /></Table.Cell><Table.Cell className="whitespace-nowrap text-xs text-muted-foreground">{new Date(operation.startedAt).toLocaleString()}</Table.Cell></Table.Row>
         })}</Table.Body></Table> : <EmptyState title={operationFiltersActive ? "No matching operations" : "No syncs yet"} description={operationFiltersActive ? "Try a different search or clear the filters." : "Operations will be recorded here with the actor and resulting status."} />}
-        <nav aria-label="Activity pagination" className="flex flex-wrap items-center justify-between gap-3">
-          <p role="status" aria-live="polite" className="text-sm text-muted-foreground">Page {page + 1}{!historyLoading && history?.items.length ? ` · Operations ${page * pageSize + 1}–${page * pageSize + history.items.length}` : ""}</p>
-          <ButtonGroup>
-            <Button variant="outline" size="sm" disabled={page === 0} onClick={() => { setHistoryError(null); setPage((value) => value - 1) }}>Previous</Button>
-            <Button variant="outline" size="sm" disabled={historyLoading || Boolean(historyError) || !history?.hasMore} onClick={() => setPage((value) => value + 1)}>Next</Button>
-          </ButtonGroup>
-        </nav>
+        {history && (historyTotal > pageSize || page > 0) && (
+          <Pagination aria-label="Activity pagination" count={Math.max(1, Math.ceil(historyTotal / pageSize))} page={page + 1} disabled={historyLoading} onPageChange={(next) => { setHistoryError(null); setPage(next - 1) }}>
+            <Pagination.Status page={page + 1} pageSize={pageSize} total={historyTotal} />
+          </Pagination>
+        )}
       </Section>
-      <Section surface title="Rollback targets" description="Review a new plan to restore a previous deployment. Opening a target never changes the cluster.">
+      <Section surface title="Rollback targets" description="Review a new plan to restore a previous deployment. Opening a target never changes the cluster." action={canApprove && <Button size="sm" variant="outline" disabled={blocked} onClick={() => setRevisionOpen(true)}>Custom revision…</Button>}>
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px]">
             <Input aria-label="Search rollback targets" placeholder="Search revision or operation ID…" value={rollbackSearch} onChange={(event) => { setRollbackSearch(event.target.value); setRollbackPage(0) }} />
@@ -160,12 +161,14 @@ export function ActivityTab({ application, operations, operationsLoading, rollba
               <Table.Cell>{canApprove && <Button size="sm" variant="outline" aria-label={`Review rollback to ${title.toLowerCase()} from ${new Date(target.createdAt).toLocaleString()}`} loading={pendingAction === "rollback-plan"} disabled={blocked} onClick={() => void onCreateRollbackPlan({ kind: target.kind, id: target.id })}>Review rollback</Button>}</Table.Cell>
             </Table.Row>
           })}</Table.Body></Table> : <EmptyState title={rollbackFiltersActive ? "No matching rollback targets" : "No rollback history yet"} description={rollbackFiltersActive ? "Try a different search or clear the filters." : "A target appears after a successful deployment or a failed/interrupted operation with a saved checkpoint."} />}
-          {(filteredTargets.length > pageSize || targetPage > 0) && <Pagination aria-label="Rollback target pagination" count={Math.max(1, Math.ceil(filteredTargets.length / pageSize))} page={targetPage + 1} disabled={rollbackLoading} onPageChange={(next) => setRollbackPage(next - 1)} />}
-          <div className="pt-4">
-            <FormField label="Git revision" htmlFor="rollback-git-revision"><Input id="rollback-git-revision" value={rollbackRevision} onChange={(event) => setRollbackRevision(event.target.value)} placeholder="branch, tag, or commit SHA" disabled={!canApprove || blocked} /></FormField>
-            <div className="mt-2 flex flex-wrap items-center justify-between gap-3"><p className="max-w-xl text-sm text-muted-foreground">Enter a branch, tag, or commit SHA to enable review. JustCD resolves and renders it, then shows a create/update/delete diff for owner approval.</p><Button size="sm" variant="outline" loading={pendingAction === "rollback-plan"} disabled={!canApprove || blocked || !rollbackRevision.trim()} onClick={async () => { if (await onCreateRollbackPlan({ kind: "git_revision", revision: rollbackRevision.trim() })) setRollbackRevision("") }}>Review Git rollback</Button></div>
-          </div>
+          {(filteredTargets.length > pageSize || targetPage > 0) && <Pagination aria-label="Rollback target pagination" count={Math.max(1, Math.ceil(filteredTargets.length / pageSize))} page={targetPage + 1} disabled={rollbackLoading} onPageChange={(next) => setRollbackPage(next - 1)}><Pagination.Status page={targetPage + 1} pageSize={pageSize} total={filteredTargets.length} /></Pagination>}
         </div>
+      <AppDialog open={revisionOpen} onOpenChange={setRevisionOpen} busy={pendingAction === "rollback-plan"} title="Roll back to a custom revision" description="JustCD resolves the revision, renders it, and shows a create/update/delete diff for owner approval. Nothing changes until you apply the plan.">
+        <form className="flex min-h-0 flex-1 flex-col" onSubmit={async (event) => { event.preventDefault(); if (!rollbackRevision.trim()) return; if (await onCreateRollbackPlan({ kind: "git_revision", revision: rollbackRevision.trim() })) { setRollbackRevision(""); setRevisionOpen(false) } }}>
+          <FormField label="Git revision" htmlFor="rollback-git-revision"><Input id="rollback-git-revision" autoFocus value={rollbackRevision} onChange={(event) => setRollbackRevision(event.target.value)} placeholder="branch, tag, or commit SHA" disabled={!canApprove || blocked} /></FormField>
+          <DialogFooter><DialogCancel disabled={pendingAction === "rollback-plan"} /><Button type="submit" loading={pendingAction === "rollback-plan"} disabled={!canApprove || blocked || !rollbackRevision.trim()}>Review rollback</Button></DialogFooter>
+        </form>
+      </AppDialog>
       </Section>
     </div>
     <Card size="sm" className="min-w-0">

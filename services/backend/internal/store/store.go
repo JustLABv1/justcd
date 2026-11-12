@@ -3846,6 +3846,15 @@ func (s *Store) ListOperationsPage(ctx context.Context, applicationID string, li
 	return s.ListOperationsFilteredPage(ctx, applicationID, limit, offset, "", "", "")
 }
 
+// CountOperationsFiltered counts the operations ListOperationsFilteredPage pages through.
+func (s *Store) CountOperationsFiltered(ctx context.Context, applicationID, status, operationType, query string) (int, error) {
+	var total int
+	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM operations WHERE application_id=$1
+ AND ($2='' OR status=$2) AND ($3='' OR operation_type=$3)
+ AND ($4='' OR strpos(lower(concat_ws(' ',id,plan_id,actor_id,message,error_code,terminal_reason)),lower($4))>0)`, applicationID, status, operationType, query).Scan(&total)
+	return total, err
+}
+
 // ListOperationsFilteredPage filters the complete history before applying the page.
 func (s *Store) ListOperationsFilteredPage(ctx context.Context, applicationID string, limit, offset int, status, operationType, query string) ([]Operation, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT id,application_id,plan_id,actor_id,operation_type,COALESCE(rollback_checkpoint_id,''),status,message,progress,attempt_count,error_code,next_retry_at,terminal_reason,started_at,finished_at,COALESCE(traceparent,''),waiting_reasons,next_allowed_at,schedule_override_reason,COALESCE(schedule_override_actor_id,''),schedule_deferred FROM operations WHERE application_id=$1

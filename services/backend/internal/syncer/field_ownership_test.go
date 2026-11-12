@@ -323,3 +323,20 @@ func mustCanonicalLive(t *testing.T, object *unstructured.Unstructured) json.Raw
 	}
 	return resource.Manifest
 }
+
+func TestUnhonoredGitRemovalsReportsRemovedFieldsStillLive(t *testing.T) {
+	localBefore := []byte(`{"spec":{"template":{"spec":{"initContainers":[{"name":"init"}],"containers":[{"name":"web","image":"old"}]}}}}`)
+	localAfter := []byte(`{"spec":{"template":{"spec":{"containers":[{"name":"web","image":"new"}]}}}}`)
+	live := []byte(`{"spec":{"template":{"spec":{"initContainers":[{"name":"init"}]}}}}`)
+	removed, err := unhonoredGitRemovals(localBefore, localAfter, live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 1 || removed[0] != "/spec/template/spec/initContainers" {
+		t.Fatalf("removed = %v", removed)
+	}
+	removed, err = unhonoredGitRemovals(localBefore, localAfter, []byte(`{"spec":{}}`))
+	if err != nil || len(removed) != 0 {
+		t.Fatalf("removed = %v, err = %v", removed, err)
+	}
+}

@@ -18,11 +18,15 @@ export function RuntimeHealthStrip({ application, healthHistory, status, reconne
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(timer) }, [])
   const condition = application.healthCondition
   const freshness = runtimeFreshness(condition?.observedAt, now)
+  // An unhealthy runtime must not hide behind a green sync badge, so it gets a badge of its own.
+  const runtimeAlert = status.runtime.reliable && status.runtime.observed && !["Healthy", "Unknown"].includes(status.runtime.status)
+  const parts = runtimeAlert ? status.parts.filter((part) => !part.startsWith("Runtime ")) : status.parts
   return <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
     <Button type="button" variant="ghost" size="sm" className="-ml-2 h-auto min-h-8 flex-wrap justify-start gap-x-2 py-1 whitespace-normal" aria-label="Status and runtime health details" onClick={() => setOpen(true)}>
       <HugeiconsIcon icon={HeartCheckIcon} strokeWidth={1.8} aria-hidden="true" />
       <StatusBadge status={status.sync} />
-      {status.parts.length > 0 && <span className="text-muted-foreground">{status.parts.slice(0, 2).join(" · ")}{status.parts.length > 2 ? ` · +${status.parts.length - 2}` : ""}</span>}
+      {runtimeAlert && <StatusBadge status={`Runtime ${status.runtime.status}`} />}
+      {parts.length > 0 && <span className="text-muted-foreground">{parts.slice(0, 2).join(" · ")}{parts.length > 2 ? ` · +${parts.length - 2}` : ""}</span>}
       <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={1.8} aria-hidden="true" />
     </Button>
     <span className={freshness.stale || reconnecting ? "text-warning-foreground dark:text-warning" : ""} title={condition?.observedAt ? `${new Date(condition.observedAt).toLocaleString()} · Updates automatically` : undefined}>{freshness.label.replace("Runtime observed", "Observed")}{reconnecting ? " · Reconnecting" : freshness.stale && condition?.observedAt ? " · Stale" : ""}{condition?.status === "Partial" ? " · Partial observation" : ""}</span>

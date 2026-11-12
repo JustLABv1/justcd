@@ -67,9 +67,24 @@ type viewFilter struct {
 	Type       string          `json:"type"`
 	Path       []string        `json:"path"`
 	Operator   string          `json:"operator"`
+	Negated    bool            `json:"negated"`
 	Combinator string          `json:"combinator"`
 	Value      json.RawMessage `json:"value"`
 	Rules      []viewFilter    `json:"rules"`
+}
+
+// Operators and fields mirror the applications page's advanced filter. An empty operator is a
+// condition the user has not finished yet; it is kept so the view reopens as it was saved.
+var viewFilterOperators = map[string]bool{
+	"": true, "is": true, "is_not": true, "is_any_of": true, "is_none_of": true,
+	"contains": true, "not_contains": true, "starts_with": true, "ends_with": true,
+	"empty": true, "not_empty": true, "is_before": true, "is_after": true,
+}
+
+var viewFilterFields = map[string]bool{
+	"name": true, "workspace": true, "cluster": true, "namespace": true, "status": true, "health": true,
+	"reconciliation": true, "syncPolicy": true, "renderer": true, "revision": true, "path": true,
+	"label": true, "labelKey": true, "lastChecked": true, "created": true,
 }
 
 func (f viewFilter) validate(depth int, count *int) error {
@@ -88,7 +103,7 @@ func (f viewFilter) validate(depth int, count *int) error {
 		}
 		return nil
 	}
-	if depth == 0 || f.Type != "rule" || len(f.Path) != 1 || f.Operator != "is" {
+	if depth == 0 || f.Type != "rule" || len(f.Path) != 1 || !viewFilterOperators[f.Operator] {
 		return errors.New("invalid application view filter")
 	}
 	if len(f.Value) > 0 && string(f.Value) != "null" {
@@ -116,7 +131,7 @@ func (f viewFilter) validate(depth int, count *int) error {
 		}
 	}
 	field := f.Path[0]
-	if field != "workspace" && field != "namespace" && field != "reconciliation" && field != "renderer" && !(strings.HasPrefix(field, "label:") && len(validation.IsQualifiedName(strings.TrimPrefix(field, "label:"))) == 0) {
+	if !viewFilterFields[field] && !(strings.HasPrefix(field, "label:") && len(validation.IsQualifiedName(strings.TrimPrefix(field, "label:"))) == 0) {
 		return errors.New("unknown application view filter field")
 	}
 	return nil

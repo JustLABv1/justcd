@@ -168,15 +168,17 @@ export function ScheduledOperationActions({ operation, canOverride, canCancel, o
   }
   if (operation.status !== "queued") return null
   const restricted = Boolean(operation.scheduleDeferred && !operation.scheduleOverrideReason)
+  const actions = <>
+    {canCancel && <Button type="button" size="sm" variant="destructive" disabled={busy} onClick={() => void cancel()}>Cancel queued apply</Button>}
+    {canOverride && !operation.scheduleOverrideReason && Boolean(operation.waitingReasons?.length) && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => { setError(null); setOpen(true) }}>Emergency override</Button>}
+  </>
   return <div className="space-y-3 text-sm">
-    {restricted && <ScheduleWarning reasons={operation.waitingReasons ?? []} nextAllowedAt={operation.nextAllowedAt} />}
-    {!restricted && operation.waitingReasons?.map((value, index) => <p key={`${index}-${value}`} className="text-muted-foreground">{value}</p>)}
-    {!restricted && operation.nextAllowedAt && <p className="text-muted-foreground">Next allowed start: {new Date(operation.nextAllowedAt).toLocaleString()} ({Intl.DateTimeFormat().resolvedOptions().timeZone})</p>}
-    {operation.scheduleOverrideReason && <p className="text-muted-foreground">Emergency override: {operation.scheduleOverrideReason}</p>}
-    <div className="flex flex-wrap gap-2">
-      {canCancel && <Button type="button" size="sm" variant="destructive" disabled={busy} onClick={() => void cancel()}>Cancel queued apply</Button>}
-      {canOverride && !operation.scheduleOverrideReason && Boolean(operation.waitingReasons?.length) && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => { setError(null); setOpen(true) }}>Emergency override</Button>}
-    </div>
+    {restricted ? <ScheduleWarning reasons={operation.waitingReasons ?? []} nextAllowedAt={operation.nextAllowedAt}>{actions}</ScheduleWarning> : <>
+      {operation.waitingReasons?.map((value, index) => <p key={`${index}-${value}`} className="text-muted-foreground">{value}</p>)}
+      {operation.nextAllowedAt && <p className="text-muted-foreground">Next allowed start: {new Date(operation.nextAllowedAt).toLocaleString()} ({Intl.DateTimeFormat().resolvedOptions().timeZone})</p>}
+      {operation.scheduleOverrideReason && <p className="text-muted-foreground">Emergency override: {operation.scheduleOverrideReason}</p>}
+      <div className="flex flex-wrap gap-2">{actions}</div>
+    </>}
     {error !== null && !open && <p role="alert" className="text-destructive">{errorMessage(error)}</p>}
     <AppDialog open={open} onOpenChange={setOpen} title="Emergency schedule override" description="Allow this queued apply to bypass workspace and application windows and freezes. The reason and your identity are recorded in the audit log. Plan and approval checks still apply." busy={busy} size="md">
       <form className="space-y-4" onSubmit={(event) => void override(event)}>

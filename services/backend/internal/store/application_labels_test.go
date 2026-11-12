@@ -37,3 +37,19 @@ func TestApplicationSavedViewValidation(t *testing.T) {
 		t.Fatal("invalid layout accepted")
 	}
 }
+
+func TestApplicationSavedViewAdvancedFilters(t *testing.T) {
+	config := ApplicationViewConfig{GroupBy: "none", Layout: "cards", Sort: "name", Status: "all", Filters: []byte(`{"id":"g","type":"group","combinator":"and","rules":[
+		{"id":"a","type":"rule","path":["name"],"operator":"contains","value":"bill"},
+		{"id":"b","type":"rule","path":["status"],"operator":"is_any_of","value":["attention","other"]},
+		{"id":"c","type":"rule","path":["cluster"],"operator":"not_empty"},
+		{"id":"d","type":"rule","path":["lastChecked"],"operator":"is_after","value":"2026-01-01T10:00","negated":true},
+		{"id":"e","type":"rule","path":["label"],"operator":"","value":null}]}`)}
+	if err := config.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	config.Filters = []byte(`{"id":"g","type":"group","combinator":"and","rules":[{"id":"a","type":"rule","path":["secret"],"operator":"is","value":"x"}]}`)
+	if err := config.Validate(); err == nil {
+		t.Fatal("unknown filter field accepted")
+	}
+}

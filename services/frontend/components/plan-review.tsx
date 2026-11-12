@@ -408,7 +408,7 @@ export function PlanReview({
         </nav>
         </ReviewNavigation>
         <Workbench.Canvas className="!items-stretch !justify-stretch !px-0 !pt-0 !pb-0">
-          <div className="min-h-0 w-full overflow-auto px-4 pb-4">
+          <div className="min-h-0 w-full overflow-auto p-4 pt-2">
           {active ? (
             renderChange(active.change, active.ignored, active, (identity) =>
               reviewIdentity(identity, active.childId)

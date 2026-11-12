@@ -27,24 +27,23 @@ export function ScheduleWarning({
           ? "Deployment freeze active"
           : "Waiting for deployment schedule"}
       </Alert.Title>
-      <Alert.Description className="space-y-2">
-        <p>
-          {frozen
-            ? "New deployments are blocked by an active freeze. Existing workloads continue running."
-            : "New deployments are waiting for an allowed maintenance window."}
-        </p>
-        <ul className="space-y-1">
-          {reasons.map((reason, index) => (
-            <li key={`${index}-${reason}`} className="font-medium">
-              {reason}
-            </li>
-          ))}
-        </ul>
-        <p>
+      <Alert.Description>
+        {frozen
+          ? "New deployments are blocked by an active freeze. Existing workloads continue running."
+          : "New deployments are waiting for an allowed maintenance window."}
+      </Alert.Description>
+      <Alert.Description className="mt-1 text-xs">
+        {reasons.map((reason, index) => (
+          <span key={`${index}-${reason}`} className="font-medium text-foreground">
+            {index > 0 && " · "}
+            {reason}
+          </span>
+        ))}
+        <span className="block">
           {nextAllowedAt
             ? `Next allowed start: ${new Date(nextAllowedAt).toLocaleString()} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`
             : "No allowed start in the next weekly cycle. Review the deployment schedule."}
-        </p>
+        </span>
       </Alert.Description>
       {children && <Alert.Actions>{children}</Alert.Actions>}
     </Alert>

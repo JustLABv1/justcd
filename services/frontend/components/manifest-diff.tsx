@@ -389,8 +389,8 @@ function ManifestDiffView({
         {matches.length} matching lines
       </span>
     )}
-    <div className={`flex items-center gap-2 ${!host && hunks.length > 1 ? "ml-auto" : ""}`}>
-      <span className="text-sm text-muted-foreground" aria-live="polite">
+    <div className={`flex items-center gap-2 group-data-[orientation=vertical]/toolbar:flex-col group-data-[orientation=vertical]/toolbar:gap-0.5 ${!host && hunks.length > 1 ? "ml-auto" : ""}`}>
+      <span className="text-sm text-muted-foreground group-data-[orientation=vertical]/toolbar:sr-only" aria-live="polite">
         {hunks.length
           ? position < 0
             ? `${hunks.length} ${hunks.length === 1 ? "change" : "changes"}`

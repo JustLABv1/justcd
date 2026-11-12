@@ -524,6 +524,10 @@ export type PlanApproval = {
   role?: string
   eligible: boolean
   expiresAt: string
+  /** When the approval was recorded. */
+  createdAt?: string
+  /** Set once an apply has consumed the approval. */
+  usedAt?: string
 }
 
 export type PlanApprovalSummary = {

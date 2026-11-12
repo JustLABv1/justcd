@@ -145,7 +145,8 @@ function ErrorDetailsBody({ error }: { error: unknown }) {
   }
 
   return (
-    <div className="space-y-3">
+    // overflow-wrap:anywhere lets long paths and JSON strings shrink the box, which break-words does not.
+    <div className="min-w-0 max-w-full space-y-3 [overflow-wrap:anywhere]">
       {issue && (
         <section aria-label="Plan failure" className="space-y-3 text-sm">
           <p className="font-medium break-words text-destructive">{redactText(issue.summary)}</p>
@@ -165,7 +166,7 @@ function ErrorDetailsBody({ error }: { error: unknown }) {
             <ul className="space-y-2" aria-label="Kubernetes causes">
               {issue.causes.map((cause, index) => (
                 <li key={index} className="space-y-1">
-                  {cause.field && <code className="block break-all text-xs">{redactText(cause.field)}</code>}
+                  {cause.field && <code className="block text-xs">{redactText(cause.field)}</code>}
                   <p>{redactText(cause.message)}</p>
                 </li>
               ))}
@@ -179,7 +180,7 @@ function ErrorDetailsBody({ error }: { error: unknown }) {
           {copied ? "Copied" : "Copy details"}
         </Button>
       </div>
-      <pre className="max-h-[55dvh] overflow-auto rounded-lg border bg-muted/40 p-3 text-xs leading-5 break-words whitespace-pre-wrap text-foreground">
+      <pre className="max-h-[55dvh] max-w-full overflow-auto rounded-lg border bg-muted/40 p-3 font-mono text-xs leading-5 whitespace-pre-wrap text-foreground">
         {details}
       </pre>
     </div>

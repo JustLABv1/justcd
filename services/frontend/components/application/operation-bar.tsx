@@ -12,6 +12,7 @@ import {
   ErrorDetailsButton,
   ErrorDetailsDialog,
 } from "@/components/error-details"
+import { ErrorOutput } from "@/components/error-output"
 import { RolloutPanel } from "@/components/application/rollout-panel"
 import { Card } from "@/components/panelui/card"
 import { Frame } from "@/components/panelui/frame"
@@ -53,9 +54,12 @@ export function OperationBar({
   canCreatePlan,
   aiAction,
   embedded = false,
+  hideStages = false,
 }: {
   /** Draw a failure as rows for a frame that already exists (the attention frame). */
   embedded?: boolean
+  /** The plan lifecycle flow already shows the stages. */
+  hideStages?: boolean
   aiAction?: ReactNode
   onCreatePlan?: () => void
   canCreatePlan?: boolean
@@ -81,6 +85,8 @@ export function OperationBar({
     return () => window.clearInterval(timer)
   }, [operation.id, operation.finishedAt])
   const elapsed = (startedAt: string, finishedAt?: string) => {
+    // A run that stopped without a finish time (a restart or lost worker) has no known duration.
+    if (!finishedAt && operation.status !== "running" && operation.status !== "queued") return "unknown"
     const seconds = Math.max(
       0,
       Math.floor(
@@ -88,7 +94,10 @@ export function OperationBar({
           1000
       )
     )
-    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+    const minutes = Math.floor(seconds / 60)
+    if (minutes >= 1440) return `${Math.floor(minutes / 1440)}d ${Math.floor((minutes % 1440) / 60)}h`
+    if (minutes >= 60) return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+    return `${minutes}m ${seconds % 60}s`
   }
   async function cancelOperation() {
     setCancelling(true)
@@ -109,7 +118,7 @@ export function OperationBar({
   const { isDismissed, dismiss } = useProgressDismissals()
   const terminal =
     operation.status !== "running" && operation.status !== "queued"
-  if (terminal && isDismissed(`operation:${operation.id}`)) return null
+  if (!hideStages && terminal && isDismissed(`operation:${operation.id}`)) return null
   const failed = operation.status === "failed"
   const completed = operation.progress?.completed?.length ?? 0
   const total = operation.progress?.total ?? 0
@@ -183,7 +192,7 @@ export function OperationBar({
             )}
     </>
   ) : null
-  const dismissButton = terminal ? (
+  const dismissButton = terminal && !hideStages ? (
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -259,6 +268,66 @@ export function OperationBar({
       </Frame.Row>
     )
   }
+  if (hideStages) {
+    const waiting = operation.status === "queued" && operation.scheduleDeferred && !operation.scheduleOverrideReason
+    const heading = failed
+      ? failedResource ? `${resourceLabel(failedResource.identity)} could not be applied` : "Sync failed"
+      : waiting ? "Waiting for deployment schedule" : operationPhaseLabel(operation.progress?.phase, operation.status)
+    const duration = elapsed(operation.startedAt, operation.finishedAt)
+    const meta = [
+      duration === "unknown" ? null : `${terminal ? "Took" : "Elapsed"} ${duration}`,
+      `Attempt ${operation.attemptCount || 1}`,
+      operation.nextRetryAt ? `Fresh plan retry ${new Date(operation.nextRetryAt).toLocaleString()}` : null,
+    ].filter(Boolean).join(" · ")
+    const percent = total > 0 ? Math.round((completed / total) * 100) : 0
+    return (
+      <section aria-label={operation.type === "rollback" ? "Rollback details" : "Sync details"} className="min-w-0 space-y-7">
+        <div role="status" aria-live="polite" className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <StatusBadge status={operation.status} />
+            <h3 className="min-w-0 text-base font-semibold break-words">{heading}</h3>
+          </div>
+          <p className="text-sm text-muted-foreground tabular-nums">{meta}</p>
+          {!failed && operation.progress?.current && <p className="text-sm text-muted-foreground">Now: {resourceLabel(operation.progress.current)}</p>}
+        </div>
+        {failed && (
+          <div className="space-y-3">
+            <h4 className="text-sm font-semibold">What happened</h4>
+            <ErrorOutput message={failureDetail || failedResource?.message || operation.message} />
+            <p className="text-sm text-muted-foreground">
+              {total > 0 ? `${completed} of ${total} resources were applied and kept. Nothing was rolled back automatically.` : "No resources were applied."}
+            </p>
+            {total > 0 && (
+              <div role="img" aria-label={`${completed} of ${total} resources applied`} className="h-1.5 overflow-hidden rounded-full bg-muted">
+                <div className="h-full rounded-full bg-success" style={{ width: `${percent}%` }} />
+              </div>
+            )}
+          </div>
+        )}
+        {!failed && total > 0 && (
+          <p className="text-sm text-muted-foreground tabular-nums">{operation.progress?.resources?.length ? rolloutSummary(operation.progress.resources) : `${completed} / ${total} resources`}</p>
+        )}
+        {operation.progress?.cancelRequested && !terminal && (
+          <p role="status" className="text-sm text-muted-foreground">The current resource step will finish before stopping. Applied changes remain. Automatic reconciliation is paused.</p>
+        )}
+        {cancelError != null && <p role="alert" className="text-sm text-destructive">{errorMessage(cancelError)}</p>}
+        {(operation.status === "running" && operation.progress?.phase !== "complete" && canCancel && operation.type !== "resource_action") || failed || scheduleActions ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {operation.status === "running" && operation.progress?.phase !== "complete" && canCancel && operation.type !== "resource_action" && (
+              <Button variant="destructive" loading={cancelling} disabled={operation.progress?.cancelRequested} onClick={() => void cancelOperation()}>
+                {operation.progress?.cancelRequested ? "Stopping after current resource" : "Stop after current resource"}
+              </Button>
+            )}
+            {scheduleActions}
+            {failed && actionButtons}
+          </div>
+        ) : null}
+        {Boolean(operation.progress?.resources?.length) && (
+          <RolloutPanel key={operation.id} operation={operation} plan={plan} elapsed={elapsed} onReviewResource={onReviewResource} />
+        )}
+      </section>
+    )
+  }
   if (failed) {
     return (
       <Card aria-label={operation.type === "rollback" ? "Rollback progress" : "Sync progress"} className="mb-5 min-w-0 border-destructive/40 bg-[color-mix(in_oklab,var(--destructive)_12%,var(--muted))] dark:border-destructive/40">
@@ -274,7 +343,7 @@ export function OperationBar({
             <p className="text-sm font-semibold break-words text-destructive">
               {failedResource ? `${resourceLabel(failedResource.identity)} could not be applied` : operation.message}
             </p>
-            {failureDetail && <p className="font-mono text-xs break-words text-destructive select-text">{failureDetail}</p>}
+            {failureDetail && <ErrorOutput message={failureDetail} />}
             {!failureDetail && failedResource && <p className="text-sm break-words text-muted-foreground">{failedResource.message || operation.message}</p>}
             <p className="text-sm text-muted-foreground">
               {total > 0 ? `${completed} of ${total} resources were applied and kept. Nothing was rolled back automatically.` : "No resources were applied."}
@@ -302,14 +371,16 @@ export function OperationBar({
       </Card>
     )
   }
+  const Shell = hideStages ? "section" : Card
+  const Body = hideStages ? "div" : Card.Content
   return (
-    <Card
+    <Shell
       aria-label={
         operation.type === "rollback" ? "Rollback progress" : "Sync progress"
       }
-      className="mb-5 min-w-0"
+      className={hideStages ? "min-w-0" : "mb-5 min-w-0"}
     >
-      <Card.Content>
+      <Body>
       <div className="min-w-0 space-y-4">
       <div
         role="status"
@@ -361,7 +432,7 @@ export function OperationBar({
           <p className="text-sm font-medium break-words">
             {failedResource ? `${resourceLabel(failedResource.identity)} could not be applied` : operation.message}
           </p>
-          {failureDetail && <p className="font-mono text-xs break-words text-destructive select-text">{failureDetail}</p>}
+          {failureDetail && <ErrorOutput message={failureDetail} />}
           {!failureDetail && failedResource && <p className="text-sm break-words text-muted-foreground">{failedResource.message || operation.message}</p>}
           <p className="text-xs text-muted-foreground">
             {total > 0 ? `${completed} of ${total} resources were applied and kept. Nothing was rolled back automatically.` : "No resources were applied."}
@@ -402,19 +473,14 @@ export function OperationBar({
         </Disclosure>
       ) : (
         <>
-          {progress && (
-            <>
-              <RunProgressStages progress={progress} label="Sync stages" />
-              <p className="text-sm text-muted-foreground">{progress.summary}</p>
-            </>
-          )}
+          {progress && !hideStages && <RunProgressStages progress={progress} label="Sync stages" />}
           {Boolean(operation.progress?.resources?.length) && (
             <RolloutPanel key={operation.id} operation={operation} plan={plan} elapsed={elapsed} onReviewResource={onReviewResource} />
           )}
         </>
       )}
       </div>
-      </Card.Content>
-    </Card>
+      </Body>
+    </Shell>
   )
 }

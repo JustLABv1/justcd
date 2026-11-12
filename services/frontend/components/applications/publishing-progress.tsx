@@ -1,40 +1,35 @@
 "use client"
-import { useEffect, useState, useSyncExternalStore } from "react"
-import { Badge } from "@/components/panelui/badge"
+import { useEffect, useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { ArrowRight01Icon, ArrowUpRight01Icon, Cancel01Icon } from "@hugeicons/core-free-icons"
+import { ArrowRight01Icon, ArrowUpRight01Icon } from "@hugeicons/core-free-icons"
 import { Card } from "@/components/panelui/card"
 import { api } from "@/lib/api"
 import { Alert } from "@/components/panelui/alert"
 import { Button } from "@/components/panelui/button"
-import { Steps } from "@/components/panelui/steps"
+import { RunProgressStages } from "@/components/application/run-progress"
+import type { RunProgress, StageStatus } from "@/lib/run-progress"
 
 import type { Publication } from "@/lib/publishing-status"
 
 type StepState = "done" | "active" | "failed" | "waiting"
-type Step = { label: string; detail: string; state: StepState }
+type Step = { label: string; detail: string; state: StepState; /** What fits in the node, when the status word alone says too little. */ short?: string }
 
-const buildStates: Record<string, { state: StepState; detail: string }> = {
-  build_created: { state: "active", detail: "Waiting for a runner" },
-  build_pending: { state: "active", detail: "Waiting for a runner" },
+const buildStates: Record<string, { state: StepState; detail: string; short?: string }> = {
+  build_created: { state: "active", detail: "Waiting for a runner", short: "Waiting for runner" },
+  build_pending: { state: "active", detail: "Waiting for a runner", short: "Waiting for runner" },
   build_waiting_for_resource: {
     state: "active",
     detail: "Waiting for a runner",
+    short: "Waiting for runner",
   },
-  build_preparing: { state: "active", detail: "Preparing" },
-  build_running: { state: "active", detail: "Building and pushing the image" },
+  build_preparing: { state: "active", detail: "Preparing", short: "Preparing" },
+  build_running: { state: "active", detail: "Building and pushing the image", short: "Building image" },
   build_failed: {
     state: "failed",
     detail: "The pipeline failed. Open it to see the job log.",
   },
   build_canceled: { state: "failed", detail: "The pipeline was canceled." },
   build_canceling: { state: "failed", detail: "The pipeline was canceled." },
-}
-const stateLabel: Record<StepState, string> = {
-  done: "Done",
-  active: "In progress",
-  failed: "Failed",
-  waiting: "Waiting",
 }
 
 function steps(p: Publication): Step[] {
@@ -50,11 +45,13 @@ function steps(p: Publication): Step[] {
         ? {
             label: "Build pipeline",
             detail: "Build finished; recording the result",
+            short: "Recording result",
             state: "active",
           }
         : {
             label: "Build pipeline",
             detail: "Waiting for the first pipeline status",
+            short: "Starting",
             state: "active",
           }
   return [
@@ -76,7 +73,7 @@ function steps(p: Publication): Step[] {
           : "waiting",
     },
     {
-      label: "Deployment manifest committed",
+      label: "Deploy manifest",
       detail: retrying
         ? "Retrying automatically"
         : completed
@@ -94,20 +91,26 @@ function steps(p: Publication): Step[] {
   ]
 }
 
-/** Five stages fit across a card from `sm` up; below that they stack. */
-function useWide() {
-  return useSyncExternalStore(
-    (notify) => { const query = window.matchMedia("(min-width: 640px)"); query.addEventListener("change", notify); return () => query.removeEventListener("change", notify) },
-    () => window.matchMedia("(min-width: 640px)").matches,
-    () => true,
-  )
+const stageStatus: Record<StepState, StageStatus> = { done: "complete", active: "running", failed: "failed", waiting: "pending" }
+
+function stageShort(step: Step) {
+  return step.state === "active" || step.state === "failed" ? step.short : undefined
 }
 
-const chipFor: Record<StepState, { label: string; variant: "success" | "info" | "destructive" | "outline" }> = {
-  done: { label: "Done", variant: "success" },
-  active: { label: "In progress", variant: "info" },
-  failed: { label: "Failed", variant: "destructive" },
-  waiting: { label: "Waiting", variant: "outline" },
+/** The publishing steps as run stages. "Review and apply" is ready to act on, so it reads as waiting for you. */
+function progressFor(list: Step[]): RunProgress {
+  const stages = list.map((step) => {
+    const ready = step.label === "Review and apply" && step.state === "active"
+    return {
+      id: step.label === "Review and apply" ? "review" : step.label,
+      title: step.label,
+      status: ready ? ("queued" as const) : stageStatus[step.state],
+      caption: ready ? "Ready" : stageShort(step),
+      action: ready ? "Click to review" : undefined,
+      details: [{ label: "Detail", value: step.detail }],
+    }
+  })
+  return { current: stages.findIndex((stage) => stage.status !== "complete") + 1 || stages.length, stages, summary: "" }
 }
 
 // One poller shared by the tab indicator and its panel, even while another tab is open.
@@ -158,7 +161,6 @@ export function PublishingProgress({
   failed: boolean
   onReview: () => void
 }) {
-  const wide = useWide()
   if (!publication)
     return (
       <p role="status" className="py-5 text-sm text-muted-foreground">
@@ -176,8 +178,6 @@ export function PublishingProgress({
     )
 
   const list = steps(publication)
-  // Connectors fill up to the first step that is not yet done.
-  const current = list.findIndex((step) => step.state !== "done") + 1 || list.length
   const reviewable = list.some((step) => step.label === "Review and apply" && step.state === "active")
   return (
     <Card size="sm" aria-label="Publishing progress">
@@ -189,22 +189,7 @@ export function PublishingProgress({
         </Card.Action>
       </Card.Header>
       <Card.Content>
-      <Steps orientation={wide ? "horizontal" : "vertical"} value={current} aria-label="Publishing stages">
-        {list.map((step, index) => {
-          const chip = step.label === "Review and apply" && step.state === "active" ? { label: "Ready", variant: "info" as const } : chipFor[step.state]
-          return <Steps.Item key={step.label} step={index + 1} completed={step.state === "done"} loading={step.state === "active" && step.label !== "Review and apply"}>
-            <div className={wide ? "flex w-full min-w-0 flex-col items-center gap-2 px-2 text-center" : "grid w-full grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1"}>
-              <Steps.Indicator className={`${wide ? "" : "row-span-2"} ${step.state === "failed" ? "bg-destructive text-destructive-foreground ring-destructive/20" : step.state === "done" ? "bg-success text-success-foreground" : ""}`}>{step.state === "failed" ? <HugeiconsIcon icon={Cancel01Icon} className="size-4" aria-hidden="true" /> : undefined}</Steps.Indicator>
-              <div className={wide ? "flex min-w-0 flex-col items-center gap-1" : "flex min-w-0 flex-col items-start gap-1"}>
-                <Steps.Title className={`${wide ? "" : "mt-1.5"} ${step.state === "failed" ? "text-destructive" : ""}`}>{step.label}<span className="sr-only">: {stateLabel[step.state]}</span></Steps.Title>
-                <Badge size="sm" variant={chip.variant} dot aria-hidden="true">{chip.label}</Badge>
-                <Steps.Description className="text-xs">{step.detail}</Steps.Description>
-              </div>
-            </div>
-            {index < list.length - 1 && <Steps.Separator className={step.state === "done" ? "bg-success/60" : "bg-border"} />}
-          </Steps.Item>
-        })}
-      </Steps>
+      <RunProgressStages label="Publishing stages" progress={progressFor(list)} pressable={reviewable ? ["review"] : []} onStagePress={onReview} />
       {publication.completionError && <Alert tone="destructive" variant="plain" role="alert" className="mt-4"><Alert.Icon /><Alert.Title>{publication.completionError}</Alert.Title></Alert>}
       </Card.Content>
     </Card>

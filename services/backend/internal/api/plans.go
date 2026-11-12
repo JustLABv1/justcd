@@ -367,20 +367,37 @@ func (s *Server) listPlanApprovals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	required := core.RequiredApprovalCount(record.Plan)
-	items, err := s.Store.ListPlanApprovals(r.Context(), record.ID, record.Plan.Digest)
+	// Starting a sync consumes the plan's approvals, so once one is running or done they keep
+	// counting, and an applied plan keeps its approvers. A failed sync consumes nothing that counts.
+	applied := record.Status == "applied"
+	if !applied {
+		live, liveErr := s.Store.PlanHasLiveOperation(r.Context(), record.ID)
+		if liveErr != nil {
+			writeStoreError(w, "could not load plan approvals")
+			return
+		}
+		applied = live
+	}
+	list := s.Store.ListPlanApprovals
+	if applied {
+		list = s.Store.ListPlanApprovalHistory
+	}
+	items, err := list(r.Context(), record.ID, record.Plan.Digest)
 	if err != nil {
 		writeStoreError(w, "could not load plan approvals")
 		return
 	}
 	type approvalView struct {
-		ID          string    `json:"id"`
-		ActorID     string    `json:"actorId"`
-		DisplayName string    `json:"displayName"`
-		Email       string    `json:"email"`
-		Comment     string    `json:"comment"`
-		Role        string    `json:"role,omitempty"`
-		Eligible    bool      `json:"eligible"`
-		ExpiresAt   time.Time `json:"expiresAt"`
+		ID          string     `json:"id"`
+		ActorID     string     `json:"actorId"`
+		DisplayName string     `json:"displayName"`
+		Email       string     `json:"email"`
+		Comment     string     `json:"comment"`
+		Role        string     `json:"role,omitempty"`
+		Eligible    bool       `json:"eligible"`
+		ExpiresAt   time.Time  `json:"expiresAt"`
+		CreatedAt   time.Time  `json:"createdAt"`
+		UsedAt      *time.Time `json:"usedAt,omitempty"`
 	}
 	approvals := make([]approvalView, 0, len(items))
 	approvedActors := make(map[string]bool, len(items))
@@ -392,6 +409,10 @@ func (s *Server) listPlanApprovals(w http.ResponseWriter, r *http.Request) {
 			role, _ = s.Store.WorkspaceRole(r.Context(), user, app.WorkspaceID)
 		}
 		eligible := userErr == nil && role != "" && core.ApprovalRoleAllows(record.Plan, role, item.Approval.ActorID)
+		// The apply counted this approval at the time, whatever the approver's role is today.
+		if applied && item.UsedAt != nil {
+			eligible = true
+		}
 		name, email := "Former workspace member", ""
 		if userErr == nil {
 			name, email = user.DisplayName, user.Email
@@ -399,7 +420,7 @@ func (s *Server) listPlanApprovals(w http.ResponseWriter, r *http.Request) {
 				name = email
 			}
 		}
-		approvals = append(approvals, approvalView{ID: item.ID, ActorID: item.Approval.ActorID, DisplayName: name, Email: email, Comment: item.Comment, Role: role, Eligible: eligible, ExpiresAt: item.Approval.ExpiresAt})
+		approvals = append(approvals, approvalView{ID: item.ID, ActorID: item.Approval.ActorID, DisplayName: name, Email: email, Comment: item.Comment, Role: role, Eligible: eligible, ExpiresAt: item.Approval.ExpiresAt, CreatedAt: item.CreatedAt, UsedAt: item.UsedAt})
 		if eligible {
 			approvedActors[item.Approval.ActorID] = true
 			if item.Approval.ActorID == currentUser(r).ID {
@@ -844,7 +865,12 @@ func (s *Server) listApplicationOperations(w http.ResponseWriter, r *http.Reques
 	if hasMore {
 		items = items[:limit]
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "hasMore": hasMore})
+	total, err := s.Store.CountOperationsFiltered(r.Context(), app.ID, status, operationType, query)
+	if err != nil {
+		writeStoreError(w, "could not load application operations")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "hasMore": hasMore, "total": total})
 }
 
 var _ = errors.Is

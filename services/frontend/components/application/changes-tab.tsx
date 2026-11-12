@@ -13,7 +13,7 @@ import { ConfirmDisclosure } from "@/components/confirm-disclosure"
 import { PlanRiskCard } from "@/components/ai-plan-risk"
 import { PlanApprovalPanel } from "@/components/plan-approval-panel"
 import { AffectedResources } from "@/components/approval-evidence"
-import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/panelui/sheet"
+import { Sheet, SheetBody, SheetContent, SheetHeader, SheetTitle } from "@/components/panelui/sheet"
 import { ErrorOutput } from "@/components/error-output"
 import { ErrorDetailsButton } from "@/components/error-details"
 import { taskPending } from "@/hooks/background-tasks"
@@ -262,7 +262,7 @@ export function ChangesTab({ workspaceId, plans, activePlan, onSelectPlan, plans
       />
     </Card.Content></Card>}
     {shownTask?.status === "failed" && <Sheet side="right" open={taskOpen} onOpenChange={setTaskOpen}><SheetContent className="w-full max-w-2xl"><SheetHeader className="shrink-0 px-5 pt-5 pb-4 sm:px-7 sm:pt-6"><SheetTitle>Plan generation failed</SheetTitle></SheetHeader><SheetBody className="space-y-5 px-5 pb-6 sm:px-7"><ErrorOutput message={errorMessage(taskError(shownTask))} /><div className="flex flex-wrap items-center gap-2"><Button disabled={busy || hasPendingOperation || !canDeploy || decommissioning} loading={pendingAction === "create-plan"} onClick={() => { setTaskOpen(false); onCreatePlan() }}>Try again</Button><ErrorDetailsButton error={taskError(shownTask)} /></div></SheetBody></SheetContent></Sheet>}
-    {operationDetails && <Sheet side="right" open={syncOpen} onOpenChange={setSyncOpen}><SheetContent className="w-full max-w-2xl"><SheetHeader className="shrink-0 px-5 pt-5 pb-4 sm:px-7 sm:pt-6"><SheetTitle>Sync details</SheetTitle><SheetDescription>Status, rollout and actions for the sync started from this plan.</SheetDescription></SheetHeader><SheetBody className="px-5 pb-6 sm:px-7">{operationDetails}</SheetBody></SheetContent></Sheet>}
+    {operationDetails && <Sheet side="right" open={syncOpen} onOpenChange={setSyncOpen}><SheetContent className="w-full max-w-2xl"><SheetHeader className="shrink-0 px-5 pt-5 pb-4 sm:px-7 sm:pt-6"><SheetTitle>Sync details</SheetTitle></SheetHeader><SheetBody className="px-5 pb-6 sm:px-7">{operationDetails}</SheetBody></SheetContent></Sheet>}
     {activePlan?.plan.requiresApproval && <Sheet side="right" open={approvalOpen} onOpenChange={setApprovalOpen}><SheetContent className="w-full max-w-2xl"><SheetHeader className="shrink-0 px-5 pt-5 pb-4 sm:px-7 sm:pt-6"><SheetTitle>Approval</SheetTitle></SheetHeader><SheetBody className="px-5 pb-6 sm:px-7"><PlanApprovalPanel record={activePlan} readOnly={planExpired} summary={approvalSummary} error={approvalError} required={requiredApprovals} approved={approvedApprovals} roles={approverRoles} members={approverMembers} workspaceId={workspaceId} onResource={(identity) => { setApprovalOpen(false); onReviewResourceChange(diffId(identity)) }} actions={approvalAction} /></SheetBody></SheetContent></Sheet>}
     <Section title={title} description={description} action={plans.length > 0 && <FormSelect ariaLabel="Select plan" value={activePlan?.id ?? ""} onValueChange={onSelectPlan} className="min-w-60 max-w-xs" size="sm" items={planPickerItems(plans, activePlan?.id, now)} />}>
     {plansLoading ? <PlanLoading label="Loading plans and differences" />

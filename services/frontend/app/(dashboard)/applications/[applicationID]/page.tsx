@@ -28,6 +28,7 @@ import { RuntimeHealthStrip } from "@/components/application/runtime-health"
 import { SettingsTab } from "@/components/application/settings-tab"
 import { ApplicationDetailSkeleton } from "@/components/application-detail-skeleton"
 import { BackgroundTaskStatus } from "@/components/background-task-status"
+import { taskPending } from "@/hooks/background-tasks"
 import { useBackgroundTasks } from "@/hooks/background-tasks"
 import { Button } from "@/components/panelui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -270,6 +271,7 @@ export default function ApplicationDetailPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applicationID, loading])
 
+  const changesInProgress = backgroundTasks.tasks.some(taskPending) || operations.some((operation) => operation.type !== "resource_action" && (operation.status === "queued" || operation.status === "running"))
   const hasPendingOperation = operations.some((operation) => operation.status === "queued" || operation.status === "running")
   const activePlanId = activePlan?.id
   const activePlanRequiresApproval = activePlan?.plan.requiresApproval ?? false
@@ -769,7 +771,7 @@ export default function ApplicationDetailPage() {
   const appStatus = application ? deriveApplicationStatus(application, { plan: latestPlan ?? null, conflictCount: ownershipConflict ? ownershipConflicts.length : 0 }) : null
   const planBlockedByNamespace = Boolean(application && namespaceMismatch && !application.kustomizeNamespaceOverride)
 
-  const operationBar = (embedded: boolean) => visibleOperation && application ? <OperationBar embedded={embedded} aiAction={visibleOperation.status === "failed" ? <AIAssistant key={`ai-op-${visibleOperation.id}`} workspaceId={application.workspaceId} applicationId={application.id} features={["summary", "diagnose"]} operations={[visibleOperation]} initialOperationId={visibleOperation.id} autoRun="summary" buttonLabel="Explain failure" /> : undefined} onCreatePlan={() => void createPlan()} canCreatePlan={!createPlanDisabled} key={visibleOperation.id} operation={visibleOperation} plan={plans.find((plan) => plan.id === visibleOperation.planId)} checkpointId={visibleOperationCheckpoint} canRestore={canApprove} disabled={busy || hasPendingOperation} onRestore={(target) => void createRollbackPlan(target)} canCancel={canDeploy && !busy} scheduleActions={visibleOperation.status === "queued" ? <ScheduledOperationActions operation={visibleOperation} canOverride={canApprove} canCancel={canDeploy} onUpdated={loadData} /> : undefined} onUpdated={loadData} onReviewResource={(identity) => { const operationPlan = plans.find((plan) => plan.id === visibleOperation.planId); if (operationPlan) setActivePlan(operationPlan); setReviewResource(diffId(identity)); selectTab("changes") }} /> : null
+  const operationBar = (embedded: boolean) => visibleOperation && application ? <OperationBar embedded={embedded} hideStages={!embedded} aiAction={visibleOperation.status === "failed" ? <AIAssistant key={`ai-op-${visibleOperation.id}`} workspaceId={application.workspaceId} applicationId={application.id} features={["summary", "diagnose"]} operations={[visibleOperation]} initialOperationId={visibleOperation.id} autoRun="summary" buttonLabel="Explain failure" /> : undefined} onCreatePlan={() => void createPlan()} canCreatePlan={!createPlanDisabled} key={visibleOperation.id} operation={visibleOperation} plan={plans.find((plan) => plan.id === visibleOperation.planId)} checkpointId={visibleOperationCheckpoint} canRestore={canApprove} disabled={busy || hasPendingOperation} onRestore={(target) => void createRollbackPlan(target)} canCancel={canDeploy && !busy} scheduleActions={visibleOperation.status === "queued" ? <ScheduledOperationActions operation={visibleOperation} canOverride={canApprove} canCancel={canDeploy} onUpdated={loadData} /> : undefined} onUpdated={loadData} onReviewResource={(identity) => { const operationPlan = plans.find((plan) => plan.id === visibleOperation.planId); if (operationPlan) setActivePlan(operationPlan); setReviewResource(diffId(identity)); selectTab("changes") }} /> : null
 
   return <>
     <PageHeading title={application?.name ?? "Application not found"} description={application ? <>Cluster <span className="text-foreground">{application.clusterName || application.clusterId}</span> · {application.namespaces.length === 1 ? "Namespace" : "Namespaces"} <span className="text-foreground">{application.namespaces.map((binding) => binding.namespace).join(", ") || "none"}</span></> : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><DeploymentScheduleNotice key={application.id} layout="chip" scope="applications" id={application.id} onViewSchedule={() => { selectTab("settings"); window.setTimeout(() => document.getElementById("deployment-schedule")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" }), 0) }} /></div>} metadata={application && <RuntimeHealthStrip application={application} status={appStatus!} healthHistory={healthHistory} reconnecting={Boolean(topologyError)} />} actions={application && <>
@@ -792,16 +794,14 @@ export default function ApplicationDetailPage() {
         ...(canApprove && !application.autoSyncPaused ? [{ label: "Pause auto-sync", icon: PauseIcon, separatorBefore: true, disabled: busy || hasPendingOperation, onSelect: () => void pauseSync() }] : []),
       ]} />}
     </>} />
-    <BackgroundTaskStatus tasks={backgroundTasks.tasks} operations={operations} error={backgroundTasks.error} onRefresh={() => void backgroundTasks.refresh()} />
     {error != null && <ErrorNotice error={error} />}
-    {application && <AttentionBar operation={!loading && visibleOperation?.status === "failed" ? operationBar(true) : undefined} application={application} latestOperation={latestOperation} canDeploy={canDeploy} onRetryReconciliation={() => void retryReconciliation()} onViewActivity={activeTab === "activity" ? undefined : () => selectTab("activity")} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} plansError={plansError} retryingPlans={retryingPlans} onRetryPlans={() => void retryPlans()}
+    {application && <AttentionBar operation={!loading && visibleOperation?.status === "failed" && !(activeTab === "changes" && visibleOperation.planId === activePlan?.id) ? operationBar(true) : undefined} application={application} latestOperation={latestOperation} canDeploy={canDeploy} onRetryReconciliation={() => void retryReconciliation()} onViewActivity={activeTab === "activity" ? undefined : () => selectTab("activity")} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} plansError={plansError} retryingPlans={retryingPlans} onRetryPlans={() => void retryPlans()}
         conflictCount={ownershipConflict ? ownershipConflicts.length : 0} onReviewConflicts={() => setConflictOpen(true)}
         namespaceMismatch={namespaceMismatch} kustomizeNamespace={kustomization?.namespace} onReviewNamespaceSetting={() => selectTab("settings")}
         onCancelDecommission={() => void cancelDecommission()}
         aiAction={aiInAttention ? <AIAssistant key={`ai-${application.id}-${activeTab}-${activePlan?.id}-${activePlan?.plan.digest}`} workspaceId={application.workspaceId} applicationId={application.id} planId={activePlan?.id} features={activeTab === "changes" ? ["plan", "drift", "ask"] : activeTab === "activity" ? ["summary", "ask"] : ["diagnose", "ask"]} operations={activeTab === "activity" ? operations : undefined} /> : undefined} onConfigureExclusion={(issue) => configureIgnore({ mode: "kind", ...(issue.resource ? { version: issue.resource.apiVersion, kind: issue.resource.kind } : {}) })}
         resumeRevision={resumeRevision} onResumeRevisionChange={setResumeRevision} onKeepPin={() => void updateRollbackTracking("keep")} onResume={() => void updateRollbackTracking("resume")} />}
     {!loading && application && <>
-      {visibleOperation && visibleOperation.status !== "failed" && operationBar(false)}
 
     </>}
       <Tabs value={activeTab} onValueChange={(value) => selectTab(String(value))} className="min-w-0">
@@ -814,8 +814,8 @@ export default function ApplicationDetailPage() {
             ...(application.labels?.["justcd.io/published"] === "true" && canDeploy ? [{ id: "publishing", label: "Publishing" }] : []),
             { id: "pull-requests", label: "Pull requests" },
             { id: "settings", label: "Settings" },
-          ].map((tab) => <TabsTrigger key={tab.id} value={tab.id} className={tab.id === "publishing" && publishingInProgress ? "text-primary" : undefined}>
-            {tab.label}{tab.id === "publishing" && publishingInProgress && <Badge variant="info" size="sm"><span aria-hidden="true" className="size-1.5 rounded-full bg-primary motion-safe:animate-pulse" />In progress</Badge>}{tab.count !== undefined && <TabsBadge>{tab.count}</TabsBadge>}
+          ].map((tab) => <TabsTrigger key={tab.id} value={tab.id} className={(tab.id === "publishing" && publishingInProgress) || (tab.id === "changes" && changesInProgress) ? "text-primary" : undefined}>
+            {tab.label}{tab.id === "changes" && changesInProgress && <Badge variant="info" size="sm"><span aria-hidden="true" className="size-1.5 rounded-full bg-primary motion-safe:animate-pulse" />Running</Badge>}{tab.id === "publishing" && publishingInProgress && <Badge variant="info" size="sm"><span aria-hidden="true" className="size-1.5 rounded-full bg-primary motion-safe:animate-pulse" />In progress</Badge>}{tab.count !== undefined && <TabsBadge>{tab.count}</TabsBadge>}
           </TabsTrigger>)}
         </TabsList>}
 
@@ -867,7 +867,14 @@ export default function ApplicationDetailPage() {
             ignoreRules={ignoreRules} ignoreReasons={ignoreReasons} onIgnoreReasonChange={(key, reason) => setIgnoreReasons((current) => ({ ...current, [key]: reason }))} onSaveIgnore={(identity, path, reason) => void saveIgnoreRule(identity, path, reason)} onRemoveRule={removeIgnoreRule}
             requiredApprovals={requiredApprovals} approvedApprovals={approvedApprovals} approvalsComplete={approvalsComplete} approverRoles={displayedApproverRoles} approverMembers={displayedApproverMembers} approvalSummary={currentApprovalSummary} approvalError={approvalError && approvalError.planId === activePlanId ? approvalError.cause : null}
             autoApplyAfterApproval={(application.syncPolicy === "auto-safe" || application.syncPolicy === "auto") && !application.autoSyncPaused && !application.decommissioning && !activePlan?.plan.rollback && !activePlan?.plan.decommission}
-            approvalComment={approvalComment} onApprovalCommentChange={setApprovalComment} onApprove={approvePlan} onApply={() => void applyPlan()} onCreatePlan={() => void createPlan()} />
+            approvalComment={approvalComment} onApprovalCommentChange={setApprovalComment} onApprove={approvePlan} onApply={() => void applyPlan()} onCreatePlan={() => void createPlan()}
+            operationDetails={visibleOperation && visibleOperation.planId === activePlan?.id ? operationBar(false) : undefined}
+            approvalPending={backgroundTasks.tasks.some((task) => task.kind === "approval" && taskPending(task))}
+            planTask={backgroundTasks.tasks.find((task) => task.kind === "plan")}
+            operation={operations.find((item) => item.type !== "resource_action" && item.planId === activePlan?.id)}
+            progress={<>
+              <BackgroundTaskStatus hideStages tasks={backgroundTasks.tasks.filter((task) => task.kind === "adopt" || (task.kind === "approval" && task.status === "failed"))} operations={operations} error={backgroundTasks.error} onRefresh={() => void backgroundTasks.refresh()} />
+            </>} />
         </TabsContent>
 
         <TabsContent value="activity" className="outline-none">

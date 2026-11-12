@@ -12,6 +12,7 @@ import {
   ErrorDetailsButton,
   ErrorDetailsDialog,
 } from "@/components/error-details"
+import { ErrorOutput } from "@/components/error-output"
 import { RolloutPanel } from "@/components/application/rollout-panel"
 import { Card } from "@/components/panelui/card"
 import { Frame } from "@/components/panelui/frame"
@@ -53,9 +54,12 @@ export function OperationBar({
   canCreatePlan,
   aiAction,
   embedded = false,
+  hideStages = false,
 }: {
   /** Draw a failure as rows for a frame that already exists (the attention frame). */
   embedded?: boolean
+  /** The plan lifecycle flow already shows the stages. */
+  hideStages?: boolean
   aiAction?: ReactNode
   onCreatePlan?: () => void
   canCreatePlan?: boolean
@@ -109,7 +113,7 @@ export function OperationBar({
   const { isDismissed, dismiss } = useProgressDismissals()
   const terminal =
     operation.status !== "running" && operation.status !== "queued"
-  if (terminal && isDismissed(`operation:${operation.id}`)) return null
+  if (!hideStages && terminal && isDismissed(`operation:${operation.id}`)) return null
   const failed = operation.status === "failed"
   const completed = operation.progress?.completed?.length ?? 0
   const total = operation.progress?.total ?? 0
@@ -183,7 +187,7 @@ export function OperationBar({
             )}
     </>
   ) : null
-  const dismissButton = terminal ? (
+  const dismissButton = terminal && !hideStages ? (
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -274,7 +278,7 @@ export function OperationBar({
             <p className="text-sm font-semibold break-words text-destructive">
               {failedResource ? `${resourceLabel(failedResource.identity)} could not be applied` : operation.message}
             </p>
-            {failureDetail && <p className="font-mono text-xs break-words text-destructive select-text">{failureDetail}</p>}
+            {failureDetail && <ErrorOutput message={failureDetail} />}
             {!failureDetail && failedResource && <p className="text-sm break-words text-muted-foreground">{failedResource.message || operation.message}</p>}
             <p className="text-sm text-muted-foreground">
               {total > 0 ? `${completed} of ${total} resources were applied and kept. Nothing was rolled back automatically.` : "No resources were applied."}
@@ -302,14 +306,16 @@ export function OperationBar({
       </Card>
     )
   }
+  const Shell = hideStages ? "section" : Card
+  const Body = hideStages ? "div" : Card.Content
   return (
-    <Card
+    <Shell
       aria-label={
         operation.type === "rollback" ? "Rollback progress" : "Sync progress"
       }
-      className="mb-5 min-w-0"
+      className={hideStages ? "min-w-0" : "mb-5 min-w-0"}
     >
-      <Card.Content>
+      <Body>
       <div className="min-w-0 space-y-4">
       <div
         role="status"
@@ -361,7 +367,7 @@ export function OperationBar({
           <p className="text-sm font-medium break-words">
             {failedResource ? `${resourceLabel(failedResource.identity)} could not be applied` : operation.message}
           </p>
-          {failureDetail && <p className="font-mono text-xs break-words text-destructive select-text">{failureDetail}</p>}
+          {failureDetail && <ErrorOutput message={failureDetail} />}
           {!failureDetail && failedResource && <p className="text-sm break-words text-muted-foreground">{failedResource.message || operation.message}</p>}
           <p className="text-xs text-muted-foreground">
             {total > 0 ? `${completed} of ${total} resources were applied and kept. Nothing was rolled back automatically.` : "No resources were applied."}
@@ -402,19 +408,14 @@ export function OperationBar({
         </Disclosure>
       ) : (
         <>
-          {progress && (
-            <>
-              <RunProgressStages progress={progress} label="Sync stages" />
-              <p className="text-sm text-muted-foreground">{progress.summary}</p>
-            </>
-          )}
+          {progress && !hideStages && <RunProgressStages progress={progress} label="Sync stages" />}
           {Boolean(operation.progress?.resources?.length) && (
             <RolloutPanel key={operation.id} operation={operation} plan={plan} elapsed={elapsed} onReviewResource={onReviewResource} />
           )}
         </>
       )}
       </div>
-      </Card.Content>
-    </Card>
+      </Body>
+    </Shell>
   )
 }

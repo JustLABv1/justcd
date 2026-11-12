@@ -35,6 +35,12 @@ export type RunStage = {
   title: string
   status: StageStatus
   time?: string
+  /** A deadline instead of a step: drawn as a live countdown that runs out. */
+  expiresAt?: string
+  /** Replaces the status text under the title. */
+  caption?: string
+  /** A call to action shown in place of the caption, in the accent colour. */
+  action?: string
   details: { label: string; value: string }[]
 }
 export type RunProgress = {
@@ -74,9 +80,7 @@ export function planRunProgress(task: BackgroundTask): RunProgress {
   const changes = Array.isArray(plan?.plan?.changes)
     ? plan.plan.changes.length
     : undefined
-  return {
-    current,
-    stages: stagesWithStatus(
+  const stages = stagesWithStatus(
       [
         {
           id: "queued",
@@ -106,7 +110,10 @@ export function planRunProgress(task: BackgroundTask): RunProgress {
         : task.status === "queued"
           ? "queued"
           : "running"
-    ),
+    )
+  return {
+    current,
+    stages,
     summary: done
       ? "Plan generation complete. Review the changes before applying."
       : task.status === "failed"
@@ -231,4 +238,87 @@ export function syncRunProgress(
                     ? "Rechecking Git, cluster state, and approval before applying."
                     : "Waiting for a sync worker to report progress.",
   }
+}
+
+/**
+ * Plan lifecycle: generated, valid until, approved, applied, complete. The sync
+ * operation's own stages are shown separately while it runs.
+ */
+export function planLifecycleProgress({
+  plan,
+  operation,
+  required,
+  approved,
+  expired,
+  approvalPending = false,
+  canApprove = false,
+}: {
+  plan: PlanRecord
+  operation?: Operation
+  required: number
+  approved: number
+  expired: boolean
+  /** An approval is being recorded in the background. */
+  approvalPending?: boolean
+  /** The viewer may approve and has not yet. */
+  canApprove?: boolean
+}): RunProgress {
+  const applied = plan.status === "applied" || operation?.status === "succeeded"
+  const dead = !applied && (expired || plan.status !== "current")
+  const approvalDone = approved >= required
+  const opStatus: StageStatus =
+    operation?.status === "running"
+      ? "running"
+      : operation?.status === "queued"
+        ? "queued"
+        : operation?.status === "succeeded"
+          ? "complete"
+          : operation?.status === "failed"
+            ? "failed"
+            : operation
+              ? "cancelled"
+              : applied
+                ? "complete"
+                : dead
+                  ? "skipped"
+                  : "pending"
+  const stages: RunStage[] = [
+    { id: "ready", title: "Plan ready", status: "complete", time: plan.createdAt, details: [] },
+  ]
+  if (!applied && plan.status === "current")
+    stages.push({ id: "expires", title: "Plan expires", status: "complete", expiresAt: plan.expiresAt, details: [] })
+  if (plan.plan.requiresApproval)
+    stages.push({
+      id: "approval",
+      title: !applied && !approvalDone && !dead && !approvalPending && canApprove ? `Approval ${approved}/${required}` : "Approval",
+      action: !applied && !approvalDone && !dead && !approvalPending && canApprove ? "Click to approve" : undefined,
+      status: applied || approvalDone ? "complete" : dead ? "skipped" : approvalPending ? "running" : "queued",
+      caption: approvalPending && !approvalDone ? "Recording approval…" : applied ? (approvalDone ? `${approved} of ${required} approved` : "Approved") : approvalDone ? `${approved} of ${required} approved` : dead ? "Not needed" : `${approved} of ${required} approved`,
+      details: [],
+    })
+  stages.push(
+    {
+      id: "apply",
+      title: "Apply",
+      status: opStatus,
+      time: operation?.startedAt,
+      caption:
+        opStatus === "running"
+          ? operation?.progress?.total ? `${operation.progress.completed?.length ?? 0} / ${operation.progress.total} resources` : "Applying…"
+          : opStatus === "queued"
+            ? operation?.scheduleDeferred && !operation.scheduleOverrideReason ? "Waiting for schedule" : "Waiting to start"
+            : opStatus === "failed"
+              ? operation?.progress?.cancelRequested ? "Stopped" : "Failed"
+              : undefined,
+      details: [],
+    },
+    {
+      id: "complete",
+      title: "Complete",
+      status: opStatus === "complete" ? "complete" : opStatus === "failed" || opStatus === "cancelled" ? "skipped" : opStatus === "skipped" ? "skipped" : "pending",
+      time: operation?.status === "succeeded" ? operation.finishedAt : undefined,
+      details: [],
+    }
+  )
+  return { current: stages.findIndex((stage) => stage.status !== "complete") + 1 || stages.length + 1, stages, summary: "" }
 }

@@ -2,7 +2,7 @@
 
 import { Section } from "@/components/section"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Alert02Icon, Tick02Icon } from "@hugeicons/core-free-icons"
 import { Alert } from "@/components/panelui/alert"
@@ -13,6 +13,13 @@ import { ConfirmDisclosure } from "@/components/confirm-disclosure"
 import { PlanRiskCard } from "@/components/ai-plan-risk"
 import { PlanApprovalPanel } from "@/components/plan-approval-panel"
 import { AffectedResources } from "@/components/approval-evidence"
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/panelui/sheet"
+import { ErrorOutput } from "@/components/error-output"
+import { ErrorDetailsButton } from "@/components/error-details"
+import { taskPending } from "@/hooks/background-tasks"
+import { errorMessage, taskError } from "@/lib/api"
+import { RunProgressStages } from "@/components/application/run-progress"
+import { planLifecycleProgress, planRunProgress } from "@/lib/run-progress"
 import { immutablePaths, planReviewStatus } from "@/lib/plan-review"
 import { ManifestDiff } from "@/components/manifest-diff"
 import { PlanReview } from "@/components/plan-review"
@@ -25,7 +32,7 @@ import { Checkbox } from "@/components/panelui/checkbox"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/panelui/textarea"
 import { CheckboxCard, EmptyState, StatusBadge } from "@/components/ui-kit"
-import type { Change, FieldExclusion, Identity, RecreationSelection, IgnoreRule, PlanApprovalSummary, PlanRecord } from "@/lib/types"
+import type { Change, FieldExclusion, Identity, RecreationSelection, IgnoreRule, PlanApprovalSummary, PlanRecord, Operation, BackgroundTask } from "@/lib/types"
 
 const kindTone = { create: "success", update: "info", delete: "destructive" } as const
 
@@ -138,7 +145,7 @@ function planPickerItems(plans: PlanRecord[], activeId: string | undefined, now:
     })
 }
 
-export function ChangesTab({ workspaceId, plans, activePlan, onSelectPlan, plansLoading, plansError, retryingPlans, onRetryPlans, decommissioning, canDeploy, canApprove, busy, hasPendingOperation, pendingAction, hasOwnershipConflict, onReviewOwnershipConflict, reviewResource, onReviewResourceChange, selectionResources, selectionFields, selectionRecreations = [], onRecreationChange, selectionDirty, onToggleResource, onToggleField, onResetSelection, onSaveSelection, ignoreRules, ignoreReasons, onIgnoreReasonChange, onSaveIgnore, onRemoveRule, requiredApprovals, approvedApprovals, approvalsComplete, approverRoles, approverMembers, approvalSummary, approvalError = null, autoApplyAfterApproval = false, approvalComment, onApprovalCommentChange, onApprove, onApply, onCreatePlan, onKeepNamespacesChange }: {
+export function ChangesTab({ workspaceId, plans, activePlan, onSelectPlan, plansLoading, plansError, retryingPlans, onRetryPlans, decommissioning, canDeploy, canApprove, busy, hasPendingOperation, pendingAction, hasOwnershipConflict, onReviewOwnershipConflict, reviewResource, onReviewResourceChange, selectionResources, selectionFields, selectionRecreations = [], onRecreationChange, selectionDirty, onToggleResource, onToggleField, onResetSelection, onSaveSelection, ignoreRules, ignoreReasons, onIgnoreReasonChange, onSaveIgnore, onRemoveRule, requiredApprovals, approvedApprovals, approvalsComplete, approverRoles, approverMembers, approvalSummary, approvalError = null, autoApplyAfterApproval = false, approvalComment, onApprovalCommentChange, onApprove, onApply, onCreatePlan, onKeepNamespacesChange, progress, operation, planTask, operationDetails, approvalPending = false }: {
   onKeepNamespacesChange?: (keep: boolean) => void
   workspaceId?: string
   plans: PlanRecord[]
@@ -185,7 +192,26 @@ export function ChangesTab({ workspaceId, plans, activePlan, onSelectPlan, plans
   onApprove: () => Promise<void>
   onApply: () => void
   onCreatePlan: () => void
+  /** Live plan generation and sync progress. It belongs with the plan it produces and applies. */
+  progress?: ReactNode
+  /** The sync started from the open plan, if any. */
+  operation?: Operation
+  /** A plan being generated right now. */
+  planTask?: BackgroundTask
+  /** The sync's full status, rollout and actions, shown in a sheet from the Apply stage. */
+  operationDetails?: ReactNode
+  /** An approval is being recorded in the background. */
+  approvalPending?: boolean
 }) {
+  const [approvalOpen, setApprovalOpen] = useState(false)
+  const [syncOpen, setSyncOpen] = useState(false)
+  const [taskOpen, setTaskOpen] = useState(false)
+  const wasComplete = useRef(approvalsComplete)
+  useEffect(() => {
+    // The last required approval was just recorded: nothing is left to do in the sheet.
+    if (approvalsComplete && !wasComplete.current) setApprovalOpen(false)
+    wasComplete.current = approvalsComplete
+  }, [approvalsComplete])
   const [expandedAppliedPlan, setExpandedAppliedPlan] = useState<string | null>(null)
   const [expandedExpiredPlan, setExpandedExpiredPlan] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
@@ -194,6 +220,7 @@ export function ChangesTab({ workspaceId, plans, activePlan, onSelectPlan, plans
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [activePlan?.id, activePlan?.status])
+  const shownTask = planTask && (taskPending(planTask) || planTask.status === "failed") ? planTask : undefined
   const planExpired = Boolean(activePlan && planReviewStatus(activePlan, now) === "expired")
   const planActionable = activePlan?.status === "current" && !planExpired
 
@@ -224,7 +251,20 @@ export function ChangesTab({ workspaceId, plans, activePlan, onSelectPlan, plans
                 <div className="space-y-3"><Input aria-label="Approval comment" value={approvalComment} maxLength={1000} onChange={(event) => onApprovalCommentChange(event.target.value)} placeholder="Comment (optional)" /><AffectedResources resources={activePlan.plan.changes.filter((change) => change.kind === "delete" || change.recreationRequired || change.takeover || change.identity.clusterScoped).map(change=>change.identity)} /></div>
               </ConfirmDisclosure>
 
-  return <Section title={title} description={description} action={plans.length > 0 && <FormSelect ariaLabel="Select plan" value={activePlan?.id ?? ""} onValueChange={onSelectPlan} className="min-w-60 max-w-xs" size="sm" items={planPickerItems(plans, activePlan?.id, now)} />}>
+  return <>
+    {progress}
+    {!plansLoading && plansError == null && (shownTask || activePlan) && <Card as="section" size="sm" aria-label={shownTask ? "Plan generation" : "Plan lifecycle"} className="mb-5 min-w-0"><Card.Content>
+      <RunProgressStages
+        label={shownTask ? "Plan generation stages" : "Plan lifecycle"}
+        progress={shownTask ? planRunProgress(shownTask) : planLifecycleProgress({ plan: activePlan!, operation, required: requiredApprovals, approved: approvedApprovals, expired: planExpired, approvalPending, canApprove: Boolean(approvalSummary?.canApprove && !approvalSummary.currentUserApproved) })}
+        pressable={shownTask ? (shownTask.status === "failed" ? ["generating", "queued"] : []) : [...(activePlan?.plan.requiresApproval ? ["approval"] : []), ...(operation && operationDetails ? ["apply", "complete"] : [])]}
+        onStagePress={(id) => { if (shownTask) setTaskOpen(true); else if (id === "approval") setApprovalOpen(true); else setSyncOpen(true) }}
+      />
+    </Card.Content></Card>}
+    {shownTask?.status === "failed" && <Sheet side="right" open={taskOpen} onOpenChange={setTaskOpen}><SheetContent className="w-full max-w-2xl"><SheetHeader className="shrink-0 px-5 pt-5 pb-4 sm:px-7 sm:pt-6"><SheetTitle>Plan generation failed</SheetTitle></SheetHeader><SheetBody className="space-y-5 px-5 pb-6 sm:px-7"><ErrorOutput message={errorMessage(taskError(shownTask))} /><div className="flex flex-wrap items-center gap-2"><Button disabled={busy || hasPendingOperation || !canDeploy || decommissioning} loading={pendingAction === "create-plan"} onClick={() => { setTaskOpen(false); onCreatePlan() }}>Try again</Button><ErrorDetailsButton error={taskError(shownTask)} /></div></SheetBody></SheetContent></Sheet>}
+    {operationDetails && <Sheet side="right" open={syncOpen} onOpenChange={setSyncOpen}><SheetContent className="w-full max-w-2xl"><SheetHeader className="shrink-0 px-5 pt-5 pb-4 sm:px-7 sm:pt-6"><SheetTitle>Sync details</SheetTitle><SheetDescription>Status, rollout and actions for the sync started from this plan.</SheetDescription></SheetHeader><SheetBody className="px-5 pb-6 sm:px-7">{operationDetails}</SheetBody></SheetContent></Sheet>}
+    {activePlan?.plan.requiresApproval && <Sheet side="right" open={approvalOpen} onOpenChange={setApprovalOpen}><SheetContent className="w-full max-w-2xl"><SheetHeader className="shrink-0 px-5 pt-5 pb-4 sm:px-7 sm:pt-6"><SheetTitle>Approval</SheetTitle></SheetHeader><SheetBody className="px-5 pb-6 sm:px-7"><PlanApprovalPanel record={activePlan} readOnly={planExpired} summary={approvalSummary} error={approvalError} required={requiredApprovals} approved={approvedApprovals} roles={approverRoles} members={approverMembers} workspaceId={workspaceId} onResource={(identity) => { setApprovalOpen(false); onReviewResourceChange(diffId(identity)) }} actions={approvalAction} /></SheetBody></SheetContent></Sheet>}
+    <Section title={title} description={description} action={plans.length > 0 && <FormSelect ariaLabel="Select plan" value={activePlan?.id ?? ""} onValueChange={onSelectPlan} className="min-w-60 max-w-xs" size="sm" items={planPickerItems(plans, activePlan?.id, now)} />}>
     {plansLoading ? <PlanLoading label="Loading plans and differences" />
       : plansError != null ? <div role="alert" className="flex flex-wrap items-center justify-between gap-3 p-5 text-sm"><span>Plans could not be loaded.</span><Button size="sm" loading={retryingPlans} onClick={onRetryPlans}>Retry</Button></div>
       : !activePlan ? <EmptyState title="No review plan yet" description="Build a plan to render Git manifests and compare them with live, app-owned resources." />
@@ -264,12 +304,12 @@ export function ChangesTab({ workspaceId, plans, activePlan, onSelectPlan, plans
               <Checkbox id="keep-decommission-namespaces" aria-describedby="keep-namespace-description" checked={Boolean(activePlan.plan.selection?.keepNamespaces)} onCheckedChange={(checked) => onKeepNamespacesChange?.(checked)} disabled={blocked || !canApprove || !planActionable || !onKeepNamespacesChange} />
             </div>
           )}
-          <PlanReview emptyDescription={activePlan.plan.rollback ? "The target matches the managed state. Applying will pin the source and pause reconciliation." : "Git and the managed fields match, or all differences are excluded."} canvasHeader={<div className="flex flex-wrap items-center gap-2"><StatusBadge status={planReviewStatus(activePlan, now)} />{(["create", "update", "delete"] as const).filter((kind) => counts?.[kind]).map((kind) => <Badge key={kind} variant="outline">{counts?.[kind]} {kind}</Badge>)}<span className="text-xs text-muted-foreground" title={`Plan digest ${activePlan.plan.digest}`}>Commit <span className="font-mono">{activePlan.plan.revision.slice(0, 12)}</span> · {planExpired ? "expired" : "expires"} {new Date(activePlan.expiresAt).toLocaleString()}</span></div>} renderApprovalReview={(reviewResource) => activePlan.plan.requiresApproval && <PlanApprovalPanel record={activePlan} readOnly={planExpired} summary={approvalSummary} error={approvalError} required={requiredApprovals} approved={approvedApprovals} roles={approverRoles} members={approverMembers} workspaceId={workspaceId} onResource={reviewResource} actions={approvalAction} />} showApprovalEvidence={false} key={activePlan.id} workspaceId={workspaceId} plan={activePlan.plan} changes={activePlan.plan.changes} ignored={activePlan.plan.ignored ?? []} selected={reviewResource} onSelect={onReviewResourceChange} identityKey={changeIdentityKey} isExcluded={(change) => selectionResources.some((identity) => sameIdentity(identity, change.identity))} renderChange={(change, ignored) => <DiffCard selectionDirty={selectionDirty} savingSelection={pendingAction === "selection"} onSaveSelection={onSaveSelection} recreationPolicy={selectionRecreations.find(item => sameIdentity(item.identity, change.identity))?.propagationPolicy ?? ""} onRecreationChange={onRecreationChange ? policy => onRecreationChange(change.identity, policy) : undefined} retainedNamespace={Boolean(ignored && activePlan.plan.decommission && activePlan.plan.selection?.keepNamespaces && change.identity.apiVersion === "v1" && change.identity.kind === "Namespace" && change.identity.clusterScoped)} readOnly={planExpired} change={change} ignored={ignored} canSelect={planActionable && canDeploy && !activePlan.plan.decommission && !activePlan.plan.rollback} canManageIgnores={planActionable && canApprove && !activePlan.plan.decommission && !activePlan.plan.rollback} excluded={selectionResources.some((identity) => sameIdentity(identity, change.identity))} excludedPaths={selectionFields.filter((field) => sameIdentity(field.identity, change.identity)).map((field) => field.path)} permanentResourceIgnore={ignoreRules.some((rule) => !rule.path && sameIdentity(rule.identity, change.identity))} permanentFieldIgnores={ignoreRules.filter((rule) => Boolean(rule.path) && sameIdentity(rule.identity, change.identity)).map((rule) => rule.path!)} reason={ignoreReasons[diffId(change.identity)] ?? ""} onReasonChange={(reason) => onIgnoreReasonChange(diffId(change.identity), reason)} onToggleResource={() => onToggleResource(change.identity)} onToggleField={(path) => onToggleField(change.identity, path)} onSaveIgnore={(path) => onSaveIgnore(change.identity, path, ignoreReasons[diffId(change.identity)] ?? "")} busy={busy} />} />
+          <PlanReview emptyDescription={activePlan.plan.rollback ? "The target matches the managed state. Applying will pin the source and pause reconciliation." : "Git and the managed fields match, or all differences are excluded."} canvasHeader={<div className="flex flex-wrap items-center gap-2"><StatusBadge status={planReviewStatus(activePlan, now)} />{(["create", "update", "delete"] as const).filter((kind) => counts?.[kind]).map((kind) => <Badge key={kind} variant="outline">{counts?.[kind]} {kind}</Badge>)}<span className="text-xs text-muted-foreground" title={`Plan digest ${activePlan.plan.digest}`}>Commit <span className="font-mono">{activePlan.plan.revision.slice(0, 12)}</span> · {planExpired ? "expired" : "expires"} {new Date(activePlan.expiresAt).toLocaleString()}</span></div>} showApprovalEvidence={false} key={activePlan.id} workspaceId={workspaceId} plan={activePlan.plan} changes={activePlan.plan.changes} ignored={activePlan.plan.ignored ?? []} selected={reviewResource} onSelect={onReviewResourceChange} identityKey={changeIdentityKey} isExcluded={(change) => selectionResources.some((identity) => sameIdentity(identity, change.identity))} renderChange={(change, ignored) => <DiffCard selectionDirty={selectionDirty} savingSelection={pendingAction === "selection"} onSaveSelection={onSaveSelection} recreationPolicy={selectionRecreations.find(item => sameIdentity(item.identity, change.identity))?.propagationPolicy ?? ""} onRecreationChange={onRecreationChange ? policy => onRecreationChange(change.identity, policy) : undefined} retainedNamespace={Boolean(ignored && activePlan.plan.decommission && activePlan.plan.selection?.keepNamespaces && change.identity.apiVersion === "v1" && change.identity.kind === "Namespace" && change.identity.clusterScoped)} readOnly={planExpired} change={change} ignored={ignored} canSelect={planActionable && canDeploy && !activePlan.plan.decommission && !activePlan.plan.rollback} canManageIgnores={planActionable && canApprove && !activePlan.plan.decommission && !activePlan.plan.rollback} excluded={selectionResources.some((identity) => sameIdentity(identity, change.identity))} excludedPaths={selectionFields.filter((field) => sameIdentity(field.identity, change.identity)).map((field) => field.path)} permanentResourceIgnore={ignoreRules.some((rule) => !rule.path && sameIdentity(rule.identity, change.identity))} permanentFieldIgnores={ignoreRules.filter((rule) => Boolean(rule.path) && sameIdentity(rule.identity, change.identity)).map((rule) => rule.path!)} reason={ignoreReasons[diffId(change.identity)] ?? ""} onReasonChange={(reason) => onIgnoreReasonChange(diffId(change.identity), reason)} onToggleResource={() => onToggleResource(change.identity)} onToggleField={(path) => onToggleField(change.identity, path)} onSaveIgnore={(path) => onSaveIgnore(change.identity, path, ignoreReasons[diffId(change.identity)] ?? "")} busy={busy} />} />
 
           {planActionable && <Card size="sm" className="sticky bottom-3 z-20 mt-4 bg-card/95 backdrop-blur"><Card.Content className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0 basis-full sm:flex-1 sm:basis-0"><p className="text-sm font-medium">{activePlan.plan.changes.length} change{activePlan.plan.changes.length === 1 ? "" : "s"} · {deletionCount} deletion{deletionCount === 1 ? "" : "s"}{activePlan.plan.requiresApproval ? ` · ${approvedApprovals}/${requiredApprovals} approvals` : ""}</p>{selectionDirty && <p role="status" className="mt-1 text-sm text-primary">Unsaved selection · Save to create a new plan and clear previous approvals.</p>}</div>
             <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
-              {!selectionDirty && activePlan.plan.requiresApproval && <Button variant="outline" size="sm" onClick={() => { const section = document.getElementById("plan-approval-review"); section?.focus({ preventScroll: true }); section?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" }) }}>Review approvals</Button>}
+              {!selectionDirty && activePlan.plan.requiresApproval && <Button variant="outline" size="sm" onClick={() => setApprovalOpen(true)}>Review approvals</Button>}
               {selectionDirty ? <><Button size="sm" variant="outline" onClick={onResetSelection} disabled={busy}>Reset selection</Button><Button size="sm" onClick={onSaveSelection} loading={pendingAction === "selection"} disabled={blocked || !canDeploy}>Save selection</Button></> : <Button variant={activePlan.plan.decommission || activePlan.plan.changes.some(change => change.recreation) ? "destructive" : "default"} loading={pendingAction === "apply-plan"} onClick={onApply} disabled={applyBlockedReason !== null} aria-describedby={applyBlockedReason ? "plan-apply-blocked-reason" : undefined}>{activePlan.plan.rollback ? "Apply rollback" : activePlan.plan.decommission ? "Delete resources" : activePlan.plan.requiresApproval ? "Apply plan" : "Sync application"}</Button>}
             </div>
           </Card.Content></Card>}
@@ -277,4 +317,5 @@ export function ChangesTab({ workspaceId, plans, activePlan, onSelectPlan, plans
         </>}
       </div>}
   </Section>
+  </>
 }

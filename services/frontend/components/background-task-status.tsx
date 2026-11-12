@@ -22,12 +22,15 @@ export function BackgroundTaskStatus({
   onRefresh,
   showApplication = false,
   operations = [],
+  hideStages = false,
 }: {
   tasks: BackgroundTask[]
   error: unknown
   onRefresh: () => void
   showApplication?: boolean
   operations?: Operation[]
+  /** Another flow on the page already shows plan generation. */
+  hideStages?: boolean
 }) {
   const { isDismissed, dismiss } = useProgressDismissals()
   const active = tasks.filter(taskPending)
@@ -108,7 +111,7 @@ export function BackgroundTaskStatus({
               {!taskPending(task) && <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon" className="text-muted-foreground" aria-label="Dismiss completed background work" onClick={() => dismiss(`task:${task.id}`)} />}><HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} aria-hidden="true" /></TooltipTrigger><TooltipContent>Dismiss progress</TooltipContent></Tooltip>}
             </div>
           </div>
-          {task.kind === "plan" && (
+          {task.kind === "plan" && !hideStages && (
             <RunProgressStages
               progress={planRunProgress(task)}
               label="Plan generation stages"

@@ -3,11 +3,9 @@
 import { useEffect, useId, useState, type ReactNode } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Tick02Icon } from "@hugeicons/core-free-icons"
-import { Avatar, AvatarBadge, AvatarGroup } from "@/components/panelui/avatar"
-import { Card } from "@/components/panelui/card"
+import { Avatar, AvatarBadge } from "@/components/panelui/avatar"
 import { Badge } from "@/components/panelui/badge"
 import { ApprovalEvidence } from "@/components/approval-evidence"
-import { Disclosure } from "@/components/ui/collapsible"
 import { errorMessage } from "@/lib/api"
 import type {
   Identity,
@@ -56,6 +54,7 @@ export function RecordedApprovals({
             </div>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {approval.role || "Former member"}
+              {approval.createdAt && ` · ${new Date(approval.createdAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`}
               {!approval.eligible && " · Expired or no longer eligible"}
             </p>
             {approval.comment && (
@@ -119,160 +118,117 @@ export function PlanApprovalPanel({
     takeovers &&
       `${takeovers} field ownership takeover${takeovers === 1 ? "" : "s"}`,
   ].filter(Boolean)
+  const applied = record.status === "applied"
+  const state = applied
+    ? "Approved and applied"
+    : !current
+    ? "Historical plan"
+    : error
+      ? "Status unavailable"
+      : !summary
+        ? "Checking status…"
+        : expired
+          ? "Plan expired"
+          : complete
+            ? "Approved"
+            : "Waiting for approval"
+  const guidance = current && summary
+    ? expired
+      ? "This plan has expired. Create a fresh plan before approving or applying."
+      : summary.currentUserApproved
+        ? "Your approval is recorded for this plan."
+        : complete
+          ? "All required approvals have been recorded."
+          : summary.canApprove
+            ? "You can approve this plan after reviewing its changes."
+            : "You are not eligible to approve under this plan’s rule."
+    : null
+  const canAct = current && !complete && !expired && summary?.canApprove && !summary.currentUserApproved && actions
   return (
-    <Card as="section" size="sm"
+    <section
       id="plan-approval-review"
       tabIndex={-1}
       aria-label="Approval review"
-      className="mb-4 scroll-mt-5 overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="scroll-mt-5 space-y-7 outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <Card.Content className="space-y-3"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold">
-              {current ? "Approvals" : "Saved approval policy"}
-            </h3>
-            <span
-              role="status"
-              className={`text-sm ${current && summary && !expired && !error && approved > 0 ? "text-success-foreground dark:text-success" : "text-muted-foreground"}`}
-            >
-              {!current
-                ? "Historical plan"
-                : error
-                  ? "Status unavailable"
-                  : !summary
-                    ? "Checking status…"
-                    : expired
-                      ? "Plan expired"
-                      : `${approved} of ${required} approved`}
-            </span>
-            {!!summary?.approvals.some((approval) => approval.eligible) && (
-              <AvatarGroup max={4} size="sm" label="Approvers">
-                {summary.approvals.filter((approval) => approval.eligible).map((approval) => <Avatar key={approval.id} name={approval.displayName || approval.email}>
-                  <AvatarBadge label="Approved" className="bg-success text-success-foreground"><HugeiconsIcon icon={Tick02Icon} strokeWidth={2} /></AvatarBadge>
-                </Avatar>)}
-              </AvatarGroup>
-            )}
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {plan.rollback
-              ? "Rollbacks require owner approval, including any additional approvals required for deletions."
-              : risks.length
-                ? `Approval is required for ${risks.join(" and ")}.`
-                : "This plan requires approval under its saved deployment policy."}
-          </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 space-y-2">
+          {current || (applied && summary) ? <>
+            <p className="flex items-baseline gap-2">
+              <span role="status" className="text-3xl font-semibold tabular-nums tracking-tight">{approved} <span className="text-muted-foreground">of {required}</span></span>
+              <span className="text-sm text-muted-foreground">approved</span>
+            </p>
+            <div aria-hidden="true" className="flex gap-1.5">
+              {Array.from({ length: Math.min(required, 8) }, (_, index) => <span key={index} className={`h-1.5 w-8 rounded-full ${index < approved ? "bg-success" : "bg-muted"}`} />)}
+            </div>
+          </> : <p role="status" className="text-3xl font-semibold tracking-tight">{applied ? "Approved" : "Not applied"}</p>}
+          <p className="text-sm text-muted-foreground">{state}{guidance ? ` · ${guidance}` : ""}</p>
         </div>
-        {current && summary?.currentUserApproved ? (
-          <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-success-foreground dark:text-success">
-            <HugeiconsIcon
-              icon={Tick02Icon}
-              strokeWidth={2}
-              className="size-3.5"
-              aria-hidden="true"
-            />
+        {canAct ? <div className="shrink-0">{actions}</div> : current && summary?.currentUserApproved ? (
+          <span className="inline-flex shrink-0 items-center gap-1.5 text-sm text-success-foreground dark:text-success">
+            <HugeiconsIcon icon={Tick02Icon} strokeWidth={2} className="size-4" aria-hidden="true" />
             Your approval is recorded
           </span>
-        ) : current &&
-          !complete &&
-          !expired &&
-          summary?.canApprove &&
-          actions ? (
-          <div className="shrink-0">{actions}</div>
         ) : null}
       </div>
       {Boolean(error) && (
         <p role="alert" className="text-sm text-destructive">
-          Could not load approvals: {errorMessage(error)}. Retrying
-          automatically.
+          Could not load approvals: {errorMessage(error)}. Retrying automatically.
         </p>
       )}
-      <Disclosure summary="Approval details" className="pb-1">
-        <p className="mb-4 text-xs text-muted-foreground">
-          {required} distinct eligible approval{required === 1 ? "" : "s"}{" "}
-          required for this exact plan.
-        </p>
-        <div className="grid gap-5 pb-4 md:grid-cols-2">
-          <div>
-            <h4 className="mb-3 text-xs font-medium text-muted-foreground">
-              {current ? "Who has approved" : "Active approval records"}
-            </h4>
-            {error ? (
-              <p role="alert" className="text-sm text-destructive">
-                Could not load approvals: {errorMessage(error)}. Status will be
-                checked again automatically.
+      <div className="space-y-4">
+        <div className="space-y-1.5">
+          <h4 className="text-sm font-semibold">Why approval is required</h4>
+          <p className="text-sm text-muted-foreground">
+            {plan.rollback
+              ? "Rollbacks require owner approval, including any additional approvals required for deletions."
+              : risks.length
+                ? `This plan includes ${risks.join(" and ")}.`
+                : "This plan requires approval under its saved deployment policy."}{" "}
+            {required} distinct eligible approval{required === 1 ? "" : "s"} required for this exact plan.
+          </p>
+        </div>
+        <ApprovalEvidence plan={plan} workspaceId={workspaceId} prefix={prefix} onResource={onResource} embedded />
+      </div>
+      {(current || applied) && <div className="space-y-3">
+        <h4 className="text-sm font-semibold">Approvals</h4>
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">Status will be checked again automatically.</p>
+        ) : !summary ? (
+          <p role="status" className="text-sm text-muted-foreground">Checking recorded approvals…</p>
+        ) : summary.approvals.length === 0 ? (
+          <div className="flex items-center gap-3">
+            <Avatar aria-hidden="true" fallback="—" color="muted" className="border border-dashed" />
+            <div>
+              <p className="text-sm">{current ? "No approvals yet" : "No active approvals"}</p>
+              <p className="text-xs text-muted-foreground">
+                {current ? `${required} approval${required === 1 ? "" : "s"} still needed.` : "Approvals are valid only for a current plan."}
               </p>
-            ) : !summary ? (
-              <p role="status" className="text-sm text-muted-foreground">
-                Checking recorded approvals…
-              </p>
-            ) : summary.approvals.length === 0 ? (
-              <div className="flex items-center gap-3">
-                <Avatar aria-hidden="true" fallback="—" color="muted" className="border border-dashed" />
-                <div>
-                  <p className="text-sm">
-                    {current ? "No approvals yet" : "No active approvals"}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {current
-                      ? `${required} approval${required === 1 ? "" : "s"} still needed.`
-                      : "Approvals are valid only for a current plan."}
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <RecordedApprovals approvals={summary.approvals} />
-            )}
-          </div>
-          <div>
-            <h4 className="mb-3 text-xs font-medium text-muted-foreground">
-              Who can approve
-            </h4>
-            <div className="flex flex-wrap gap-2">
-              {roles.map((role) => (
-                <Badge key={role} variant="outline" className="capitalize">
-                  {role}
-                </Badge>
-              ))}
-              {members.map((member) => (
-                <span
-                  key={member.id}
-                  className="inline-flex items-center gap-2 text-xs"
-                >
-                  <Avatar size="sm" name={member.label} aria-hidden="true" />
-                  {member.label}
-                </span>
-              ))}
             </div>
-            <p className="mt-2 text-xs text-muted-foreground">
-              {roles.length
-                ? `Members with these workspace roles or higher qualify.${members.length ? " Selected members also qualify." : ""}`
-                : "Only the selected workspace members qualify."}
-            </p>
-            {current && summary && (
-              <p className="mt-3 text-sm">
-                {expired
-                  ? "This plan has expired. Create a fresh plan before approving or applying."
-                  : summary.currentUserApproved
-                    ? "Your approval is recorded for this plan."
-                    : complete
-                      ? "All required approvals have been recorded."
-                      : summary.canApprove
-                        ? "You can approve this plan after reviewing its changes."
-                        : "You are not eligible to approve under this plan’s rule."}
-              </p>
-            )}
           </div>
+        ) : (
+          <RecordedApprovals approvals={summary.approvals} />
+        )}
+      </div>}
+      <div className="space-y-3">
+        <h4 className="text-sm font-semibold">Who can approve</h4>
+        <div className="flex flex-wrap items-center gap-2">
+          {roles.map((role) => (
+            <Badge key={role} variant="outline" className="capitalize">{role}</Badge>
+          ))}
+          {members.map((member) => (
+            <span key={member.id} className="inline-flex items-center gap-2 text-sm">
+              <Avatar size="sm" name={member.label} aria-hidden="true" />
+              {member.label}
+            </span>
+          ))}
         </div>
-        <div className="pt-3">
-          <ApprovalEvidence
-            plan={plan}
-            workspaceId={workspaceId}
-            prefix={prefix}
-            onResource={onResource}
-            embedded
-          />
-        </div>
-      </Disclosure>
-    </Card.Content></Card>
+        <p className="text-xs text-muted-foreground">
+          {roles.length
+            ? `Members with these workspace roles or higher qualify.${members.length ? " Selected members also qualify." : ""}`
+            : "Only the selected workspace members qualify."}
+        </p>
+      </div>
+    </section>
   )
 }

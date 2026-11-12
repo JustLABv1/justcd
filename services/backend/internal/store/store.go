@@ -3148,7 +3148,27 @@ func (s *Store) ApprovalByID(ctx context.Context, id string) (ApprovalRecord, er
 }
 
 func (s *Store) ListPlanApprovals(ctx context.Context, planID, digest string) ([]ApprovalRecord, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,plan_id,actor_id,plan_digest,deletes,expires_at,used_at,created_at,comment FROM deletion_approvals WHERE plan_id=$1 AND plan_digest=$2 AND used_at IS NULL AND expires_at>NOW() ORDER BY created_at,id`, planID, digest)
+	return s.listPlanApprovals(ctx, planID, digest, `SELECT id,plan_id,actor_id,plan_digest,deletes,expires_at,used_at,created_at,comment FROM deletion_approvals WHERE plan_id=$1 AND plan_digest=$2 AND used_at IS NULL AND expires_at>NOW() ORDER BY created_at,id`)
+}
+
+// ListPlanApprovalHistory returns every approval recorded for a plan, including
+// those already consumed by an apply or past their expiry. Applied plans keep
+// their approvers this way, for review and audit.
+func (s *Store) ListPlanApprovalHistory(ctx context.Context, planID, digest string) ([]ApprovalRecord, error) {
+	return s.listPlanApprovals(ctx, planID, digest, `SELECT id,plan_id,actor_id,plan_digest,deletes,expires_at,used_at,created_at,comment FROM deletion_approvals WHERE plan_id=$1 AND plan_digest=$2 ORDER BY created_at,id`)
+}
+
+// PlanHasLiveOperation reports whether a queued, running or finished-successfully
+// operation was started from the plan. Such an operation has already consumed the
+// plan's approvals, so they must keep counting while the plan is still current.
+func (s *Store) PlanHasLiveOperation(ctx context.Context, planID string) (bool, error) {
+	var exists bool
+	err := s.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM operations WHERE plan_id=$1 AND status IN ('queued','running','succeeded'))`, planID).Scan(&exists)
+	return exists, err
+}
+
+func (s *Store) listPlanApprovals(ctx context.Context, planID, digest, query string) ([]ApprovalRecord, error) {
+	rows, err := s.DB.QueryContext(ctx, query, planID, digest)
 	if err != nil {
 		return nil, err
 	}

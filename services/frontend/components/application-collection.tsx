@@ -26,7 +26,6 @@ import { PanelSelect } from "@/components/applications/panel-wizard"
 import { applicationCardStatus, badgeLabel, type CardStatus } from "@/lib/application-card-status"
 import { attentionTab, tabActionLabel } from "@/lib/application-status"
 import type { ApplicationSyncActivity } from "@/lib/sync-history"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/panelui/tooltip"
 import { Filters } from "@/components/reui/filters/filters"
 import { createFilterQuery } from "@/components/reui/filters/filters-query"
 import { applicationFilterFieldIds, applicationFilterFields, readApplicationField } from "@/components/application-filter-fields"
@@ -137,6 +136,7 @@ export function ApplicationCard({
   /** Every card in the group shares this state and the group header says so: drop the coloured edge. */
   quietEdge?: boolean
 }) {
+  const [showAllBadges, setShowAllBadges] = useState(false)
   const labels = summaryLabels(app).filter(([key]) => key !== hideLabelKey)
   const namespaces = app.namespaces.map((item) => item.namespace).join(", ") || "No namespace"
   const revision = /^[a-f0-9]{40}$|^[a-f0-9]{64}$/i.test(app.revision) ? app.revision.slice(0, 8) : app.revision
@@ -167,12 +167,11 @@ export function ApplicationCard({
       {showCluster && <p className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground" title={`${clusterName} (${app.clusterId})`}><Dot level={clusterLevel ?? "unknown"} /><span className="min-w-0 truncate">{clusterName}</span></p>}
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         <Badge variant={badgeVariant[status.primary.tone]} size="sm" dot title={status.primary.title}>{badgeLabel(status.primary)}</Badge>
-        {status.others.length > 0 && <Tooltip>
-          <TooltipTrigger render={<span tabIndex={0} className="inline-flex rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Also: ${status.others.map(badgeLabel).join(", ")}`} />}>
-            <Badge variant="secondary" size="sm">+{status.others.length}</Badge>
-          </TooltipTrigger>
-          <TooltipContent><ul className="space-y-0.5">{status.others.map((item) => <li key={item.key}>{badgeLabel(item)}</li>)}</ul></TooltipContent>
-        </Tooltip>}
+        {/* The rest are a click away, on the card itself: a hover tooltip hid them from touch and from anyone who did not think to hover. */}
+        {showAllBadges && status.others.map((item) => <Badge key={item.key} variant={badgeVariant[item.tone]} size="sm" dot={item.tone === "success"} title={item.title}>{badgeLabel(item)}</Badge>)}
+        {status.others.length > 0 && <button type="button" aria-expanded={showAllBadges} aria-label={showAllBadges ? "Show fewer states" : `Show ${status.others.length} more state${status.others.length === 1 ? "" : "s"}: ${status.others.map(badgeLabel).join(", ")}`} onClick={() => setShowAllBadges((current) => !current)} className="inline-flex rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <Badge variant="secondary" size="sm" className="cursor-pointer hover:bg-secondary/80">{showAllBadges ? "Show less" : `+${status.others.length}`}</Badge>
+        </button>}
         <ProfileVersionBadge application={app} />
       </div>
       {labels.length > 0 && <div aria-label="Application labels" className="mt-2 flex flex-wrap gap-1">{labels.map(([key, value]) => <Badge key={key} variant="outline" size="sm" className="max-w-full truncate" title={`${key}=${value}`}>{key}{value && <>: {value}</>}</Badge>)}</div>}
@@ -627,13 +626,14 @@ export function ApplicationCollection({
   // Everything that narrows the list, for the count on the phone's Filters button. The search has its own field.
   const narrowing = Number(filter !== "all") + Number(favoritesOnly) + Number(Boolean(clusterFilter)) + activeConditions
   const statusChips = (
-    <Chip.Group multiple={false} value={[filter]} onValueChange={(next) => { if (next[0]) setFilter(next[0]) }} aria-label="Filter by health">
+    // No "All apps" chip: nothing pressed is all of them, and pressing the active chip again lets go.
+    <Chip.Group multiple={false} value={filter === "all" ? [] : [filter]} onValueChange={(next) => setFilter(next[0] ?? "all")} aria-label="Filter by status" className="flex-wrap">
 
         {/* The same split as the group headers: what is down, what waits on a person, what to look at.
             "Needs attention" (the three together) stays reachable from links and saved views. */}
         {([["all", "All apps"], ["attention", "Needs attention"], ["down", "Down"], ["waiting", "Waiting for review"], ["check", "To check"], ["synced", "In sync"], ["paused", "Paused"], ["other", "Other"]] as const)
           // Empty buckets are noise; keep them only while they are the active filter.
-          .filter(([value]) => value === "all" || (value === "attention" ? filter === value : counts[value] > 0 || filter === value))
+          .filter(([value]) => value !== "all" && (value === "attention" ? filter === value : counts[value] > 0 || filter === value))
           .map(([value, label]) => (
             <Chip key={value} value={value}>{label} <span className="ms-1 tabular-nums">{counts[value]}</span></Chip>
           ))}
@@ -648,7 +648,7 @@ export function ApplicationCollection({
     </Chip>
   )
   const searchField = (
-    <Input.Group className="min-w-0 flex-1 sm:min-w-56 lg:max-w-md">
+    <Input.Group className={wide ? "w-full min-w-48 sm:w-60 2xl:w-72" : "min-w-0 flex-1"}>
       <Input.Addon><WorkspaceIcon name="search" className="size-4" /></Input.Addon>
       <Input aria-label="Search applications" placeholder="Search applications, labels, clusters…" value={query} onChange={(event) => setQuery(event.target.value)} />
     </Input.Group>
@@ -660,12 +660,17 @@ export function ApplicationCollection({
       onValueChange={setClusterFilter}
     />
   )
-  const advancedFilter = <Filters variant="advanced" advancedMode="popover" advancedAlign="start" fields={filterFields} query={filterQuery} onQueryChange={setFilterQuery} size="sm" />
+  // On a wide screen the advanced filter is an icon beside the other view controls; the count says when it is on.
+  const advancedFilter = <Filters variant="advanced" advancedMode="popover" advancedAlign={wide ? "end" : "start"} fields={filterFields} query={filterQuery} onQueryChange={setFilterQuery} size="sm"
+    trigger={wide ? <Button type="button" variant="outline" size="icon" className="relative" aria-label={activeConditions ? `Advanced filter, ${activeConditions} active` : "Advanced filter"} title="Advanced filter">
+      <HugeiconsIcon icon={FilterHorizontalIcon} strokeWidth={1.8} aria-hidden="true" />
+      {activeConditions > 0 && <span aria-hidden="true" className="absolute -right-1 -top-1 grid size-4 place-items-center rounded-full bg-primary text-[10px] font-semibold tabular-nums text-primary-foreground">{activeConditions}</span>}
+    </Button> : undefined} />
   const groupMenu = (
     <Menu>
       <Menu.Trigger render={<Button type="button" variant="outline" aria-label="Group and sort" />}>
         <HugeiconsIcon icon={SlidersHorizontalIcon} strokeWidth={1.8} aria-hidden="true" />
-        <span className="hidden sm:inline">{groupLabels[groupBy]} · {sortLabels[sort]}</span>
+        <span className="hidden xl:inline">{groupLabels[groupBy]} · {sortLabels[sort]}</span>
       </Menu.Trigger>
       <Menu.Content align="end" className="min-w-56">
         <Menu.Group>
@@ -722,20 +727,16 @@ export function ApplicationCollection({
       {bulkBar}
       {editingLabels && <ApplicationLabelsDialog key={editingLabels.id} application={editingLabels} onClose={() => setEditingLabels(null)} onSaved={labels => onApplicationUpdated?.({ ...editingLabels, labels })} />}
       <section aria-label="Filter applications" className="mb-4 space-y-3">
-        {wide ? <>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="max-w-full overflow-x-auto">
-              {statusChips}
-            </div>
+        {/* One row: find (search, then the chips that narrow), and on the right how to look at it. */}
+        {wide ? <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          {searchField}
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            {statusChips}
+            <span aria-hidden="true" className="mx-0.5 h-5 w-px bg-border" />
             {favoritesChip}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {searchField}
-            {clusterControl}
-            {advancedFilter}
-            <div className="ml-auto flex items-center gap-2">{groupMenu}{viewTabs}</div>
-          </div>
-        </> : <>
+          <div className="ml-auto flex items-center gap-2">{clusterControl}{advancedFilter}{groupMenu}{viewTabs}</div>
+        </div> : <>
           {/* A phone gets the search and one Filters button; the chips would otherwise take three rows. */}
           <div className="flex items-center gap-2">
             {searchField}

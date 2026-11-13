@@ -28,7 +28,8 @@ import { Button } from "@/components/panelui/button"
 import { Disclosure } from "@/components/ui/collapsible"
 import { FormSelect } from "@/components/form-select"
 import { Input } from "@/components/panelui/input"
-import { Checkbox } from "@/components/panelui/checkbox"
+import { Switch } from "@/components/panelui/switch"
+import { Combobox } from "@/components/panelui/combobox"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/panelui/textarea"
 import { CheckboxCard, EmptyState, StatusBadge } from "@/components/ui-kit"
@@ -69,12 +70,14 @@ function DiffCard({ selectionDirty, savingSelection, onSaveSelection, recreation
   const fieldPaths = useMemo(() => (change.changedPaths ?? []).filter(safeIgnorePath), [change.changedPaths])
   const immutable = useMemo(() => immutablePaths(change), [change])
   const showFields = fieldPaths.length > 0 && change.kind !== "delete"
+  const ignorableFields = fieldPaths.filter((path) => !permanentFieldIgnores.includes(path))
+  const [chosenField, setIgnoreField] = useState("")
+  const ignoreField = ignorableFields.includes(chosenField) ? chosenField : ignorableFields[0] ?? ""
   return <Card id={diffId(change.identity)} className="scroll-mt-6 min-w-0">
     <Card.Header><div className="flex flex-wrap items-center gap-2">
       <Badge variant={ignored ? "secondary" : kindTone[change.kind]} className="uppercase">{retainedNamespace ? "Kept" : ignored ? "Excluded" : change.kind}</Badge>
       <span className="min-w-0 flex-1 break-words text-sm font-medium">{name}</span>
       {change.takeover && <Badge variant="warning">Field ownership takeover</Badge>}
-      {ignored && <Badge variant="warning">Not applied</Badge>}
       {change.identity.clusterScoped && <Badge variant="outline">cluster-wide</Badge>}
     </div></Card.Header>
     <Card.Content className="space-y-4">
@@ -111,7 +114,10 @@ function DiffCard({ selectionDirty, savingSelection, onSaveSelection, recreation
             <Textarea aria-label={`Reason for ignoring ${name}`} minRows={2} value={reason} onChange={(event) => onReasonChange(event.target.value)} placeholder="Why should future plans ignore this? (required)" className="min-h-16 resize-y" maxLength={500} />
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="outline" disabled={busy || permanentResourceIgnore || reason.trim().length < 5} onClick={() => onSaveIgnore("")}>{permanentResourceIgnore ? "Resource already ignored" : "Ignore resource in future plans"}</Button>
-              {fieldPaths.filter((path) => !permanentFieldIgnores.includes(path)).map((path) => <Button key={path} size="sm" variant="ghost" disabled={busy || reason.trim().length < 5 || change.kind === "delete"} onClick={() => onSaveIgnore(path)}>Ignore {path} in future plans</Button>)}
+              {ignorableFields.length > 0 && change.kind !== "delete" && <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <FormSelect ariaLabel={`Field of ${name} to ignore`} size="sm" className="min-w-48 max-w-full" value={ignoreField} onValueChange={setIgnoreField} items={ignorableFields.map((path) => ({ value: path, label: path }))} />
+                <Button size="sm" variant="outline" disabled={busy || reason.trim().length < 5 || !ignoreField} onClick={() => onSaveIgnore(ignoreField)}>Ignore field in future plans</Button>
+              </div>}
             </div>
             <p className="text-sm text-muted-foreground">Only workspace owners can change permanent rules. Each change is audited and invalidates existing plans.</p>
           </div>
@@ -264,7 +270,12 @@ export function ChangesTab({ workspaceId, plans, activePlan, onSelectPlan, plans
     {shownTask?.status === "failed" && <Sheet side="right" open={taskOpen} onOpenChange={setTaskOpen}><SheetContent className="w-full max-w-2xl"><SheetHeader className="shrink-0 px-5 pt-5 pb-4 sm:px-7 sm:pt-6"><SheetTitle>Plan generation failed</SheetTitle></SheetHeader><SheetBody className="space-y-5 px-5 pb-6 sm:px-7"><ErrorOutput message={errorMessage(taskError(shownTask))} /><div className="flex flex-wrap items-center gap-2"><Button disabled={busy || hasPendingOperation || !canDeploy || decommissioning} loading={pendingAction === "create-plan"} onClick={() => { setTaskOpen(false); onCreatePlan() }}>Try again</Button><ErrorDetailsButton error={taskError(shownTask)} /></div></SheetBody></SheetContent></Sheet>}
     {operationDetails && <Sheet side="right" open={syncOpen} onOpenChange={setSyncOpen}><SheetContent className="w-full max-w-2xl"><SheetHeader className="shrink-0 px-5 pt-5 pb-4 sm:px-7 sm:pt-6"><SheetTitle>Sync details</SheetTitle></SheetHeader><SheetBody className="px-5 pb-6 sm:px-7">{operationDetails}</SheetBody></SheetContent></Sheet>}
     {activePlan?.plan.requiresApproval && <Sheet side="right" open={approvalOpen} onOpenChange={setApprovalOpen}><SheetContent className="w-full max-w-2xl"><SheetHeader className="shrink-0 px-5 pt-5 pb-4 sm:px-7 sm:pt-6"><SheetTitle>Approval</SheetTitle></SheetHeader><SheetBody className="px-5 pb-6 sm:px-7"><PlanApprovalPanel record={activePlan} readOnly={planExpired} summary={approvalSummary} error={approvalError} required={requiredApprovals} approved={approvedApprovals} roles={approverRoles} members={approverMembers} workspaceId={workspaceId} onResource={(identity) => { setApprovalOpen(false); onReviewResourceChange(diffId(identity)) }} actions={approvalAction} /></SheetBody></SheetContent></Sheet>}
-    <Section title={title} description={description} action={plans.length > 0 && <FormSelect ariaLabel="Select plan" value={activePlan?.id ?? ""} onValueChange={onSelectPlan} className="min-w-60 max-w-xs" size="sm" items={planPickerItems(plans, activePlan?.id, now)} />}>
+    <Section title={title} description={description} action={plans.length > 0 && <div className="w-96 max-w-full">
+      {/* Searchable: the history grows with every refresh, and the reader usually knows the date or change count. */}
+      <Combobox accessibilityLabel="Select plan" value={activePlan?.id ?? ""} onValueChange={(value) => { if (value) onSelectPlan(value) }} placeholder="Search plans…" emptyMessage="No plan matches">
+        {planPickerItems(plans, activePlan?.id, now).map((item) => <Combobox.Item key={item.value} value={item.value} label={item.label} />)}
+      </Combobox>
+    </div>}>
     {plansLoading ? <PlanLoading label="Loading plans and differences" />
       : plansError != null ? <div role="alert" className="flex flex-wrap items-center justify-between gap-3 p-5 text-sm"><span>Plans could not be loaded.</span><Button size="sm" loading={retryingPlans} onClick={onRetryPlans}>Retry</Button></div>
       : !activePlan ? <EmptyState title="No review plan yet" description="Build a plan to render Git manifests and compare them with live, app-owned resources." />
@@ -282,7 +293,7 @@ export function ChangesTab({ workspaceId, plans, activePlan, onSelectPlan, plans
         {activePlan.status === "applied" && <Alert tone="success" role="status">
           <Alert.Icon />
           <Alert.Title>Plan successfully applied</Alert.Title>
-          <Alert.Description>These changes have already been executed. This plan is a historical snapshot, not a list of pending changes. Use Refresh plan above to compare Git with the current cluster state.</Alert.Description>
+          <Alert.Description>These changes have already been executed. This plan is a historical snapshot, not a list of pending changes. Refresh the plan to compare Git with the current cluster state.</Alert.Description>
           <Alert.Actions><Button size="sm" variant="outline" onClick={() => setExpandedAppliedPlan(expandedAppliedPlan === activePlan.id ? null : activePlan.id)}>{expandedAppliedPlan === activePlan.id ? "Hide applied diff" : "View applied diff"}</Button></Alert.Actions>
         </Alert>}
         {(!planInactive || expandedExpiredPlan === activePlan.id) && (activePlan.status !== "applied" || expandedAppliedPlan === activePlan.id) && <>
@@ -301,19 +312,19 @@ export function ChangesTab({ workspaceId, plans, activePlan, onSelectPlan, plans
                 <label htmlFor="keep-decommission-namespaces" className="text-sm font-medium">Keep namespace</label>
                 <p id="keep-namespace-description" className="text-sm text-muted-foreground">Delete the application’s other managed resources and leave its namespace in place. Changing this option creates a new plan that needs fresh approval.</p>
               </div>
-              <Checkbox id="keep-decommission-namespaces" aria-describedby="keep-namespace-description" checked={Boolean(activePlan.plan.selection?.keepNamespaces)} onCheckedChange={(checked) => onKeepNamespacesChange?.(checked)} disabled={blocked || !canApprove || !planActionable || !onKeepNamespacesChange} />
+              <Switch id="keep-decommission-namespaces" aria-describedby="keep-namespace-description" checked={Boolean(activePlan.plan.selection?.keepNamespaces)} onCheckedChange={(checked) => onKeepNamespacesChange?.(checked)} disabled={blocked || !canApprove || !planActionable || !onKeepNamespacesChange} />
             </div>
           )}
           <PlanReview emptyDescription={activePlan.plan.rollback ? "The target matches the managed state. Applying will pin the source and pause reconciliation." : "Git and the managed fields match, or all differences are excluded."} canvasHeader={<div className="flex flex-wrap items-center gap-2"><StatusBadge status={planReviewStatus(activePlan, now)} />{(["create", "update", "delete"] as const).filter((kind) => counts?.[kind]).map((kind) => <Badge key={kind} variant="outline">{counts?.[kind]} {kind}</Badge>)}<span className="text-xs text-muted-foreground" title={`Plan digest ${activePlan.plan.digest}`}>Commit <span className="font-mono">{activePlan.plan.revision.slice(0, 12)}</span> · {planExpired ? "expired" : "expires"} {new Date(activePlan.expiresAt).toLocaleString()}</span></div>} showApprovalEvidence={false} key={activePlan.id} workspaceId={workspaceId} plan={activePlan.plan} changes={activePlan.plan.changes} ignored={activePlan.plan.ignored ?? []} selected={reviewResource} onSelect={onReviewResourceChange} identityKey={changeIdentityKey} isExcluded={(change) => selectionResources.some((identity) => sameIdentity(identity, change.identity))} renderChange={(change, ignored) => <DiffCard selectionDirty={selectionDirty} savingSelection={pendingAction === "selection"} onSaveSelection={onSaveSelection} recreationPolicy={selectionRecreations.find(item => sameIdentity(item.identity, change.identity))?.propagationPolicy ?? ""} onRecreationChange={onRecreationChange ? policy => onRecreationChange(change.identity, policy) : undefined} retainedNamespace={Boolean(ignored && activePlan.plan.decommission && activePlan.plan.selection?.keepNamespaces && change.identity.apiVersion === "v1" && change.identity.kind === "Namespace" && change.identity.clusterScoped)} readOnly={planExpired} change={change} ignored={ignored} canSelect={planActionable && canDeploy && !activePlan.plan.decommission && !activePlan.plan.rollback} canManageIgnores={planActionable && canApprove && !activePlan.plan.decommission && !activePlan.plan.rollback} excluded={selectionResources.some((identity) => sameIdentity(identity, change.identity))} excludedPaths={selectionFields.filter((field) => sameIdentity(field.identity, change.identity)).map((field) => field.path)} permanentResourceIgnore={ignoreRules.some((rule) => !rule.path && sameIdentity(rule.identity, change.identity))} permanentFieldIgnores={ignoreRules.filter((rule) => Boolean(rule.path) && sameIdentity(rule.identity, change.identity)).map((rule) => rule.path!)} reason={ignoreReasons[diffId(change.identity)] ?? ""} onReasonChange={(reason) => onIgnoreReasonChange(diffId(change.identity), reason)} onToggleResource={() => onToggleResource(change.identity)} onToggleField={(path) => onToggleField(change.identity, path)} onSaveIgnore={(path) => onSaveIgnore(change.identity, path, ignoreReasons[diffId(change.identity)] ?? "")} busy={busy} />} />
 
           {planActionable && <Card size="sm" className="sticky bottom-3 z-20 mt-4 bg-card/95 backdrop-blur"><Card.Content className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0 basis-full sm:flex-1 sm:basis-0"><p className="text-sm font-medium">{activePlan.plan.changes.length} change{activePlan.plan.changes.length === 1 ? "" : "s"} · {deletionCount} deletion{deletionCount === 1 ? "" : "s"}{activePlan.plan.requiresApproval ? ` · ${approvedApprovals}/${requiredApprovals} approvals` : ""}</p>{selectionDirty && <p role="status" className="mt-1 text-sm text-primary">Unsaved selection · Save to create a new plan and clear previous approvals.</p>}</div>
+            <div className="min-w-0 basis-full sm:flex-1 sm:basis-0"><p className="text-sm font-medium">{activePlan.plan.changes.length} change{activePlan.plan.changes.length === 1 ? "" : "s"} · {deletionCount} deletion{deletionCount === 1 ? "" : "s"}{activePlan.plan.requiresApproval ? ` · ${approvedApprovals}/${requiredApprovals} approvals` : ""}</p>{selectionDirty ? <p role="status" className="mt-1 text-sm text-primary">Unsaved selection · Save to create a new plan and clear previous approvals.</p>
+              : applyBlockedReason && <p id="plan-apply-blocked-reason" role="status" className="mt-1 text-sm text-muted-foreground">{applyBlockedReason}</p>}</div>
             <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
               {!selectionDirty && activePlan.plan.requiresApproval && <Button variant="outline" size="sm" onClick={() => setApprovalOpen(true)}>Review approvals</Button>}
               {selectionDirty ? <><Button size="sm" variant="outline" onClick={onResetSelection} disabled={busy}>Reset selection</Button><Button size="sm" onClick={onSaveSelection} loading={pendingAction === "selection"} disabled={blocked || !canDeploy}>Save selection</Button></> : <Button variant={activePlan.plan.decommission || activePlan.plan.changes.some(change => change.recreation) ? "destructive" : "default"} loading={pendingAction === "apply-plan"} onClick={onApply} disabled={applyBlockedReason !== null} aria-describedby={applyBlockedReason ? "plan-apply-blocked-reason" : undefined}>{activePlan.plan.rollback ? "Apply rollback" : activePlan.plan.decommission ? "Delete resources" : activePlan.plan.requiresApproval ? "Apply plan" : "Sync application"}</Button>}
             </div>
           </Card.Content></Card>}
-          {planActionable && applyBlockedReason && <p id="plan-apply-blocked-reason" role="status" className="mt-2 text-right text-sm text-muted-foreground">{applyBlockedReason}</p>}
         </>}
       </div>}
   </Section>

@@ -1,6 +1,7 @@
 "use client"
 
-import { Suspense, type ReactNode } from "react"
+import { Suspense, useMemo, type ReactNode } from "react"
+import { useSyncHistory } from "@/hooks/use-sync-history"
 import { useSearchParams } from "next/navigation"
 import { ApplicationCollection } from "@/components/application-collection"
 import { Add01Icon, Layers01Icon } from "@hugeicons/core-free-icons"
@@ -25,9 +26,11 @@ export default function ApplicationsPage() {
 function ApplicationsContent() {
   const { workspaces, applications, loading, error, refresh, updateApplication } = useWorkspace()
   const { workspaceId } = useWorkspaceSelection()
+  const syncHistory = useSyncHistory("workspaces", workspaceId)
+  const activity = useMemo(() => Object.fromEntries((syncHistory.result.history?.applications ?? []).map((item) => [item.applicationId, item])), [syncHistory.result.history])
   const clusterStatuses = useClusterStatuses(workspaces.filter((workspace) => workspace.id === workspaceId).map((workspace) => workspace.id))
   const searchParams = useSearchParams()
-  const initialFilter = ["attention", "synced", "other", "paused"].includes(
+  const initialFilter = ["attention", "down", "waiting", "check", "synced", "other", "paused"].includes(
     searchParams.get("status") ?? ""
   )
     ? searchParams.get("status")!
@@ -58,6 +61,7 @@ function ApplicationsContent() {
         <ApplicationCollection
           key={`${workspaceId}:${initialFilter}`}
           renderHeader={renderHeader}
+          activity={activity}
           initialFilter={initialFilter}
           applications={applications}
           onApplicationUpdated={updateApplication}

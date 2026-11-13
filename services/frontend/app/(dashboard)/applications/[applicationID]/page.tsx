@@ -24,17 +24,20 @@ import { OverviewTab } from "@/components/application/overview-tab"
 import { OwnershipConflictDialog } from "@/components/application/ownership-conflict-dialog"
 import { applicationResourceNodes } from "@/lib/topology-view"
 import { deriveApplicationStatus } from "@/lib/application-status"
-import { RuntimeHealthStrip } from "@/components/application/runtime-health"
+import { RuntimeHealthStrip, runtimeProblem } from "@/components/application/runtime-health"
+import { ScrollHeader } from "@/components/panelui/scroll-header"
+import { PageBreadcrumb } from "@/components/page-breadcrumb"
+import { useMediaQuery } from "@/hooks/use-media-query"
 import { SettingsTab } from "@/components/application/settings-tab"
 import { ApplicationDetailSkeleton } from "@/components/application-detail-skeleton"
 import { BackgroundTaskStatus } from "@/components/background-task-status"
 import { taskPending } from "@/hooks/background-tasks"
 import { useBackgroundTasks } from "@/hooks/background-tasks"
 import { Button } from "@/components/panelui/button"
-import { Skeleton } from "@/components/ui/skeleton"
+import { SectionLoading } from "@/components/section-loading"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/panelui/tooltip"
 import { ResourceMap } from "@/components/resource-map"
-import { PageHeading } from "@/components/ui-kit"
+import { PageHeading, StatusBadge } from "@/components/ui-kit"
 import { ErrorDetailsButton } from "@/components/error-details"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
@@ -88,6 +91,14 @@ export default function ApplicationDetailPage() {
   const conflictEpoch = useRef(0)
   const loadEpoch = useRef(0)
   const [activeTab, setActiveTab] = useState("overview")
+  const activeTabRef = useRef(activeTab)
+  // createPlan reports its own result and opens Changes; the task callback must not add a second message.
+  const userPlanRef = useRef(false)
+  useEffect(() => { activeTabRef.current = activeTab }, [activeTab])
+  const [settingsSection, setSettingsSection] = useState("")
+  const [healthOpen, setHealthOpen] = useState(false)
+  const [headerCollapsed, setHeaderCollapsed] = useState(false)
+  const wideHeader = useMediaQuery("(min-width: 640px)")
   const [conflictOpen, setConflictOpen] = useState(false)
   const [ignorePrefill, setIgnorePrefill] = useState<IgnorePrefill | null>(null)
   const backgroundTasks = useBackgroundTasks({ applicationId: applicationID }, (task) => {
@@ -97,7 +108,8 @@ export default function ApplicationDetailPage() {
     if (task.status === "succeeded" && task.kind === "plan") {
       const plan = task.result as PlanRecord
       setActivePlan(plan)
-      selectTab("changes")
+      // Do not pull the reader away from the tab they are working in; offer the plan instead.
+      if (activeTabRef.current !== "changes" && !userPlanRef.current) toast.withAction(plan.plan.changes.length ? `Plan ready: ${plan.plan.changes.length} change${plan.plan.changes.length === 1 ? "" : "s"} to review.` : "Plan ready: no changes.", "Review", () => selectTab("changes"))
     }
   })
   const busy = actionBusy || backgroundTasks.pending
@@ -130,17 +142,21 @@ export default function ApplicationDetailPage() {
     const readTab = () => {
       const value = new URLSearchParams(window.location.search).get("tab")
       setActiveTab(value === "components" ? "topology" : ["overview", "topology", "changes", "activity", "pull-requests", "publishing", "settings"].includes(value ?? "") ? value! : "overview")
+      setSettingsSection(new URLSearchParams(window.location.search).get("section") ?? "")
     }
     readTab()
     window.addEventListener("popstate", readTab)
     return () => window.removeEventListener("popstate", readTab)
   }, [])
 
-  function selectTab(value: string) {
+  function selectTab(value: string, section = "") {
     setActiveTab(value)
+    setSettingsSection(section)
     const url = new URL(window.location.href)
     if (value === "overview") url.searchParams.delete("tab")
     else url.searchParams.set("tab", value)
+    if (value === "settings" && section) url.searchParams.set("section", section)
+    else url.searchParams.delete("section")
     window.history.pushState(null, "", url)
   }
 
@@ -221,14 +237,10 @@ export default function ApplicationDetailPage() {
         if (!active) return
         setTopology(result)
         setTopologyError(null)
-        const [app, history] = await Promise.allSettled([
-          api<Application>(`/api/v1/applications/${encodeURIComponent(loadedAppID)}` , { signal }),
-          api<ListResponse<ApplicationHealthTransition>>(`/api/v1/applications/${encodeURIComponent(loadedAppID)}/health-history`, { signal }),
-        ])
+        // The application itself is refreshed by the operations poll below; fetching it here as well doubled the requests.
+        const history = await api<ListResponse<ApplicationHealthTransition>>(`/api/v1/applications/${encodeURIComponent(loadedAppID)}/health-history`, { signal }).catch(() => null)
         if (!active) return
-        if (app.status === "fulfilled") setApplication(app.value)
-        else setTopologyError(app.reason)
-        if (history.status === "fulfilled") setHealthHistory(history.value.items)
+        if (history) setHealthHistory(history.items)
       } catch (cause) {
         if (active) setTopologyError(cause)
       } finally {
@@ -335,6 +347,7 @@ export default function ApplicationDetailPage() {
   async function createPlan() {
     conflictEpoch.current += 1
     setBusy(true); setPendingAction("create-plan"); setError(null); setApprovalSummary(null)
+    userPlanRef.current = true
     try {
       const plan = await toast.promise(backgroundTasks.run<PlanRecord>(`/api/v1/applications/${encodeURIComponent(applicationID)}/plans`), {
         loading: "Building a plan from the Git revision…",
@@ -357,6 +370,7 @@ export default function ApplicationDetailPage() {
       } else if (!acceptRefreshedPlan(cause)) toast.error(errorMessage(cause), cause)
     } finally {
       try { setApplication(await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`)) } catch { /* Retain the current application if refresh is unavailable. */ }
+      userPlanRef.current = false
       setBusy(false); setPendingAction("")
     }
   }
@@ -438,7 +452,7 @@ export default function ApplicationDetailPage() {
   function configureIgnore(prefill: Omit<IgnorePrefill, "nonce">) {
     setIgnorePrefill((current) => ({ ...prefill, nonce: (current?.nonce ?? 0) + 1 }))
     setConflictOpen(false)
-    selectTab("settings")
+    selectTab("settings", "exclusions")
   }
 
   function configureConflictIgnore() {
@@ -773,16 +787,21 @@ export default function ApplicationDetailPage() {
 
   const operationBar = (embedded: boolean) => visibleOperation && application ? <OperationBar embedded={embedded} hideStages={!embedded} aiAction={visibleOperation.status === "failed" ? <AIAssistant key={`ai-op-${visibleOperation.id}`} workspaceId={application.workspaceId} applicationId={application.id} features={["summary", "diagnose"]} operations={[visibleOperation]} initialOperationId={visibleOperation.id} autoRun="summary" buttonLabel="Explain failure" /> : undefined} onCreatePlan={() => void createPlan()} canCreatePlan={!createPlanDisabled} key={visibleOperation.id} operation={visibleOperation} plan={plans.find((plan) => plan.id === visibleOperation.planId)} checkpointId={visibleOperationCheckpoint} canRestore={canApprove} disabled={busy || hasPendingOperation} onRestore={(target) => void createRollbackPlan(target)} canCancel={canDeploy && !busy} scheduleActions={visibleOperation.status === "queued" ? <ScheduledOperationActions operation={visibleOperation} canOverride={canApprove} canCancel={canDeploy} onUpdated={loadData} /> : undefined} onUpdated={loadData} onReviewResource={(identity) => { const operationPlan = plans.find((plan) => plan.id === visibleOperation.planId); if (operationPlan) setActivePlan(operationPlan); setReviewResource(diffId(identity)); selectTab("changes") }} /> : null
 
-  return <>
-    <PageHeading title={application?.name ?? "Application not found"} description={application ? <>Cluster <span className="text-foreground">{application.clusterName || application.clusterId}</span> · {application.namespaces.length === 1 ? "Namespace" : "Namespaces"} <span className="text-foreground">{application.namespaces.map((binding) => binding.namespace).join(", ") || "none"}</span></> : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><DeploymentScheduleNotice key={application.id} layout="chip" scope="applications" id={application.id} onViewSchedule={() => { selectTab("settings"); window.setTimeout(() => document.getElementById("deployment-schedule")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" }), 0) }} /></div>} metadata={application && <RuntimeHealthStrip application={application} status={appStatus!} healthHistory={healthHistory} reconnecting={Boolean(topologyError)} />} actions={application && <>
-      {!aiInAttention && <AIAssistant key={`ai-${application.id}-${activeTab}-${activePlan?.id}-${activePlan?.plan.digest}`} workspaceId={application.workspaceId} applicationId={application.id} planId={activePlan?.id} features={activeTab === "changes" ? ["plan", "drift", "ask"] : activeTab === "activity" ? ["summary", "ask"] : ["diagnose", "ask"]} operations={activeTab === "activity" ? operations : undefined} />}
+  // The page header's filled action is for the next step only: a missing or outdated plan.
+  // With a current plan the next step is reviewing it (the plan card); when up to date there is none.
+  const refreshIsNextStep = !latestPlan || appStatus?.plan.state === "stale" || appStatus?.plan.state === "expired"
+  const refreshVariant = (activeTab === "overview" || activeTab === "activity") && refreshIsNextStep && plansError == null ? "default" : "outline"
+  const refreshLabel = latestPlan || plansError != null ? "Refresh plan" : "Create plan"
+  const runtimeIssue = appStatus ? runtimeProblem(appStatus) : false
+  const headerActions = application && <>
+      {!aiInAttention && <AIAssistant key={`ai-${application.id}-${activePlan?.id}-${activePlan?.plan.digest}`} workspaceId={application.workspaceId} applicationId={application.id} planId={activePlan?.id} features={activeTab === "changes" ? ["plan", "drift", "ask"] : activeTab === "activity" ? ["summary", "ask"] : ["diagnose", "ask"]} operations={activeTab === "activity" ? operations : undefined} />}
       {pendingData.workspace && <span role="status" className="text-sm text-muted-foreground">Loading permissions…</span>}
       {planBlockedByNamespace && !application.configurationMissing && !application.decommissioning && canDeploy
         ? <Tooltip>
-          <TooltipTrigger render={<span tabIndex={0} className="inline-flex" />}><Button variant={activeTab === "overview" || activeTab === "activity" ? "default" : "outline"} loading={pendingAction === "create-plan"} disabled><HugeiconsIcon icon={RefreshIcon} strokeWidth={1.8} aria-hidden="true" />Refresh plan</Button></TooltipTrigger>
+          <TooltipTrigger render={<span tabIndex={0} className="inline-flex" />}><Button variant={refreshVariant} loading={pendingAction === "create-plan"} disabled><HugeiconsIcon icon={RefreshIcon} strokeWidth={1.8} aria-hidden="true" /><span className="max-sm:sr-only">{refreshLabel}</span></Button></TooltipTrigger>
           <TooltipContent>Choose a namespace override before refreshing the plan</TooltipContent>
         </Tooltip>
-        : <Button variant={activeTab === "overview" || activeTab === "activity" ? "default" : "outline"} loading={pendingAction === "create-plan"} onClick={() => void createPlan()} disabled={createPlanDisabled}><HugeiconsIcon icon={RefreshIcon} strokeWidth={1.8} aria-hidden="true" />Refresh plan</Button>}
+        : <Button variant={refreshVariant} loading={pendingAction === "create-plan"} onClick={() => void createPlan()} disabled={createPlanDisabled}><HugeiconsIcon icon={RefreshIcon} strokeWidth={1.8} aria-hidden="true" /><span className="max-sm:sr-only">{refreshLabel}</span></Button>}
       {(canApprove || canUploadSource) && <ActionMenu label="More actions" items={[
         ...(canUploadSource ? [{ label: "Upload new version", icon: Upload01Icon, disabled: busy || application.decommissioning, onSelect: () => router.push(`/applications/${applicationID}/publish`) }] : []),
         ...(canApprove && manualPublication && !application.decommissioning ? [
@@ -793,17 +812,26 @@ export default function ApplicationDetailPage() {
         ...(canApprove && !application.branchTest ? [{ label: "Test branch…", icon: TestTubeIcon, disabled: busy || hasPendingOperation || application.decommissioning || Boolean(application.configurationMissing) || Boolean(application.rollbackResumeAvailable) || Boolean(application.applicationGroupId), onSelect: () => setBranchTestOpen(true) }] : []),
         ...(canApprove && !application.autoSyncPaused ? [{ label: "Pause auto-sync", icon: PauseIcon, separatorBefore: true, disabled: busy || hasPendingOperation, onSelect: () => void pauseSync() }] : []),
       ]} />}
-    </>} />
-    {error != null && <ErrorNotice error={error} />}
-    {application && <AttentionBar operation={!loading && visibleOperation?.status === "failed" && !(activeTab === "changes" && visibleOperation.planId === activePlan?.id) ? operationBar(true) : undefined} application={application} latestOperation={latestOperation} canDeploy={canDeploy} onRetryReconciliation={() => void retryReconciliation()} onViewActivity={activeTab === "activity" ? undefined : () => selectTab("activity")} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} plansError={plansError} retryingPlans={retryingPlans} onRetryPlans={() => void retryPlans()}
-        conflictCount={ownershipConflict ? ownershipConflicts.length : 0} onReviewConflicts={() => setConflictOpen(true)}
-        namespaceMismatch={namespaceMismatch} kustomizeNamespace={kustomization?.namespace} onReviewNamespaceSetting={() => selectTab("settings")}
-        onCancelDecommission={() => void cancelDecommission()}
-        aiAction={aiInAttention ? <AIAssistant key={`ai-${application.id}-${activeTab}-${activePlan?.id}-${activePlan?.plan.digest}`} workspaceId={application.workspaceId} applicationId={application.id} planId={activePlan?.id} features={activeTab === "changes" ? ["plan", "drift", "ask"] : activeTab === "activity" ? ["summary", "ask"] : ["diagnose", "ask"]} operations={activeTab === "activity" ? operations : undefined} /> : undefined} onConfigureExclusion={(issue) => configureIgnore({ mode: "kind", ...(issue.resource ? { version: issue.resource.apiVersion, kind: issue.resource.kind } : {}) })}
-        resumeRevision={resumeRevision} onResumeRevisionChange={setResumeRevision} onKeepPin={() => void updateRollbackTracking("keep")} onResume={() => void updateRollbackTracking("resume")} />}
-    {!loading && application && <>
+    </>
 
-    </>}
+  return <ScrollHeader onCollapsedChange={setHeaderCollapsed}>
+    <ScrollHeader.Bar className="px-0">
+      {!headerCollapsed && <PageBreadcrumb size="sm" className="relative min-w-0 shrink" crumbs={[{ label: "Applications", href: "/applications" }, { label: application?.name ?? "Application" }]} />}
+      <ScrollHeader.Title>{application?.name ?? "Application not found"}</ScrollHeader.Title>
+      {headerCollapsed && appStatus && <span className="relative hidden sm:inline-flex">{runtimeIssue ? <StatusBadge status={`Runtime ${appStatus.runtime.status}`} /> : <StatusBadge status={appStatus.sync} />}</span>}
+      {/* The bar is one 56px row: on phones the actions do not fit beside the trail, so they sit under the title instead. */}
+      {wideHeader && <ScrollHeader.Actions>{headerActions}</ScrollHeader.Actions>}
+    </ScrollHeader.Bar>
+    <ScrollHeader.Large className="px-0 pb-0">
+      <PageHeading title={application?.name ?? "Application not found"} description={application ? <>Cluster <span className="text-foreground">{application.clusterName || application.clusterId}</span> · {application.namespaces.length === 1 ? "Namespace" : "Namespaces"} <span className="text-foreground">{application.namespaces.map((binding) => binding.namespace).join(", ") || "none"}</span></> : ""} badge={application && <div className="flex flex-wrap items-center gap-3"><DeploymentScheduleNotice key={application.id} layout="chip" scope="applications" id={application.id} onViewSchedule={() => selectTab("settings", "schedule")} /></div>} metadata={application && <RuntimeHealthStrip application={application} status={appStatus!} healthHistory={healthHistory} reconnecting={Boolean(topologyError)} open={healthOpen} onOpenChange={setHealthOpen} />} actions={!wideHeader ? headerActions : undefined} />
+    </ScrollHeader.Large>
+    {error != null && <ErrorNotice error={error} />}
+    {application && <AttentionBar runtimeProblem={runtimeIssue} onViewResources={() => selectTab("topology")} onOpenHealth={() => setHealthOpen(true)} operation={!loading && visibleOperation?.status === "failed" && !(activeTab === "changes" && visibleOperation.planId === activePlan?.id) ? operationBar(true) : undefined} application={application} latestOperation={latestOperation} canDeploy={canDeploy} onRetryReconciliation={() => void retryReconciliation()} onViewActivity={activeTab === "activity" ? undefined : () => selectTab("activity")} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} plansError={plansError} retryingPlans={retryingPlans} onRetryPlans={() => void retryPlans()}
+        conflictCount={ownershipConflict ? ownershipConflicts.length : 0} onReviewConflicts={() => setConflictOpen(true)}
+        namespaceMismatch={namespaceMismatch} kustomizeNamespace={kustomization?.namespace} onReviewNamespaceSetting={() => selectTab("settings", "render")}
+        onCancelDecommission={() => void cancelDecommission()}
+        aiAction={aiInAttention ? <AIAssistant key={`ai-${application.id}-${activePlan?.id}-${activePlan?.plan.digest}`} workspaceId={application.workspaceId} applicationId={application.id} planId={activePlan?.id} features={activeTab === "changes" ? ["plan", "drift", "ask"] : activeTab === "activity" ? ["summary", "ask"] : ["diagnose", "ask"]} operations={activeTab === "activity" ? operations : undefined} /> : undefined} onConfigureExclusion={(issue) => configureIgnore({ mode: "kind", ...(issue.resource ? { version: issue.resource.apiVersion, kind: issue.resource.kind } : {}) })}
+        resumeRevision={resumeRevision} onResumeRevisionChange={setResumeRevision} onKeepPin={() => void updateRollbackTracking("keep")} onResume={() => void updateRollbackTracking("resume")} />}
       <Tabs value={activeTab} onValueChange={(value) => selectTab(String(value))} className="min-w-0">
         {application && <TabsList aria-label="Application views">
           {[
@@ -832,7 +860,7 @@ export default function ApplicationDetailPage() {
     </>}
     {!loading && application && <>
         <TabsContent value="overview" className="outline-none">
-          <OverviewTab canUpgradeProfile={canDeploy} status={appStatus!} application={application} latestPlan={latestPlan} plansError={plansError} retryingPlans={retryingPlans} topology={topology} topologyError={topologyError} pending={{ topology: pendingData.topology, plans: pendingData.plans, operations: pendingData.operations }} operations={operations} operationsError={operationsError} canRefreshPlan={!createPlanDisabled} creatingPlan={pendingAction === "create-plan"} onCreatePlan={() => void createPlan()} onRetryPlans={() => void retryPlans()} onSelectTab={selectTab} />
+          <OverviewTab canUpgradeProfile={canDeploy} status={appStatus!} application={application} plans={plans} members={workspaceMembers} plansError={plansError} retryingPlans={retryingPlans} topology={topology} topologyError={topologyError} pending={{ topology: pendingData.topology, plans: pendingData.plans, operations: pendingData.operations }} operations={operations} operationsError={operationsError} onRetryPlans={() => void retryPlans()} onSelectTab={(tab) => selectTab(tab)} onOpenHealth={() => setHealthOpen(true)} />
         </TabsContent>
 
         {application.labels?.["justcd.io/published"] === "true" && canDeploy && <TabsContent value="publishing" className="outline-none">
@@ -878,7 +906,7 @@ export default function ApplicationDetailPage() {
         </TabsContent>
 
         <TabsContent value="activity" className="outline-none">
-          <ActivityTab key={application.id} application={application} operations={operations} operationsLoading={pendingData.operations} rollbackTargets={rollbackTargets} rollbackLoading={pendingData.rollback} kustomization={kustomization} kustomizationError={kustomizationError} canDeploy={canDeploy} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} onRetryReconciliation={(operationId) => void retryReconciliation(operationId)} onCreateRollbackPlan={createRollbackPlan} />
+          <ActivityTab key={application.id} application={application} operations={operations} operationsLoading={pendingData.operations} plans={plans} members={workspaceMembers} onViewPlan={(planId) => { const plan = plans.find((item) => item.id === planId); if (plan) { setApprovalSummary(null); setActivePlan(plan) } selectTab("changes") }} rollbackTargets={rollbackTargets} rollbackLoading={pendingData.rollback} canDeploy={canDeploy} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} onRetryReconciliation={(operationId) => void retryReconciliation(operationId)} onCreateRollbackPlan={createRollbackPlan} />
         </TabsContent>
 
         <TabsContent value="pull-requests" className="outline-none">
@@ -886,13 +914,9 @@ export default function ApplicationDetailPage() {
         </TabsContent>
 
         <TabsContent value="settings" keepMounted className="outline-none">
-          <SettingsTab schedule={<div id="deployment-schedule" className="scroll-mt-5"><SettingsSection title="Deployment schedule" description="When deployments can start, and any freezes that take precedence."><DeploymentSchedulePanel key={application.id} scope="applications" id={application.id} canEdit={canApprove} layout="settings" /></SettingsSection></div>} application={application} kustomization={kustomization} kustomizationError={kustomizationError} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} rulesLoading={pendingData.rules || pendingData.selectors} ignoreRules={ignoreRules} ignoreSelectors={ignoreSelectors} managedResourceCount={resources.length} deletionApprovalCount={deletionApprovalCount} prefill={ignorePrefill} onSaveRenderSettings={saveRenderSettings} onAddIgnore={addIgnore} onRemoveRule={removeIgnoreRule} onRemoveSelector={removeIgnoreSelector} onDeleteApplication={deleteApplication} onCancelDecommission={() => void cancelDecommission()} />
+          <SettingsTab section={settingsSection} onSectionChange={(section) => selectTab("settings", section)} schedule={<SettingsSection title="Deployment schedule" description="When deployments can start, and any freezes that take precedence."><DeploymentSchedulePanel key={application.id} scope="applications" id={application.id} canEdit={canApprove} layout="settings" /></SettingsSection>} application={application} kustomization={kustomization} kustomizationError={kustomizationError} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} pendingAction={pendingAction} rulesLoading={pendingData.rules || pendingData.selectors} ignoreRules={ignoreRules} ignoreSelectors={ignoreSelectors} managedResourceCount={resources.length} deletionApprovalCount={deletionApprovalCount} prefill={ignorePrefill} onSaveRenderSettings={saveRenderSettings} onAddIgnore={addIgnore} onRemoveRule={removeIgnoreRule} onRemoveSelector={removeIgnoreSelector} onDeleteApplication={deleteApplication} onCancelDecommission={() => void cancelDecommission()} />
         </TabsContent>
     </>}
       </Tabs>
-  </>
-}
-
-function SectionLoading({ label }: { label: string }) {
-  return <div role="status" aria-label={label} className="space-y-4 p-5 sm:p-6"><span className="sr-only">{label}…</span><div aria-hidden="true" className="space-y-3"><Skeleton className="h-5 w-2/3 max-w-72 motion-reduce:animate-none" /><Skeleton className="h-4 w-full max-w-lg motion-reduce:animate-none" /><Skeleton className="h-4 w-4/5 max-w-md motion-reduce:animate-none" /></div></div>
+  </ScrollHeader>
 }

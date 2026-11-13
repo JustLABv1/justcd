@@ -15,6 +15,7 @@ import { Button } from "@/components/panelui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/panelui/tooltip"
 import { api } from "@/lib/api"
 import type { Application, ListResponse, Workspace } from "@/lib/types"
+import { readRecentApplications } from "@/lib/recent-applications"
 
 type PaletteApplication = Pick<Application, "id" | "name" | "workspaceId"> & { cluster: string; namespaces: string[] }
 
@@ -45,7 +46,15 @@ export function CommandPalette({ open, onOpenChange, isAdmin, canCreateWorkspace
   const { setTheme } = useTheme()
   const [applications, setApplications] = useState<PaletteApplication[]>([])
   const [loading, setLoading] = useState(false)
+  const [search, setSearch] = useState("")
+  const [recentIds, setRecentIds] = useState<string[]>([])
   const workspaceIds = workspaces.map((workspace) => workspace.id).join(",")
+
+  // Read when it opens, so an application opened a moment ago is already at the top.
+  useEffect(() => {
+    if (!open) return
+    void Promise.resolve().then(() => { setRecentIds(readRecentApplications()); setSearch("") })
+  }, [open])
 
   // Applications are fetched when the palette opens so the list is fresh without polling.
   useEffect(() => {
@@ -78,9 +87,17 @@ export function CommandPalette({ open, onOpenChange, isAdmin, canCreateWorkspace
 
   return (
     <Command.Dialog open={open} onOpenChange={onOpenChange} hotkey="mod+k" label="Command menu">
-      <Command label="JustCD commands">
+      <Command label="JustCD commands" search={search} onSearchChange={setSearch}>
         <Command.Input icon={<LogoMark className="size-6 text-foreground" />} placeholder="Search pages, applications and actions…" />
         <Command.List>
+          {/* Before anything is typed, the last applications opened come first; a search finds them under Applications. */}
+          {!search.trim() && (() => {
+            const recent = recentIds.flatMap((id) => applications.filter((application) => application.id === id))
+            return recent.length > 0 && <Command.Group heading="Recent applications">
+              {recent.map((application) => <Command.Item key={application.id} value={`recent-${application.id}`} textValue={application.name} icon={icon(Layers01Icon, "violet")} subtitle={applicationLocation(application)} kind="Recent" onSelect={go(`/applications/${scoped(application.id)}`)}>{application.name}</Command.Item>)}
+            </Command.Group>
+          })()}
+
           <Command.Group heading="Go to">
             <Command.Item icon={icon(Home01Icon, "blue")} kind="Page" keywords={["home", "dashboard"]} onSelect={go("/")}>Overview</Command.Item>
             <Command.Item icon={icon(Layers01Icon, "violet")} kind="Page" keywords={["apps", "deployments"]} onSelect={go("/applications")}>Applications</Command.Item>

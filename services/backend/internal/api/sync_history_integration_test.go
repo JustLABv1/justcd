@@ -138,6 +138,16 @@ func TestIntegrationSyncHistory(t *testing.T) {
 	if latest[3].ApplicationID != "history-new-app" || latest[3].StartedAt != nil || latest[3].Status != "" {
 		t.Fatalf("never-synced app has fabricated history: %#v", latest[3])
 	}
+	// Recent runs: newest first, at most ten, resource actions excluded.
+	if len(latest[0].Recent) != 10 || latest[0].Recent[0] != "failed" || latest[0].DeployedAt == nil {
+		t.Fatalf("recent runs of a busy app: %#v", latest[0])
+	}
+	if len(latest[2].Recent) != 1 || latest[2].Recent[0] != "succeeded" || latest[2].DeployedAt == nil || !latest[2].DeployedAt.Equal(*latest[2].FinishedAt) {
+		t.Fatalf("recent runs must skip resource actions and report the deploy time: %#v", latest[2])
+	}
+	if latest[3].Recent == nil || len(latest[3].Recent) != 0 || latest[3].DeployedAt != nil {
+		t.Fatalf("never-synced app must have an empty, non-null run list: %#v", latest[3])
+	}
 	emptyWorkspace, err := db.WorkspaceSyncHistory(ctx, "missing-workspace", start, end, time.Hour)
 	if err != nil || len(emptyWorkspace.Applications) != 0 || len(emptyWorkspace.Buckets) != 24 {
 		t.Fatalf("invalid empty workspace history: %#v %v", emptyWorkspace, err)

@@ -1,6 +1,8 @@
 "use client"
 
 import Link from "next/link"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { ArrowUpRight01Icon } from "@hugeicons/core-free-icons"
 import { ApplicationNotificationSettings } from "@/components/application-notification-settings"
 import { useState, type ReactNode } from "react"
 import { RowActions } from "@/components/action-menu"
@@ -11,10 +13,13 @@ import { Badge } from "@/components/panelui/badge"
 import { Button } from "@/components/panelui/button"
 import { FormSelect } from "@/components/form-select"
 import { Input } from "@/components/panelui/input"
-import { Skeleton } from "@/components/ui/skeleton"
+import { SectionLoading } from "@/components/section-loading"
+import { Table } from "@/components/panelui/table"
+import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
+import { SettingsNav, type SettingsNavGroup } from "@/components/settings/layout"
 import { Textarea } from "@/components/panelui/textarea"
-import { FormField, CheckboxField } from "@/components/ui-kit"
-import { SettingsDangerZone, SettingsPanel, SettingsRow } from "@/components/settings/settings-section"
+import { EmptyState, FormField, CheckboxField } from "@/components/ui-kit"
+import { SettingsDangerZone, SettingsGroup, SettingsPanel, SettingsRow } from "@/components/settings/settings-section"
 import { errorMessage } from "@/lib/api"
 import type { Application, IgnoreRule, IgnoreSelector } from "@/lib/types"
 
@@ -59,7 +64,29 @@ function RenderSettings({ application, kustomization, kustomizationError, canApp
   </SettingsPanel>
 }
 
-export function SettingsTab({ application, kustomization, kustomizationError, canApprove, busy, hasPendingOperation, pendingAction, rulesLoading, ignoreRules, ignoreSelectors, managedResourceCount, deletionApprovalCount, prefill, onSaveRenderSettings, onAddIgnore, onRemoveRule, onRemoveSelector, onDeleteApplication, onCancelDecommission, schedule }: {
+const rendererLabels: Record<string, string> = { yaml: "YAML", kustomize: "Kustomize", helm: "Helm" }
+
+/** Where the application's manifests come from. Read-only; editing goes through "Edit application". */
+function SourceSettings({ application, canApprove }: { application: Application; canApprove: boolean }) {
+  const overlays = Object.entries(application.namespaceManifestPaths ?? {})
+  const mono = "font-mono text-xs break-all"
+  return <SettingsPanel title="Source" description="Where JustCD reads this application's manifests." action={<>
+    {application.applicationGroupId && <Button size="sm" variant="outline" nativeButton={false} render={<Link href={`/application-groups/${application.applicationGroupId}`} />}>Open deployment group</Button>}
+    {canApprove && !application.repositoryConfigurationId && !application.decommissioning && <Button size="sm" variant="outline" nativeButton={false} render={<Link href={`/applications/${application.id}/edit`} />}>Edit application</Button>}
+  </>}>
+    <SettingsGroup>
+      <SettingsRow label="Revision" value={<span className="font-medium break-all">{application.revision}</span>} />
+      <SettingsRow label="Manifest path" value={<span className={mono}>{application.manifestPath}</span>} />
+      <SettingsRow label="Renderer" value={rendererLabels[application.renderer] ?? application.renderer} />
+      {application.renderer === "kustomize" && <SettingsRow label="Cluster overlay path" value={<span className={mono}>{application.targetManifestPath || "Shared path"}</span>} />}
+      {overlays.length > 0 && <SettingsRow label="Namespace overlays" value={<ul className="space-y-1">{overlays.map(([namespace, path]) => <li key={namespace} className={mono}>{namespace}: {path}</li>)}</ul>} />}
+      <SettingsRow label="Cluster" value={application.clusterName || application.clusterId} />
+      <SettingsRow label="Poll interval" value={`${application.pollSeconds} seconds`} />
+    </SettingsGroup>
+  </SettingsPanel>
+}
+
+export function SettingsTab({ application, kustomization, kustomizationError, canApprove, busy, hasPendingOperation, pendingAction, rulesLoading, ignoreRules, ignoreSelectors, managedResourceCount, deletionApprovalCount, prefill, onSaveRenderSettings, onAddIgnore, onRemoveRule, onRemoveSelector, onDeleteApplication, onCancelDecommission, schedule, section, onSectionChange }: {
   application: Application
   kustomization: { namespace: string; commit: string } | null
   kustomizationError: unknown | null
@@ -80,8 +107,11 @@ export function SettingsTab({ application, kustomization, kustomizationError, ca
   onRemoveSelector: (selector: IgnoreSelector) => Promise<void>
   onDeleteApplication: (resourcePolicy: string) => Promise<void>
   onCancelDecommission: () => void
-  /** Deployment schedule section, placed before the danger zone. */
+  /** Deployment schedule section. */
   schedule?: ReactNode
+  /** The open settings section; empty selects the first. */
+  section: string
+  onSectionChange: (section: string) => void
 }) {
   const [ignoreMode, setIgnoreMode] = useState<string>(prefill?.mode ?? "kind")
   const [ignoreVersion, setIgnoreVersion] = useState(prefill?.version ?? "")
@@ -92,10 +122,11 @@ export function SettingsTab({ application, kustomization, kustomizationError, ca
   const [ignoreLabelValue, setIgnoreLabelValue] = useState("")
   const [ignoreReason, setIgnoreReason] = useState(prefill?.reason ?? "")
   const [appliedPrefill, setAppliedPrefill] = useState(prefill?.nonce)
+  const [addOpen, setAddOpen] = useState(Boolean(prefill))
   const [deletePolicy, setDeletePolicy] = useState(application.decommissioning ? "delete" : "keep")
   const [wasDecommissioning, setWasDecommissioning] = useState(application.decommissioning)
 
-  // A new prefill request (for example "Configure exclusion" elsewhere on the page) overwrites the form.
+  // A new prefill request (for example "Configure exclusion" elsewhere on the page) fills and opens the form.
   if (prefill && prefill.nonce !== appliedPrefill) {
     setAppliedPrefill(prefill.nonce)
     setIgnoreMode(prefill.mode)
@@ -104,6 +135,7 @@ export function SettingsTab({ application, kustomization, kustomizationError, ca
     if (prefill.namespace !== undefined) setIgnoreNamespace(prefill.namespace)
     if (prefill.name !== undefined) setIgnoreName(prefill.name)
     if (prefill.reason !== undefined) setIgnoreReason(prefill.reason)
+    if (canApprove) setAddOpen(true)
   }
   if (application.decommissioning !== wasDecommissioning) {
     setWasDecommissioning(application.decommissioning)
@@ -112,46 +144,20 @@ export function SettingsTab({ application, kustomization, kustomizationError, ca
 
   const reasonLength = ignoreReason.trim().length
   const reasonInvalid = reasonLength > 0 && reasonLength < 5
+  const adding = pendingAction === "add-ignore"
+  const addDisabled = busy || hasPendingOperation || reasonLength < 5 || ((ignoreMode === "kind" || ignoreMode === "resource") && (!ignoreVersion.trim() || !ignoreKind.trim())) || (ignoreMode === "resource" && !ignoreName.trim()) || (ignoreMode === "label" && !ignoreLabelKey.trim())
   async function addIgnore() {
     const saved = await onAddIgnore({ mode: ignoreMode, version: ignoreVersion, kind: ignoreKind, namespace: ignoreNamespace, name: ignoreName, labelKey: ignoreLabelKey, labelValue: ignoreLabelValue, reason: ignoreReason })
-    if (saved) { setIgnoreReason(""); setIgnoreName("") }
+    if (saved) { setIgnoreReason(""); setIgnoreName(""); setAddOpen(false) }
   }
 
-  return <div className="space-y-8">
-    {canApprove && <ApplicationNotificationSettings key={application.id} applicationId={application.id} workspaceId={application.workspaceId} />}
-    {application.renderer === "kustomize" && <RenderSettings application={application} kustomization={kustomization} kustomizationError={kustomizationError} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} saving={pendingAction === "render-settings"} onSave={onSaveRenderSettings} />}
-    <SettingsPanel title="Ignored resources" description="Exclude an exact resource, an entire Kubernetes kind, or resources with a label. Exclusions apply before cluster discovery and live reads.">
-      {application.repositoryConfigurationId && <p className="px-5 pt-5 text-sm text-muted-foreground">Define Git-managed exclusions in <code>spec.ignoreResources</code> in <code>{application.configurationPath}</code>. Additional manual exclusions remain available below. <a href="/docs/guides/repository-applications#ignored-resources" target="_blank" rel="noreferrer" className="underline underline-offset-4">File format and examples</a></p>}
-      <div className="space-y-5 p-5">
-        {canApprove && <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <FormField label="Exclude by" htmlFor="ignore-mode"><FormSelect id="ignore-mode" value={ignoreMode} onValueChange={setIgnoreMode} items={[{ value: "kind", label: "API kind" }, { value: "label", label: "Label" }, { value: "resource", label: "Exact resource" }]} /></FormField>
-          {(ignoreMode === "kind" || ignoreMode === "resource") && <><FormField label="API version" htmlFor="ignore-api-version"><Input id="ignore-api-version" placeholder="secrets.hashicorp.com/v1beta1" value={ignoreVersion} onChange={(event) => setIgnoreVersion(event.target.value)} /></FormField><FormField label="Kind" htmlFor="ignore-kind"><Input id="ignore-kind" placeholder="VaultStaticSecret" value={ignoreKind} onChange={(event) => setIgnoreKind(event.target.value)} /></FormField></>}
-          {ignoreMode === "resource" && <><FormField label="Namespace" htmlFor="ignore-namespace"><Input id="ignore-namespace" placeholder={application.namespaces[0]?.namespace ?? "namespace"} value={ignoreNamespace} onChange={(event) => setIgnoreNamespace(event.target.value)} /></FormField><FormField label="Resource name" htmlFor="ignore-name"><Input id="ignore-name" placeholder="ntfy-secret" value={ignoreName} onChange={(event) => setIgnoreName(event.target.value)} /></FormField></>}
-          {ignoreMode === "label" && <><FormField label="Label key" htmlFor="ignore-label-key"><Input id="ignore-label-key" placeholder="justcd.io/exclude" value={ignoreLabelKey} onChange={(event) => setIgnoreLabelKey(event.target.value)} /></FormField><FormField label="Label value" htmlFor="ignore-label-value"><Input id="ignore-label-value" placeholder="true" value={ignoreLabelValue} onChange={(event) => setIgnoreLabelValue(event.target.value)} /></FormField></>}
-          <div className="sm:col-span-2 lg:col-span-4"><FormField label="Reason" htmlFor="ignore-reason"><Textarea id="ignore-reason" aria-invalid={reasonInvalid} aria-describedby="ignore-reason-help" value={ignoreReason} onChange={(event) => setIgnoreReason(event.target.value)} placeholder="Managed by another controller or outside this service account's permissions" maxLength={500} /><p id="ignore-reason-help" className={reasonInvalid ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>{reasonInvalid ? "Enter at least 5 characters to add the exclusion." : "Required · 5–500 characters"}</p></FormField></div>
-          <Button size="sm" className="w-fit sm:col-span-2" loading={pendingAction === "add-ignore"} onClick={() => void addIgnore()} disabled={busy || hasPendingOperation || reasonLength < 5 || ((ignoreMode === "kind" || ignoreMode === "resource") && (!ignoreVersion.trim() || !ignoreKind.trim())) || (ignoreMode === "resource" && !ignoreName.trim()) || (ignoreMode === "label" && !ignoreLabelKey.trim())}>Add exclusion</Button>
-          {pendingAction === "add-ignore" && <p role="status" aria-live="polite" className="self-center text-sm text-muted-foreground sm:col-span-2">Saving the exclusion and invalidating reviewed plans…</p>}
-        </div>}
-        <p className="text-sm text-muted-foreground">Ignored resources stay visible here and are not read, updated, or deleted by normal plans. Existing plans become stale when these rules change.</p>
-        {rulesLoading
-          ? <div role="status" aria-label="Loading exclusions" className="space-y-3"><span className="sr-only">Loading exclusions…</span><Skeleton className="h-5 w-2/3 max-w-72 motion-reduce:animate-none" /><Skeleton className="h-4 w-full max-w-lg motion-reduce:animate-none" /></div>
-          : (ignoreSelectors.length > 0 || ignoreRules.length > 0) && <ul className="-mx-5 -mb-5 divide-y border-t">
-            {ignoreSelectors.map((rule) => {
-              const label = rule.kind ? `${rule.apiVersion} · ${rule.kind}` : "Any kind"
-              return <li key={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
-                <span className="min-w-0 flex-1"><strong>{label}</strong>{rule.labelKey && <span className="ml-2 font-mono text-muted-foreground">{rule.labelKey}={rule.labelValue}</span>}<span className="mt-1 block text-muted-foreground">{rule.reason}</span></span>
-                {rule.managedByGit ? <Badge variant="outline">Managed by Git</Badge> : canApprove && <RowActions label={`exclusion ${label}`} items={[{ label: "Remove exclusion", destructive: true, disabled: busy || hasPendingOperation, confirm: { title: `Remove exclusion ${label}?`, description: "Future plans may manage matching resources again.", confirmLabel: "Remove exclusion", onConfirm: () => onRemoveSelector(rule) } }]} />}
-              </li>
-            })}
-            {ignoreRules.map((rule) => <li key={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
-              <span className="min-w-0 flex-1"><strong>{ruleLabel(rule)}</strong><span className="ml-2 font-mono text-muted-foreground">{rule.path || "whole resource"}</span><span className="mt-1 block text-muted-foreground">{rule.reason}</span></span>
-              {rule.managedByGit ? <Badge variant="outline">Managed by Git</Badge> : canApprove && <RowActions label={`ignore rule for ${ruleLabel(rule)}`} items={[{ label: "Remove ignore rule", destructive: true, disabled: busy || hasPendingOperation, confirm: { title: `Remove ignore rule for ${ruleLabel(rule)}?`, description: "Future plans may manage this resource again.", confirmLabel: "Remove ignore rule", onConfirm: () => onRemoveRule(rule) } }]} />}
-            </li>)}
-          </ul>}
-      </div>
-    </SettingsPanel>
-    {schedule}
-    {canApprove && <SettingsDangerZone description="Choose whether JustCD keeps or removes the resources it manages.">
+  const sections: { id: string; label: string; node: ReactNode }[] = [
+    { id: "source", label: "Source", node: <SourceSettings application={application} canApprove={canApprove} /> },
+    ...(application.renderer === "kustomize" ? [{ id: "render", label: "Render settings", node: <RenderSettings application={application} kustomization={kustomization} kustomizationError={kustomizationError} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} saving={pendingAction === "render-settings"} onSave={onSaveRenderSettings} /> }] : []),
+    { id: "exclusions", label: "Ignored resources", node: <ExclusionList application={application} canApprove={canApprove} busy={busy} hasPendingOperation={hasPendingOperation} loading={rulesLoading} ignoreRules={ignoreRules} ignoreSelectors={ignoreSelectors} onAdd={() => setAddOpen(true)} onRemoveRule={onRemoveRule} onRemoveSelector={onRemoveSelector} /> },
+    ...(schedule ? [{ id: "schedule", label: "Deployment schedule", node: schedule }] : []),
+    ...(canApprove ? [{ id: "notifications", label: "Notifications", node: <ApplicationNotificationSettings key={application.id} applicationId={application.id} workspaceId={application.workspaceId} /> }] : []),
+    ...(canApprove ? [{ id: "danger", label: "Delete application", node: <SettingsDangerZone description="Choose whether JustCD keeps or removes the resources it manages.">
       <SettingsRow label="Delete this application" description={<>{`${managedResourceCount} managed resource${managedResourceCount === 1 ? "" : "s"} currently recorded.`} Keeping them removes ownership tracking from JustCD.{application.decommissioning ? " Deletion is already in progress." : ""}</>} action={<div className="flex flex-wrap items-center gap-2">
         {application.decommissioning && <Button type="button" size="sm" variant="outline" disabled={busy || hasPendingOperation} onClick={onCancelDecommission}>Cancel deletion</Button>}
         <ConfirmDisclosure trigger="Delete application" title={`Delete ${application.name}?`} description="Removing this application from JustCD cannot be undone. Choose what happens to its managed Kubernetes resources." confirmLabel={`Delete ${application.name}`} busyLabel="Deleting…" onConfirm={() => onDeleteApplication(deletePolicy)} disabled={busy || hasPendingOperation}>
@@ -159,6 +165,66 @@ export function SettingsTab({ application, kustomization, kustomizationError, ca
           {deletePolicy === "delete" && managedResourceCount > 0 && <p className="mt-2 text-sm text-muted-foreground">A deletion plan must receive {deletionApprovalCount} approval{deletionApprovalCount === 1 ? "" : "s"} from eligible workspace members before the resources can be removed.</p>}
         </ConfirmDisclosure>
       </div>} />
-    </SettingsDangerZone>}
+    </SettingsDangerZone> }] : []),
+  ]
+  const active = sections.find((item) => item.id === section) ?? sections[0]
+  const nav: SettingsNavGroup[] = [{ items: sections.map((item) => ({ id: item.id, label: item.label, onSelect: () => onSectionChange(item.id) })) }]
+
+  return <div className="grid min-w-0 gap-6 lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-8">
+    <SettingsNav groups={nav} activeId={active.id} label="Application settings" className="lg:top-20" />
+    <div className="min-w-0 max-w-4xl">{active.node}</div>
+    {canApprove && <AppDialog open={addOpen} onOpenChange={setAddOpen} busy={adding} title="Add exclusion" description="Excluded resources are not read, updated or deleted by plans. Existing plans become stale when exclusions change.">
+      <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => { event.preventDefault(); if (!addDisabled) void addIgnore() }}>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="sm:col-span-2"><FormField label="Exclude by" htmlFor="ignore-mode"><FormSelect id="ignore-mode" value={ignoreMode} onValueChange={setIgnoreMode} items={[{ value: "kind", label: "API kind" }, { value: "label", label: "Label" }, { value: "resource", label: "Exact resource" }]} /></FormField></div>
+          {(ignoreMode === "kind" || ignoreMode === "resource") && <><FormField label="API version" htmlFor="ignore-api-version"><Input id="ignore-api-version" placeholder="secrets.hashicorp.com/v1beta1" value={ignoreVersion} onChange={(event) => setIgnoreVersion(event.target.value)} /></FormField><FormField label="Kind" htmlFor="ignore-kind"><Input id="ignore-kind" placeholder="VaultStaticSecret" value={ignoreKind} onChange={(event) => setIgnoreKind(event.target.value)} /></FormField></>}
+          {ignoreMode === "resource" && <><FormField label="Namespace" htmlFor="ignore-namespace"><Input id="ignore-namespace" placeholder={application.namespaces[0]?.namespace ?? "namespace"} value={ignoreNamespace} onChange={(event) => setIgnoreNamespace(event.target.value)} /></FormField><FormField label="Resource name" htmlFor="ignore-name"><Input id="ignore-name" placeholder="ntfy-secret" value={ignoreName} onChange={(event) => setIgnoreName(event.target.value)} /></FormField></>}
+          {ignoreMode === "label" && <><FormField label="Label key" htmlFor="ignore-label-key"><Input id="ignore-label-key" placeholder="justcd.io/exclude" value={ignoreLabelKey} onChange={(event) => setIgnoreLabelKey(event.target.value)} /></FormField><FormField label="Label value" htmlFor="ignore-label-value"><Input id="ignore-label-value" placeholder="true" value={ignoreLabelValue} onChange={(event) => setIgnoreLabelValue(event.target.value)} /></FormField></>}
+          <div className="sm:col-span-2"><FormField label="Reason" htmlFor="ignore-reason"><Textarea id="ignore-reason" aria-invalid={reasonInvalid} aria-describedby="ignore-reason-help" value={ignoreReason} onChange={(event) => setIgnoreReason(event.target.value)} placeholder="Managed by another controller or outside this service account's permissions" maxLength={500} /><p id="ignore-reason-help" className={reasonInvalid ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>{reasonInvalid ? "Enter at least 5 characters to add the exclusion." : "Required · 5–500 characters"}</p></FormField></div>
+        </div>
+        <DialogFooter><DialogCancel disabled={adding} /><Button type="submit" loading={adding} disabled={addDisabled}>Add exclusion</Button></DialogFooter>
+      </form>
+    </AppDialog>}
   </div>
+}
+
+function ExclusionList({ application, canApprove, busy, hasPendingOperation, loading, ignoreRules, ignoreSelectors, onAdd, onRemoveRule, onRemoveSelector }: {
+  application: Application
+  canApprove: boolean
+  busy: boolean
+  hasPendingOperation: boolean
+  loading: boolean
+  ignoreRules: IgnoreRule[]
+  ignoreSelectors: IgnoreSelector[]
+  onAdd: () => void
+  onRemoveRule: (rule: IgnoreRule) => Promise<void>
+  onRemoveSelector: (selector: IgnoreSelector) => Promise<void>
+}) {
+  const empty = ignoreRules.length === 0 && ignoreSelectors.length === 0
+  const blocked = busy || hasPendingOperation
+  const rows = [
+    ...ignoreSelectors.map((rule) => {
+      const label = rule.kind ? `${rule.apiVersion} · ${rule.kind}` : "Any kind"
+      return { id: `selector-${rule.id}`, match: label, scope: rule.labelKey ? `Label ${rule.labelKey}=${rule.labelValue}` : "Every resource of this kind", reason: rule.reason, git: rule.managedByGit,
+        remove: { label: "Remove exclusion", title: `Remove exclusion ${label}?`, description: "Future plans may manage matching resources again.", onConfirm: () => onRemoveSelector(rule), name: `exclusion ${label}` } }
+    }),
+    ...ignoreRules.map((rule) => ({ id: `rule-${rule.id}`, match: ruleLabel(rule), scope: rule.path ? `Field ${rule.path}` : "Whole resource", reason: rule.reason, git: rule.managedByGit,
+      remove: { label: "Remove ignore rule", title: `Remove ignore rule for ${ruleLabel(rule)}?`, description: "Future plans may manage this resource again.", onConfirm: () => onRemoveRule(rule), name: `ignore rule for ${ruleLabel(rule)}` } })),
+  ]
+  return <SettingsPanel title="Ignored resources" description="Exclude an exact resource, an entire Kubernetes kind, or resources with a label. Exclusions apply before cluster discovery and live reads." action={canApprove && !empty && <Button size="sm" variant="outline" disabled={blocked} onClick={onAdd}>Add exclusion</Button>}>
+    {application.repositoryConfigurationId && <p className="border-b px-5 py-4 text-sm text-muted-foreground">Define Git-managed exclusions in <code>spec.ignoreResources</code> in <code>{application.configurationPath}</code>. Manual exclusions can be added here as well.{" "}
+      <a href="/docs/guides/repository-applications#ignored-resources" target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 underline underline-offset-4">File format and examples<HugeiconsIcon icon={ArrowUpRight01Icon} strokeWidth={2} className="size-3.5" aria-hidden="true" /><span className="sr-only"> (opens in a new tab)</span></a></p>}
+    {loading ? <SectionLoading label="Loading exclusions" lines={2} className="p-5" />
+      : empty ? <EmptyState title="No ignored resources" description="Every resource rendered from Git is planned and managed." {...(canApprove ? { action: "Add exclusion", onAction: onAdd } : {})} />
+      : <Table aria-label="Ignored resources">
+        <Table.Header><Table.Row><Table.Head>Match</Table.Head><Table.Head>Applies to</Table.Head><Table.Head>Reason</Table.Head><Table.Head>Source</Table.Head><Table.Head><span className="sr-only">Actions</span></Table.Head></Table.Row></Table.Header>
+        <Table.Body>{rows.map((row) => <Table.Row key={row.id}>
+          <Table.Cell className="min-w-48 font-medium whitespace-normal break-words">{row.match}</Table.Cell>
+          <Table.Cell className="min-w-40 font-mono text-xs whitespace-normal break-all text-muted-foreground">{row.scope}</Table.Cell>
+          <Table.Cell className="min-w-56 whitespace-normal text-muted-foreground">{row.reason}</Table.Cell>
+          <Table.Cell>{row.git ? <Badge variant="outline">Git</Badge> : <span className="text-muted-foreground">Manual</span>}</Table.Cell>
+          <Table.Cell className="text-right">{!row.git && canApprove && <RowActions label={row.remove.name} items={[{ label: row.remove.label, destructive: true, disabled: blocked, confirm: { title: row.remove.title, description: row.remove.description, confirmLabel: row.remove.label, onConfirm: row.remove.onConfirm } }]} />}</Table.Cell>
+        </Table.Row>)}</Table.Body>
+      </Table>}
+  </SettingsPanel>
 }

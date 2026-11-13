@@ -16,7 +16,7 @@ export type SettingsNavGroup = { label?: string; items: SettingsNavItem[] }
 const navItemClass = (active: boolean) => `flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring ${active ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`
 
 /** Left navigation of a settings area. A scrollable strip below `lg`, a sticky column above. */
-export function SettingsNav({ groups, activeId, label }: { groups: SettingsNavGroup[]; activeId: string; label: string }) {
+export function SettingsNav({ groups, activeId, label, className = "lg:top-6" }: { groups: SettingsNavGroup[]; activeId: string; label: string; /** Sticky offset; pages with their own sticky header pass a larger one. */ className?: string }) {
   const rail = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const container = rail.current
@@ -33,7 +33,7 @@ export function SettingsNav({ groups, activeId, label }: { groups: SettingsNavGr
     observer.observe(container)
     return () => observer.disconnect()
   }, [activeId])
-  return <nav aria-label={label} className="min-w-0 lg:sticky lg:top-6 lg:self-start">
+  return <nav aria-label={label} className={`min-w-0 lg:sticky lg:self-start ${className}`}>
     <div ref={rail} className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 lg:mx-0 lg:block lg:space-y-5 lg:overflow-visible lg:px-0 lg:pb-0">
       {groups.map((group, index) => <div key={group.label ?? index} className="flex shrink-0 gap-1 lg:block lg:space-y-0.5">
         {group.label && <p className="hidden px-3 pb-1 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase lg:block">{group.label}</p>}

@@ -1,32 +1,26 @@
 "use client"
 
-import { Card } from "@/components/panelui/card"
 import { Table } from "@/components/panelui/table"
 import { Pagination } from "@/components/panelui/pagination"
 import { Section } from "@/components/section"
 
 import { useEffect, useState } from "react"
-import { ActionMenu } from "@/components/action-menu"
-import { operationPhaseLabel, resourceLabel } from "@/components/application/helpers"
+import { ActionMenu, RowActions } from "@/components/action-menu"
+import { operationContext, operationPhaseLabel, resourceLabel } from "@/components/application/helpers"
 import type { RollbackRequest } from "@/components/application/operation-bar"
 import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
 import { ErrorDetailsButton, ErrorDetailsDialog } from "@/components/error-details"
 import { Button } from "@/components/panelui/button"
-import { FormSelect } from "@/components/form-select"
 import { filterRollbackTargets } from "@/lib/activity-history"
 import { Input } from "@/components/panelui/input"
-import { Skeleton } from "@/components/ui/skeleton"
+import { SectionLoading } from "@/components/section-loading"
+import { Alert } from "@/components/panelui/alert"
+import { Chip } from "@/components/panelui/chip"
+import { Combobox } from "@/components/panelui/combobox"
+import { ago } from "@/lib/relative-time"
 import { EmptyState, FormField, StatusBadge } from "@/components/ui-kit"
 import { api, errorMessage } from "@/lib/api"
-import type { Application, Operation, RollbackTarget } from "@/lib/types"
-
-function SectionLoading({ label }: { label: string }) {
-  return <div role="status" aria-label={label} className="space-y-4 p-5 sm:p-6"><span className="sr-only">{label}…</span><div aria-hidden="true" className="space-y-3"><Skeleton className="h-5 w-2/3 max-w-72 motion-reduce:animate-none" /><Skeleton className="h-4 w-full max-w-lg motion-reduce:animate-none" /><Skeleton className="h-4 w-4/5 max-w-md motion-reduce:animate-none" /></div></div>
-}
-
-function KeyValue({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
-  return <div className="flex items-start justify-between gap-3"><dt className="text-muted-foreground">{label}</dt><dd className={`max-w-[65%] truncate text-right ${mono ? "font-mono text-xs" : "font-medium"}`}>{value}</dd></div>
-}
+import type { Application, Operation, PlanRecord, RollbackTarget, WorkspaceMember } from "@/lib/types"
 
 function operationTitle(operation: Operation) {
   const { type, status } = operation
@@ -63,14 +57,25 @@ function FailedOperationActions({ operation, canRetry, restoreCheckpoint, disabl
   </>
 }
 
-export function ActivityTab({ application, operations, operationsLoading, rollbackTargets, rollbackLoading, kustomization, kustomizationError, canDeploy, canApprove, busy, hasPendingOperation, pendingAction, onRetryReconciliation, onCreateRollbackPlan }: {
+const statusFilters = [["succeeded", "Succeeded"], ["failed", "Failed"], ["running", "Running"], ["queued", "Queued"], ["cancelled", "Cancelled"]] as const
+const typeFilters = [["sync", "Sync"], ["rollback", "Rollback"], ["resource_action", "Resource action"]] as const
+const targetFilters = [["successful_sync", "Successful deployment"], ["pre_operation", "Before failed operation"]] as const
+
+/** A single-choice chip row whose active chip can be pressed again to clear the filter. */
+function FilterChips({ label, value, options, onChange }: { label: string; value: string; options: readonly (readonly [string, string])[]; onChange: (value: string) => void }) {
+  return <Chip.Group multiple={false} aria-label={label} value={value ? [value] : []} onValueChange={(next) => onChange(next[0] ?? "")}>
+    {options.map(([option, text]) => <Chip key={option} value={option} size="sm">{text}</Chip>)}
+  </Chip.Group>
+}
+
+export function ActivityTab({ application, operations, operationsLoading, plans, members, rollbackTargets, rollbackLoading, canDeploy, canApprove, busy, hasPendingOperation, pendingAction, onRetryReconciliation, onCreateRollbackPlan, onViewPlan }: {
   application: Application
   operations: Operation[]
   operationsLoading: boolean
+  plans: PlanRecord[]
+  members: WorkspaceMember[]
   rollbackTargets: RollbackTarget[]
   rollbackLoading: boolean
-  kustomization: { namespace: string; commit: string } | null
-  kustomizationError: unknown | null
   canDeploy: boolean
   canApprove: boolean
   busy: boolean
@@ -79,9 +84,12 @@ export function ActivityTab({ application, operations, operationsLoading, rollba
   onRetryReconciliation: (operationId?: string) => void
   /** Resolves true when the rollback plan was created. */
   onCreateRollbackPlan: (target: RollbackRequest) => Promise<boolean>
+  /** Opens the plan an operation applied, in the Changes tab. */
+  onViewPlan: (planId: string) => void
 }) {
   const [rollbackRevision, setRollbackRevision] = useState("")
   const [revisionOpen, setRevisionOpen] = useState(false)
+  const [rollingBack, setRollingBack] = useState<string | null>(null)
   const [page, setPage] = useState(0)
   const [retry, setRetry] = useState(0)
   const [history, setHistory] = useState<{ key: string; items: Operation[]; hasMore: boolean; total?: number } | null>(null)
@@ -92,11 +100,13 @@ export function ActivityTab({ application, operations, operationsLoading, rollba
   const [rollbackSearch, setRollbackSearch] = useState("")
   const [rollbackKind, setRollbackKind] = useState("")
   const [rollbackPage, setRollbackPage] = useState(0)
-  const pageSize = 5
+  const pageSize = 10
   const historyKey = JSON.stringify([application.id, page, operationSearch.trim(), operationStatus, operationType])
   const filteredTargets = filterRollbackTargets(rollbackTargets, rollbackSearch, rollbackKind)
   const targetPage = Math.min(rollbackPage, Math.max(0, Math.ceil(filteredTargets.length / pageSize) - 1))
   const visibleTargets = filteredTargets.slice(targetPage * pageSize, (targetPage + 1) * pageSize)
+  // Revisions JustCD has seen, offered while typing a custom rollback target; any branch, tag or SHA is still accepted.
+  const revisionSuggestions = [...new Set([application.revision, ...rollbackTargets.map((target) => target.revision ?? ""), ...plans.map((plan) => plan.plan.revision)].filter(Boolean))].slice(0, 20)
   useEffect(() => {
     const controller = new AbortController()
     const query = new URLSearchParams({ limit: String(pageSize), offset: String(page * pageSize) })
@@ -116,83 +126,85 @@ export function ActivityTab({ application, operations, operationsLoading, rollba
   const operationFiltersActive = Boolean(operationSearch.trim() || operationStatus || operationType)
   const rollbackFiltersActive = Boolean(rollbackSearch.trim() || rollbackKind)
   const blocked = busy || hasPendingOperation
+  // Older runs may point at plans that are no longer loaded; drop the column rather than show a page of dashes.
+  const showRevision = Boolean(history?.items.some((operation) => operationContext(operation, plans, members).revision))
 
-  return <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
-    <div className="min-w-0 space-y-5">
-      <Section surface title="Recent operations" description="Sync history and result state">
-        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_160px_160px]">
-          <Input aria-label="Search operations" placeholder="Search messages or IDs…" maxLength={256} value={operationSearch} onChange={(event) => { setOperationSearch(event.target.value); setPage(0); setHistoryError(null) }} />
-          <FormSelect ariaLabel="Filter operations by status" value={operationStatus} emptyOption="All statuses" items={[{ value: "succeeded", label: "Succeeded" }, { value: "failed", label: "Failed" }, { value: "queued", label: "Queued" }, { value: "running", label: "Running" }, { value: "cancelled", label: "Cancelled" }]} onValueChange={(value) => { setOperationStatus(value); setPage(0); setHistoryError(null) }} />
-          <FormSelect ariaLabel="Filter operations by type" value={operationType} emptyOption="All operation types" items={[{ value: "sync", label: "Sync" }, { value: "rollback", label: "Rollback" }, { value: "resource_action", label: "Resource action" }]} onValueChange={(value) => { setOperationType(value); setPage(0); setHistoryError(null) }} />
-          {operationFiltersActive && <Button variant="ghost" size="sm" className="justify-self-start" onClick={() => { setOperationSearch(""); setOperationStatus(""); setOperationType(""); setPage(0); setHistoryError(null) }}>Clear operation filters</Button>}
-        </div>
-        {historyError ? <div role="alert" className="space-y-2 p-5"><p className="text-sm">Could not load operations: {errorMessage(historyError)}</p><Button variant="outline" size="sm" onClick={() => { setHistoryError(null); setRetry((value) => value + 1) }}>Retry</Button></div> : historyLoading ? <SectionLoading label="Loading recent operations" /> : history?.items.length ? <Table aria-label="Recent operations"><Table.Header><Table.Row><Table.Head>Operation</Table.Head><Table.Head>Status</Table.Head><Table.Head>Started</Table.Head></Table.Row></Table.Header><Table.Body>{history.items.map((operation) => {
-          const checkpoint = operation.rollbackCheckpointId ?? rollbackTargets.find((target) => target.kind === "pre_operation" && target.operationId === operation.id)?.id
-          return <Table.Row key={operation.id}><Table.Cell className="min-w-64 whitespace-normal">
-            <p className="text-sm font-medium">{operationTitle(operation)}</p>
-            <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{operation.message || (operation.type === "resource_action" ? "Resource action" : operation.type === "rollback" ? "Rollback operation" : "Sync operation")}</p>
-            {operation.status === "failed" && <p className="mt-1 text-sm text-muted-foreground">Attempt {operation.attemptCount}{operation.nextRetryAt ? ` · next retry ${new Date(operation.nextRetryAt).toLocaleString()}` : operation.terminalReason ? ` · ${operation.terminalReason.replaceAll("_", " ")}` : ""}{operation.errorCode ? ` · ${operation.errorCode}` : ""}</p>}
-            {operation.progress && operation.type !== "resource_action" && <p className="mt-1 text-sm text-muted-foreground">{operationPhaseLabel(operation.progress.phase, operation.status)} · {operation.progress.completed?.length ?? 0}/{operation.progress.total} resources{operation.progress.current ? ` · ${resourceLabel(operation.progress.current)}` : ""}</p>}
-            {operation.status === "failed" && <div className="mt-2 flex flex-wrap items-center gap-2">
-              <FailedOperationActions operation={operation} disabled={blocked} canRetry={canDeploy && !application.decommissioning && operation.type === "sync"} restoreCheckpoint={canApprove ? checkpoint : undefined} onRetry={() => onRetryReconciliation(operation.id)} onRestore={() => void onCreateRollbackPlan({ kind: "pre_operation", id: checkpoint })} />
-            </div>}
+  async function reviewRollback(id: string, target: RollbackRequest) {
+    setRollingBack(id)
+    try { return await onCreateRollbackPlan(target) } finally { setRollingBack(null) }
+  }
 
-          </Table.Cell><Table.Cell><StatusBadge status={operation.status} /></Table.Cell><Table.Cell className="whitespace-nowrap text-xs text-muted-foreground">{new Date(operation.startedAt).toLocaleString()}</Table.Cell></Table.Row>
-        })}</Table.Body></Table> : <EmptyState title={operationFiltersActive ? "No matching operations" : "No syncs yet"} description={operationFiltersActive ? "Try a different search or clear the filters." : "Operations will be recorded here with the actor and resulting status."} />}
-        {history && (historyTotal > pageSize || page > 0) && (
-          <Pagination aria-label="Activity pagination" count={Math.max(1, Math.ceil(historyTotal / pageSize))} page={page + 1} disabled={historyLoading} onPageChange={(next) => { setHistoryError(null); setPage(next - 1) }}>
-            <Pagination.Status page={page + 1} pageSize={pageSize} total={historyTotal} />
-          </Pagination>
-        )}
-      </Section>
-      <Section surface title="Rollback targets" description="Review a new plan to restore a previous deployment. Opening a target never changes the cluster." action={canApprove && <Button size="sm" variant="outline" disabled={blocked} onClick={() => setRevisionOpen(true)}>Custom revision…</Button>}>
-        <div className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px]">
-            <Input aria-label="Search rollback targets" placeholder="Search revision or operation ID…" value={rollbackSearch} onChange={(event) => { setRollbackSearch(event.target.value); setRollbackPage(0) }} />
-            <FormSelect ariaLabel="Filter rollback targets by type" value={rollbackKind} emptyOption="All target types" items={[{ value: "successful_sync", label: "Successful deployment" }, { value: "pre_operation", label: "Before failed operation" }]} onValueChange={(value) => { setRollbackKind(value); setRollbackPage(0) }} />
-            {rollbackFiltersActive && <Button variant="ghost" size="sm" className="justify-self-start" onClick={() => { setRollbackSearch(""); setRollbackKind(""); setRollbackPage(0) }}>Clear rollback filters</Button>}
-          </div>
-          {rollbackLoading ? <SectionLoading label="Loading rollback targets" /> : visibleTargets.length > 0 ? <Table aria-label="Rollback targets"><Table.Header><Table.Row><Table.Head>Target</Table.Head><Table.Head>Revision</Table.Head><Table.Head>Resources</Table.Head><Table.Head>Review</Table.Head></Table.Row></Table.Header><Table.Body>{visibleTargets.map((target) => {
-            const title = target.kind === "successful_sync" ? "Successful deployment" : "Before failed operation"
-            return <Table.Row key={target.id}>
-              <Table.Cell className="min-w-48 whitespace-normal"><p className="text-sm font-medium">{title}</p><p className="mt-1 text-xs text-muted-foreground">{new Date(target.createdAt).toLocaleString()}</p>{target.operationId && <p className="mt-1 font-mono text-xs text-muted-foreground">Operation {target.operationId.slice(0, 12)}</p>}</Table.Cell>
-              <Table.Cell className="font-mono text-xs">{target.revision ? target.revision.slice(0, 12) : "No successful revision"}</Table.Cell>
-              <Table.Cell>{target.resourceCount}</Table.Cell>
-              <Table.Cell>{canApprove && <Button size="sm" variant="outline" aria-label={`Review rollback to ${title.toLowerCase()} from ${new Date(target.createdAt).toLocaleString()}`} loading={pendingAction === "rollback-plan"} disabled={blocked} onClick={() => void onCreateRollbackPlan({ kind: target.kind, id: target.id })}>Review rollback</Button>}</Table.Cell>
-            </Table.Row>
-          })}</Table.Body></Table> : <EmptyState title={rollbackFiltersActive ? "No matching rollback targets" : "No rollback history yet"} description={rollbackFiltersActive ? "Try a different search or clear the filters." : "A target appears after a successful deployment or a failed/interrupted operation with a saved checkpoint."} />}
-          {(filteredTargets.length > pageSize || targetPage > 0) && <Pagination aria-label="Rollback target pagination" count={Math.max(1, Math.ceil(filteredTargets.length / pageSize))} page={targetPage + 1} disabled={rollbackLoading} onPageChange={(next) => setRollbackPage(next - 1)}><Pagination.Status page={targetPage + 1} pageSize={pageSize} total={filteredTargets.length} /></Pagination>}
+  return <div className="min-w-0 space-y-5">
+    <Section surface title="Recent operations" description="Syncs, rollbacks and resource actions, newest first">
+      <div className="space-y-3">
+        <Input aria-label="Search operations" placeholder="Search messages or IDs…" maxLength={256} value={operationSearch} onChange={(event) => { setOperationSearch(event.target.value); setPage(0); setHistoryError(null) }} />
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <FilterChips label="Filter operations by status" value={operationStatus} options={statusFilters} onChange={(value) => { setOperationStatus(value); setPage(0); setHistoryError(null) }} />
+          <span aria-hidden="true" className="hidden h-5 w-px bg-border sm:block" />
+          <FilterChips label="Filter operations by type" value={operationType} options={typeFilters} onChange={(value) => { setOperationType(value); setPage(0); setHistoryError(null) }} />
+          {operationFiltersActive && <Button variant="ghost" size="sm" onClick={() => { setOperationSearch(""); setOperationStatus(""); setOperationType(""); setPage(0); setHistoryError(null) }}>Clear filters</Button>}
         </div>
+      </div>
+      {historyError ? <Alert tone="destructive" variant="inline" role="alert"><Alert.Icon /><Alert.Title>Operations could not be loaded</Alert.Title><Alert.Description>{errorMessage(historyError)}</Alert.Description><Alert.Actions><Button variant="outline" size="sm" onClick={() => { setHistoryError(null); setRetry((value) => value + 1) }}>Retry</Button></Alert.Actions></Alert>
+        : historyLoading ? <SectionLoading label="Loading recent operations" />
+          : history?.items.length ? <Table aria-label="Recent operations">
+            <Table.Header><Table.Row><Table.Head>Operation</Table.Head><Table.Head>Status</Table.Head>{showRevision && <Table.Head>Revision</Table.Head>}<Table.Head>Started by</Table.Head><Table.Head>Started</Table.Head><Table.Head>Duration</Table.Head><Table.Head><span className="sr-only">Actions</span></Table.Head></Table.Row></Table.Header>
+            <Table.Body>{history.items.map((operation) => {
+              const checkpoint = operation.rollbackCheckpointId ?? rollbackTargets.find((target) => target.kind === "pre_operation" && target.operationId === operation.id)?.id
+              const context = operationContext(operation, plans, members)
+              return <Table.Row key={operation.id}>
+                <Table.Cell className="min-w-64 whitespace-normal">
+                  <p className="text-sm font-medium">{operationTitle(operation)}</p>
+                  <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{operation.message || (operation.type === "resource_action" ? "Resource action" : operation.type === "rollback" ? "Rollback operation" : "Sync operation")}</p>
+                  {operation.status === "failed" && <p className="mt-1 text-sm text-muted-foreground">Attempt {operation.attemptCount}{operation.nextRetryAt ? ` · next retry ${new Date(operation.nextRetryAt).toLocaleString()}` : operation.terminalReason ? ` · ${operation.terminalReason.replaceAll("_", " ")}` : ""}{operation.errorCode ? ` · ${operation.errorCode}` : ""}</p>}
+                  {operation.progress && operation.type !== "resource_action" && <p className="mt-1 text-sm text-muted-foreground">{operationPhaseLabel(operation.progress.phase, operation.status)} · {operation.progress.completed?.length ?? 0}/{operation.progress.total} resources{operation.progress.current ? ` · ${resourceLabel(operation.progress.current)}` : ""}</p>}
+                  {operation.status === "failed" && <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <FailedOperationActions operation={operation} disabled={blocked} canRetry={canDeploy && !application.decommissioning && operation.type === "sync"} restoreCheckpoint={canApprove ? checkpoint : undefined} onRetry={() => onRetryReconciliation(operation.id)} onRestore={() => void onCreateRollbackPlan({ kind: "pre_operation", id: checkpoint })} />
+                  </div>}
+                </Table.Cell>
+                <Table.Cell><StatusBadge status={operation.status} /></Table.Cell>
+                {showRevision && <Table.Cell className="font-mono text-xs" title={context.revision}>{context.revision ? context.revision.slice(0, 7) : <span className="text-muted-foreground">–</span>}</Table.Cell>}
+                <Table.Cell className="max-w-48 truncate text-sm">{context.source}</Table.Cell>
+                <Table.Cell className="whitespace-nowrap text-xs text-muted-foreground"><time dateTime={operation.startedAt} title={new Date(operation.startedAt).toLocaleString()}>{ago(operation.startedAt)}</time></Table.Cell>
+                <Table.Cell className="whitespace-nowrap text-xs text-muted-foreground tabular-nums">{context.duration ?? "–"}</Table.Cell>
+                <Table.Cell className="text-right">{operation.planId && plans.some((plan) => plan.id === operation.planId) && <RowActions label={operationTitle(operation)} items={[{ label: "View plan", onSelect: () => onViewPlan(operation.planId!) }]} />}</Table.Cell>
+              </Table.Row>
+            })}</Table.Body>
+          </Table> : <EmptyState title={operationFiltersActive ? "No matching operations" : "No syncs yet"} description={operationFiltersActive ? "Try a different search or clear the filters." : "Operations will be recorded here with the actor and resulting status."} />}
+      {history && (historyTotal > pageSize || page > 0) && (
+        <Pagination aria-label="Activity pagination" count={Math.max(1, Math.ceil(historyTotal / pageSize))} page={page + 1} disabled={historyLoading} onPageChange={(next) => { setHistoryError(null); setPage(next - 1) }}>
+          <Pagination.Status page={page + 1} pageSize={pageSize} total={historyTotal} />
+        </Pagination>
+      )}
+    </Section>
+    <Section surface title="Rollback targets" description="Review a new plan to restore a previous deployment. Opening a target never changes the cluster." action={canApprove && <Button size="sm" variant="outline" disabled={blocked} onClick={() => setRevisionOpen(true)}>Custom revision…</Button>}>
+      <div className="space-y-3">
+        <Input aria-label="Search rollback targets" placeholder="Search revision or operation ID…" value={rollbackSearch} onChange={(event) => { setRollbackSearch(event.target.value); setRollbackPage(0) }} />
+        <div className="flex flex-wrap items-center gap-2">
+          <FilterChips label="Filter rollback targets by type" value={rollbackKind} options={targetFilters} onChange={(value) => { setRollbackKind(value); setRollbackPage(0) }} />
+          {rollbackFiltersActive && <Button variant="ghost" size="sm" onClick={() => { setRollbackSearch(""); setRollbackKind(""); setRollbackPage(0) }}>Clear filters</Button>}
+        </div>
+      </div>
+      {rollbackLoading ? <SectionLoading label="Loading rollback targets" /> : visibleTargets.length > 0 ? <Table aria-label="Rollback targets"><Table.Header><Table.Row><Table.Head>Target</Table.Head><Table.Head>Revision</Table.Head><Table.Head>Resources</Table.Head><Table.Head><span className="sr-only">Review</span></Table.Head></Table.Row></Table.Header><Table.Body>{visibleTargets.map((target) => {
+        const title = target.kind === "successful_sync" ? "Successful deployment" : "Before failed operation"
+        return <Table.Row key={target.id}>
+          <Table.Cell className="min-w-48 whitespace-normal"><p className="text-sm font-medium">{title}</p><p className="mt-1 text-xs text-muted-foreground"><time dateTime={target.createdAt} title={new Date(target.createdAt).toLocaleString()}>{ago(target.createdAt)}</time></p>{target.operationId && <p className="mt-1 font-mono text-xs text-muted-foreground">Operation {target.operationId.slice(0, 12)}</p>}</Table.Cell>
+          <Table.Cell className="font-mono text-xs">{target.revision ? target.revision.slice(0, 12) : "No successful revision"}</Table.Cell>
+          <Table.Cell className="tabular-nums">{target.resourceCount}</Table.Cell>
+          <Table.Cell className="text-right">{canApprove && <Button size="sm" variant="outline" aria-label={`Review rollback to ${title.toLowerCase()} from ${new Date(target.createdAt).toLocaleString()}`} loading={rollingBack === target.id} disabled={blocked || (rollingBack !== null && rollingBack !== target.id)} onClick={() => void reviewRollback(target.id, { kind: target.kind, id: target.id })}>Review rollback</Button>}</Table.Cell>
+        </Table.Row>
+      })}</Table.Body></Table> : <EmptyState title={rollbackFiltersActive ? "No matching rollback targets" : "No rollback history yet"} description={rollbackFiltersActive ? "Try a different search or clear the filters." : "A target appears after a successful deployment or a failed/interrupted operation with a saved checkpoint."} />}
+      {(filteredTargets.length > pageSize || targetPage > 0) && <Pagination aria-label="Rollback target pagination" count={Math.max(1, Math.ceil(filteredTargets.length / pageSize))} page={targetPage + 1} disabled={rollbackLoading} onPageChange={(next) => setRollbackPage(next - 1)}><Pagination.Status page={targetPage + 1} pageSize={pageSize} total={filteredTargets.length} /></Pagination>}
       <AppDialog open={revisionOpen} onOpenChange={setRevisionOpen} busy={pendingAction === "rollback-plan"} title="Roll back to a custom revision" description="JustCD resolves the revision, renders it, and shows a create/update/delete diff for owner approval. Nothing changes until you apply the plan.">
-        <form className="flex min-h-0 flex-1 flex-col" onSubmit={async (event) => { event.preventDefault(); if (!rollbackRevision.trim()) return; if (await onCreateRollbackPlan({ kind: "git_revision", revision: rollbackRevision.trim() })) { setRollbackRevision(""); setRevisionOpen(false) } }}>
-          <FormField label="Git revision" htmlFor="rollback-git-revision"><Input id="rollback-git-revision" autoFocus value={rollbackRevision} onChange={(event) => setRollbackRevision(event.target.value)} placeholder="branch, tag, or commit SHA" disabled={!canApprove || blocked} /></FormField>
-          <DialogFooter><DialogCancel disabled={pendingAction === "rollback-plan"} /><Button type="submit" loading={pendingAction === "rollback-plan"} disabled={!canApprove || blocked || !rollbackRevision.trim()}>Review rollback</Button></DialogFooter>
+        <form className="flex min-h-0 flex-1 flex-col" onSubmit={async (event) => { event.preventDefault(); if (!rollbackRevision.trim()) return; if (await reviewRollback("custom", { kind: "git_revision", revision: rollbackRevision.trim() })) { setRollbackRevision(""); setRevisionOpen(false) } }}>
+          <FormField label="Git revision" htmlFor="rollback-git-revision">
+            <Combobox id="rollback-git-revision" accessibilityLabel="Git revision" value={rollbackRevision} onValueChange={(value) => setRollbackRevision(value ?? "")} inputValue={rollbackRevision} onInputValueChange={setRollbackRevision} allowCustomValue placeholder="branch, tag, or commit SHA" disabled={!canApprove || blocked} emptyMessage="Any branch, tag or commit SHA is accepted">
+              {revisionSuggestions.map((revision) => <Combobox.Item key={revision} value={revision} label={revision} />)}
+            </Combobox>
+          </FormField>
+          <DialogFooter><DialogCancel disabled={pendingAction === "rollback-plan"} /><Button type="submit" loading={rollingBack === "custom"} disabled={!canApprove || blocked || !rollbackRevision.trim()}>Review rollback</Button></DialogFooter>
         </form>
       </AppDialog>
-      </Section>
-    </div>
-    <Card size="sm" className="min-w-0">
-      <Card.Header><Card.Title as="h2">Application source</Card.Title><Card.Description>Configuration stored in JustCD</Card.Description><Card.Action><ActionMenu label="Links" size="sm" items={[
-      ...(application.applicationGroupId ? [{ label: "Open deployment group", href: `/application-groups/${application.applicationGroupId}` }] : []),
-      ...(canApprove ? [{ label: "Edit application", href: `/applications/${application.id}/edit` }] : []),
-      { label: "Open workspace", href: `/workspaces/${application.workspaceId}` },
-    ]} /></Card.Action></Card.Header>
-      <Card.Content>
-      <dl className="space-y-3 text-sm">
-        <KeyValue label="Manifest path" value={application.manifestPath} mono />
-        <KeyValue label="Renderer" value={application.renderer} />
-        {application.renderer === "kustomize" && <>
-          <KeyValue label="Cluster overlay path" value={application.targetManifestPath || "Shared path"} mono />
-          {Object.keys(application.namespaceManifestPaths ?? {}).length > 0 && <KeyValue label="Namespace overlays" value={Object.entries(application.namespaceManifestPaths).map(([namespace, path]) => `${namespace}: ${path}`).join(", ")} mono />}
-        </>}
-        <KeyValue label="Cluster" value={application.clusterId.slice(0, 12)} mono />
-        <KeyValue label="Poll interval (seconds)" value={String(application.pollSeconds)} />
-        {application.renderer === "kustomize" && <>
-          <KeyValue label="Namespace from Git" value={kustomization ? kustomization.namespace || "Not set in kustomization" : kustomizationError ? errorMessage(kustomizationError) : "Checking kustomization…"} />
-        </>}
-      </dl>
-      {application.renderer === "kustomize" && kustomizationError != null && <div className="px-5 pb-3"><ErrorDetailsButton error={kustomizationError} /></div>}
-      </Card.Content>
-    </Card>
+    </Section>
   </div>
 }

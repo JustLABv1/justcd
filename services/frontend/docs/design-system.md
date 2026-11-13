@@ -75,8 +75,8 @@ Rules:
     with the heading inside.
   - A collapsible group of Cards or a Table is a `CollapsibleGroup` (`components/ui/collapsible`):
     a bordered tray whose header is the trigger. It is the second sanctioned place, after Workbench,
-    where surfaces sit inside a container. Never a bare trigger line between Cards. With a single
-    group there is nothing to tell apart: show its header on the canvas, no tray, not collapsible.
+    where surfaces sit inside a container. Never a bare trigger line between Cards. A single group
+    is a tray too, so the page keeps one shape whatever the data (it starts open).
 - No divider under a tab row, header or toolbar; hairlines belong between rows of one list and
   between stacked open sections.
 - **Headings sit above the surface**, in the section, unless the component owns a header slot and the
@@ -290,7 +290,12 @@ The user rejected screens where blocks were not clearly bounded. These apply fro
 
 | Application cards where every card carried two or three coloured badges, yellow text, and one of three card styles (dashed and dimmed, yellow edge, normal) | One card style, one coloured badge, a coloured edge for the card signal. See `applicationCardStatus`. |
 | Cards of applications blocked by an unreachable cluster all turned grey "because the cluster is the shared cause", so a page of down applications looked healthy | Blocked applications keep their state colour (red when down) and a reason line naming the cluster. |
-| Truncated card titles and a tray around a single group | Titles clamp to two lines. `CollapsibleGroup` only when there are two or more groups; a single group keeps its header on the canvas. |
+| Truncated card titles | Titles clamp to two lines. |
+| One group on the canvas, several in trays: the page changed shape with the data | Every group is a `CollapsibleGroup` tray, a single one included. |
+| "Needs attention 9" beside "All apps 9" | Status chips use the group headers' split: Down, Waiting for review, To check, In sync, Paused. "Needs attention" stays reachable by link and saved view. |
+| An outage said four times (alert, header, card reason, card button) | One alert above the groups, in every grouping, carries "Check cluster"; blocked cards keep the reason line and lose the button. |
+| Status chips taking three rows on a phone | Below `sm`, search plus one "Filters" button that opens a bottom `Sheet` with the chips, favourites and advanced filter. |
+| List rows only openable one at a time | Rows have checkboxes; a floating bar offers Refresh plans, Add label and Auto-sync (resume asks first). Rows the reader may not change are skipped and counted in the result. |
 
 ### Application detail review (2026-11-10)
 
@@ -327,6 +332,57 @@ The user rejected screens where blocks were not clearly bounded. These apply fro
 | Wizard steps as bare fields on the canvas, "just input and text on a background" | Each step is a `Section surface`. The earlier rule "a step is a section, not a Card" contradicted "every block has a boundary" and is replaced. |
 | Draft notice floating between the step and the buttons | `PublishingDraftNotice` renders as a compact Card. |
 | Notes between fields indented 4 px and one size above the field hints | Aligned with the fields. A note that states a security or storage fact is an `Alert variant="plain"`. |
+
+### Application detail second review (2026-11-13)
+
+| Found | Now |
+| --- | --- |
+| Runtime "Degraded" only as a small header badge while plan, KPIs and chart all read healthy | A "Runtime degraded" row in Needs attention (`runtimeProblem`), and a Runtime health Kpi whose bar takes the worst workload signal (`summarizeRuntime`). Observation coverage ("4 of 4 observed") is drawn neutral, never green. |
+| Green "Synced" beside red "Runtime Degraded" | Sync badge turns neutral when the runtime is worse. One coloured signal. |
+| Sync policy as a large KPI | Settings are not metrics: sync policy is a row in the Source card. |
+| "Refresh plan" filled even when nothing is outdated, and again in the plan card | The header action is filled only when the plan is missing, stale or expired; the plan card only leads to the plan. |
+| Profile update Alert with its own border inside the Source Card | Alerts inside a surface use `variant="inline"` with actions in `Alert.Actions`. |
+| History rows that repeat "Sync completed successfully" | Rows carry revision, who or what started the run, and duration (`operationContext`). |
+| Status and type filters as Selects with 3–5 options | Single-choice `Chip.Group`; pressing the active chip clears it. |
+| Application Settings tab as one long column | `SettingsNav` with one section per `?section=`; adding an exclusion is a Dialog, the rules a Table. |
+| Background plan completion switched the tab | A toast with a "Review" action; only user-started work changes the tab. |
+
+New PanelUI components in use: `Breadcrumb` (via `PageBreadcrumb`, every nested page), `ScrollHeader`
+(application detail: trail and actions in the bar, title and status in the large block; actions move
+under the title below `sm`), `Combobox` (plan picker, custom rollback revision), `RollingNumber`
+(live Kpi counts). A heatmap was considered for sync history and rejected: a one-colour ramp cannot
+show failures.
+
+### Overview dashboard review (2026-11-13)
+
+| Found | Now |
+| --- | --- |
+| Medium severity purple, low severity green | Critical and high red, medium and low yellow. Attention is never neutral or green. |
+| "Healthy" and "Needs attention" as two KPIs of the same total | One Applications KPI with a split bar (healthy, needs attention, other). |
+| Syncs KPI with a sparkline repeating the chart below | "Failed syncs", the number a person acts on. |
+| Workspace name as the page title, beside the sidebar switcher | Title "Overview"; the workspace name leads the description. |
+| Connections as a Card that only said "All 5 reachable" | A status badge in the page heading; problems keep the Alert. |
+| Attention rows that only linked to the application | `AttentionRow` (shared with the application page) with an action that opens the tab holding the fix. |
+| Chart and digest behind tabs, chart 400px tall with one bar | Side by side; the chart is shorter and defaults to 7 days. |
+
+The Delivery section shows deploy frequency, failure rate and time to restore against the previous
+period (`/workspaces/{id}/delivery-metrics`). Lead time is not shown: it needs commit timestamps.
+
+### Applications list review (2026-11-13)
+
+| Found | Now |
+| --- | --- |
+| Two to four bare badges per card ("Degraded", "Unknown") with nothing saying which is which | One headline badge (`CardStatus.primary`), self-describing via `badgeLabel` ("Runtime degraded", "Delivery out of sync"); the rest behind "+N" with a tooltip. |
+| Title Case badges from CSS `capitalize` | Sentence case, as everywhere else. |
+| Cluster name truncated to "DEMO ONLY - u…" beside the namespace | The cluster has a line of its own; hidden when the list is grouped by cluster. |
+| Group bar yellow "to check" over red cards | The header takes its worst card's colour and says "N down, N waiting for review, N to check". |
+| Every card in a group carrying the same red edge for the same unreachable cluster | The group header names the shared cause once; when it covers the whole group, cards drop the edge. |
+| The grouping label repeated on every card of its group | Hidden. |
+| A favourite star on every card | Shown on hover or focus, or when already a favourite (always on touch). |
+| "Checked 33 min ago" as the only time | Recent runs as dots and "Deployed …", from the workspace sync history; the fix is one button away (`attentionTab`). |
+| "Cluster unreachable" repeated on every blocked card | The card says "Blocked by cluster" (plus the state, such as "· agent offline", when the cluster is not the group) and links to "Check cluster", not to the application's activity. |
+| "Checked 23 d ago" in grey on a paused application | Paused applications are not polled, so the footer says "Not checked while paused · last 23 d ago"; the paused badge carries the colour. Only an application that should be polled turns yellow ("Checks stalled"). |
+| Stretched cards with a gap above a floating footer | The footer sits behind a divider at the bottom of the card. |
 
 "No container" and "whitespace separates first" were over-applied during the migration. When in
 doubt, a block gets a boundary.

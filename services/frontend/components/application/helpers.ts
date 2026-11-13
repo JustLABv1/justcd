@@ -1,4 +1,5 @@
-import type { Identity, OwnershipConflict } from "@/lib/types"
+import { runDuration } from "@/lib/relative-time"
+import type { Identity, Operation, OwnershipConflict, PlanRecord, WorkspaceMember } from "@/lib/types"
 
 export function diffId(identity: Identity) {
   return `diff-${[identity.clusterId ?? "", identity.apiVersion, identity.kind, identity.namespace, identity.name].map(encodeURIComponent).join("-")}`
@@ -43,3 +44,18 @@ export function isClaimable(item: OwnershipConflict, applicationID: string) {
 export type IgnorePrefill = { nonce: number; mode: "kind" | "label" | "resource"; version?: string; kind?: string; namespace?: string; name?: string; reason?: string }
 
 export type NewIgnore = { mode: string; version: string; kind: string; namespace: string; name: string; labelKey: string; labelValue: string; reason: string }
+
+/**
+ * What a run deployed and who started it, for history rows. A row that only says
+ * "Sync completed" three times tells the reader nothing; the revision, the trigger
+ * and the duration do.
+ */
+export function operationContext(operation: Operation, plans: PlanRecord[], members: WorkspaceMember[]) {
+  const plan = operation.planId ? plans.find((item) => item.id === operation.planId) : undefined
+  const member = operation.actorId ? members.find((item) => item.id === operation.actorId) : undefined
+  const source = plan?.trigger ? `${plan.trigger.provider} push`
+    : member ? member.displayName || member.email
+    : operation.actorId ? "Workspace member"
+    : "Auto-sync"
+  return { revision: plan?.plan.revision, source, duration: runDuration(operation.startedAt, operation.finishedAt) }
+}

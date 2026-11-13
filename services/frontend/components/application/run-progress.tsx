@@ -117,6 +117,8 @@ export function RunProgressStages({ progress, label, onStagePress, pressable = [
         label={label}
         className="h-full cursor-default border-0 bg-transparent active:cursor-default"
       >
+        {/* A quiet dot grid marks this as a pipeline. No spotlight: the strip cannot be panned. */}
+        <Flow.Background variant="dots" gap={16} className="size-full text-muted-foreground/30" />
         {stages.map((stage, index) => <Flow.Node
           key={stage.id}
           id={stage.id}

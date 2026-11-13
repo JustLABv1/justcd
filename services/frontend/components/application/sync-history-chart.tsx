@@ -6,6 +6,9 @@ import { Button } from "@/components/panelui/button"
 import { Card } from "@/components/panelui/card"
 import { Tabs } from "@/components/panelui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/panelui/tooltip"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { InformationCircleIcon } from "@hugeicons/core-free-icons"
 import { ErrorDetailsButton } from "@/components/error-details"
 import { summarizeSyncHistory } from "@/lib/sync-history"
 import { useSyncHistory, type SyncHistoryState } from "@/hooks/use-sync-history"
@@ -20,18 +23,18 @@ const config = {
 // very tall. Aim for a steady plot height instead.
 const PLOT_HEIGHT = 260
 
-function useAspectRatio() {
+function useAspectRatio(plotHeight = PLOT_HEIGHT) {
   const ref = useRef<HTMLDivElement>(null)
   const [ratio, setRatio] = useState(2)
   useEffect(() => {
     const node = ref.current
     if (!node) return
-    const read = () => setRatio(Math.min(6, Math.max(1.5, node.clientWidth / PLOT_HEIGHT)))
+    const read = () => setRatio(Math.min(6, Math.max(1.5, node.clientWidth / plotHeight)))
     read()
     const observer = new ResizeObserver(read)
     observer.observe(node)
     return () => observer.disconnect()
-  }, [])
+  }, [plotHeight])
   return { ref, ratio }
 }
 const outcomes = ["succeeded", "failed", "cancelled", "active"] as const
@@ -59,12 +62,17 @@ export function SyncHistoryChart({
 export function SyncHistoryChartView({
   state,
   onViewActivity,
+  plotHeight,
+  className,
 }: {
   state: SyncHistoryState
   onViewActivity?: () => void
+  /** Target plot height in pixels; the chart keeps a steady height as the card widens. */
+  plotHeight?: number
+  className?: string
 }) {
   const { result, range, setRange, retry } = state
-  const { ref: plotRef, ratio } = useAspectRatio()
+  const { ref: plotRef, ratio } = useAspectRatio(plotHeight)
   const history = result.history
   const totals = history ? summarizeSyncHistory(history) : null
   const showData = !result.loading && !result.error && Boolean(totals && totals.total > 0)
@@ -90,7 +98,7 @@ export function SyncHistoryChartView({
     return `${start.toLocaleString()} – ${end.toLocaleTimeString()}`
   }
   return (
-    <Card size="sm" className="min-w-0">
+    <Card size="sm" className={`min-w-0 ${className ?? ""}`}>
       <Card.Header className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1 basis-48"><Card.Title as="h2">Sync activity</Card.Title>
         <Card.Description aria-live="polite" className={result.error ? "text-destructive" : undefined}>
@@ -101,6 +109,12 @@ export function SyncHistoryChartView({
               : totals && totals.total > 0
                 ? `${totals.total} runs in the last ${label}${totals.successRate == null ? "" : ` · ${totals.successRate.toFixed(1)}% succeeded`}`
                 : ""}
+          {showData && <Tooltip>
+            <TooltipTrigger render={<button type="button" className="ms-1 inline-grid size-5 translate-y-[3px] place-items-center rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" aria-label="How runs are counted" />}>
+              <HugeiconsIcon icon={InformationCircleIcon} strokeWidth={1.8} className="size-3.5" aria-hidden="true" />
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs">Syncs and rollbacks grouped by start time. Success rate includes succeeded, failed and cancelled runs; active runs are excluded.</TooltipContent>
+          </Tooltip>}
         </Card.Description></div>
         <Card.Action>
           <Tabs value={range} onValueChange={(value) => { if (value === "24h" || value === "7d") setRange(value) }} aria-label="Sync history period">
@@ -115,7 +129,8 @@ export function SyncHistoryChartView({
       <div ref={plotRef} className="space-y-4">
       {showData && (
         <ul aria-label="Run outcomes" className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          {outcomes.map((outcome) => (
+          {/* Only outcomes that happened in this period; an always-present "Failed: 0" entry is noise. */}
+          {outcomes.filter((outcome) => totals?.[outcome]).map((outcome) => (
             <li key={outcome} className="inline-flex items-center gap-1.5">
               <span className="size-1.5 rounded-full" style={{ background: config[outcome].color }} aria-hidden="true" />
               {config[outcome].label}
@@ -163,17 +178,11 @@ export function SyncHistoryChartView({
           </div>
         )
       )}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        {showData && <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-          Syncs and rollbacks grouped by start time. Success rate includes
-          succeeded, failed and cancelled runs; active runs are excluded.
-        </p>}
-        {onViewActivity && showData && (
-          <Button variant="outline" size="sm" onClick={onViewActivity}>
-            View activity
-          </Button>
-        )}
-      </div>
+      {onViewActivity && showData && (
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" onClick={onViewActivity}>View activity</Button>
+        </div>
+      )}
       </div>
       </Card.Content>
     </Card>

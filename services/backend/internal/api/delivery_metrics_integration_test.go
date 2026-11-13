@@ -84,6 +84,14 @@ func TestIntegrationDeliveryMetrics(t *testing.T) {
 		t.Fatalf("by application: %#v", metrics.FailuresByApplication)
 	}
 
+	alpha, err := db.ApplicationDeliveryMetrics(ctx, "metrics-a", end, 7*day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alpha.Current.Deployments != 2 || alpha.Current.Failed != 2 || alpha.Current.Restored != 1 || alpha.Current.RestoreSeconds == nil || *alpha.Current.RestoreSeconds != 30*60 || alpha.Previous.Deployments != 1 {
+		t.Fatalf("application: %#v %#v", alpha.Current, alpha.Previous)
+	}
+
 	server := &Server{Store: db}
 	request := func(query, user string) int {
 		r := httptest.NewRequest("GET", "/?"+query, nil)
@@ -101,5 +109,19 @@ func TestIntegrationDeliveryMetrics(t *testing.T) {
 	}
 	if code := request("range=7d", "outsider"); code != http.StatusForbidden {
 		t.Fatalf("workspace isolation failed: %d", code)
+	}
+	applicationRequest := func(id, user string) int {
+		r := httptest.NewRequest("GET", "/?range=7d", nil)
+		r.SetPathValue("applicationID", id)
+		r = r.WithContext(context.WithValue(ctx, userContextKey, store.User{ID: user}))
+		w := httptest.NewRecorder()
+		server.applicationDeliveryMetrics(w, r)
+		return w.Code
+	}
+	if code := applicationRequest("metrics-a", "metrics-viewer"); code != http.StatusOK {
+		t.Fatalf("application viewer denied: %d", code)
+	}
+	if code := applicationRequest("metrics-a", "outsider"); code != http.StatusForbidden {
+		t.Fatalf("application isolation failed: %d", code)
 	}
 }

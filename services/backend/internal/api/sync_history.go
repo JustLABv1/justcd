@@ -52,18 +52,46 @@ func (s *Server) writeSyncHistory(w http.ResponseWriter, r *http.Request, applic
 	writeJSON(w, http.StatusOK, history)
 }
 
+// deliveryRange reads ?range=7d|30d, writing the error itself when it is neither.
+func deliveryRange(w http.ResponseWriter, r *http.Request) (time.Duration, bool) {
+	switch r.URL.Query().Get("range") {
+	case "", "7d":
+		return 7 * 24 * time.Hour, true
+	case "30d":
+		return 30 * 24 * time.Hour, true
+	}
+	writeError(w, http.StatusBadRequest, "range must be 7d or 30d")
+	return 0, false
+}
+
+func (s *Server) applicationDeliveryMetrics(w http.ResponseWriter, r *http.Request) {
+	app, err := s.Store.ApplicationByID(r.Context(), r.PathValue("applicationID"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "application not found")
+		return
+	}
+	if !s.requireWorkspaceRole(w, r, app.WorkspaceID, "viewer") {
+		return
+	}
+	period, ok := deliveryRange(w, r)
+	if !ok {
+		return
+	}
+	metrics, err := s.Store.ApplicationDeliveryMetrics(r.Context(), app.ID, time.Now().UTC(), period)
+	if err != nil {
+		writeStoreError(w, "could not load delivery metrics")
+		return
+	}
+	writeJSON(w, http.StatusOK, metrics)
+}
+
 func (s *Server) workspaceDeliveryMetrics(w http.ResponseWriter, r *http.Request) {
 	workspaceID := r.PathValue("workspaceID")
 	if !s.requireWorkspaceRole(w, r, workspaceID, "viewer") {
 		return
 	}
-	period := 7 * 24 * time.Hour
-	switch r.URL.Query().Get("range") {
-	case "", "7d":
-	case "30d":
-		period = 30 * 24 * time.Hour
-	default:
-		writeError(w, http.StatusBadRequest, "range must be 7d or 30d")
+	period, ok := deliveryRange(w, r)
+	if !ok {
 		return
 	}
 	metrics, err := s.Store.WorkspaceDeliveryMetrics(r.Context(), workspaceID, time.Now().UTC(), period)

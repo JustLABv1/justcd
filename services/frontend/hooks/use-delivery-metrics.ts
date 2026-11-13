@@ -10,20 +10,20 @@ export type DeliveryMetrics = {
   failuresByApplication: { applicationId: string; name: string; failed: number; total: number }[]
 }
 
-/** Workspace delivery over the last 7 or 30 days, compared with the period before. Refreshes every five minutes. */
-export function useDeliveryMetrics(workspaceId: string | undefined, range: "7d" | "30d", revision = "") {
-  const key = `${workspaceId}:${range}:${revision}`
+/** Delivery of a workspace or one application over the last 7 or 30 days, compared with the period before. Refreshes every five minutes. */
+export function useDeliveryMetrics(scope: "workspaces" | "applications", id: string | undefined, range: "7d" | "30d", revision = "") {
+  const key = `${scope}:${id}:${range}:${revision}`
   const [state, setState] = useState<{ key: string; metrics?: DeliveryMetrics; error?: unknown }>({ key: "" })
   useEffect(() => {
-    if (!workspaceId) return
+    if (!id) return
     const controller = new AbortController()
-    const load = () => api<DeliveryMetrics>(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/delivery-metrics?range=${range}`, { signal: controller.signal })
+    const load = () => api<DeliveryMetrics>(`/api/v1/${scope}/${encodeURIComponent(id)}/delivery-metrics?range=${range}`, { signal: controller.signal })
       .then((metrics) => setState({ key, metrics }))
       .catch((error) => { if (!controller.signal.aborted) setState({ key, error }) })
     void load()
     const timer = window.setInterval(() => void load(), 300_000)
     return () => { controller.abort(); window.clearInterval(timer) }
-  }, [workspaceId, range, key])
+  }, [scope, id, range, key])
   const current = state.key === key ? state : { key }
   return { metrics: current.metrics, error: current.error, loading: !current.metrics && !current.error }
 }

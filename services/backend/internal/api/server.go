@@ -240,6 +240,7 @@ func (s *Server) routes() {
 	s.Mux.Handle("GET /api/v1/applications/{applicationID}/sync-history", s.requireAuth(http.HandlerFunc(s.applicationSyncHistory)))
 	s.Mux.Handle("GET /api/v1/workspaces/{workspaceID}/sync-history", s.requireAuth(http.HandlerFunc(s.workspaceSyncHistory)))
 	s.Mux.Handle("GET /api/v1/workspaces/{workspaceID}/delivery-metrics", s.requireAuth(http.HandlerFunc(s.workspaceDeliveryMetrics)))
+	s.Mux.Handle("GET /api/v1/applications/{applicationID}/delivery-metrics", s.requireAuth(http.HandlerFunc(s.applicationDeliveryMetrics)))
 	s.Mux.Handle("GET /api/v1/approval-inbox", s.requireAuth(http.HandlerFunc(s.listApprovalInbox)))
 	s.Mux.Handle("POST /api/v1/approval-inbox/batch", s.requireAuth(s.requireCSRF(http.HandlerFunc(s.batchApprovePlans))))
 	s.Mux.Handle("GET /api/v1/plans/{planID}", s.requireAuth(http.HandlerFunc(s.getPlan)))

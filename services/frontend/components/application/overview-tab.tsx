@@ -4,7 +4,9 @@ import Link from "next/link"
 import { ProfileVersionNotice } from "@/components/applications/profile-version-notice"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { ArrowRight01Icon, HeartCheckIcon, Layers01Icon, Rocket01Icon } from "@hugeicons/core-free-icons"
-import type { ReactNode } from "react"
+import { useState, type ReactNode } from "react"
+import { DeliverySection } from "@/components/overview/overview-parts"
+import { useDeliveryMetrics } from "@/hooks/use-delivery-metrics"
 import { Kpi } from "@/components/panelui/kpi"
 import { ErrorDetailsButton } from "@/components/error-details"
 import { Alert } from "@/components/panelui/alert"
@@ -125,6 +127,10 @@ export function OverviewTab({
           : runtime.unknown ? `${runtime.unknown} not reported`
             : "All workloads ready"
 
+  // Refetched when a run finishes, like the chart below it.
+  const [deliveryRange, setDeliveryRange] = useState<"7d" | "30d">("7d")
+  const delivery = useDeliveryMetrics("applications", application.id, deliveryRange, operations.slice(0, 3).map((operation) => `${operation.id}:${operation.status}`).join(","))
+
   return (
     <div className="space-y-5">
       {application.configurationMissing && (
@@ -196,6 +202,7 @@ export function OverviewTab({
       </div>
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)]">
         <div className="min-w-0 space-y-5">
+          <DeliverySection {...delivery} range={deliveryRange} onRangeChange={setDeliveryRange} description={`This application's syncs and rollbacks over the last ${deliveryRange === "30d" ? 30 : 7} days, compared with the period before.`} />
           <SyncHistoryChart
             applicationID={application.id}
             revision={operations.slice(0, 3).map((operation) => `${operation.id}:${operation.status}`).join(",")}

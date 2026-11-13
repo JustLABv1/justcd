@@ -35,16 +35,31 @@ type DeliveryMetrics struct {
 	FailuresByApplication []ApplicationFailures `json:"failuresByApplication"`
 }
 
-const workspaceOperations = `application_id IN (SELECT id FROM applications WHERE workspace_id = $1) AND operation_type IN ('sync','rollback')`
+// The operations a period is taken over; $1 is the workspace or the application id.
+const (
+	workspaceOperations   = `application_id IN (SELECT id FROM applications WHERE workspace_id = $1) AND operation_type IN ('sync','rollback')`
+	applicationOperations = `application_id = $1 AND operation_type IN ('sync','rollback')`
+)
+
+// ApplicationDeliveryMetrics is WorkspaceDeliveryMetrics for one application, without the per-application breakdown.
+func (s *Store) ApplicationDeliveryMetrics(ctx context.Context, applicationID string, end time.Time, period time.Duration) (DeliveryMetrics, error) {
+	result := DeliveryMetrics{FailuresByApplication: []ApplicationFailures{}}
+	var err error
+	if result.Current, err = s.deliveryPeriod(ctx, applicationOperations, applicationID, end.Add(-period), end); err != nil {
+		return result, err
+	}
+	result.Previous, err = s.deliveryPeriod(ctx, applicationOperations, applicationID, end.Add(-2*period), end.Add(-period))
+	return result, err
+}
 
 // WorkspaceDeliveryMetrics compares [end-period, end) with the period before it.
 func (s *Store) WorkspaceDeliveryMetrics(ctx context.Context, workspaceID string, end time.Time, period time.Duration) (DeliveryMetrics, error) {
 	result := DeliveryMetrics{FailuresByApplication: []ApplicationFailures{}}
 	var err error
-	if result.Current, err = s.deliveryPeriod(ctx, workspaceID, end.Add(-period), end); err != nil {
+	if result.Current, err = s.deliveryPeriod(ctx, workspaceOperations, workspaceID, end.Add(-period), end); err != nil {
 		return result, err
 	}
-	if result.Previous, err = s.deliveryPeriod(ctx, workspaceID, end.Add(-2*period), end.Add(-period)); err != nil {
+	if result.Previous, err = s.deliveryPeriod(ctx, workspaceOperations, workspaceID, end.Add(-2*period), end.Add(-period)); err != nil {
 		return result, err
 	}
 	rows, err := s.DB.QueryContext(ctx, `SELECT a.id, a.name, count(*) FILTER (WHERE o.status = 'failed'), count(*)
@@ -66,10 +81,10 @@ func (s *Store) WorkspaceDeliveryMetrics(ctx context.Context, workspaceID string
 	return result, rows.Err()
 }
 
-func (s *Store) deliveryPeriod(ctx context.Context, workspaceID string, start, end time.Time) (DeliveryPeriod, error) {
+func (s *Store) deliveryPeriod(ctx context.Context, scope, scopeID string, start, end time.Time) (DeliveryPeriod, error) {
 	period := DeliveryPeriod{StartedAt: start, EndedAt: end}
 	if err := s.DB.QueryRowContext(ctx, `SELECT count(*) FILTER (WHERE status = 'succeeded'), count(*) FILTER (WHERE status = 'failed')
-		FROM operations WHERE `+workspaceOperations+` AND started_at >= $2 AND started_at < $3`, workspaceID, start, end).
+		FROM operations WHERE `+scope+` AND started_at >= $2 AND started_at < $3`, scopeID, start, end).
 		Scan(&period.Deployments, &period.Failed); err != nil {
 		return period, err
 	}
@@ -79,7 +94,7 @@ func (s *Store) deliveryPeriod(ctx context.Context, workspaceID string, start, e
 	err := s.DB.QueryRowContext(ctx, `WITH ops AS (
 			SELECT id, application_id, status, started_at, COALESCE(finished_at, started_at) AS done,
 				LAG(status) OVER (PARTITION BY application_id ORDER BY started_at, id) AS previous
-			FROM operations WHERE `+workspaceOperations+` AND status IN ('succeeded','failed')
+			FROM operations WHERE `+scope+` AND status IN ('succeeded','failed')
 		), failures AS (
 			SELECT application_id, started_at, done FROM ops
 			WHERE status = 'failed' AND previous IS DISTINCT FROM 'failed' AND started_at >= $2 AND started_at < $3
@@ -88,7 +103,7 @@ func (s *Store) deliveryPeriod(ctx context.Context, workspaceID string, start, e
 		FROM failures f CROSS JOIN LATERAL (
 			SELECT done FROM ops o WHERE o.application_id = f.application_id AND o.status = 'succeeded' AND o.started_at > f.started_at
 			ORDER BY o.started_at, o.id LIMIT 1
-		) fix`, workspaceID, start, end).Scan(&median, &period.Restored)
+		) fix`, scopeID, start, end).Scan(&median, &period.Restored)
 	if err != nil {
 		return period, err
 	}

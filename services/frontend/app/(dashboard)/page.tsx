@@ -46,7 +46,7 @@ export default function OverviewPage() {
   const [syncRevision, setSyncRevision] = useState(0)
   const syncHistory = useSyncHistory("workspaces", workspaceId, String(syncRevision), "7d")
   const [deliveryRange, setDeliveryRange] = useState<"7d" | "30d">("7d")
-  const delivery = useDeliveryMetrics(workspaceId, deliveryRange, String(syncRevision))
+  const delivery = useDeliveryMetrics("workspaces", workspaceId, deliveryRange, String(syncRevision))
   const refreshOverview = () => {
     refresh()
     setSyncRevision((value) => value + 1)

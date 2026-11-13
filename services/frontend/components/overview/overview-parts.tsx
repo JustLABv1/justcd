@@ -120,13 +120,15 @@ const change = (current: number, previous: number) => previous ? ((current - pre
  * How delivery is going over time: deploy frequency, failure rate and time to restore
  * (three of the four DORA measures), each against the period before.
  */
-export function DeliverySection({ metrics, error, loading, range, onRangeChange, applicationHref }: {
+export function DeliverySection({ metrics, error, loading, range, onRangeChange, applicationHref, description }: {
   metrics?: DeliveryMetrics
   error?: unknown
   loading: boolean
   range: "7d" | "30d"
   onRangeChange: (range: "7d" | "30d") => void
-  applicationHref: (id: string) => string
+  /** Omit for one application's own measures: there is no "most failures" list to link from. */
+  applicationHref?: (id: string) => string
+  description?: string
 }) {
   const days = range === "30d" ? 30 : 7
   const caption = `vs previous ${days} days`
@@ -138,13 +140,13 @@ export function DeliverySection({ metrics, error, loading, range, onRangeChange,
   const restoreChange = current?.restoreSeconds != null && previous?.restoreSeconds != null ? change(current.restoreSeconds, previous.restoreSeconds) : null
   const pending = <Skeleton className="h-8 w-20 motion-reduce:animate-none" />
   return (
-    <Section title="Delivery" description={`The last ${days} days compared with the ${days} before.`} action={
+    <Section title="Delivery" description={description ?? `The last ${days} days compared with the ${days} before.`} action={
       <Tabs value={range} onValueChange={(value) => { if (value === "7d" || value === "30d") onRangeChange(value) }}>
         <Tabs.List aria-label="Delivery period"><Tabs.Trigger value="7d">7 days</Tabs.Trigger><Tabs.Trigger value="30d">30 days</Tabs.Trigger></Tabs.List>
       </Tabs>
     }>
       {error ? <p role="status" className="text-sm text-muted-foreground">Delivery measures could not be loaded.</p> : (
-        <div className="grid gap-3 lg:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.2fr)]">
+        <div className={`grid gap-3 ${applicationHref ? "lg:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.2fr)]" : "sm:grid-cols-3"}`}>
           <Kpi surface className="h-full gap-3">
             <Kpi.Header><Kpi.Icon><HugeiconsIcon icon={Rocket01Icon} strokeWidth={1.8} /></Kpi.Icon><Kpi.Title>Deployments per day</Kpi.Title></Kpi.Header>
             <Kpi.Content>{loading || !current ? pending : <Kpi.Value>{(current.deployments / days).toFixed(1)}</Kpi.Value>}</Kpi.Content>
@@ -164,7 +166,7 @@ export function DeliverySection({ metrics, error, loading, range, onRangeChange,
               ? <Kpi.Trend value={restoreChange} goodDirection="down" threshold={5} caption={caption} />
               : current.restored ? `median of ${current.restored} recover${current.restored === 1 ? "y" : "ies"}` : current.failed ? "No failure fixed yet" : "No failures" : null}</Kpi.Footer>
           </Kpi>
-          <Frame>
+          {applicationHref && <Frame>
             <Frame.Header><Frame.Title as="h3">Most failures</Frame.Title></Frame.Header>
             <Frame.Panel>
               {loading || !metrics ? <p role="status" className="px-4 py-4 text-sm text-muted-foreground">Loading…</p>
@@ -177,7 +179,7 @@ export function DeliverySection({ metrics, error, loading, range, onRangeChange,
                   </LinkRow>
                 )) : <p className="px-4 py-4 text-sm text-muted-foreground">No failed runs in the last {days} days.</p>}
             </Frame.Panel>
-          </Frame>
+          </Frame>}
         </div>
       )}
     </Section>

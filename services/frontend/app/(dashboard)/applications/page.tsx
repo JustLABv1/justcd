@@ -30,7 +30,7 @@ function ApplicationsContent() {
   const activity = useMemo(() => Object.fromEntries((syncHistory.result.history?.applications ?? []).map((item) => [item.applicationId, item])), [syncHistory.result.history])
   const clusterStatuses = useClusterStatuses(workspaces.filter((workspace) => workspace.id === workspaceId).map((workspace) => workspace.id))
   const searchParams = useSearchParams()
-  const initialFilter = ["attention", "synced", "other", "paused"].includes(
+  const initialFilter = ["attention", "down", "waiting", "check", "synced", "other", "paused"].includes(
     searchParams.get("status") ?? ""
   )
     ? searchParams.get("status")!

@@ -15,6 +15,7 @@ import { Button } from "@/components/panelui/button"
 import { Sheet } from "@/components/panelui/sheet"
 import { APIError, api, apiPost, errorMessage } from "@/lib/api"
 import { WorkspaceSelectionProvider } from "@/hooks/workspace-selection"
+import { recordRecentApplication } from "@/lib/recent-applications"
 import type { Application, ListResponse, OnboardingStatus, Workspace, User } from "@/lib/types"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Home01Icon, Folder01Icon, Layers01Icon, Task01Icon, Settings02Icon, Audit01Icon, Link01Icon, Add01Icon, Rocket01Icon, Search01Icon, BookOpen01Icon, Menu01Icon } from "@hugeicons/core-free-icons"
@@ -143,6 +144,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       if (!active) return
       if (list) setWorkspaces(list)
       setRouteApplication(application)
+      // Only an application that loaded counts as visited, so a stale link never fills the list.
+      if (application) recordRecentApplication(application.id)
       setWorkspacesLoading(false)
     })
     return () => { active = false }

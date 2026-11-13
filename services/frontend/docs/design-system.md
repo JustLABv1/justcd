@@ -292,6 +292,10 @@ The user rejected screens where blocks were not clearly bounded. These apply fro
 | Cards of applications blocked by an unreachable cluster all turned grey "because the cluster is the shared cause", so a page of down applications looked healthy | Blocked applications keep their state colour (red when down) and a reason line naming the cluster. |
 | Truncated card titles | Titles clamp to two lines. |
 | One group on the canvas, several in trays: the page changed shape with the data | Every group is a `CollapsibleGroup` tray, a single one included. |
+| "Needs attention 9" beside "All apps 9" | Status chips use the group headers' split: Down, Waiting for review, To check, In sync, Paused. "Needs attention" stays reachable by link and saved view. |
+| An outage said four times (alert, header, card reason, card button) | One alert above the groups, in every grouping, carries "Check cluster"; blocked cards keep the reason line and lose the button. |
+| Status chips taking three rows on a phone | Below `sm`, search plus one "Filters" button that opens a bottom `Sheet` with the chips, favourites and advanced filter. |
+| List rows only openable one at a time | Rows have checkboxes; a floating bar offers Refresh plans, Add label and Auto-sync (resume asks first). Rows the reader may not change are skipped and counted in the result. |
 
 ### Application detail review (2026-11-10)
 

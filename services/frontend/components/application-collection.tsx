@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { ProfileVersionBadge } from "@/components/applications/profile-version-notice"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { SlidersHorizontalIcon, StarIcon, Tag01Icon, ViewIcon as SavedViewIcon, Tick02Icon, Add01Icon } from "@hugeicons/core-free-icons"
+import { FilterHorizontalIcon, SlidersHorizontalIcon, StarIcon, Tag01Icon, ViewIcon as SavedViewIcon, Tick02Icon, Add01Icon } from "@hugeicons/core-free-icons"
 import { ApplicationLabelsDialog } from "@/components/application-labels-dialog"
 import { ConnectionDialog } from "@/components/connection-dialog"
 import { DialogCancel, DialogFooter } from "@/components/app-dialog"
@@ -20,8 +20,9 @@ import { Input } from "@/components/panelui/input"
 import { Tabs } from "@/components/panelui/tabs"
 import { Chip } from "@/components/panelui/chip"
 import { Menu } from "@/components/panelui/menu"
+import { Sheet } from "@/components/panelui/sheet"
+import { useMediaQuery } from "@/hooks/use-media-query"
 import { PanelSelect } from "@/components/applications/panel-wizard"
-import { StatusPill } from "@/components/overview/overview-parts"
 import { applicationCardStatus, badgeLabel, type CardStatus } from "@/lib/application-card-status"
 import { attentionTab, tabActionLabel } from "@/lib/application-status"
 import type { ApplicationSyncActivity } from "@/lib/sync-history"
@@ -50,7 +51,7 @@ import { groupApplications, type ApplicationBucket, type GroupMode, type StatusB
 import { clusterHealth, isCheckStalled, type ConnectionHealth, type HealthLevel } from "@/lib/connection-health"
 import { ago } from "@/lib/relative-time"
 import type { Workspace } from "@/lib/types"
-import { api, errorMessage } from "@/lib/api"
+import { api, apiPost, errorMessage } from "@/lib/api"
 
 function ApplicationActions({ app, canManage, onDeleted, onEditLabels }: { app: WorkspaceApplication; canManage: boolean; onDeleted?: (id: string) => void; onEditLabels?: () => void }) {
   const router = useRouter()
@@ -196,12 +197,19 @@ export function ApplicationCard({
             {stalled ? "Checks stalled · last " : app.autoSyncPaused && !app.decommissioning ? "Not checked while paused · last " : "Checked "}{ago(app.lastCheckedAt, now)}
           </p>
         </div>
-        {blockedBy
-          ? <Button size="sm" variant="outline" className="shrink-0" nativeButton={false} render={<Link href={`/workspaces/${app.workspaceId}/connections/clusters`} />}>Check cluster</Button>
-          : attention && tab !== "overview" && <Button size="sm" variant="outline" className="shrink-0" nativeButton={false} render={<Link href={`/applications/${app.id}?tab=${tab}`} />}>{tabActionLabel[tab]}</Button>}
+        {/* Blocked by its cluster, the fix is not on this application: the outage alert above the groups links to it once. */}
+        {!(blockedBy && !status.needsDecision) && attention && tab !== "overview" && <Button size="sm" variant="outline" className="shrink-0" nativeButton={false} render={<Link href={`/applications/${app.id}?tab=${tab}`} />}>{tabActionLabel[tab]}</Button>}
       </div></footer>
     </Card.Content></Card>
   )
+}
+
+/** Down, waiting for a person, or to check: one word per application, shared by the chips and the group headers. */
+function statusKind(app: WorkspaceApplication, status: CardStatus): "down" | "waiting" | "check" | "synced" | "other" {
+  if (status.needsDecision) return "waiting"
+  if (status.edge === "destructive") return "down"
+  if (needsAttention(app)) return "check"
+  return isApplicationHealthy(app) ? "synced" : "other"
 }
 
 function GroupHeader({ label, bucket, mode, health, open, statusOf, sharedCause }: {
@@ -215,14 +223,7 @@ function GroupHeader({ label, bucket, mode, health, open, statusOf, sharedCause 
   const apps = bucket.applications
   // Down, waiting for a person, or to check: the same words and colours as the cards inside.
   const counts = { synced: 0, down: 0, waiting: 0, check: 0, other: 0 }
-  for (const app of apps) {
-    const status = statusOf(app)
-    if (status.needsDecision) counts.waiting++
-    else if (status.edge === "destructive") counts.down++
-    else if (needsAttention(app)) counts.check++
-    else if (isApplicationHealthy(app)) counts.synced++
-    else counts.other++
-  }
+  for (const app of apps) counts[statusKind(app, statusOf(app))]++
   const worst = counts.down ? "destructive" : counts.waiting || counts.check ? "warning" : null
   // Only a cluster has a health of its own; otherwise the group takes its worst application's colour.
   const level: HealthLevel = health?.level ?? (worst === "destructive" ? "critical" : worst === "warning" ? "warning" : "unknown")
@@ -241,13 +242,15 @@ function GroupHeader({ label, bucket, mode, health, open, statusOf, sharedCause 
           <span className="break-words text-sm font-semibold">{label}</span>
           {health && <span className={`text-xs font-medium ${tone[health.level].text}`}><span className="sr-only">{health.level}: </span>{health.label}</span>}
         </span>
-        {health && health.level !== "healthy" ? (
+        {/* A cluster that is down is explained by the alert above the groups. */}
+        {health && health.level !== "healthy" && health.level !== "critical" ? (
           <span className="mt-0.5 block text-xs text-muted-foreground">
             {health.detail}{health.affectedApplications.length > 0 && ` ${health.affectedApplications.length} application${health.affectedApplications.length === 1 ? "" : "s"} affected.`}
           </span>
         ) : sharedCause ? <span className="mt-0.5 block text-xs text-muted-foreground">{sharedCause}</span> : null}
       </span>
-      <span className="flex shrink-0 items-center gap-3">
+      {/* On a phone the counts take their own line, aligned under the title rather than under the icon. */}
+      <span className="flex w-full shrink-0 items-center gap-3 pl-11 sm:w-auto sm:pl-0">
         <span role="img" aria-label={`${counts.synced} healthy, ${counts.down} down, ${counts.waiting} waiting for review, ${counts.check} to check, ${counts.other} other`} className="flex h-1.5 w-24 gap-px overflow-hidden rounded-full bg-foreground/10">
           {([["bg-success", counts.synced], ["bg-destructive", counts.down], ["bg-warning", counts.waiting + counts.check], ["bg-muted-foreground/40", counts.other]] as const).map(([color, n]) => n > 0 && <span key={color} className={color} style={{ width: `${(n / apps.length) * 100}%` }} />)}
         </span>
@@ -294,6 +297,13 @@ export function ApplicationCollection({
   const toast = useToast()
   const [labelKey, setLabelKey] = useState("")
   const [favoritesOnly, setFavoritesOnly] = useState(false)
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  // Bulk actions in the list view: the ids of the checked rows.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [bulkBusy, setBulkBusy] = useState("")
+  const [bulkLabelOpen, setBulkLabelOpen] = useState(false)
+  const [bulkLabel, setBulkLabel] = useState({ key: "", value: "" })
+  const wide = useMediaQuery("(min-width: 640px)")
   const [favoriteIds, setFavoriteIds] = useState<string[]>([])
   const [favoriteBusy, setFavoriteBusy] = useState<string[]>([])
   const [savedViews, setSavedViews] = useState<ApplicationSavedView[]>([])
@@ -402,22 +412,34 @@ export function ApplicationCollection({
   const labelKeys = [...new Set([...available.flatMap(app => Object.keys(app.labels ?? {})), ...(labelKey ? [labelKey] : [])])].sort()
   const filterFields = useMemo(() => applicationFilterFields(available, workspaces), [available, workspaces])
   const activeConditions = countActiveConditions(filterQuery, applicationFilterFieldIds)
+  /** The unreachable cluster behind this application's state, whatever the list is grouped by. */
+  const blockedByCluster = (app: WorkspaceApplication) => {
+    const state = clusters.get(app.clusterId)?.health
+    return state?.level === "critical" && state.affectedApplications.some((item) => item.id === app.id) ? state : undefined
+  }
+  const statusOf = (app: WorkspaceApplication) => { const blocked = blockedByCluster(app); return applicationCardStatus(app, { blocked: Boolean(blocked), blockedLabel: blocked?.label }) }
+  const kindOf = (app: WorkspaceApplication) => statusKind(app, statusOf(app))
+  const kinds = new Map(available.map((app) => [app.id, kindOf(app)]))
   const counts = {
     all: available.length,
+    down: available.filter((app) => kinds.get(app.id) === "down").length,
+    waiting: available.filter((app) => kinds.get(app.id) === "waiting").length,
+    check: available.filter((app) => kinds.get(app.id) === "check").length,
     favorites: available.filter(app => favoriteIds.includes(app.id)).length,
     attention: available.filter(needsAttention).length,
     synced: available.filter(isApplicationHealthy).length,
     paused: available.filter((app) => app.autoSyncPaused).length,
-    other: available.filter((app) => !needsAttention(app) && !isApplicationHealthy(app)).length,
+    other: available.filter((app) => kinds.get(app.id) === "other").length,
   }
   const visible = available
     .filter((app) => {
       const matchesStatus =
         filter === "all" ||
         (filter === "attention" ? needsAttention(app)
+          : filter === "down" || filter === "waiting" || filter === "check" ? kinds.get(app.id) === filter
           : filter === "synced" ? isApplicationHealthy(app)
           : filter === "paused" ? app.autoSyncPaused
-          : !needsAttention(app) && !isApplicationHealthy(app))
+          : kinds.get(app.id) === "other")
       return (
         matchesStatus &&
         (!favoritesOnly || favoriteIds.includes(app.id)) &&
@@ -500,7 +522,7 @@ export function ApplicationCollection({
         return (
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center gap-1.5">
-              {status.badges.map((item) => <span key={item.key} title={item.title} className="inline-flex"><StatusPill status={item.status} tone={item.tone} /></span>)}
+              {status.badges.map((item) => <Badge key={item.key} variant={badgeVariant[item.tone]} size="sm" dot={item.tone !== "neutral"} title={item.title}>{badgeLabel(item)}</Badge>)}
               <ProfileVersionBadge application={app} />
             </div>
             {reason && <p className="line-clamp-2 text-xs text-muted-foreground" title={reason}>{reason}</p>}
@@ -523,15 +545,52 @@ export function ApplicationCollection({
     { id: "actions", title: "", size: 64, cell: (app) => <ApplicationActions app={app} canManage={canManageApp(app)} onDeleted={handleDeleted} onEditLabels={editLabelsFor(app)} /> },
   ]
 
-  /** The unreachable cluster behind this application's state, whatever the list is grouped by. */
-  const blockedByCluster = (app: WorkspaceApplication) => {
-    const state = clusters.get(app.clusterId)?.health
-    return state?.level === "critical" && state.affectedApplications.some((item) => item.id === app.id) ? state : undefined
-  }
-  // Grouped by cluster, each group header reports its own outage. Otherwise it is said once, above the groups.
-  const unreachable = groupBy === "cluster" ? [] : [...clusters.values()].filter((cluster) => cluster.health.level === "critical" && visible.some((app) => app.clusterId === cluster.id && blockedByCluster(app)))
+  // An outage is said once, above the groups, with the one action that fixes it.
+  const unreachable = [...clusters.values()].filter((cluster) => cluster.health.level === "critical" && visible.some((app) => app.clusterId === cluster.id && blockedByCluster(app)))
 
-  const statusOf = (app: WorkspaceApplication) => { const blocked = blockedByCluster(app); return applicationCardStatus(app, { blocked: Boolean(blocked), blockedLabel: blocked?.label }) }
+  const canDeployApp = (app: WorkspaceApplication) => canManageApp(app) || Boolean(workspaces?.some((workspace) => workspace.id === app.workspaceId && workspace.role === "deployer")) || workspaceRole === "deployer"
+  // Only what is checked and still on screen: a filter change never acts on rows the reader cannot see.
+  const selectedApps = view === "list" ? visible.filter((app) => selectedIds.has(app.id)) : []
+  const bulk = {
+    pause: selectedApps.filter((app) => canManageApp(app) && !app.autoSyncPaused && !app.decommissioning),
+    // A rollback pin that needs a revision to resume is a decision per application, made on its own page.
+    resume: selectedApps.filter((app) => canManageApp(app) && app.autoSyncPaused && !app.decommissioning && !app.rollbackResumeRequiresRevision),
+    plan: selectedApps.filter((app) => app.decommissioning || app.configurationMissing ? canManageApp(app) : canDeployApp(app)),
+    label: selectedApps.filter((app) => canManageApp(app) && !app.repositoryConfigurationId && !app.branchTest),
+  }
+  async function runBulk(kind: string, apps: WorkspaceApplication[], call: (app: WorkspaceApplication) => Promise<WorkspaceApplication | void>, done: string) {
+    setBulkBusy(kind)
+    const results = await Promise.allSettled(apps.map(call))
+    setBulkBusy("")
+    results.forEach((result) => { if (result.status === "fulfilled" && result.value) onApplicationUpdated?.(result.value) })
+    const failed = results.flatMap((result, index) => result.status === "rejected" ? [`${apps[index].name}: ${errorMessage(result.reason)}`] : [])
+    const skipped = selectedApps.length - apps.length
+    const note = skipped ? ` ${skipped} skipped: not allowed or not applicable.` : ""
+    if (failed.length) toast.error(`${done} ${apps.length - failed.length} of ${apps.length}. ${failed.join(" · ")}${note}`)
+    else toast.success(`${done} ${apps.length} application${apps.length === 1 ? "" : "s"}.${note}`)
+    if (!failed.length) setSelectedIds(new Set())
+  }
+  const appPath = (app: WorkspaceApplication) => `/api/v1/applications/${encodeURIComponent(app.id)}`
+  const bulkBar = selectedApps.length > 0 && (
+    <div role="region" aria-label="Bulk actions" className="pointer-events-none fixed inset-x-0 bottom-4 z-30 flex justify-center px-4 lg:pl-[272px]">
+      <Card size="sm" className="pointer-events-auto max-w-full shadow-lg"><Card.Content className="flex flex-wrap items-center gap-2">
+        <span className="me-1 text-sm font-medium tabular-nums">{selectedApps.length} selected</span>
+        <Button size="sm" variant="outline" disabled={!bulk.plan.length || Boolean(bulkBusy)} loading={bulkBusy === "plan"} onClick={() => void runBulk("plan", bulk.plan, async (app) => { await apiPost(`${appPath(app)}/plans`) }, "Plan refresh started for")}>Refresh plans</Button>
+        <Button size="sm" variant="outline" disabled={!bulk.label.length || Boolean(bulkBusy)} loading={bulkBusy === "label"} onClick={() => { setBulkLabel({ key: "", value: "" }); setBulkLabelOpen(true) }}>Add label</Button>
+        <ActionMenu label="Auto-sync" size="sm" items={[
+          { label: `Pause auto-sync (${bulk.pause.length})`, disabled: !bulk.pause.length || Boolean(bulkBusy), onSelect: () => void runBulk("pause", bulk.pause, (app) => apiPost<WorkspaceApplication>(`${appPath(app)}/pause`).then((updated) => ({ ...app, ...updated })), "Auto-sync paused for") },
+          { label: `Resume auto-sync (${bulk.resume.length})`, disabled: !bulk.resume.length || Boolean(bulkBusy), confirm: {
+            title: `Resume auto-sync for ${bulk.resume.length} application${bulk.resume.length === 1 ? "" : "s"}?`,
+            description: "JustCD will reconcile them with Git again. Manual changes made while they were paused may be overwritten.",
+            confirmLabel: "Resume auto-sync",
+            onConfirm: () => runBulk("resume", bulk.resume, (app) => apiPost<WorkspaceApplication>(`${appPath(app)}/rollback-state`, { action: "resume", revision: "" }).then((updated) => ({ ...app, ...updated })), "Auto-sync resumed for"),
+          } },
+        ]} />
+        <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>Clear</Button>
+      </Card.Content></Card>
+    </div>
+  )
+
   const renderBucket = (bucket: ApplicationBucket<WorkspaceApplication>) => {
     const health = groupBy === "cluster" ? clusters.get(bucket.key)?.health : undefined
     // One unreachable cluster behind every blocked application in the group: say it in the header once,
@@ -553,7 +612,7 @@ export function ApplicationCollection({
         ))}
       </div>
     ) : (
-      <DataGridList rows={bucket.applications} columns={listColumns(groupBy !== "cluster")} />
+      <DataGridList rows={bucket.applications} columns={listColumns(groupBy !== "cluster")} selection={{ rowId: (app) => app.id, rowLabel: (app) => app.name, selected: selectedIds, onSelectedChange: setSelectedIds }} />
     )
     if (groupBy === "none") return <div key={bucket.key}>{body}</div>
     // Every group is a tray, one group or ten: the page keeps one shape whatever the data.
@@ -565,6 +624,82 @@ export function ApplicationCollection({
     )
   }
 
+  // Everything that narrows the list, for the count on the phone's Filters button. The search has its own field.
+  const narrowing = Number(filter !== "all") + Number(favoritesOnly) + Number(Boolean(clusterFilter)) + activeConditions
+  const statusChips = (
+    <Chip.Group multiple={false} value={[filter]} onValueChange={(next) => { if (next[0]) setFilter(next[0]) }} aria-label="Filter by health">
+
+        {/* The same split as the group headers: what is down, what waits on a person, what to look at.
+            "Needs attention" (the three together) stays reachable from links and saved views. */}
+        {([["all", "All apps"], ["attention", "Needs attention"], ["down", "Down"], ["waiting", "Waiting for review"], ["check", "To check"], ["synced", "In sync"], ["paused", "Paused"], ["other", "Other"]] as const)
+          // Empty buckets are noise; keep them only while they are the active filter.
+          .filter(([value]) => value === "all" || (value === "attention" ? filter === value : counts[value] > 0 || filter === value))
+          .map(([value, label]) => (
+            <Chip key={value} value={value}>{label} <span className="ms-1 tabular-nums">{counts[value]}</span></Chip>
+          ))}
+
+    </Chip.Group>
+  )
+  const favoritesChip = (
+    <Chip pressed={favoritesOnly} onPressedChange={setFavoritesOnly} disabled={!preferencesReady} className="gap-1.5">
+      {/* The chip draws its own tick while pressed, so the star only shows while it is off. */}
+      {!favoritesOnly && <HugeiconsIcon icon={StarIcon} aria-hidden="true" className="size-3.5" />}
+      Favorites{counts.favorites > 0 && <span className="tabular-nums"> {counts.favorites}</span>}
+    </Chip>
+  )
+  const searchField = (
+    <Input.Group className="min-w-0 flex-1 sm:min-w-56 lg:max-w-md">
+      <Input.Addon><WorkspaceIcon name="search" className="size-4" /></Input.Addon>
+      <Input aria-label="Search applications" placeholder="Search applications, labels, clusters…" value={query} onChange={(event) => setQuery(event.target.value)} />
+    </Input.Group>
+  )
+  const clusterControl = clusters.size > 1 && (
+    <ApplicationClusterFilter
+      clusters={[...clusters.values()].sort((a, b) => levelRank[a.health.level] - levelRank[b.health.level] || a.name.localeCompare(b.name))}
+      value={clusterFilter}
+      onValueChange={setClusterFilter}
+    />
+  )
+  const advancedFilter = <Filters variant="advanced" advancedMode="popover" advancedAlign="start" fields={filterFields} query={filterQuery} onQueryChange={setFilterQuery} size="sm" />
+  const groupMenu = (
+    <Menu>
+      <Menu.Trigger render={<Button type="button" variant="outline" aria-label="Group and sort" />}>
+        <HugeiconsIcon icon={SlidersHorizontalIcon} strokeWidth={1.8} aria-hidden="true" />
+        <span className="hidden sm:inline">{groupLabels[groupBy]} · {sortLabels[sort]}</span>
+      </Menu.Trigger>
+      <Menu.Content align="end" className="min-w-56">
+        <Menu.Group>
+          <Menu.GroupLabel>Group by</Menu.GroupLabel>
+          <Menu.RadioGroup value={groupBy} onValueChange={(value) => { setGroupBy(value as GroupMode); setOpenGroups({}); if (value === "label" && !labelKey) setLabelKey(labelKeys[0] ?? "") }}>
+            {(Object.keys(groupLabels) as GroupMode[]).map((value) => <Menu.RadioItem key={value} value={value}>{groupLabels[value]}</Menu.RadioItem>)}
+          </Menu.RadioGroup>
+        </Menu.Group>
+        {groupBy === "label" && <Menu.Group>
+          <Menu.Separator />
+          <Menu.GroupLabel>Label key</Menu.GroupLabel>
+          <Menu.RadioGroup value={labelKey} onValueChange={(value) => { setLabelKey(String(value)); setOpenGroups({}) }}>
+            {labelKeys.map((key) => <Menu.RadioItem key={key} value={key}>{key}</Menu.RadioItem>)}
+          </Menu.RadioGroup>
+        </Menu.Group>}
+        <Menu.Separator />
+        <Menu.Group>
+          <Menu.GroupLabel>Sort by</Menu.GroupLabel>
+          <Menu.RadioGroup value={sort} onValueChange={(value) => setSort(String(value))}>
+            {Object.entries(sortLabels).map(([value, label]) => <Menu.RadioItem key={value} value={value}>{label}</Menu.RadioItem>)}
+          </Menu.RadioGroup>
+        </Menu.Group>
+      </Menu.Content>
+    </Menu>
+  )
+  const viewTabs = (
+    <Tabs value={view} onValueChange={(value) => { if (value === "cards" || value === "list") setView(value) }}>
+      <Tabs.List aria-label="Application view">
+        <Tabs.Trigger value="cards">Cards</Tabs.Trigger>
+        <Tabs.Trigger value="list">List</Tabs.Trigger>
+      </Tabs.List>
+    </Tabs>
+  )
+
   return (
     <>
       {renderHeader?.(viewMenu)}
@@ -573,75 +708,60 @@ export function ApplicationCollection({
       <ConnectionDialog open={saveDialog} onOpenChange={setSaveDialog} title="Save application view" description="Save your grouping, filters, sort order and layout. This view is personal and will reopen when you return." busy={viewBusy} size="sm">
         <form className="space-y-4" onSubmit={event => { event.preventDefault(); void saveView(true) }}><FormField label="View name" htmlFor="application-view-name"><Input id="application-view-name" value={viewName} maxLength={80} placeholder="Production by team" autoFocus required disabled={viewBusy} onChange={event => setViewName(event.target.value)} /></FormField>{viewError && <p role="alert" className="text-sm text-destructive">{viewError}</p>}<DialogFooter><DialogCancel disabled={viewBusy} /><Button type="submit" loading={viewBusy} disabled={!viewName.trim()}>Save view</Button></DialogFooter></form>
       </ConnectionDialog>
+      <ConnectionDialog open={bulkLabelOpen} onOpenChange={setBulkLabelOpen} title={`Add a label to ${bulk.label.length} application${bulk.label.length === 1 ? "" : "s"}`} description={`Existing labels are kept; a label with the same key is replaced.${selectedApps.length > bulk.label.length ? ` ${selectedApps.length - bulk.label.length} selected application${selectedApps.length - bulk.label.length === 1 ? " is" : "s are"} skipped: labels managed in Git, or you are not an owner.` : ""}`} busy={bulkBusy === "label"} size="sm">
+        <form className="space-y-4" onSubmit={(event) => {
+          event.preventDefault()
+          const key = bulkLabel.key.trim(), value = bulkLabel.value.trim()
+          void runBulk("label", bulk.label, (app) => api<WorkspaceApplication>(`${appPath(app)}/labels`, { method: "PUT", body: JSON.stringify({ labels: { ...(app.labels ?? {}), [key]: value } }) }).then((updated) => ({ ...app, ...updated })), `Label ${key}${value ? `=${value}` : ""} added to`).then(() => setBulkLabelOpen(false))
+        }}>
+          <FormField label="Key" htmlFor="bulk-label-key"><Input id="bulk-label-key" value={bulkLabel.key} placeholder="team" autoFocus required disabled={bulkBusy === "label"} onChange={(event) => setBulkLabel((current) => ({ ...current, key: event.target.value }))} /></FormField>
+          <FormField label="Value" htmlFor="bulk-label-value"><Input id="bulk-label-value" value={bulkLabel.value} placeholder="platform" disabled={bulkBusy === "label"} onChange={(event) => setBulkLabel((current) => ({ ...current, value: event.target.value }))} /></FormField>
+          <DialogFooter><DialogCancel disabled={bulkBusy === "label"} /><Button type="submit" loading={bulkBusy === "label"} disabled={!bulkLabel.key.trim()}>Add label</Button></DialogFooter>
+        </form>
+      </ConnectionDialog>
+      {bulkBar}
       {editingLabels && <ApplicationLabelsDialog key={editingLabels.id} application={editingLabels} onClose={() => setEditingLabels(null)} onSaved={labels => onApplicationUpdated?.({ ...editingLabels, labels })} />}
       <section aria-label="Filter applications" className="mb-4 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="max-w-full overflow-x-auto">
-            <Chip.Group multiple={false} value={[filter]} onValueChange={(next) => { if (next[0]) setFilter(next[0]) }} aria-label="Filter by health">
-
-                {([["all", "All apps"], ["attention", "Needs attention"], ["synced", "In sync"], ["other", "Other"], ["paused", "Reconciliation paused"]] as const)
-                  // Empty buckets are noise; keep them only while they are the active filter.
-                  .filter(([value]) => value === "all" || value === "attention" || counts[value] > 0 || filter === value)
-                  .map(([value, label]) => (
-                    <Chip key={value} value={value}>{label} <span className="ms-1 tabular-nums">{counts[value]}</span></Chip>
-                  ))}
-
-            </Chip.Group>
+        {wide ? <>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="max-w-full overflow-x-auto">
+              {statusChips}
+            </div>
+            {favoritesChip}
           </div>
-          <Chip pressed={favoritesOnly} onPressedChange={setFavoritesOnly} disabled={!preferencesReady} className="gap-1.5">
-            {/* The chip draws its own tick while pressed, so the star only shows while it is off. */}
-            {!favoritesOnly && <HugeiconsIcon icon={StarIcon} aria-hidden="true" className="size-3.5" />}
-            Favorites{counts.favorites > 0 && <span className="tabular-nums"> {counts.favorites}</span>}
-          </Chip>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Input.Group className="w-full min-w-0 sm:w-auto sm:min-w-56 sm:flex-1 lg:max-w-md">
-            <Input.Addon><WorkspaceIcon name="search" className="size-4" /></Input.Addon>
-            <Input aria-label="Search applications" placeholder="Search applications, labels, clusters…" value={query} onChange={(event) => setQuery(event.target.value)} />
-          </Input.Group>
-          {clusters.size > 1 && <ApplicationClusterFilter
-            clusters={[...clusters.values()].sort((a, b) => levelRank[a.health.level] - levelRank[b.health.level] || a.name.localeCompare(b.name))}
-            value={clusterFilter}
-            onValueChange={setClusterFilter}
-          />}
-          <Filters variant="advanced" advancedMode="popover" advancedAlign="start" fields={filterFields} query={filterQuery} onQueryChange={setFilterQuery} size="sm" />
-          <div className="ml-auto flex items-center gap-2">
-            <Menu>
-              <Menu.Trigger render={<Button type="button" variant="outline" aria-label="Group and sort" />}>
-                <HugeiconsIcon icon={SlidersHorizontalIcon} strokeWidth={1.8} aria-hidden="true" />
-                <span className="hidden sm:inline">{groupLabels[groupBy]} · {sortLabels[sort]}</span>
-              </Menu.Trigger>
-              <Menu.Content align="end" className="min-w-56">
-                <Menu.Group>
-                  <Menu.GroupLabel>Group by</Menu.GroupLabel>
-                  <Menu.RadioGroup value={groupBy} onValueChange={(value) => { setGroupBy(value as GroupMode); setOpenGroups({}); if (value === "label" && !labelKey) setLabelKey(labelKeys[0] ?? "") }}>
-                    {(Object.keys(groupLabels) as GroupMode[]).map((value) => <Menu.RadioItem key={value} value={value}>{groupLabels[value]}</Menu.RadioItem>)}
-                  </Menu.RadioGroup>
-                </Menu.Group>
-                {groupBy === "label" && <Menu.Group>
-                  <Menu.Separator />
-                  <Menu.GroupLabel>Label key</Menu.GroupLabel>
-                  <Menu.RadioGroup value={labelKey} onValueChange={(value) => { setLabelKey(String(value)); setOpenGroups({}) }}>
-                    {labelKeys.map((key) => <Menu.RadioItem key={key} value={key}>{key}</Menu.RadioItem>)}
-                  </Menu.RadioGroup>
-                </Menu.Group>}
-                <Menu.Separator />
-                <Menu.Group>
-                  <Menu.GroupLabel>Sort by</Menu.GroupLabel>
-                  <Menu.RadioGroup value={sort} onValueChange={(value) => setSort(String(value))}>
-                    {Object.entries(sortLabels).map(([value, label]) => <Menu.RadioItem key={value} value={value}>{label}</Menu.RadioItem>)}
-                  </Menu.RadioGroup>
-                </Menu.Group>
-              </Menu.Content>
-            </Menu>
-            <Tabs value={view} onValueChange={(value) => { if (value === "cards" || value === "list") setView(value) }}>
-              <Tabs.List aria-label="Application view">
-                <Tabs.Trigger value="cards">Cards</Tabs.Trigger>
-                <Tabs.Trigger value="list">List</Tabs.Trigger>
-              </Tabs.List>
-            </Tabs>
+          <div className="flex flex-wrap items-center gap-2">
+            {searchField}
+            {clusterControl}
+            {advancedFilter}
+            <div className="ml-auto flex items-center gap-2">{groupMenu}{viewTabs}</div>
           </div>
-        </div>
+        </> : <>
+          {/* A phone gets the search and one Filters button; the chips would otherwise take three rows. */}
+          <div className="flex items-center gap-2">
+            {searchField}
+            <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
+              <Sheet.Trigger render={<Button type="button" variant="outline" className="shrink-0" aria-label={narrowing ? `Filters, ${narrowing} active` : "Filters"} />}>
+                <HugeiconsIcon icon={FilterHorizontalIcon} strokeWidth={1.8} aria-hidden="true" />
+                Filters{narrowing > 0 && <Badge size="sm" variant="secondary" className="tabular-nums">{narrowing}</Badge>}
+              </Sheet.Trigger>
+              <Sheet.Content>
+                <Sheet.Header title="Filter applications" />
+                <Sheet.Body className="space-y-5">
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground">Status</p>
+                    {statusChips}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">{favoritesChip}{clusterControl}{advancedFilter}</div>
+                </Sheet.Body>
+                <Sheet.Footer>
+                  {narrowing > 0 && <Button type="button" variant="ghost" onClick={() => { setFilter("all"); setClusterFilter(""); setFilterQuery(createFilterQuery()); setFavoritesOnly(false) }}>Clear filters</Button>}
+                  <Sheet.Close render={<Button type="button" />}>Show {visible.length} application{visible.length === 1 ? "" : "s"}</Sheet.Close>
+                </Sheet.Footer>
+              </Sheet.Content>
+            </Sheet>
+          </div>
+          <div className="flex items-center justify-between gap-2">{groupMenu}{viewTabs}</div>
+        </>}
         {(filtering || buckets.length > 1) && <p role="status" className="px-1 text-sm text-muted-foreground">Showing {visible.length} of {available.length} applications{buckets.length > 1 && groupBy !== "none" ? ` in ${buckets.length} groups` : ""}</p>}
       </section>
       {visible.length ? (
@@ -650,6 +770,7 @@ export function ApplicationCollection({
           <Alert.Icon />
           <Alert.Title>{unreachable.length === 1 ? `${unreachable[0].name}: ${unreachable[0].health.label.toLowerCase()}` : `${unreachable.length} clusters are unreachable`}</Alert.Title>
           <Alert.Description>{unreachable.length === 1 ? unreachable[0].health.detail : unreachable.map((cluster) => cluster.name).join(" · ")} {unreachable.reduce((sum, cluster) => sum + cluster.health.affectedApplications.length, 0)} applications are blocked until the connection is restored.</Alert.Description>
+          {unreachable[0].health.affectedApplications[0] && <Alert.Actions><Button size="sm" variant="outline" nativeButton={false} render={<Link href={`/workspaces/${unreachable[0].health.affectedApplications[0].workspaceId}/connections/clusters`} />}>{unreachable.length === 1 ? "Check cluster" : "Check clusters"}</Button></Alert.Actions>}
         </Alert>}
         {buckets.map(renderBucket)}
         </div>

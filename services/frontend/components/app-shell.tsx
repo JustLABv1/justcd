@@ -1,10 +1,8 @@
 "use client"
 
-import { DocumentationLink } from "@/components/documentation-link"
 import { LogoMark } from "@/components/logo"
 import Link from "next/link"
 import { PageBreadcrumb } from "@/components/page-breadcrumb"
-import styles from "./app-shell.module.css"
 import { usePathname, useRouter } from "next/navigation"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { AccountMenu } from "@/components/account-menu"
@@ -13,12 +11,13 @@ import { PendingApproval } from "@/components/pending-approval"
 import { NavRail } from "@/components/panelui/nav-rail"
 import { Select } from "@/components/panelui/select"
 import { Card } from "@/components/panelui/card"
-import { Button, buttonVariants } from "@/components/panelui/button"
+import { Button } from "@/components/panelui/button"
+import { Sheet } from "@/components/panelui/sheet"
 import { APIError, api, apiPost, errorMessage } from "@/lib/api"
 import { WorkspaceSelectionProvider } from "@/hooks/workspace-selection"
 import type { Application, ListResponse, OnboardingStatus, Workspace, User } from "@/lib/types"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Home01Icon, Folder01Icon, Layers01Icon, Task01Icon, Settings02Icon, Audit01Icon, Link01Icon, Add01Icon, Rocket01Icon, Search01Icon, BookOpen01Icon } from "@hugeicons/core-free-icons"
+import { Home01Icon, Folder01Icon, Layers01Icon, Task01Icon, Settings02Icon, Audit01Icon, Link01Icon, Add01Icon, Rocket01Icon, Search01Icon, BookOpen01Icon, Menu01Icon } from "@hugeicons/core-free-icons"
 
 type NavChild = { href: string; label: string }
 type NavItem = { href: string; label: string; icon: typeof Home01Icon; badge?: number; dot?: boolean; children?: NavChild[] }
@@ -56,6 +55,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [onboardingIncomplete, setOnboardingIncomplete] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   const [pendingApprovals, setPendingApprovals] = useState(0)
   const [pendingAccounts, setPendingAccounts] = useState(0)
 
@@ -205,7 +205,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [selectedWorkspaceId, pathname])
 
   const crumbs = pageCrumbs(pathname, routeWorkspace, routeApplication)
-  const showAdmin = user?.isAdmin ?? false
 
   const isAdminUser = user?.isAdmin === true
   const refreshPendingAccounts = useCallback(() => {
@@ -252,10 +251,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   ]
   const administration = adminNavigation.filter((item) => item.href !== "/onboarding" || onboardingIncomplete).map((item) => item.href === "/onboarding" ? { ...item, dot: true } : item.href === "/settings" ? { ...item, badge: pendingAccounts } : item)
   const delivery = deliveryNavigation.map((item) => item.href === "/approvals" ? { ...item, badge: pendingApprovals } : item)
-  const mobileGroups = [
-    { label: "Delivery", items: delivery },
-    ...(showAdmin ? [{ label: "Administration", items: administration }] : []),
-  ]
 
   if (loading || !user) {
     return (
@@ -275,58 +270,67 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-svh overflow-x-clip bg-background text-foreground">
-      <NavRail
-        aria-label="Sidebar"
-        collapsed={collapsed}
-        onCollapsedChange={setSidebarCollapsed}
-        expandedWidth={256}
-        collapsedWidth={72}
-        className="fixed bottom-2 left-2 top-2 z-20 hidden h-auto bg-muted dark:bg-muted/50 lg:flex not-data-collapsed:overflow-y-auto"
-      >
-        <NavRail.Header className="pb-3 pt-1">
-          <NavRail.Brand href="/" label="JustCD home" icon={<LogoMark className="h-5 w-auto text-current" />}>JustCD</NavRail.Brand>
-          <NavRail.Trigger expandLabel="Expand sidebar" collapseLabel="Collapse sidebar" aria-keyshortcuts="Control+B Meta+B" title="Toggle sidebar · Ctrl/⌘ B" />
-        </NavRail.Header>
-        <WorkspaceSelector workspaces={workspaces} selectedId={selectedWorkspaceId} onChange={selectWorkspace} loading={workspacesLoading} collapsed={collapsed} canCreate={canCreateWorkspace} />
-        <NavRail.Item icon={<HugeiconsIcon icon={Search01Icon} strokeWidth={1.8} aria-hidden="true" />} label="Search and commands" aria-keyshortcuts="Control+K Meta+K" onClick={() => setPaletteOpen(true)} className="text-start">
-          Search <kbd className="float-end text-[11px] font-medium text-muted-foreground/70">⌘K</kbd>
-        </NavRail.Item>
-        <RailGroup label="Delivery" items={delivery} pathname={pathname} />
-        {selectedWorkspaceId && <RailGroup label="Workspace" items={workspaceNavigation} pathname={pathname} />}
-        {user.isAdmin && <RailGroup label="Administration" items={administration} pathname={pathname} />}
-        <NavRail.Footer className="gap-1 pt-3">
-          <NavRail.Item href="/docs" target="_blank" rel="noopener noreferrer" icon={<HugeiconsIcon icon={BookOpen01Icon} strokeWidth={1.8} aria-hidden="true" />} label="Documentation (opens in a new tab)">Documentation</NavRail.Item>
-          <AccountMenu user={user} onSignOut={signOut} collapsed={collapsed} />
-        </NavRail.Footer>
-      </NavRail>
+      {/* The sidebar and the mobile menu are one navigation: the same rows, the same order. */}
+      {(() => {
+        const rows = (folded: boolean) => <>
+          <WorkspaceSelector workspaces={workspaces} selectedId={selectedWorkspaceId} onChange={selectWorkspace} loading={workspacesLoading} collapsed={folded} canCreate={canCreateWorkspace} />
+          <NavRail.Item icon={<HugeiconsIcon icon={Search01Icon} strokeWidth={1.8} aria-hidden="true" />} label="Search and commands" aria-keyshortcuts="Control+K Meta+K" onClick={() => { setMenuOpen(false); setPaletteOpen(true) }} className="text-start">
+            Search <kbd className="float-end text-[11px] font-medium text-muted-foreground/70">⌘K</kbd>
+          </NavRail.Item>
+          <RailGroup label="Delivery" items={delivery} pathname={pathname} />
+          {selectedWorkspaceId && <RailGroup label="Workspace" items={workspaceNavigation} pathname={pathname} />}
+          {user.isAdmin && <RailGroup label="Administration" items={administration} pathname={pathname} />}
+          <NavRail.Footer className="gap-1 pt-3">
+            <NavRail.Item href="/docs" target="_blank" rel="noopener noreferrer" icon={<HugeiconsIcon icon={BookOpen01Icon} strokeWidth={1.8} aria-hidden="true" />} label="Documentation (opens in a new tab)">Documentation</NavRail.Item>
+            <AccountMenu user={user} onSignOut={signOut} collapsed={folded} />
+          </NavRail.Footer>
+        </>
+        return <>
+          <NavRail
+            aria-label="Sidebar"
+            collapsed={collapsed}
+            onCollapsedChange={setSidebarCollapsed}
+            expandedWidth={256}
+            collapsedWidth={72}
+            className="fixed bottom-2 left-2 top-2 z-20 hidden h-auto bg-muted dark:bg-muted/50 lg:flex not-data-collapsed:overflow-y-auto"
+          >
+            <NavRail.Header className="pb-3 pt-1">
+              <NavRail.Brand href="/" label="JustCD home" icon={<LogoMark className="h-5 w-auto text-current" />}>JustCD</NavRail.Brand>
+              <NavRail.Trigger expandLabel="Expand sidebar" collapseLabel="Collapse sidebar" aria-keyshortcuts="Control+B Meta+B" title="Toggle sidebar · Ctrl/⌘ B" />
+            </NavRail.Header>
+            {rows(collapsed)}
+          </NavRail>
+          {/* Below lg the rail becomes a sheet from the left. Following a link closes it. */}
+          <Sheet side="left" open={menuOpen} onOpenChange={setMenuOpen}>
+            <Sheet.Content className="lg:hidden" onClickCapture={(event) => { if ((event.target as HTMLElement).closest("a[href]")) setMenuOpen(false) }}>
+              <Sheet.Title className="sr-only">Navigation</Sheet.Title>
+              <NavRail aria-label="Main navigation" collapsed={false} expandedWidth="100%" className="h-full overflow-y-auto bg-transparent px-1 pt-1">
+                <NavRail.Header className="pb-3 pt-1 pe-12">
+                  <NavRail.Brand href="/" label="JustCD home" icon={<LogoMark className="h-5 w-auto text-current" />}>JustCD</NavRail.Brand>
+                </NavRail.Header>
+                {rows(false)}
+              </NavRail>
+            </Sheet.Content>
+          </Sheet>
+        </>
+      })()}
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} isAdmin={user.isAdmin} canCreateWorkspace={canCreateWorkspace} workspaces={workspaces} workspaceId={selectedWorkspaceId} onSelectWorkspace={selectWorkspace} onToggleSidebar={toggleSidebar} onboardingIncomplete={onboardingIncomplete} />
 
       <div className={`${collapsed ? "lg:pl-[88px]" : "lg:pl-[272px]"} transition-[padding] duration-200 motion-reduce:transition-none`}>
       <div className="lg:min-h-svh">
-        <header className="flex h-14 items-center justify-between gap-4 px-5 sm:px-8 lg:hidden">
-          <Link href="/" className="flex items-center gap-2">
-            <LogoMark className="h-7 w-auto text-foreground" />
-            <span className="font-semibold">JustCD</span>
+        {/* Small screens: one bar. Everything else lives in the menu sheet, so pages start at the top. */}
+        <header className="sticky top-0 z-20 flex h-14 items-center gap-2 border-b bg-background/85 px-3 backdrop-blur supports-[backdrop-filter]:bg-background/70 sm:px-6 lg:hidden">
+          <Button variant="ghost" size="icon" className="relative" aria-label="Open menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}>
+            <HugeiconsIcon icon={Menu01Icon} strokeWidth={1.8} className="size-5" aria-hidden="true" />
+            {(pendingApprovals > 0 || pendingAccounts > 0 || onboardingIncomplete) && <span aria-hidden="true" className="absolute right-1.5 top-1.5 size-2 rounded-full bg-destructive ring-2 ring-background" />}
+          </Button>
+          <Link href="/" className="flex min-w-0 items-center gap-2 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="JustCD home">
+            <LogoMark className="h-6 w-auto shrink-0 text-foreground" />
+            <span className="truncate font-semibold">{workspaces.find((item) => item.id === selectedWorkspaceId)?.name ?? "JustCD"}</span>
           </Link>
-          <div className="flex items-center gap-1"><CommandPaletteButton compact onClick={() => setPaletteOpen(true)} /><DocumentationLink compact /><AccountMenu user={user} onSignOut={signOut} compact /></div>
+          <div className="ms-auto flex items-center gap-1"><CommandPaletteButton compact onClick={() => setPaletteOpen(true)} /><AccountMenu user={user} onSignOut={signOut} compact /></div>
         </header>
-        <div className="mx-4 mb-2 lg:hidden">
-          <WorkspaceSelector workspaces={workspaces} selectedId={selectedWorkspaceId} onChange={selectWorkspace} compact loading={workspacesLoading} canCreate={canCreateWorkspace} />
-          {selectedWorkspaceId && <div className="grid grid-cols-2 gap-2">
-            {workspaceNavigation.map((item) => <Link key={item.href} className={buttonVariants({ variant: isNavSelected(item.href, pathname) ? "secondary" : "outline", className: "min-w-0 h-auto justify-start py-2 text-left" })} aria-current={isNavSelected(item.href, pathname) ? "page" : undefined} href={item.href}>
-              <HugeiconsIcon icon={item.icon} className="size-4" aria-hidden="true" /><span className="min-w-0 whitespace-normal">{item.label}</span>
-            </Link>)}
-          </div>}
-
-        </div>
-        <nav aria-label="Main navigation" className={`mx-4 mt-3 flex lg:hidden ${styles.mobileNav}`}>
-          {mobileGroups.map((group, groupIndex) => <div key={group.label} role="group" aria-label={group.label} className="flex shrink-0 items-center gap-1">
-            {groupIndex > 0 && <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 bg-border" />}
-            <span className="shrink-0 px-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">{group.label}</span>
-            {group.items.map((item) => <Link key={item.href} href={item.href} aria-current={isNavSelected(item.href, pathname) ? "page" : undefined} className={`${styles.navItem} shrink-0 !py-1.5 !text-xs`}><HugeiconsIcon icon={item.icon} strokeWidth={1.8} className="size-4 shrink-0" aria-hidden="true" />{item.label}<NavBadge item={item} /></Link>)}
-          </div>)}
-        </nav>
         <main className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") && !pathname.endsWith("/publish") ? "max-w-none" : "max-w-[1440px]"} px-5 pb-7 pt-5 sm:px-8 sm:pb-8 sm:pt-6 lg:pt-7 ${pathname === "/audit" ? "lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden" : ""}`}>
           {/* The application detail page carries its trail in its own collapsing header. */}
           {!/^\/applications\/(?!new$|publish$)[^/]+$/.test(pathname) && <PageBreadcrumb crumbs={crumbs} className="mb-4 shrink-0" />}
@@ -424,12 +428,6 @@ function RailGroup({ label, items, pathname }: { label: string; items: NavItem[]
       </NavRail.Item>
     })}
   </NavRail.Group>
-}
-
-function NavBadge({ item }: { item: NavItem }) {
-  if (item.badge) return <span className="ml-auto min-w-5 rounded-full bg-rose-500 px-1.5 py-0.5 text-center text-[11px] font-semibold leading-none text-white" aria-label={`${item.badge} pending`}>{item.badge > 99 ? "99+" : item.badge}</span>
-  if (item.dot) return <span className="ml-auto size-2 rounded-full bg-emerald-500" role="img" aria-label="Setup incomplete" />
-  return null
 }
 
 function isNavSelected(href: string, pathname: string) {

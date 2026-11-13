@@ -75,8 +75,8 @@ Rules:
     with the heading inside.
   - A collapsible group of Cards or a Table is a `CollapsibleGroup` (`components/ui/collapsible`):
     a bordered tray whose header is the trigger. It is the second sanctioned place, after Workbench,
-    where surfaces sit inside a container. Never a bare trigger line between Cards. With a single
-    group there is nothing to tell apart: show its header on the canvas, no tray, not collapsible.
+    where surfaces sit inside a container. Never a bare trigger line between Cards. A single group
+    is a tray too, so the page keeps one shape whatever the data (it starts open).
 - No divider under a tab row, header or toolbar; hairlines belong between rows of one list and
   between stacked open sections.
 - **Headings sit above the surface**, in the section, unless the component owns a header slot and the
@@ -290,7 +290,8 @@ The user rejected screens where blocks were not clearly bounded. These apply fro
 
 | Application cards where every card carried two or three coloured badges, yellow text, and one of three card styles (dashed and dimmed, yellow edge, normal) | One card style, one coloured badge, a coloured edge for the card signal. See `applicationCardStatus`. |
 | Cards of applications blocked by an unreachable cluster all turned grey "because the cluster is the shared cause", so a page of down applications looked healthy | Blocked applications keep their state colour (red when down) and a reason line naming the cluster. |
-| Truncated card titles and a tray around a single group | Titles clamp to two lines. `CollapsibleGroup` only when there are two or more groups; a single group keeps its header on the canvas. |
+| Truncated card titles | Titles clamp to two lines. |
+| One group on the canvas, several in trays: the page changed shape with the data | Every group is a `CollapsibleGroup` tray, a single one included. |
 
 ### Application detail review (2026-11-10)
 
@@ -362,6 +363,22 @@ show failures.
 
 The Delivery section shows deploy frequency, failure rate and time to restore against the previous
 period (`/workspaces/{id}/delivery-metrics`). Lead time is not shown: it needs commit timestamps.
+
+### Applications list review (2026-11-13)
+
+| Found | Now |
+| --- | --- |
+| Two to four bare badges per card ("Degraded", "Unknown") with nothing saying which is which | One headline badge (`CardStatus.primary`), self-describing via `badgeLabel` ("Runtime degraded", "Delivery out of sync"); the rest behind "+N" with a tooltip. |
+| Title Case badges from CSS `capitalize` | Sentence case, as everywhere else. |
+| Cluster name truncated to "DEMO ONLY - u…" beside the namespace | The cluster has a line of its own; hidden when the list is grouped by cluster. |
+| Group bar yellow "to check" over red cards | The header takes its worst card's colour and says "N down, N waiting for review, N to check". |
+| Every card in a group carrying the same red edge for the same unreachable cluster | The group header names the shared cause once; when it covers the whole group, cards drop the edge. |
+| The grouping label repeated on every card of its group | Hidden. |
+| A favourite star on every card | Shown on hover or focus, or when already a favourite (always on touch). |
+| "Checked 33 min ago" as the only time | Recent runs as dots and "Deployed …", from the workspace sync history; the fix is one button away (`attentionTab`). |
+| "Cluster unreachable" repeated on every blocked card | The card says "Blocked by cluster" (plus the state, such as "· agent offline", when the cluster is not the group) and links to "Check cluster", not to the application's activity. |
+| "Checked 23 d ago" in grey on a paused application | Paused applications are not polled, so the footer says "Not checked while paused · last 23 d ago"; the paused badge carries the colour. Only an application that should be polled turns yellow ("Checks stalled"). |
+| Stretched cards with a gap above a floating footer | The footer sits behind a divider at the bottom of the card. |
 
 "No container" and "whitespace separates first" were over-applied during the migration. When in
 doubt, a block gets a boundary.

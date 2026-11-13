@@ -20,6 +20,10 @@ export type ApplicationSyncActivity = {
   type?: "sync" | "rollback"
   startedAt?: string
   finishedAt?: string
+  /** Outcomes of the latest syncs and rollbacks, newest first (at most 10). */
+  recent?: string[]
+  /** When the latest successful sync or rollback finished. */
+  deployedAt?: string
 }
 
 export function summarizeSyncHistory(history: SyncHistory) {

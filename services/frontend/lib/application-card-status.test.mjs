@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { applicationCardStatus } from "./application-card-status.ts"
+import { applicationCardStatus, badgeLabel } from "./application-card-status.ts"
 import { needsAttention } from "./application-status.ts"
 
 const deliveries = ["synced", "out_of_sync", "deletion_pending", "degraded", "failed", "error", "unknown", "syncing", "pending", "decommissioned", "something_new"]
@@ -62,7 +62,8 @@ test("exhausted retries are red even when the badges are green", () => {
 test("an application blocked by its cluster is still shown as down", () => {
   const status = applicationCardStatus({ health: "degraded", healthCondition: { status: "Missing" }, statusIssues: [{ source: "cluster", summary: "cluster unreachable", observedAt: "" }], decommissioning: false }, { blocked: true, blockedLabel: "Cluster unreachable" })
   assert.deepEqual(status.badges.filter((item) => coloured(item.tone)).map((item) => [item.key, item.tone]), [["delivery", "destructive"]])
-  assert.equal(status.reason, "Cluster unreachable")
+  assert.equal(status.reason, "Blocked by cluster · unreachable")
+  assert.equal(applicationCardStatus({ health: "degraded", decommissioning: false }, { blocked: true }).reason, "Blocked by cluster")
   assert.equal(status.signal, "destructive")
   assert.equal(status.edge, "destructive")
 })
@@ -101,4 +102,22 @@ test("a decommissioned application is informational", () => {
 test("an application being decommissioned says so", () => {
   const status = applicationCardStatus({ health: "synced", healthCondition: { status: "Healthy" }, statusIssues: [], decommissioning: true })
   assert.equal(status.badges.find((item) => item.key === "decommissioning").tone, "warning")
+})
+
+test("the headline badge is the coloured signal whenever there is one", () => {
+  for (const app of all) for (const blocked of [false, true]) {
+    const status = applicationCardStatus(app, { blocked })
+    const colouredBadge = status.badges.find((item) => coloured(item.tone))
+    if (colouredBadge) assert.equal(status.primary, colouredBadge, JSON.stringify(app))
+    assert.equal(status.others.length, status.badges.length - 1)
+    assert.ok(!status.others.includes(status.primary))
+  }
+})
+
+test("badge labels say what they describe, in sentence case", () => {
+  assert.equal(badgeLabel({ key: "runtime", status: "Degraded" }), "Runtime degraded")
+  assert.equal(badgeLabel({ key: "delivery", status: "out_of_sync" }), "Delivery out of sync")
+  assert.equal(badgeLabel({ key: "delivery", status: "synced" }), "Synced")
+  assert.equal(badgeLabel({ key: "paused", status: "Reconciliation paused" }), "Reconciliation paused")
+  assert.equal(badgeLabel({ key: "definition", status: "Definition missing" }), "Definition missing")
 })

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -34,6 +35,10 @@ type ApplicationSyncActivity struct {
 	Type          string     `json:"type,omitempty"`
 	StartedAt     *time.Time `json:"startedAt,omitempty"`
 	FinishedAt    *time.Time `json:"finishedAt,omitempty"`
+	// Recent holds the outcomes of the latest syncs and rollbacks, newest first (at most 10).
+	Recent []string `json:"recent"`
+	// DeployedAt is when the latest successful sync or rollback finished.
+	DeployedAt *time.Time `json:"deployedAt,omitempty"`
 }
 
 type WorkspaceSyncHistory struct {
@@ -49,12 +54,23 @@ func (s *Store) WorkspaceSyncHistory(ctx context.Context, workspaceID string, st
 	if err != nil {
 		return result, err
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT a.id, a.name, COALESCE(o.status,''), COALESCE(o.operation_type,''), o.started_at, o.finished_at
+	rows, err := s.DB.QueryContext(ctx, `SELECT a.id, a.name, COALESCE(o.status,''), COALESCE(o.operation_type,''), o.started_at, o.finished_at,
+			COALESCE(r.recent, ''), d.deployed_at
 		FROM applications a LEFT JOIN LATERAL (
 			SELECT status, operation_type, started_at, finished_at FROM operations
 			WHERE application_id = a.id AND operation_type IN ('sync','rollback')
 			ORDER BY started_at DESC, id DESC LIMIT 1
-		) o ON true WHERE a.workspace_id = $1
+		) o ON true LEFT JOIN LATERAL (
+			SELECT string_agg(status, ',' ORDER BY started_at DESC, id DESC) AS recent FROM (
+				SELECT status, started_at, id FROM operations
+				WHERE application_id = a.id AND operation_type IN ('sync','rollback')
+				ORDER BY started_at DESC, id DESC LIMIT 10
+			) latest
+		) r ON true LEFT JOIN LATERAL (
+			SELECT COALESCE(finished_at, started_at) AS deployed_at FROM operations
+			WHERE application_id = a.id AND operation_type IN ('sync','rollback') AND status = 'succeeded'
+			ORDER BY started_at DESC, id DESC LIMIT 1
+		) d ON true WHERE a.workspace_id = $1
 		ORDER BY o.started_at DESC NULLS LAST, a.name, a.id`, workspaceID)
 	if err != nil {
 		return result, err
@@ -62,8 +78,14 @@ func (s *Store) WorkspaceSyncHistory(ctx context.Context, workspaceID string, st
 	defer rows.Close()
 	for rows.Next() {
 		var app ApplicationSyncActivity
-		if err := rows.Scan(&app.ApplicationID, &app.Name, &app.Status, &app.Type, &app.StartedAt, &app.FinishedAt); err != nil {
+		var recent string
+		if err := rows.Scan(&app.ApplicationID, &app.Name, &app.Status, &app.Type, &app.StartedAt, &app.FinishedAt, &recent, &app.DeployedAt); err != nil {
 			return result, err
+		}
+		// Statuses are fixed words (succeeded, failed…), so a comma is a safe separator.
+		app.Recent = []string{}
+		if recent != "" {
+			app.Recent = strings.Split(recent, ",")
 		}
 		result.Applications = append(result.Applications, app)
 	}

@@ -94,3 +94,16 @@ export function deriveApplicationStatus(
     parts,
   }
 }
+
+export type ApplicationTab = "overview" | "topology" | "changes" | "activity" | "settings"
+
+/** The application tab that holds the fix for a rule-detected problem. */
+export function attentionTab(app: Pick<Application, "configurationMissing" | "decommissioning" | "health" | "retryTerminalReason" | "retryNextAt" | "healthCondition">): ApplicationTab {
+  if (app.configurationMissing || app.decommissioning || ["out_of_sync", "deletion_pending"].includes(app.health)) return "changes"
+  if (app.retryTerminalReason || app.retryNextAt) return "activity"
+  if (["Progressing", "Degraded", "Suspended", "Missing", "Unknown", "Partial"].includes(app.healthCondition?.status ?? "")) return "topology"
+  return "overview"
+}
+
+/** Button label for a link to an application tab, named after what the reader does there. */
+export const tabActionLabel: Record<string, string> = { topology: "View resources", changes: "Review changes", activity: "View activity", settings: "Open settings", overview: "Open application" }

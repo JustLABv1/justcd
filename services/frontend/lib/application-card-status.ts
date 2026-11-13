@@ -14,6 +14,21 @@ export type CardStatus = {
   needsDecision: boolean
   /** Colour of the card edge: a decision is `warning`, an application that is down is `destructive`. */
   edge: "destructive" | "warning" | null
+  /** The one badge a compact card shows: the coloured signal, otherwise the delivery state. */
+  primary: CardBadge
+  /** Everything else, for a "+N" summary. */
+  others: CardBadge[]
+}
+
+/**
+ * A badge as one self-describing phrase in sentence case: "Runtime degraded", "Delivery out of sync".
+ * Two bare words ("Degraded", "Unknown") side by side did not say which one was the runtime.
+ */
+export function badgeLabel(badge: Pick<CardBadge, "key" | "status">) {
+  const status = badge.status.replaceAll("_", " ").toLowerCase()
+  if (badge.key === "runtime") return `Runtime ${status}`
+  if (badge.key === "delivery") return status === "synced" ? "Synced" : status === "deletion pending" ? "Deletion pending" : `Delivery ${status}`
+  return status.charAt(0).toUpperCase() + status.slice(1)
 }
 
 type CardApplication = Pick<Application, "health" | "healthCondition" | "statusIssues" | "decommissioning" | "autoSyncPaused" | "retryTerminalReason" | "retryNextAt"> & { configurationMissing?: boolean }
@@ -77,8 +92,9 @@ export function applicationCardStatus(app: CardApplication, options: { blocked?:
 
   let reason: string | null
   if (blocked && !needsDecision) {
-    // The cause, in a few words. The cluster's own detail is in the group header.
-    reason = options.blockedLabel ?? "Cluster unreachable"
+    // The cause, in a few words: "Blocked by cluster · agent offline". The cluster's full detail is in the group header.
+    const detail = options.blockedLabel?.replace(/^cluster\s+/i, "")
+    reason = detail ? `Blocked by cluster · ${detail.charAt(0).toLowerCase()}${detail.slice(1)}` : "Blocked by cluster"
   } else if (blocked) {
     reason = app.configurationMissing ? applicationAttentionReason(app as Application) : "Deletion review required"
   } else {
@@ -97,5 +113,6 @@ export function applicationCardStatus(app: CardApplication, options: { blocked?:
         : "warning"
 
   const edge: CardStatus["edge"] = needsDecision ? "warning" : signal === "destructive" ? "destructive" : null
-  return { badges, reason, signal, needsDecision, edge }
+  const primary = badges.find((item) => item.tone === "warning" || item.tone === "destructive") ?? badges.find((item) => item.key === "delivery") ?? badges[0]
+  return { badges, reason, signal, needsDecision, edge, primary, others: badges.filter((item) => item !== primary) }
 }

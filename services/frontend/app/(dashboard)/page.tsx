@@ -25,16 +25,16 @@ import { SyncHistoryChartView } from "@/components/application/sync-history-char
 import { useSyncHistory } from "@/hooks/use-sync-history"
 import { summarizeSyncHistory } from "@/lib/sync-history"
 import { ago } from "@/lib/relative-time"
-import { applicationAttentionReason } from "@/lib/application-status"
+import { applicationAttentionReason, attentionTab, tabActionLabel } from "@/lib/application-status"
 import { clusterHealth, gitSourceHealth, isCheckStalled, type ConnectionHealth } from "@/lib/connection-health"
-import type { Application, TriageSeverity } from "@/lib/types"
+import type { TriageSeverity } from "@/lib/types"
 
 type ConnectionRow = { key: string; kind: "Cluster" | "Git source"; name: string; sub: string; health: ConnectionHealth }
 
 const severityLabel: Record<TriageSeverity, string> = { critical: "Critical", high: "High", medium: "Medium", low: "Low" }
 // Attention is never neutral or green: high and critical are red, the rest yellow.
 const severityVariant = { critical: "destructive", high: "destructive", medium: "warning", low: "warning" } as const
-const tabActions: Record<string, string> = { topology: "View resources", changes: "Review changes", activity: "View activity", settings: "Open settings", overview: "Open application" }
+const tabActions = tabActionLabel
 const ATTENTION_LIMIT = 5
 const SYNC_LIMIT = 5
 
@@ -282,12 +282,4 @@ export default function OverviewPage() {
       )}
     </>
   )
-}
-
-/** The tab that holds the fix for a rule-detected problem. */
-function attentionTab(app: Application) {
-  if (app.configurationMissing || app.decommissioning || ["out_of_sync", "deletion_pending"].includes(app.health)) return "changes"
-  if (app.retryTerminalReason || app.retryNextAt) return "activity"
-  if (["Progressing", "Degraded", "Suspended", "Missing", "Unknown", "Partial"].includes(app.healthCondition?.status ?? "")) return "topology"
-  return "overview"
 }

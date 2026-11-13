@@ -22,7 +22,10 @@ import { Chip } from "@/components/panelui/chip"
 import { Menu } from "@/components/panelui/menu"
 import { PanelSelect } from "@/components/applications/panel-wizard"
 import { StatusPill } from "@/components/overview/overview-parts"
-import { applicationCardStatus } from "@/lib/application-card-status"
+import { applicationCardStatus, badgeLabel, type CardStatus } from "@/lib/application-card-status"
+import { attentionTab, tabActionLabel } from "@/lib/application-status"
+import type { ApplicationSyncActivity } from "@/lib/sync-history"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/panelui/tooltip"
 import { Filters } from "@/components/reui/filters/filters"
 import { createFilterQuery } from "@/components/reui/filters/filters-query"
 import { applicationFilterFieldIds, applicationFilterFields, readApplicationField } from "@/components/application-filter-fields"
@@ -108,35 +111,67 @@ function Dot({ level }: { level: HealthLevel }) {
   return <span aria-hidden="true" className={`inline-block size-2 shrink-0 rounded-full ${tone[level].dot}`} />
 }
 
+const badgeVariant = { success: "success", destructive: "destructive", warning: "warning", neutral: "secondary" } as const
+const runDot: Record<string, string> = { succeeded: "bg-success", failed: "bg-destructive", cancelled: "bg-warning", running: "bg-info", queued: "bg-info" }
+
+/** The latest runs as dots, oldest on the left, so a flapping application is visible at a glance. */
+function RecentRuns({ runs }: { runs: string[] }) {
+  const ordered = [...runs].reverse()
+  const failed = runs.filter((run) => run === "failed").length
+  return <span role="img" aria-label={`Last ${runs.length} run${runs.length === 1 ? "" : "s"}: ${runs.length - failed} without failure, ${failed} failed`} className="flex items-center gap-0.5">
+    {ordered.map((run, index) => <span key={index} className={`size-1.5 rounded-full ${runDot[run] ?? "bg-muted-foreground/40"}`} />)}
+  </span>
+}
+
 export function ApplicationCard({
-  app, canManage, onDeleted, showCluster = true, clusterLevel, blockedBy, now, favorite, favoriteBusy, onFavorite, onEditLabels,
+  app, canManage, onDeleted, showCluster = true, clusterLevel, blockedBy, now, favorite, favoriteBusy, onFavorite, onEditLabels, activity, hideLabelKey, quietEdge = false,
 }: {
   app: WorkspaceApplication; canManage?: boolean; onDeleted?: (id: string) => void
   favorite?: boolean; favoriteBusy?: boolean; onFavorite?: () => void; onEditLabels?: () => void
   showCluster?: boolean; clusterLevel?: HealthLevel; blockedBy?: ConnectionHealth; now?: number
+  /** Latest runs and deploy time, from the workspace sync history. */
+  activity?: ApplicationSyncActivity
+  /** The label the list is grouped by; its value is already the group heading. */
+  hideLabelKey?: string
+  /** Every card in the group shares this state and the group header says so: drop the coloured edge. */
+  quietEdge?: boolean
 }) {
-  const labels = summaryLabels(app)
+  const labels = summaryLabels(app).filter(([key]) => key !== hideLabelKey)
   const namespaces = app.namespaces.map((item) => item.namespace).join(", ") || "No namespace"
   const revision = /^[a-f0-9]{40}$|^[a-f0-9]{64}$/i.test(app.revision) ? app.revision.slice(0, 8) : app.revision
-  const status = applicationCardStatus(app, { blocked: Boolean(blockedBy), blockedLabel: blockedBy?.label })
+  // Grouped by cluster, the header already names the outage: the card only says that it is the cause.
+  const status = applicationCardStatus(app, { blocked: Boolean(blockedBy), blockedLabel: showCluster ? blockedBy?.label : undefined })
   const reason = status.reason
   const stalled = isCheckStalled(app, now)
+  const attention = needsAttention(app) || stalled
+  const tab = attentionTab(app)
+  const edge = quietEdge ? null : status.edge
+  const clusterName = app.clusterName || app.clusterId
   return (
-    <Card as="article" size="sm" className={`min-w-0 ${status.edge === "destructive" ? "border-destructive/50 dark:border-destructive/50" : status.edge === "warning" ? "border-warning/50 dark:border-warning/50" : ""}`}><Card.Content className="flex h-full flex-col">
-      <header className="flex items-start justify-between gap-3">
+    <Card as="article" size="sm" className={`group/app min-w-0 ${edge === "destructive" ? "border-destructive/50 dark:border-destructive/50" : edge === "warning" ? "border-warning/50 dark:border-warning/50" : ""}`}><Card.Content className="flex h-full flex-col">
+      <header className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <h3 className="line-clamp-2 break-words text-base leading-snug font-semibold tracking-tight" title={app.name}>
             <Link href={`/applications/${app.id}`} className="rounded-sm underline-offset-4 hover:underline">{app.name}</Link>
           </h3>
-          <p className="mt-0.5 flex min-w-0 items-center gap-1.5 truncate text-sm text-muted-foreground">
-            {showCluster && <><Dot level={clusterLevel ?? "unknown"} /><span className="min-w-0 truncate" title={app.clusterId}>{app.clusterName || app.clusterId}</span><span aria-hidden="true">/</span></>}
-            <span className={showCluster ? "max-w-[60%] shrink-0 truncate" : "min-w-0 truncate"} title={namespaces}>{namespaces}</span>
-          </p>
+          <p className="mt-0.5 truncate text-sm text-muted-foreground" title={namespaces}>{namespaces}</p>
         </div>
-        <div className="flex shrink-0 items-center gap-1">{onFavorite && <FavoriteButton name={app.name} favorite={Boolean(favorite)} busy={favoriteBusy} onClick={onFavorite} />}<ApplicationActions app={app} canManage={Boolean(canManage)} onDeleted={onDeleted} onEditLabels={onEditLabels} /></div>
+        <div className="-mr-1 flex shrink-0 items-center">
+          {/* The star is clutter on every card: shown on hover or focus, or when it is already a favourite. Always shown without a hover pointer. */}
+          {onFavorite && <span className={favorite ? "" : "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/app:opacity-100 [@media(hover:hover)]:focus-within:opacity-100"}><FavoriteButton name={app.name} favorite={Boolean(favorite)} busy={favoriteBusy} onClick={onFavorite} /></span>}
+          <ApplicationActions app={app} canManage={Boolean(canManage)} onDeleted={onDeleted} onEditLabels={onEditLabels} />
+        </div>
       </header>
+      {/* The cluster gets a line of its own: cut down to "DEMO ONLY - u…" it could not explain anything. */}
+      {showCluster && <p className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground" title={`${clusterName} (${app.clusterId})`}><Dot level={clusterLevel ?? "unknown"} /><span className="min-w-0 truncate">{clusterName}</span></p>}
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
-        {status.badges.map((item) => <span key={item.key} title={item.title} className="inline-flex"><StatusPill status={item.status} tone={item.tone} /></span>)}
+        <Badge variant={badgeVariant[status.primary.tone]} size="sm" dot title={status.primary.title}>{badgeLabel(status.primary)}</Badge>
+        {status.others.length > 0 && <Tooltip>
+          <TooltipTrigger render={<span tabIndex={0} className="inline-flex rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Also: ${status.others.map(badgeLabel).join(", ")}`} />}>
+            <Badge variant="secondary" size="sm">+{status.others.length}</Badge>
+          </TooltipTrigger>
+          <TooltipContent><ul className="space-y-0.5">{status.others.map((item) => <li key={item.key}>{badgeLabel(item)}</li>)}</ul></TooltipContent>
+        </Tooltip>}
         <ProfileVersionBadge application={app} />
       </div>
       {labels.length > 0 && <div aria-label="Application labels" className="mt-2 flex flex-wrap gap-1">{labels.map(([key, value]) => <Badge key={key} variant="outline" size="sm" className="max-w-full truncate" title={`${key}=${value}`}>{key}{value && <>: {value}</>}</Badge>)}</div>}
@@ -146,24 +181,56 @@ export function ApplicationCard({
           <span className="line-clamp-2 min-w-0">{reason}{!blockedBy && app.statusIssues?.length > 0 && <> · <span className="text-muted-foreground">{checkSources(app)} check failed</span></>}</span>
         </p>
       )}
-      <footer className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-1 pt-4 text-xs text-muted-foreground">
-        <span className="truncate" title={`${app.revision} · ${app.manifestPath || "."} · ${app.syncPolicy}`}>
-          <span className="font-mono">{revision}</span> · {rendererLabel[app.renderer]} · {app.autoSyncPaused ? "paused" : app.syncPolicy}
-        </span>
-        <span className={stalled ? "font-medium text-warning-foreground dark:text-warning" : ""} title={app.lastCheckedAt ? new Date(app.lastCheckedAt).toLocaleString() : undefined}>
-          {stalled ? "Checks stalled · " : "Checked "}{ago(app.lastCheckedAt, now)}
-        </span>
-      </footer>
+      {/* The divider anchors the footer when a card stretches to the tallest card in its row. */}
+      <footer className="mt-auto flex items-end justify-between gap-3 pt-4"><div className="flex w-full min-w-0 items-end justify-between gap-3 border-t pt-3">
+        <div className="min-w-0 space-y-1 text-xs text-muted-foreground">
+          {activity && (activity.recent?.length ?? 0) > 0 && <div className="flex items-center gap-2">
+            <RecentRuns runs={activity.recent!} />
+            <span className="truncate" title={activity.deployedAt ? new Date(activity.deployedAt).toLocaleString() : undefined}>{activity.deployedAt ? `Deployed ${ago(activity.deployedAt, now)}` : "Never deployed"}</span>
+          </div>}
+          <p className="truncate" title={`${app.revision} · ${app.manifestPath || "."} · ${app.syncPolicy}`}>
+            <span className="font-mono">{revision}</span> · {rendererLabel[app.renderer]} · {app.autoSyncPaused ? "paused" : app.syncPolicy}
+          </p>
+          <p className={stalled ? "font-medium text-warning-foreground dark:text-warning" : ""} title={app.lastCheckedAt ? new Date(app.lastCheckedAt).toLocaleString() : undefined}>
+            {/* Paused applications are not polled, so an old check is expected; the paused badge carries the signal. */}
+            {stalled ? "Checks stalled · last " : app.autoSyncPaused && !app.decommissioning ? "Not checked while paused · last " : "Checked "}{ago(app.lastCheckedAt, now)}
+          </p>
+        </div>
+        {blockedBy
+          ? <Button size="sm" variant="outline" className="shrink-0" nativeButton={false} render={<Link href={`/workspaces/${app.workspaceId}/connections/clusters`} />}>Check cluster</Button>
+          : attention && tab !== "overview" && <Button size="sm" variant="outline" className="shrink-0" nativeButton={false} render={<Link href={`/applications/${app.id}?tab=${tab}`} />}>{tabActionLabel[tab]}</Button>}
+      </div></footer>
     </Card.Content></Card>
   )
 }
 
-function GroupHeader({ label, bucket, mode, health, open }: { label: string; bucket: ApplicationBucket<WorkspaceApplication>; mode: GroupMode; health?: ConnectionHealth; /** Omit for a group that cannot collapse. */ open?: boolean }) {
+function GroupHeader({ label, bucket, mode, health, open, statusOf, sharedCause }: {
+  label: string; bucket: ApplicationBucket<WorkspaceApplication>; mode: GroupMode; health?: ConnectionHealth
+  /** Omit for a group that cannot collapse. */
+  open?: boolean
+  statusOf: (app: WorkspaceApplication) => CardStatus
+  /** One cause behind the group's problems (an unreachable cluster), said here once. */
+  sharedCause?: string
+}) {
   const apps = bucket.applications
-  const counts = { synced: 0, attention: 0, other: 0 }
-  for (const app of apps) counts[classify(app)]++
-  // Only a cluster has a health of its own; a label or namespace group is just a heading.
-  const level = health?.level ?? "unknown"
+  // Down, waiting for a person, or to check: the same words and colours as the cards inside.
+  const counts = { synced: 0, down: 0, waiting: 0, check: 0, other: 0 }
+  for (const app of apps) {
+    const status = statusOf(app)
+    if (status.needsDecision) counts.waiting++
+    else if (status.edge === "destructive") counts.down++
+    else if (needsAttention(app)) counts.check++
+    else if (isApplicationHealthy(app)) counts.synced++
+    else counts.other++
+  }
+  const worst = counts.down ? "destructive" : counts.waiting || counts.check ? "warning" : null
+  // Only a cluster has a health of its own; otherwise the group takes its worst application's colour.
+  const level: HealthLevel = health?.level ?? (worst === "destructive" ? "critical" : worst === "warning" ? "warning" : "unknown")
+  const summary = [
+    counts.down && <span key="down" className="text-destructive">{counts.down} down</span>,
+    counts.waiting && <span key="waiting" className="text-warning-foreground dark:text-warning">{counts.waiting} waiting for review</span>,
+    counts.check && <span key="check" className="text-warning-foreground dark:text-warning">{counts.check} to check</span>,
+  ].filter(Boolean)
   return (
     <span className="flex w-full min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-left">
       <span aria-hidden="true" className={`grid size-8 shrink-0 place-items-center rounded-lg ${tone[level].bg} ${tone[level].text}`}>
@@ -174,17 +241,17 @@ function GroupHeader({ label, bucket, mode, health, open }: { label: string; buc
           <span className="break-words text-sm font-semibold">{label}</span>
           {health && <span className={`text-xs font-medium ${tone[health.level].text}`}><span className="sr-only">{health.level}: </span>{health.label}</span>}
         </span>
-        {health && health.level !== "healthy" && (
+        {health && health.level !== "healthy" ? (
           <span className="mt-0.5 block text-xs text-muted-foreground">
             {health.detail}{health.affectedApplications.length > 0 && ` ${health.affectedApplications.length} application${health.affectedApplications.length === 1 ? "" : "s"} affected.`}
           </span>
-        )}
+        ) : sharedCause ? <span className="mt-0.5 block text-xs text-muted-foreground">{sharedCause}</span> : null}
       </span>
       <span className="flex shrink-0 items-center gap-3">
-        <span role="img" aria-label={`${counts.synced} in sync, ${counts.attention} need attention, ${counts.other} other`} className="flex h-1.5 w-24 overflow-hidden rounded-full bg-foreground/10">
-          {[["bg-success", counts.synced], ["bg-warning", counts.attention], ["bg-muted-foreground/40", counts.other]].map(([color, n]) => Number(n) > 0 && <span key={String(color)} className={String(color)} style={{ width: `${(Number(n) / apps.length) * 100}%` }} />)}
+        <span role="img" aria-label={`${counts.synced} healthy, ${counts.down} down, ${counts.waiting} waiting for review, ${counts.check} to check, ${counts.other} other`} className="flex h-1.5 w-24 gap-px overflow-hidden rounded-full bg-foreground/10">
+          {([["bg-success", counts.synced], ["bg-destructive", counts.down], ["bg-warning", counts.waiting + counts.check], ["bg-muted-foreground/40", counts.other]] as const).map(([color, n]) => n > 0 && <span key={color} className={color} style={{ width: `${(n / apps.length) * 100}%` }} />)}
         </span>
-        <span className="text-xs tabular-nums text-muted-foreground">{apps.length} app{apps.length === 1 ? "" : "s"}{counts.attention > 0 && <> · <span className="text-warning-foreground dark:text-warning">{counts.attention} to check</span></>}</span>
+        <span className="text-xs tabular-nums text-muted-foreground">{apps.length} app{apps.length === 1 ? "" : "s"}{summary.length > 0 && <> · {summary.flatMap((part, index) => index ? [", ", part] : [part])}</>}</span>
       </span>
       {open !== undefined && <span className="sr-only">{open ? "Collapse" : "Expand"} {label}</span>}
     </span>
@@ -202,6 +269,7 @@ export function ApplicationCollection({
   onDeleted,
   onApplicationUpdated,
   renderHeader,
+  activity,
 }: {
   applications: WorkspaceApplication[]
   workspaces?: Workspace[]
@@ -213,6 +281,8 @@ export function ApplicationCollection({
   onDeleted?: (id: string) => void
   onApplicationUpdated?: (app: WorkspaceApplication) => void
   renderHeader?: (viewMenu?: ReactNode) => ReactNode
+  /** Latest runs per application id, from the workspace sync history. */
+  activity?: Record<string, ApplicationSyncActivity>
 }) {
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState(initialFilter)
@@ -461,8 +531,16 @@ export function ApplicationCollection({
   // Grouped by cluster, each group header reports its own outage. Otherwise it is said once, above the groups.
   const unreachable = groupBy === "cluster" ? [] : [...clusters.values()].filter((cluster) => cluster.health.level === "critical" && visible.some((app) => app.clusterId === cluster.id && blockedByCluster(app)))
 
+  const statusOf = (app: WorkspaceApplication) => { const blocked = blockedByCluster(app); return applicationCardStatus(app, { blocked: Boolean(blocked), blockedLabel: blocked?.label }) }
   const renderBucket = (bucket: ApplicationBucket<WorkspaceApplication>) => {
     const health = groupBy === "cluster" ? clusters.get(bucket.key)?.health : undefined
+    // One unreachable cluster behind every blocked application in the group: say it in the header once,
+    // and when it covers the whole group, let the header carry the colour instead of every card's edge.
+    const blockedClusters = new Set(bucket.applications.map((app) => blockedByCluster(app) ? app.clusterId : null).filter(Boolean))
+    const blockedCount = bucket.applications.filter((app) => blockedByCluster(app)).length
+    const sharedClusterId = blockedClusters.size === 1 ? [...blockedClusters][0]! : undefined
+    const sharedCause = sharedClusterId && groupBy !== "cluster" ? `${blockedCount} of ${bucket.applications.length} blocked by ${clusters.get(sharedClusterId)?.name ?? sharedClusterId}.` : undefined
+    const quietEdge = bucket.applications.length > 1 && Boolean(sharedClusterId) && blockedCount === bucket.applications.length
     const body = view === "cards" ? (
       <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,300px),1fr))] gap-3">
         {bucket.applications.map((app) => (
@@ -470,7 +548,7 @@ export function ApplicationCollection({
             key={app.id} app={app} canManage={canManageApp(app)} onDeleted={handleDeleted} now={now}
             favorite={favoriteIds.includes(app.id)} favoriteBusy={!preferencesReady || favoriteBusy.includes(app.id)} onFavorite={() => void toggleFavorite(app)} onEditLabels={editLabelsFor(app)}
             showCluster={groupBy !== "cluster"} clusterLevel={clusters.get(app.clusterId)?.health.level}
-            blockedBy={blockedByCluster(app)}
+            blockedBy={blockedByCluster(app)} activity={activity?.[app.id]} hideLabelKey={groupBy === "label" ? labelKey : undefined} quietEdge={quietEdge}
           />
         ))}
       </div>
@@ -478,11 +556,10 @@ export function ApplicationCollection({
       <DataGridList rows={bucket.applications} columns={listColumns(groupBy !== "cluster")} />
     )
     if (groupBy === "none") return <div key={bucket.key}>{body}</div>
-    // A single group has nothing to be told apart from: its header sits on the canvas, with no tray and no collapsing.
-    if (buckets.length === 1) return <section key={bucket.key} aria-label={bucket.label} className="min-w-0 space-y-3"><GroupHeader label={bucket.label} bucket={bucket} mode={groupBy} health={health} />{body}</section>
+    // Every group is a tray, one group or ten: the page keeps one shape whatever the data.
     const open = openGroups[bucket.key] ?? defaultOpen(bucket)
     return (
-      <CollapsibleGroup key={bucket.key} open={open} onOpenChange={(next) => setOpenGroups((current) => ({ ...current, [bucket.key]: next }))} header={<GroupHeader label={bucket.label} bucket={bucket} mode={groupBy} health={health} open={open} />}>
+      <CollapsibleGroup key={bucket.key} open={open} onOpenChange={(next) => setOpenGroups((current) => ({ ...current, [bucket.key]: next }))} header={<GroupHeader label={bucket.label} bucket={bucket} mode={groupBy} health={health} open={open} statusOf={statusOf} sharedCause={sharedCause} />}>
         {body}
       </CollapsibleGroup>
     )

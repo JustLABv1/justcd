@@ -7,9 +7,10 @@ import type { SyncHistory } from "@/lib/sync-history"
 export function useSyncHistory(
   scope: "workspaces" | "applications",
   scopeID: string,
-  revision = ""
+  revision = "",
+  initialRange: "24h" | "7d" = "24h"
 ) {
-  const [range, setRange] = useState<"24h" | "7d">("24h")
+  const [range, setRange] = useState<"24h" | "7d">(initialRange)
   const [refresh, setRefresh] = useState(0)
   const requestKey = `${scope}:${scopeID}:${range}:${refresh}:${revision ?? ""}`
   const [response, setResult] = useState<{

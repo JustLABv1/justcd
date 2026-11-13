@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Alert02Icon, AiMagicIcon, InformationCircleIcon } from "@hugeicons/core-free-icons"
+import { AiMagicIcon, InformationCircleIcon } from "@hugeicons/core-free-icons"
 import { api, errorMessage } from "@/lib/api"
 import { ago } from "@/lib/relative-time"
 import { Button } from "@/components/panelui/button"
@@ -79,7 +79,7 @@ export function TriageStatus({ triage, starting, onRun }: { triage: Triage | nul
       {running && <span aria-hidden="true" className="text-xs text-muted-foreground">{stage}</span>}
       <Dialog>
         <Dialog.Trigger render={<Button type="button" variant="ghost" size="icon-sm" aria-label="About this ranking" title="About this ranking" />}>
-          <HugeiconsIcon icon={outdated ? Alert02Icon : InformationCircleIcon} strokeWidth={1.8} aria-hidden="true" className={outdated ? "text-warning-foreground dark:text-warning" : "text-muted-foreground"} />
+          <HugeiconsIcon icon={InformationCircleIcon} strokeWidth={1.8} aria-hidden="true" className="text-muted-foreground" />
         </Dialog.Trigger>
         <Dialog.Content variant="plain" size="sm"><Dialog.Header title="How these are ranked" /><Dialog.Body>
 
@@ -93,7 +93,7 @@ export function TriageStatus({ triage, starting, onRun }: { triage: Triage | nul
       {triage.available && triage.attentionCount > 0 && (
         <Button type="button" variant="outline" size="sm" loading={running} onClick={onRun}>
           <HugeiconsIcon icon={AiMagicIcon} strokeWidth={1.8} aria-hidden="true" className="text-primary" />
-          {running ? "Ranking…" : triage.source === "ai" ? "Re-rank" : "Rank with AI"}
+          {running ? "Ranking…" : outdated ? "Re-rank · out of date" : triage.source === "ai" ? "Re-rank" : "Rank with AI"}
         </Button>
       )}
     </div>

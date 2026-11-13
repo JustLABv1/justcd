@@ -348,6 +348,21 @@ under the title below `sm`), `Combobox` (plan picker, custom rollback revision),
 (live Kpi counts). A heatmap was considered for sync history and rejected: a one-colour ramp cannot
 show failures.
 
+### Overview dashboard review (2026-11-13)
+
+| Found | Now |
+| --- | --- |
+| Medium severity purple, low severity green | Critical and high red, medium and low yellow. Attention is never neutral or green. |
+| "Healthy" and "Needs attention" as two KPIs of the same total | One Applications KPI with a split bar (healthy, needs attention, other). |
+| Syncs KPI with a sparkline repeating the chart below | "Failed syncs", the number a person acts on. |
+| Workspace name as the page title, beside the sidebar switcher | Title "Overview"; the workspace name leads the description. |
+| Connections as a Card that only said "All 5 reachable" | A status badge in the page heading; problems keep the Alert. |
+| Attention rows that only linked to the application | `AttentionRow` (shared with the application page) with an action that opens the tab holding the fix. |
+| Chart and digest behind tabs, chart 400px tall with one bar | Side by side; the chart is shorter and defaults to 7 days. |
+
+The Delivery section shows deploy frequency, failure rate and time to restore against the previous
+period (`/workspaces/{id}/delivery-metrics`). Lead time is not shown: it needs commit timestamps.
+
 "No container" and "whitespace separates first" were over-applied during the migration. When in
 doubt, a block gets a boundary.
 

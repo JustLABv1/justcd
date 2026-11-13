@@ -7,14 +7,15 @@ import { TriageStatus, useTriage } from "@/components/ai-triage"
 import Link from "next/link"
 import { useEffect, useMemo, useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { Add01Icon, Alert02Icon, Refresh01Icon } from "@hugeicons/core-free-icons"
+import { Add01Icon, Alert02Icon, AlertCircleIcon, Refresh01Icon } from "@hugeicons/core-free-icons"
+import { AttentionRow } from "@/components/attention-row"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/panelui/tooltip"
+import { useDeliveryMetrics } from "@/hooks/use-delivery-metrics"
 import { Alert } from "@/components/panelui/alert"
 import { Badge } from "@/components/panelui/badge"
 import { Button } from "@/components/panelui/button"
-import { Card } from "@/components/panelui/card"
 import { Frame } from "@/components/panelui/frame"
-import { Tabs } from "@/components/panelui/tabs"
-import { FrameLink, LinkRow, StatusPill, SummaryKpis } from "@/components/overview/overview-parts"
+import { DeliverySection, FrameLink, LinkRow, StatusPill, SummaryKpis } from "@/components/overview/overview-parts"
 import { PageHeading } from "@/components/ui-kit"
 import { CollectionSkeleton, LoadError } from "@/components/workspace-ui"
 import { useWorkspace, needsAttention, isApplicationHealthy } from "@/hooks/use-workspace"
@@ -26,12 +27,14 @@ import { summarizeSyncHistory } from "@/lib/sync-history"
 import { ago } from "@/lib/relative-time"
 import { applicationAttentionReason } from "@/lib/application-status"
 import { clusterHealth, gitSourceHealth, isCheckStalled, type ConnectionHealth } from "@/lib/connection-health"
-import type { TriageSeverity } from "@/lib/types"
+import type { Application, TriageSeverity } from "@/lib/types"
 
 type ConnectionRow = { key: string; kind: "Cluster" | "Git source"; name: string; sub: string; health: ConnectionHealth }
 
 const severityLabel: Record<TriageSeverity, string> = { critical: "Critical", high: "High", medium: "Medium", low: "Low" }
-const severityVariant = { critical: "destructive", high: "warning", medium: "info", low: "success" } as const
+// Attention is never neutral or green: high and critical are red, the rest yellow.
+const severityVariant = { critical: "destructive", high: "destructive", medium: "warning", low: "warning" } as const
+const tabActions: Record<string, string> = { topology: "View resources", changes: "Review changes", activity: "View activity", settings: "Open settings", overview: "Open application" }
 const ATTENTION_LIMIT = 5
 const SYNC_LIMIT = 5
 
@@ -41,7 +44,9 @@ export default function OverviewPage() {
   const health = useWorkspaceHealth(workspaceId)
   const [now, setNow] = useState(() => Date.now())
   const [syncRevision, setSyncRevision] = useState(0)
-  const syncHistory = useSyncHistory("workspaces", workspaceId, String(syncRevision))
+  const syncHistory = useSyncHistory("workspaces", workspaceId, String(syncRevision), "7d")
+  const [deliveryRange, setDeliveryRange] = useState<"7d" | "30d">("7d")
+  const delivery = useDeliveryMetrics(workspaceId, deliveryRange, String(syncRevision))
   const refreshOverview = () => {
     refresh()
     setSyncRevision((value) => value + 1)
@@ -83,7 +88,7 @@ export default function OverviewPage() {
 
   const syncHistoryData = syncHistory.result.history
   const syncSummary = syncHistoryData
-    ? { ...summarizeSyncHistory(syncHistoryData), series: syncHistoryData.buckets.map((bucket) => bucket.succeeded + bucket.failed + bucket.cancelled + bucket.active) }
+    ? summarizeSyncHistory(syncHistoryData)
     : null
   const problems = rows.filter((row) => row.health.level !== "healthy")
   const syncApplications = syncHistory.result.history?.applications ?? []
@@ -92,15 +97,16 @@ export default function OverviewPage() {
     ...(triage.triage?.items ?? []).map((item) => ({
       id: item.applicationId,
       name: item.applicationName,
-      href: `/applications/${item.applicationId}${item.actionTab && item.actionTab !== "overview" ? `?tab=${item.actionTab}` : ""}`,
+      tab: item.actionTab || "overview",
       severity: item.severity,
       headline: item.headline.replace(new RegExp(`^${item.applicationName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:\\-–—]\\s*`, "i"), ""),
-      next: item.action,
+      // Rankings written before the tab was renamed still say "topology".
+      next: item.action?.replace(/\btopology\b(\s+(tab|view))?/gi, (_, suffix) => `Resources${suffix ?? ""}`),
     })),
     ...rest.map((app) => ({
       id: app.id,
       name: app.name,
-      href: `/applications/${app.id}`,
+      tab: attentionTab(app),
       severity: undefined,
       headline: applicationAttentionReason(app) ?? `No check ${ago(app.lastCheckedAt || app.createdAt, now)} (every ${app.pollSeconds}s expected)`,
       next: undefined,
@@ -108,16 +114,36 @@ export default function OverviewPage() {
   ]
   const visibleAttention = attentionItems.slice(0, ATTENTION_LIMIT)
   const urgent = attentionItems.some((item) => item.severity === "critical" || item.severity === "high")
+  const appHref = (id: string, tab = "overview") => `/applications/${encodeURIComponent(id)}${tab !== "overview" ? `?tab=${tab}` : ""}`
+  const failedSyncs = syncHistoryData ? {
+    failed: syncSummary!.failed,
+    total: syncSummary!.total,
+    label: syncHistory.range === "7d" ? "7 days" : "24 h",
+    series: syncHistoryData.buckets.map((bucket) => bucket.failed),
+  } : null
 
   return (
     <>
       <PageHeading
-        title={workspace ? workspace.name : "Overview"}
-        description={workspace ? "What needs you right now, and how delivery is going." : "Select a workspace to view its delivery status."}
+        title="Overview"
+        description={workspace ? `${workspace.name} · what needs you right now, and how delivery is going.` : "Select a workspace to view its delivery status."}
+        metadata={workspaceId && health.loaded && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge size="sm" dot variant={problems.some((row) => row.health.level === "critical") ? "destructive" : problems.length ? "warning" : rows.length ? "success" : "secondary"}>
+              {rows.length ? (problems.length ? `${rows.length - problems.length} of ${rows.length} connections reachable` : `All ${rows.length} connections reachable`) : "No connections yet"}
+            </Badge>
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" nativeButton={false} render={<Link href={connectionsHref} />}>Manage connections</Button>
+          </div>
+        )}
         actions={
           <>
             {workspaceId && <AIAssistant key={`ask-${workspaceId}`} workspaceId={workspaceId} features={["ask"]} buttonLabel="Ask AI" />}
-            <Button type="button" variant="ghost" onClick={refreshOverview}><HugeiconsIcon icon={Refresh01Icon} strokeWidth={1.8} aria-hidden="true" />Refresh</Button>
+            <Tooltip>
+              <TooltipTrigger render={<Button type="button" variant="outline" size="icon" aria-label="Refresh overview" onClick={refreshOverview} />}>
+                <HugeiconsIcon icon={Refresh01Icon} strokeWidth={1.8} aria-hidden="true" />
+              </TooltipTrigger>
+              <TooltipContent>Refresh now. The overview also updates on its own.</TooltipContent>
+            </Tooltip>
             <Button render={<Link href={workspaceId ? `/applications/new${qs}` : "/workspaces"} />} nativeButton={false}>
               <HugeiconsIcon icon={Add01Icon} strokeWidth={1.8} aria-hidden="true" />New application
             </Button>
@@ -149,10 +175,10 @@ export default function OverviewPage() {
             total={total}
             healthy={synced}
             attention={attention.length + stalled.length}
+            urgent={urgent}
             approvals={health.approvals.length}
-            syncs={syncSummary}
-            syncRange={syncHistory.range}
-            hrefs={{ healthy: listHref("synced"), attention: listHref("attention"), approvals: "/approvals", syncs: "#insights" }}
+            failedSyncs={failedSyncs}
+            hrefs={{ applications: listHref(attention.length + stalled.length ? "attention" : undefined), approvals: "/approvals", syncs: "#sync-activity" }}
           />
 
           <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,380px)]">
@@ -163,22 +189,22 @@ export default function OverviewPage() {
                   Needs attention
                   {attentionItems.length > 0 && <Badge variant={urgent ? "destructive" : "warning"} size="sm">{attentionItems.length}</Badge>}
                 </Frame.Title>
-                <Frame.Description>{triage.triage?.source === "ai" && triage.triage.summary ? triage.triage.summary : "Most important first."}</Frame.Description>
+                {/* With a handful of rows the AI summary only restates one of them; it earns its place on a longer list. */}
+                <Frame.Description>{triage.triage?.source === "ai" && triage.triage.summary && attentionItems.length > 3 ? triage.triage.summary : "Most important first."}</Frame.Description>
                 <Frame.Action><TriageStatus triage={triage.triage} starting={triage.starting} onRun={() => void triage.run()} /></Frame.Action>
               </Frame.Header>
               <Frame.Panel>
-                {visibleAttention.length ? visibleAttention.map((item) => (
-                  <LinkRow key={item.id} href={item.href}>
-                    <Frame.Content>
-                      <span className="flex flex-wrap items-center gap-2">
-                        <Frame.Title as="p">{item.name}</Frame.Title>
-                        {item.severity && <Badge variant={severityVariant[item.severity]} size="sm">{severityLabel[item.severity]}</Badge>}
-                      </span>
-                      <span className="text-sm">{item.headline}</span>
-                      {item.next && <span className="text-sm text-muted-foreground">Next: {item.next}</span>}
-                    </Frame.Content>
-                  </LinkRow>
-                )) : (
+                {visibleAttention.length ? visibleAttention.map((item) => {
+                  const destructive = item.severity === "critical" || item.severity === "high"
+                  return (
+                    <AttentionRow key={item.id} tone={destructive ? "destructive" : "warning"} icon={destructive ? Alert02Icon : AlertCircleIcon}
+                      title={<span className="flex flex-wrap items-center gap-2"><Link href={appHref(item.id)} className="rounded-sm outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring">{item.name}</Link>{item.severity && <Badge variant={severityVariant[item.severity]} size="sm">{severityLabel[item.severity]}</Badge>}</span>}
+                      actions={<Button size="sm" variant="outline" nativeButton={false} render={<Link href={appHref(item.id, item.tab)} />}>{tabActions[item.tab] ?? tabActions.overview}</Button>}>
+                      <p className="text-sm">{item.headline}</p>
+                      {item.next && <p className="text-sm text-muted-foreground">Next: {item.next}</p>}
+                    </AttentionRow>
+                  )
+                }) : (
                   <div className="px-4 py-10 text-center">
                     <p className="text-sm font-medium">{total ? "Nothing needs attention" : "A fresh start"}</p>
                     <p className="mt-1 text-sm text-muted-foreground">{total ? "No drift, degradation, pauses, or stalled checks." : "Create your first application to start delivering."}</p>
@@ -199,12 +225,12 @@ export default function OverviewPage() {
               {health.approvals.length > 0 && (
                 <Frame>
                   <Frame.Header>
-                    <Frame.Title as="h2" className="flex items-center gap-2">Waiting for review<Badge variant="secondary" size="sm">{health.approvals.length}</Badge></Frame.Title>
+                    <Frame.Title as="h2" className="flex items-center gap-2">Waiting for review<Badge variant="warning" size="sm">{health.approvals.length}</Badge></Frame.Title>
                     <Frame.Action><FrameLink href="/approvals">Open inbox</FrameLink></Frame.Action>
                   </Frame.Header>
                   <Frame.Panel>
                     {health.approvals.slice(0, 4).map((item) => (
-                      <LinkRow key={item.planId} href={`/applications/${item.applicationId}?tab=changes`}>
+                      <LinkRow key={item.planId} href={appHref(item.applicationId, "changes")}>
                         <Frame.Content>
                           <Frame.Title as="p">{item.applicationName}</Frame.Title>
                           <Frame.Description>{item.changeCount} change{item.changeCount === 1 ? "" : "s"} · {item.approvedApprovals}/{item.requiredApprovals} approvals · {ago(item.createdAt, now)}</Frame.Description>
@@ -229,7 +255,7 @@ export default function OverviewPage() {
                         <Button size="sm" variant="outline" onClick={syncHistory.retry}>Retry</Button>
                       </div>
                     ) : syncApplications.filter((app) => app.startedAt).length ? syncApplications.filter((app) => app.startedAt).slice(0, SYNC_LIMIT).map((app) => (
-                      <LinkRow key={app.applicationId} href={`/applications/${encodeURIComponent(app.applicationId)}?tab=activity`}>
+                      <LinkRow key={app.applicationId} href={appHref(app.applicationId, "activity")}>
                         <Frame.Content>
                           <Frame.Title as="p">{app.name}</Frame.Title>
                           <Frame.Description>{app.type === "rollback" ? "Rollback" : "Sync"} · {ago(app.startedAt!, now)}</Frame.Description>
@@ -239,29 +265,29 @@ export default function OverviewPage() {
                     )) : <p className="px-4 py-6 text-center text-sm text-muted-foreground">No syncs yet.</p>}
                 </Frame.Panel>
               </Frame>
-
-              {health.loaded && <Card size="sm">
-                <Card.Header>
-                  <Card.Title as="h2">Connections</Card.Title>
-                  <Card.Description>{rows.length ? (problems.length ? `${rows.length - problems.length} of ${rows.length} reachable` : `All ${rows.length} reachable`) : "None connected yet"}</Card.Description>
-                  <Card.Action><Button variant="outline" size="sm" nativeButton={false} render={<Link href={connectionsHref} />}>Manage</Button></Card.Action>
-                </Card.Header>
-              </Card>}
             </div>
           </div>
 
+          {workspaceId && total > 0 && (
+            <DeliverySection {...delivery} range={deliveryRange} onRangeChange={setDeliveryRange} applicationHref={(id) => appHref(id, "activity")} />
+          )}
+
           {workspaceId && (
-            <Tabs defaultValue="activity" id="insights">
-              <Tabs.List>
-                <Tabs.Trigger value="activity">Sync activity</Tabs.Trigger>
-                {total > 0 && <Tabs.Trigger value="digest">Activity digest</Tabs.Trigger>}
-              </Tabs.List>
-              <Tabs.Content value="activity"><SyncHistoryChartView state={syncHistory} /></Tabs.Content>
-              {total > 0 && <Tabs.Content value="digest"><WorkspaceDigest key={workspaceId} workspaceId={workspaceId} /></Tabs.Content>}
-            </Tabs>
+            <div id="sync-activity" className={`grid scroll-mt-20 items-start gap-6 ${total > 0 ? "xl:grid-cols-2" : ""}`}>
+              <SyncHistoryChartView state={syncHistory} plotHeight={180} />
+              {total > 0 && <WorkspaceDigest key={workspaceId} workspaceId={workspaceId} />}
+            </div>
           )}
         </div>
       )}
     </>
   )
+}
+
+/** The tab that holds the fix for a rule-detected problem. */
+function attentionTab(app: Application) {
+  if (app.configurationMissing || app.decommissioning || ["out_of_sync", "deletion_pending"].includes(app.health)) return "changes"
+  if (app.retryTerminalReason || app.retryNextAt) return "activity"
+  if (["Progressing", "Degraded", "Suspended", "Missing", "Unknown", "Partial"].includes(app.healthCondition?.status ?? "")) return "topology"
+  return "overview"
 }

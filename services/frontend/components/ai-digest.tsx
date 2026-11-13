@@ -50,7 +50,7 @@ export function WorkspaceDigest({ workspaceId }: { workspaceId: string }) {
     .map((section) => [section, digest?.items.filter((item) => item.section === section) ?? []] as const)
     .filter(([, items]) => items.length > 0)
   return (
-    <Card>
+    <Card size="sm" className="min-w-0">
       <Card.Header>
         <Card.Title as="h2">Activity digest</Card.Title>
         <Card.Description>{`What shipped, what failed and what needs a decision in the last ${window}.`}</Card.Description>

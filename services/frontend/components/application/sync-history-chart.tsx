@@ -23,18 +23,18 @@ const config = {
 // very tall. Aim for a steady plot height instead.
 const PLOT_HEIGHT = 260
 
-function useAspectRatio() {
+function useAspectRatio(plotHeight = PLOT_HEIGHT) {
   const ref = useRef<HTMLDivElement>(null)
   const [ratio, setRatio] = useState(2)
   useEffect(() => {
     const node = ref.current
     if (!node) return
-    const read = () => setRatio(Math.min(6, Math.max(1.5, node.clientWidth / PLOT_HEIGHT)))
+    const read = () => setRatio(Math.min(6, Math.max(1.5, node.clientWidth / plotHeight)))
     read()
     const observer = new ResizeObserver(read)
     observer.observe(node)
     return () => observer.disconnect()
-  }, [])
+  }, [plotHeight])
   return { ref, ratio }
 }
 const outcomes = ["succeeded", "failed", "cancelled", "active"] as const
@@ -62,12 +62,17 @@ export function SyncHistoryChart({
 export function SyncHistoryChartView({
   state,
   onViewActivity,
+  plotHeight,
+  className,
 }: {
   state: SyncHistoryState
   onViewActivity?: () => void
+  /** Target plot height in pixels; the chart keeps a steady height as the card widens. */
+  plotHeight?: number
+  className?: string
 }) {
   const { result, range, setRange, retry } = state
-  const { ref: plotRef, ratio } = useAspectRatio()
+  const { ref: plotRef, ratio } = useAspectRatio(plotHeight)
   const history = result.history
   const totals = history ? summarizeSyncHistory(history) : null
   const showData = !result.loading && !result.error && Boolean(totals && totals.total > 0)
@@ -93,7 +98,7 @@ export function SyncHistoryChartView({
     return `${start.toLocaleString()} – ${end.toLocaleTimeString()}`
   }
   return (
-    <Card size="sm" className="min-w-0">
+    <Card size="sm" className={`min-w-0 ${className ?? ""}`}>
       <Card.Header className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1 basis-48"><Card.Title as="h2">Sync activity</Card.Title>
         <Card.Description aria-live="polite" className={result.error ? "text-destructive" : undefined}>

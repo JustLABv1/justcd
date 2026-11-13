@@ -2,7 +2,8 @@
 
 import Link from "next/link"
 import { useState, type ReactNode } from "react"
-import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { AttentionRow } from "@/components/attention-row"
 import { Alert02Icon, AlertCircleIcon, PauseIcon } from "@hugeicons/core-free-icons"
 import { ActionMenu } from "@/components/action-menu"
 import { ErrorDetailsButton, ErrorDetailsDialog } from "@/components/error-details"
@@ -13,26 +14,6 @@ import { Input } from "@/components/panelui/input"
 import { FormField } from "@/components/ui-kit"
 import { resourceLabel } from "@/components/application/helpers"
 import type { Application, Operation } from "@/lib/types"
-
-type Tone = "destructive" | "warning" | "info"
-
-const toneClass: Record<Tone, string> = {
-  destructive: "bg-destructive/15 text-destructive",
-  warning: "bg-warning/15 text-warning",
-  info: "bg-info/15 text-info",
-}
-
-function AttentionRow({ tone, icon, title, detail, children, actions, alert = false }: { tone: Tone; icon: IconSvgElement; title: ReactNode; detail?: string; children?: ReactNode; actions?: ReactNode; alert?: boolean }) {
-  return <Frame.Row role={alert ? "alert" : "status"} className="flex-wrap items-start gap-x-4 gap-y-3">
-    <span aria-hidden="true" className={`grid size-8 shrink-0 place-items-center rounded-full ${toneClass[tone]}`}><HugeiconsIcon icon={icon} strokeWidth={2} className="size-4" /></span>
-    <div className="min-w-0 flex-1 basis-72 space-y-0.5">
-      <p className="text-sm font-medium">{title}</p>
-      {detail && <pre className="mt-2 max-h-48 overflow-auto rounded-md border bg-muted/40 p-2 text-xs leading-5 whitespace-pre-wrap break-words" aria-label="Renderer output">{detail}</pre>}
-      {children}
-    </div>
-    {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
-  </Frame.Row>
-}
 
 type Issue = Application["statusIssues"][number]
 

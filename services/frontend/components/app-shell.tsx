@@ -3,6 +3,7 @@
 import { DocumentationLink } from "@/components/documentation-link"
 import { LogoMark } from "@/components/logo"
 import Link from "next/link"
+import { PageBreadcrumb } from "@/components/page-breadcrumb"
 import styles from "./app-shell.module.css"
 import { usePathname, useRouter } from "next/navigation"
 import { useCallback, useEffect, useMemo, useState } from "react"
@@ -327,14 +328,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>)}
         </nav>
         <main className={`mx-auto w-full ${/^\/applications\/[^/]+$/.test(pathname) && !pathname.endsWith("/new") && !pathname.endsWith("/publish") ? "max-w-none" : "max-w-[1440px]"} px-5 pb-7 pt-5 sm:px-8 sm:pb-8 sm:pt-6 lg:pt-7 ${pathname === "/audit" ? "lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden" : ""}`}>
-          {crumbs.length > 1 && <nav aria-label="Breadcrumb" className="mb-4 shrink-0 text-sm">
-            <ol className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-              {crumbs.map((crumb, index) => <li key={`${crumb.label}-${index}`} className="flex min-w-0 max-w-full items-center gap-2">
-                {index > 0 && <span aria-hidden="true" className="text-muted-foreground/50">/</span>}
-                {crumb.href ? <Link href={crumb.href} className="truncate text-muted-foreground transition-colors hover:text-foreground">{crumb.label}</Link> : <span aria-current="page" className="truncate text-muted-foreground">{crumb.label}</span>}
-              </li>)}
-            </ol>
-          </nav>}
+          {/* The application detail page carries its trail in its own collapsing header. */}
+          {!/^\/applications\/(?!new$|publish$)[^/]+$/.test(pathname) && <PageBreadcrumb crumbs={crumbs} className="mb-4 shrink-0" />}
           <WorkspaceSelectionProvider value={{ isAdmin: user.isAdmin, canCreateWorkspace, pendingAccounts, refreshPendingAccounts, workspaces, workspaceId: selectedWorkspaceId, workspace: workspaces.find((item) => item.id === selectedWorkspaceId) ?? null, selectWorkspace }}>
             {children}
           </WorkspaceSelectionProvider>

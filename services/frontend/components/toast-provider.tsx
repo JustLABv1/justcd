@@ -57,6 +57,8 @@ const methods = {
   error: (message: string, error?: unknown) => { notify("error", message, error) },
   info: (message: string) => { notify("info", message) },
   warning: (message: string) => { notify("warning", message) },
+  /** An info toast with one follow-up action, for results the reader may want to open but should not be taken to. */
+  withAction: (message: string, label: string, onAction: () => void) => { toast.add({ ...toastContent("info", message), actionProps: { children: label, onClick: onAction } }) },
   /** A toast that stays until `finish` or `dismiss`; use it for work that takes a moment. */
   loading: (message: string) => toast.add({ title: "Working", description: message, type: "loading", timeout: 0 }),
   /** Turns a `loading` toast into its result. */

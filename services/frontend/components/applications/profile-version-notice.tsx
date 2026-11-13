@@ -43,7 +43,8 @@ export function ProfileVersionNotice({
   if (!profile) return null
   if (profile.updateAvailable || profile.needsBuild) {
     return (
-      <Alert tone="info" role="status">
+      // Inside a Card (compact) the notice must not draw a second surface.
+      <Alert tone="info" role="status" variant={compact ? "inline" : undefined}>
         <Alert.Icon />
         <Alert.Title>
           {profile.adoptionPending
@@ -52,8 +53,8 @@ export function ProfileVersionNotice({
               ? "Profile build pending"
               : "Profile update available"}
         </Alert.Title>
-        <Alert.Description className="space-y-3">
-          <div
+        <Alert.Description className="space-y-1.5">
+          <span
             className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5"
             aria-label={`${profile.name}, current version ${profile.revision}${profile.updateAvailable ? `, available version ${profile.latestRevision}` : ""}`}
           >
@@ -67,8 +68,8 @@ export function ProfileVersionNotice({
                 </>
               )}
             </span>
-          </div>
-          <p>
+          </span>
+          <span className="block">
             {!profile.enabled
               ? "This profile is disabled. Ask an administrator to enable it before upgrading."
               : profile.adoptionPending
@@ -76,18 +77,19 @@ export function ProfileVersionNotice({
                 : profile.needsBuild
                   ? "The profile build has not started. Review the pending update to retry."
                   : "Review the updated build settings before rebuilding your application."}
-          </p>
+          </span>
+        </Alert.Description>
+        <Alert.Actions>
           <Button
             size="sm"
-            // The description underlines links; this one is a button.
-            className="w-fit max-w-full no-underline! text-primary-foreground!"
+            variant="outline"
             nativeButton={false}
             render={<Link href={`/applications/${application.id}/profile-update`} />}
             disabled={!canUpgrade || !profile.enabled || application.decommissioning}
           >
             {profile.adoptionPending ? "Review conversion" : "Review profile update"}
           </Button>
-        </Alert.Description>
+        </Alert.Actions>
       </Alert>
     )
   }

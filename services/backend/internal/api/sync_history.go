@@ -35,7 +35,9 @@ func (s *Server) writeSyncHistory(w http.ResponseWriter, r *http.Request, applic
 		writeError(w, http.StatusBadRequest, "range must be 24h or 7d")
 		return
 	}
-	end := time.Now().UTC()
+	// Buckets start on whole hours (or six-hour marks), so the axis reads 10:00, 11:00…
+	// instead of the minute the page happened to load. The last bucket is the one in progress.
+	end := time.Now().UTC().Truncate(width).Add(width)
 	var history any
 	var err error
 	if workspaceID != "" {

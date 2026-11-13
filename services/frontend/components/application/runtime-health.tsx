@@ -12,22 +12,32 @@ import type { ApplicationStatus } from "@/lib/application-status"
 import type { Application, ApplicationHealthTransition } from "@/lib/types"
 
 /** Single application status line: sync state, blockers, runtime health and freshness. */
-export function RuntimeHealthStrip({ application, healthHistory, status, reconnecting = false }: { application: Application; healthHistory: ApplicationHealthTransition[]; status: ApplicationStatus; reconnecting?: boolean }) {
-  const [open, setOpen] = useState(false)
+/** The runtime states that are a problem in their own right, not a passing rollout. */
+export function runtimeProblem(status: ApplicationStatus) {
+  return status.runtime.reliable && status.runtime.observed && ["Degraded", "Missing"].includes(status.runtime.status)
+}
+
+export function RuntimeHealthStrip({ application, healthHistory, status, reconnecting = false, open: controlledOpen, onOpenChange }: { application: Application; healthHistory: ApplicationHealthTransition[]; status: ApplicationStatus; reconnecting?: boolean; open?: boolean; onOpenChange?: (open: boolean) => void }) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
+  const open = controlledOpen ?? uncontrolledOpen
+  const setOpen = (next: boolean) => { setUncontrolledOpen(next); onOpenChange?.(next) }
   const [now, setNow] = useState(() => Date.now())
-  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(timer) }, [])
+  // "Observed 10s ago" does not need per-second precision; a coarse tick keeps the header from re-rendering every second.
+  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 10_000); return () => window.clearInterval(timer) }, [])
   const condition = application.healthCondition
   const freshness = runtimeFreshness(condition?.observedAt, now)
   // An unhealthy runtime must not hide behind a green sync badge, so it gets a badge of its own.
   const runtimeAlert = status.runtime.reliable && status.runtime.observed && !["Healthy", "Unknown"].includes(status.runtime.status)
   const parts = runtimeAlert ? status.parts.filter((part) => !part.startsWith("Runtime ")) : status.parts
   return <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-    <Button type="button" variant="ghost" size="sm" className="-ml-2 h-auto min-h-8 flex-wrap justify-start gap-x-2 py-1 whitespace-normal" aria-label="Status and runtime health details" onClick={() => setOpen(true)}>
+    {/* One signal per record: when the runtime is worse than the sync state, only the runtime badge is coloured. */}
+    <StatusBadge status={status.sync} tone={runtimeAlert ? "neutral" : undefined} />
+    {runtimeAlert && <StatusBadge status={`Runtime ${status.runtime.status}`} />}
+    {parts.length > 0 && <span className="text-muted-foreground">{parts.slice(0, 2).join(" · ")}{parts.length > 2 ? ` · +${parts.length - 2}` : ""}</span>}
+    <Button type="button" variant="ghost" size="sm" className="h-7 gap-1.5 px-2 text-xs" onClick={() => setOpen(true)}>
       <HugeiconsIcon icon={HeartCheckIcon} strokeWidth={1.8} aria-hidden="true" />
-      <StatusBadge status={status.sync} />
-      {runtimeAlert && <StatusBadge status={`Runtime ${status.runtime.status}`} />}
-      {parts.length > 0 && <span className="text-muted-foreground">{parts.slice(0, 2).join(" · ")}{parts.length > 2 ? ` · +${parts.length - 2}` : ""}</span>}
-      <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={1.8} aria-hidden="true" />
+      Health details
+      <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={1.8} aria-hidden="true" data-icon="inline-end" />
     </Button>
     <span className={freshness.stale || reconnecting ? "text-warning-foreground dark:text-warning" : ""} title={condition?.observedAt ? `${new Date(condition.observedAt).toLocaleString()} · Updates automatically` : undefined}>{freshness.label.replace("Runtime observed", "Observed")}{reconnecting ? " · Reconnecting" : freshness.stale && condition?.observedAt ? " · Stale" : ""}{condition?.status === "Partial" ? " · Partial observation" : ""}</span>
     <AppDialog open={open} onOpenChange={setOpen} variant="info" size="lg" title="Status and runtime health" description="Runtime readiness is separate from Git sync state. Partial means some runtime resources could not be assessed; configuration objects do not need workload health checks.">

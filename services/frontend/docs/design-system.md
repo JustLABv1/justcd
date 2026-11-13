@@ -328,6 +328,26 @@ The user rejected screens where blocks were not clearly bounded. These apply fro
 | Draft notice floating between the step and the buttons | `PublishingDraftNotice` renders as a compact Card. |
 | Notes between fields indented 4 px and one size above the field hints | Aligned with the fields. A note that states a security or storage fact is an `Alert variant="plain"`. |
 
+### Application detail second review (2026-11-13)
+
+| Found | Now |
+| --- | --- |
+| Runtime "Degraded" only as a small header badge while plan, KPIs and chart all read healthy | A "Runtime degraded" row in Needs attention (`runtimeProblem`), and a Runtime health Kpi whose bar takes the worst workload signal (`summarizeRuntime`). Observation coverage ("4 of 4 observed") is drawn neutral, never green. |
+| Green "Synced" beside red "Runtime Degraded" | Sync badge turns neutral when the runtime is worse. One coloured signal. |
+| Sync policy as a large KPI | Settings are not metrics: sync policy is a row in the Source card. |
+| "Refresh plan" filled even when nothing is outdated, and again in the plan card | The header action is filled only when the plan is missing, stale or expired; the plan card only leads to the plan. |
+| Profile update Alert with its own border inside the Source Card | Alerts inside a surface use `variant="inline"` with actions in `Alert.Actions`. |
+| History rows that repeat "Sync completed successfully" | Rows carry revision, who or what started the run, and duration (`operationContext`). |
+| Status and type filters as Selects with 3–5 options | Single-choice `Chip.Group`; pressing the active chip clears it. |
+| Application Settings tab as one long column | `SettingsNav` with one section per `?section=`; adding an exclusion is a Dialog, the rules a Table. |
+| Background plan completion switched the tab | A toast with a "Review" action; only user-started work changes the tab. |
+
+New PanelUI components in use: `Breadcrumb` (via `PageBreadcrumb`, every nested page), `ScrollHeader`
+(application detail: trail and actions in the bar, title and status in the large block; actions move
+under the title below `sm`), `Combobox` (plan picker, custom rollback revision), `RollingNumber`
+(live Kpi counts). A heatmap was considered for sync history and rejected: a one-colour ramp cannot
+show failures.
+
 "No container" and "whitespace separates first" were over-applied during the migration. When in
 doubt, a block gets a boundary.
 

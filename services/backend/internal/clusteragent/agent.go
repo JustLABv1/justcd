@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -133,6 +134,10 @@ func New(c Config, kube *rest.Config) (*Agent, error) {
 	return a, nil
 }
 func (a *Agent) call(ctx context.Context, method, path, token string, in, out any) (int, error) {
+	return a.callLimit(ctx, method, path, token, in, out, 12<<20)
+}
+
+func (a *Agent) callLimit(ctx context.Context, method, path, token string, in, out any, limit int64) (int, error) {
 	var body []byte
 	var err error
 	if in != nil {
@@ -156,7 +161,7 @@ func (a *Agent) call(ctx context.Context, method, path, token string, in, out an
 		return res.StatusCode, fmt.Errorf("JustCD returned HTTP %d", res.StatusCode)
 	}
 	if out != nil && res.StatusCode != 204 {
-		err = json.NewDecoder(io.LimitReader(res.Body, 12<<20)).Decode(out)
+		err = json.NewDecoder(io.LimitReader(res.Body, limit)).Decode(out)
 	}
 	return res.StatusCode, err
 }
@@ -396,17 +401,30 @@ func (a *Agent) Run(ctx context.Context) error {
 	}()
 	// Keep a single task poll, but do not let a slow Kubernetes read or result
 	// delivery block discovery, health observations, and access reviews behind it.
-	workers := make(chan struct{}, 8)
+	// Each poll asks for as many tasks as there are free workers, so a burst of
+	// concurrent reads arrives in one response instead of one poll per task.
+	workers := make(chan struct{}, taskWorkers)
 	for ctx.Err() == nil {
 		select {
 		case workers <- struct{}{}:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
-		var task agentprotocol.Request
-		status, err := a.call(ctx, "GET", "/tasks", a.token(), nil, &task)
-		if err != nil {
+		reserved := 1
+	reserve:
+		for reserved < taskWorkers {
+			select {
+			case workers <- struct{}{}:
+				reserved++
+			default:
+				break reserve
+			}
+		}
+		tasks, status, err := a.pollTasks(ctx, reserved)
+		for range reserved - len(tasks) {
 			<-workers
+		}
+		if err != nil {
 			if status == 401 {
 				if err := a.enroll(ctx); err == nil {
 					continue
@@ -420,18 +438,47 @@ func (a *Agent) Run(ctx context.Context) error {
 			}
 			continue
 		}
-		if status == 204 {
-			<-workers
-			continue
+		for _, task := range tasks {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer func() { <-workers }()
+				a.executeAndDeliver(ctx, task)
+			}()
 		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer func() { <-workers }()
-			a.executeAndDeliver(ctx, task)
-		}()
 	}
 	return ctx.Err()
+}
+
+// taskWorkers bounds the Kubernetes requests one agent runs at once.
+const taskWorkers = 8
+
+// pollTasks waits for up to max tasks. A server that predates batched polls
+// ignores max and answers with a single task object, which is accepted too.
+// On error it returns no tasks.
+func (a *Agent) pollTasks(ctx context.Context, max int) ([]agentprotocol.Request, int, error) {
+	var raw json.RawMessage
+	status, err := a.callLimit(ctx, "GET", "/tasks?max="+strconv.Itoa(max), a.token(), nil, &raw, agentprotocol.MaxTaskBatchResponse)
+	if err != nil || status == 204 {
+		return nil, status, err
+	}
+	var batch struct {
+		Tasks *[]agentprotocol.Request `json:"tasks"`
+	}
+	if err := json.Unmarshal(raw, &batch); err != nil {
+		return nil, status, err
+	}
+	if batch.Tasks != nil {
+		if len(*batch.Tasks) > max {
+			return nil, status, errors.New("JustCD returned more tasks than requested")
+		}
+		return *batch.Tasks, status, nil
+	}
+	var task agentprotocol.Request
+	if err := json.Unmarshal(raw, &task); err != nil {
+		return nil, status, err
+	}
+	return []agentprotocol.Request{task}, status, nil
 }
 
 func (a *Agent) executeAndDeliver(ctx context.Context, task agentprotocol.Request) {

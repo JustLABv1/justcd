@@ -153,6 +153,9 @@ never automatically falls back to direct credentials. An owner can explicitly
 switch back to direct API access and refresh plans.
 
 The agent uses one HTTPS task poll and up to eight concurrent Kubernetes requests.
+Each poll claims up to as many queued tasks as the agent has free workers (at
+most 16, and about 2 MiB of request bodies), so a burst of concurrent reads
+arrives in one response. Older agents still receive one task per poll.
 Slow requests and result delivery retries do not block unrelated work. Each task
 is executed once; only result delivery is retried, within the task deadline.
 It does not support streaming Kubernetes APIs, agent HA,
@@ -351,8 +354,12 @@ Agent token rotation preserves the original five-minute old-token grace deadline
 Task claims recheck token validity and revocation under a database row lock; tasks
 already claimed before revocation may still finish. Each backend process permits
 one active poll per cluster and 1,200 poll starts/minute to accommodate API
-discovery bursts. Database poll intervals start at 50 ms and back off to one
-second while idle. Enrollment is limited to ten attempts/minute per direct peer IP.
+discovery bursts. Queuing a task wakes the waiting poll, and delivering a
+result wakes the backend request waiting for it, through PostgreSQL
+`LISTEN`/`NOTIFY` on the `justcd_agent_tasks` channel so other replicas wake
+too. Each backend holds one extra database connection for that listener.
+Database polling remains as a fallback while a wakeup is missed or the listener
+reconnects: poll intervals start at 50 ms and back off to one second while idle. Enrollment is limited to ten attempts/minute per direct peer IP.
 Rate/concurrency limits are process-local; deployments with multiple replicas
 should additionally enforce shared ingress limits. Password-login throttling uses
 normalized account names rather than the frontend proxy's shared address; it still

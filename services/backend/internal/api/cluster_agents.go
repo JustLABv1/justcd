@@ -8,6 +8,7 @@ import (
 	"github.com/justlab/justcd/services/backend/internal/security"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -197,19 +198,47 @@ func (s *Server) agentTasks(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, "could not issue lease")
 		return
 	}
+	// Agents that run several tasks at once ask for up to max tasks per poll
+	// and receive {"tasks":[...]}. Older agents omit it and receive one task.
+	batch, max := false, 1
+	if raw := r.URL.Query().Get("max"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 {
+			writeError(w, 400, "invalid max")
+			return
+		}
+		batch, max = true, min(parsed, agentprotocol.MaxTaskBatch)
+	}
+	wake, stopWaiting := s.Store.WaitForAgentTask(id)
+	defer stopWaiting()
 	deadline := time.NewTimer(20 * time.Second)
 	defer deadline.Stop()
-	// Sequential requests often arrive just after a result is delivered. Start
-	// responsive, then back off idle polls to avoid hammering the database.
+	// A queued task wakes the poll immediately. The backoff only bounds how
+	// long a missed wakeup can delay a task, without hammering the database.
 	pollDelay := 50 * time.Millisecond
 	poll := time.NewTimer(pollDelay)
 	defer poll.Stop()
+	tokenHash := security.HashToken(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	for {
 		if _, ok = s.authenticatedAgent(w, r); !ok {
 			return
 		}
-		taskID, cipher, err := s.Store.ClaimAgentTask(r.Context(), id, lease, security.HashToken(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")))
-		if err == nil {
+		var tasks []agentprotocol.Request
+		size := 0
+		for len(tasks) < max && size < agentprotocol.TaskBatchBudget {
+			taskID, cipher, err := s.Store.ClaimAgentTask(r.Context(), id, lease, tokenHash)
+			if errors.Is(err, sql.ErrNoRows) {
+				break
+			}
+			if err != nil {
+				// A claimed task is already leased; deliver it rather than
+				// leave it to expire.
+				if len(tasks) > 0 {
+					break
+				}
+				writeStoreError(w, "could not fetch task")
+				return
+			}
 			plain, err := security.Decrypt(s.EncryptionKey, cipher, "agent-task:"+taskID+":request")
 			if err != nil {
 				writeStoreError(w, "could not decode task")
@@ -221,12 +250,16 @@ func (s *Server) agentTasks(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			task.Lease = lease
-			w.Header().Set("Cache-Control", "no-store")
-			writeJSON(w, 200, task)
-			return
+			tasks = append(tasks, task)
+			size += len(plain)
 		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			writeStoreError(w, "could not fetch task")
+		if len(tasks) > 0 {
+			w.Header().Set("Cache-Control", "no-store")
+			if batch {
+				writeJSON(w, 200, agentprotocol.TaskBatch{Tasks: tasks})
+			} else {
+				writeJSON(w, 200, tasks[0])
+			}
 			return
 		}
 		select {
@@ -235,6 +268,7 @@ func (s *Server) agentTasks(w http.ResponseWriter, r *http.Request) {
 		case <-deadline.C:
 			w.WriteHeader(204)
 			return
+		case <-wake:
 		case <-poll.C:
 			pollDelay = min(2*pollDelay, time.Second)
 			poll.Reset(pollDelay)

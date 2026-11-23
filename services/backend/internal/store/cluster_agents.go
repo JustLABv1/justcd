@@ -109,7 +109,15 @@ func (s *Store) QueueAgentTask(ctx context.Context, id, clusterID string, cipher
 			return err
 		}
 	}
-	return tx.Commit()
+	// NOTIFY is delivered on commit, so other replicas never wake early.
+	if _, err = tx.ExecContext(ctx, `SELECT pg_notify($1,$2)`, wakeupChannel, agentQueueWakeup(clusterID)); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	s.wakeups.signal(agentQueueWakeup(clusterID))
+	return nil
 }
 
 // ClaimAgentTask serializes task delivery with revocation and token rotation.
@@ -160,7 +168,14 @@ func (s *Store) CompleteAgentTask(ctx context.Context, clusterID, id, lease stri
 			return err
 		}
 	}
-	return tx.Commit()
+	if _, err = tx.ExecContext(ctx, `SELECT pg_notify($1,$2)`, wakeupChannel, agentResultWakeup(id)); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	s.wakeups.signal(agentResultWakeup(id))
+	return nil
 }
 func (s *Store) AgentTaskResult(ctx context.Context, id string) ([]byte, error) {
 	var cipher []byte

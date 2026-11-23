@@ -81,6 +81,7 @@ const (
 	stageLiveSnapshot    = "live_snapshot"
 	stageDryRun          = "dry_run"
 	stageRecheck         = "recheck"
+	stageRecheckFast     = "recheck_fast"
 	stageCheckpoint      = "checkpoint"
 	stageApply           = "apply"
 	stageDelete          = "delete"

@@ -290,7 +290,7 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		return finishFailure(err, "failed")
 	}
 	recheckCtx, recheckDone := s.beginStage(ctx, stageRecheck)
-	fresh, err := s.RecheckPlan(recheckCtx, app, record)
+	fresh, observed, err := s.recheck(recheckCtx, app, record)
 	recheckDone()
 	if err != nil {
 		return finishFailure(err, "failed")
@@ -303,6 +303,11 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		return finishFailure(err, "failed")
 	}
 	input.Selection = record.Plan.Selection
+	if observed != nil {
+		// The recheck has just read every object; the pre-operation
+		// checkpoint reuses those reads instead of scanning again.
+		input.Live = observed
+	}
 	input.IgnoreRules, err = s.Store.IgnoreRules(ctx, app.ID)
 	if err != nil {
 		return finishFailure(err, "failed")
@@ -760,6 +765,9 @@ func safeApplyFailure(cause error, progress store.OperationProgress, operationTy
 }
 
 func (s *Service) applyResource(ctx context.Context, input planInput, applicationID string, resource core.Resource, change core.Change) error {
+	// Whatever was observed before is about to change. Only the object the
+	// API server returns for a completed apply is recorded again.
+	input.Live.forget(resource.Identity.Key())
 	if err := reportResourceStage(ctx, "checking_live", false); err != nil {
 		return err
 	}
@@ -833,7 +841,11 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 			return err
 		}
 		current.Manifest = resource.Manifest
-		return s.Store.UpsertManagedResource(ctx, applicationID, current)
+		if err := s.Store.UpsertManagedResource(ctx, applicationID, current); err != nil {
+			return err
+		}
+		input.Live.set(resource.Identity.Key(), applied)
+		return nil
 	}
 	object.SetResourceVersion(resourceVersion)
 	body, err = object.MarshalJSON()
@@ -865,6 +877,7 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 	if err := s.Store.UpsertManagedResource(ctx, applicationID, current); err != nil {
 		return err
 	}
+	input.Live.set(resource.Identity.Key(), applied)
 	return nil
 }
 

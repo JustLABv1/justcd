@@ -14,6 +14,7 @@ import (
 
 	"github.com/justlab/justcd/services/backend/internal/api"
 	"github.com/justlab/justcd/services/backend/internal/config"
+	"github.com/justlab/justcd/services/backend/internal/gitops"
 	"github.com/justlab/justcd/services/backend/internal/observability"
 	"github.com/justlab/justcd/services/backend/internal/security"
 	"github.com/justlab/justcd/services/backend/internal/store"
@@ -72,6 +73,7 @@ func runCommand(logger *slog.Logger, args []string) error {
 		logger.Info("encryption key rotation committed", "valuesRotated", count)
 		return nil
 	}
+	gitops.ConfigureCache(cfg.GitCacheDir)
 	server, err := api.New(db, cfg, logger)
 	if err != nil {
 		return fmt.Errorf("initialize API: %w", err)

@@ -121,6 +121,8 @@ spec:
               value: {{ .Values.backend.shutdownGracePeriod | quote }}
             - name: JUSTCD_SYNC_CONCURRENCY
               value: {{ .Values.backend.syncConcurrency | default 8 | quote }}
+            - name: JUSTCD_GIT_CACHE_DIR
+              value: {{ .Values.backend.gitCacheDir | default "" | quote }}
             - name: JUSTCD_METRICS_ENABLED
               value: {{ .Values.backend.observability.metrics.enabled | quote }}
             - name: JUSTCD_OTEL_ENABLED

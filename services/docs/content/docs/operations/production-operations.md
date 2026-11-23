@@ -298,7 +298,17 @@ operations and 30 starts/minute. Later releases may change this: inspect the
 pinned chart/source and budget every replica plus administration/migrations.
 Start with chart resources, load-test Helm/Kustomize, and monitor throttling,
 OOM/restarts, RSS, DB connections, disk growth and backup duration. Allow writable
-`/tmp` for Git/rendering with read-only roots. Increase target throughput only
+`/tmp` for Git/rendering with read-only roots.
+
+The backend keeps a local Git mirror per repository and credential so repeated
+plan and sync fetches only download new objects. Every fetch still
+authenticates to the remote and fetches the requested revision there, so a
+revoked credential or removed revision fails as before. Mirrors live under
+`JUSTCD_GIT_CACHE_DIR` (Helm `backend.gitCacheDir`); empty uses the temporary
+directory, and `off` disables the cache. Mount a volume to keep it across
+restarts and give each replica its own directory. Mirrors unused for seven days
+are removed, and a mirror is rebuilt after 256 fetched revisions. A damaged
+mirror is discarded and the fetch falls back to a direct clone. Increase target throughput only
 after measuring API throttling and approval load. No supported audit-retention
 setting is implied; do not prune audit tables ad hoc.
 

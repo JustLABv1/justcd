@@ -82,6 +82,8 @@ func runCommand(logger *slog.Logger, args []string) error {
 		server.Mux.Handle("GET /metrics", telemetry.Metrics.Handler())
 	}
 	lifecycle := newBackendLifecycle()
+	// Agent requests in flight during a drain still need their wakeups.
+	lifecycle.Start(func(_, executionCtx context.Context) { db.ListenForWakeups(executionCtx, cfg.DatabaseURL, logger) })
 	lifecycle.Start(func(ctx, _ context.Context) { server.RunNotificationWorker(ctx) })
 	lifecycle.Start(func(ctx, _ context.Context) {
 		ticker := time.NewTicker(time.Hour)

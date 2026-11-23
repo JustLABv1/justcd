@@ -25,7 +25,10 @@ import (
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
-type Store struct{ DB *sql.DB }
+type Store struct {
+	DB      *sql.DB
+	wakeups wakeups
+}
 
 var ErrPlanNotCurrent = errors.New("plan is no longer current or has expired; generate a fresh plan")
 

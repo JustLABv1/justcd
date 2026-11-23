@@ -13,6 +13,23 @@ import (
 const Version = 1
 const MaxBody = 8 << 20
 
+// MaxTaskBatch caps how many tasks one agent poll can claim.
+const MaxTaskBatch = 16
+
+// TaskBatchBudget stops a poll from claiming more tasks once the bodies it has
+// claimed reach this size. A batch can exceed it by at most one task, so its
+// response stays under MaxTaskBatchResponse.
+const TaskBatchBudget = 2 << 20
+
+// MaxTaskBatchResponse bounds a batched poll response read by an agent: the
+// budget plus one task of MaxBody, encoded as base64 JSON, with headroom.
+const MaxTaskBatchResponse = 32 << 20
+
+// TaskBatch is the poll response for agents that request several tasks.
+type TaskBatch struct {
+	Tasks []Request `json:"tasks"`
+}
+
 type Profile struct {
 	Name                  string                 `json:"name"`
 	WorkspaceIDs          []string               `json:"workspaceIds"`

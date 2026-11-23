@@ -66,6 +66,25 @@ func Fetch(ctx context.Context, db *store.Store, key []byte, source store.GitSou
 	}
 	cloneCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
+	if dir := cacheDir(); dir != "" {
+		commit, err := fetchThroughMirror(cloneCtx, dir, env, source, revision, checkoutPath)
+		if err == nil {
+			return &Checkout{Root: checkoutPath, Commit: commit, env: env, cleanup: cleanup}, nil
+		}
+		if !errors.Is(err, errMirrorUnusable) {
+			cleanup()
+			return nil, err
+		}
+		// The cache could not be used. Fetch directly, exactly as without it.
+		if err := os.RemoveAll(checkoutPath); err != nil {
+			cleanup()
+			return nil, err
+		}
+	}
+	return fetchDirect(cloneCtx, env, source, revision, checkoutPath, cleanup)
+}
+
+func fetchDirect(cloneCtx context.Context, env []string, source store.GitSource, revision, checkoutPath string, cleanup func()) (*Checkout, error) {
 	if err := runGit(cloneCtx, env, "clone", "--no-checkout", "--filter=blob:none", "--", source.RepositoryURL, checkoutPath); err != nil {
 		cleanup()
 		return nil, commandFailure(cloneCtx, "clone Git source", err)

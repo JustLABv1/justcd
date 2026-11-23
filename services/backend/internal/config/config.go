@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +32,9 @@ type Config struct {
 	// SyncConcurrency bounds simultaneous Kubernetes requests for one
 	// application's plan or sync. One restores strictly sequential execution.
 	SyncConcurrency int
+	// GitCacheDir holds cached Git mirrors. Empty uses the OS temporary
+	// directory and "off" disables the cache.
+	GitCacheDir string
 }
 
 type Observability struct {
@@ -92,6 +96,10 @@ func Load() (Config, error) {
 	cfg.SyncConcurrency, err = strconv.Atoi(value("JUSTCD_SYNC_CONCURRENCY", "8"))
 	if err != nil || cfg.SyncConcurrency < 1 || cfg.SyncConcurrency > 32 {
 		return Config{}, errors.New("JUSTCD_SYNC_CONCURRENCY must be an integer from 1 to 32")
+	}
+	cfg.GitCacheDir = strings.TrimSpace(os.Getenv("JUSTCD_GIT_CACHE_DIR"))
+	if cfg.GitCacheDir != "" && !strings.EqualFold(cfg.GitCacheDir, "off") && !filepath.IsAbs(cfg.GitCacheDir) {
+		return Config{}, errors.New("JUSTCD_GIT_CACHE_DIR must be an absolute path or off")
 	}
 	cfg.Observability.MetricsEnabled, err = boolValue("JUSTCD_METRICS_ENABLED", false)
 	if err != nil {

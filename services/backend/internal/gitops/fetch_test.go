@@ -68,27 +68,43 @@ func TestCommandFailurePreservesTimeoutAndCancellation(t *testing.T) {
 }
 
 func TestFetchPreservesRetryClassificationAtEveryCheckoutStage(t *testing.T) {
-	for _, stage := range []string{"clone", "config", "fetch", "rev-parse", "checkout"} {
-		t.Run(stage, func(t *testing.T) {
-			bin := t.TempDir()
-			// A partial clone may fetch missing blobs during checkout as well.
-			script := "#!/bin/sh\nif [ \"$1\" = '-C' ]; then shift 2; fi\n" +
-				"if [ \"$1\" = " + shellQuote(stage) + " ]; then echo 'The requested URL returned error: 500 PRIVATE-TOKEN' >&2; exit 128; fi\n" +
-				"if [ \"$1\" = 'rev-parse' ]; then echo 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; fi\n"
-			if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0700); err != nil {
-				t.Fatal(err)
-			}
-			t.Setenv("PATH", bin)
-			checkout, err := Fetch(context.Background(), nil, nil, store.GitSource{RepositoryURL: "https://git.example.com/team/app.git"}, "main")
-			defer checkout.Close()
-			var fetch *FetchError
-			if !errors.As(err, &fetch) || !fetch.Retryable() {
-				t.Fatalf("%s failure lost retry classification: %v", stage, err)
-			}
-			if strings.Contains(err.Error(), "PRIVATE-TOKEN") {
-				t.Fatal("Git stderr leaked into error")
-			}
-		})
+	t.Cleanup(func() { ConfigureCache("") })
+	for _, mode := range []struct {
+		name, cache string
+		stages      []string
+	}{
+		{name: "direct", cache: "off", stages: []string{"clone", "config", "fetch", "rev-parse", "checkout"}},
+		// Local cache failures fall back to a direct clone; these stages
+		// fail in both paths.
+		{name: "cached", cache: "", stages: []string{"config", "fetch", "rev-parse", "checkout"}},
+	} {
+		for _, stage := range mode.stages {
+			t.Run(mode.name+"/"+stage, func(t *testing.T) {
+				cache := mode.cache
+				if cache == "" {
+					cache = t.TempDir()
+				}
+				ConfigureCache(cache)
+				bin := t.TempDir()
+				// A partial clone may fetch missing blobs during checkout as well.
+				script := "#!/bin/sh\nif [ \"$1\" = '-C' ]; then shift 2; fi\n" +
+					"if [ \"$1\" = " + shellQuote(stage) + " ]; then echo 'The requested URL returned error: 500 PRIVATE-TOKEN' >&2; exit 128; fi\n" +
+					"if [ \"$1\" = 'rev-parse' ]; then echo 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; fi\n"
+				if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0700); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("PATH", bin)
+				checkout, err := Fetch(context.Background(), nil, nil, store.GitSource{RepositoryURL: "https://git.example.com/team/app.git"}, "main")
+				defer checkout.Close()
+				var fetch *FetchError
+				if !errors.As(err, &fetch) || !fetch.Retryable() {
+					t.Fatalf("%s failure lost retry classification: %v", stage, err)
+				}
+				if strings.Contains(err.Error(), "PRIVATE-TOKEN") {
+					t.Fatal("Git stderr leaked into error")
+				}
+			})
+		}
 	}
 }
 

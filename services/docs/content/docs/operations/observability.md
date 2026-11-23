@@ -23,6 +23,7 @@ annotations when enabled.
 | `justcd_drift_changes_total` | Counter | `kind` | Create, update, and delete changes found by automatic checks. |
 | `justcd_operations_completed_total` | Counter | `type`, `status` | Completed sync, rollback, and decommission operations. |
 | `justcd_operation_duration_seconds` | Histogram | `type`, `status` | End-to-end operation duration. |
+| `justcd_sync_stage_duration_seconds` | Histogram | `stage` | Time spent in one plan or sync stage: `git_fetch`, `render`, `live_snapshot`, `dry_run`, `recheck`, `checkpoint`, `apply`, `delete`, or `success_snapshot`. |
 | `justcd_operation_queue_depth` | Gauge | `status` | Durable queued and running operation counts. |
 | `justcd_plan_approvals_total` | Counter | `state` | Recorded approvals that are pending or meet the plan threshold. |
 

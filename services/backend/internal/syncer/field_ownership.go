@@ -41,6 +41,14 @@ func fieldOwnershipConflict(err error) bool {
 // can be retried automatically. Other managers require a sealed takeover.
 // Preserve the caller's dry-run and resource-version preconditions on the retry.
 func applyWithOwnershipMigration(ctx context.Context, rc dynamic.ResourceInterface, name string, body []byte, options metav1.PatchOptions) (*unstructured.Unstructured, error) {
+	return applyWithOwnershipMigrationFrom(ctx, rc, name, body, options, nil)
+}
+
+// applyWithOwnershipMigrationFrom accepts the live object the caller has just
+// read. It is used only when its resourceVersion matches the request
+// precondition, so it is the same object a fresh Get would return; any other
+// value falls back to that Get.
+func applyWithOwnershipMigrationFrom(ctx context.Context, rc dynamic.ResourceInterface, name string, body []byte, options metav1.PatchOptions, known *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	// Inspect the pre-apply snapshot, including for removal-only updates that
 	// produce no SSA conflict. Their omitted legacy fields still need cleanup.
 	// legacyManagers may always be cleaned up after an Apply: a leftover
@@ -51,7 +59,11 @@ func applyWithOwnershipMigration(ctx context.Context, rc dynamic.ResourceInterfa
 	pendingAdoption := false
 	request := &unstructured.Unstructured{}
 	if request.UnmarshalJSON(body) == nil && request.GetResourceVersion() != "" {
-		if live, err := rc.Get(ctx, name, metav1.GetOptions{}); err == nil && live.GetResourceVersion() == request.GetResourceVersion() {
+		live, err := known, error(nil)
+		if live == nil || live.GetResourceVersion() != request.GetResourceVersion() {
+			live, err = rc.Get(ctx, name, metav1.GetOptions{})
+		}
+		if err == nil && live.GetResourceVersion() == request.GetResourceVersion() {
 			pendingAdoption = pendingClientSideAdoption(live, options.FieldManager)
 			legacyManagers = leftoverLegacyManagers(live, options.FieldManager)
 			if pendingAdoption && len(legacyManagers) == 0 {
@@ -171,6 +183,8 @@ func unhonoredGitRemovals(localBefore, localAfter, live []byte) ([]string, error
 // Admission defaults and CRD list merging are interpreted by Kubernetes, not
 // by the local list projection. The original Git manifest remains the apply body.
 func (s *Service) reconcileUpdatePlan(ctx context.Context, input planInput, plan *core.Plan, desired, live []core.Resource) error {
+	ctx, done := s.beginStage(ctx, stageDryRun)
+	defer done()
 	byKey := make(map[string]core.Resource, len(desired))
 	for _, resource := range desired {
 		byKey[resource.Identity.Key()] = resource
@@ -179,108 +193,27 @@ func (s *Service) reconcileUpdatePlan(ctx context.Context, input planInput, plan
 	for _, resource := range live {
 		liveByKey[resource.Identity.Key()] = resource
 	}
-	changes := make([]core.Change, 0, len(plan.Changes))
-	for index := range plan.Changes {
+	// Each update is validated by its own dry-run request. They are independent
+	// of each other, so run them concurrently and keep the results in plan order.
+	keep := make([]bool, len(plan.Changes))
+	err := forEachLimit(len(plan.Changes), input.concurrency(), func(index int) error {
 		change := &plan.Changes[index]
 		if change.Kind != core.Update {
-			changes = append(changes, *change)
-			continue
+			keep[index] = true
+			return nil
 		}
-		resource, ok := byKey[change.Identity.Key()]
-		if !ok {
-			return errors.New("update plan desired resource is missing")
+		var err error
+		keep[index], err = s.reconcileUpdateChange(ctx, input, plan, change, byKey, liveByKey)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	changes := make([]core.Change, 0, len(plan.Changes))
+	for index := range plan.Changes {
+		if keep[index] {
+			changes = append(changes, plan.Changes[index])
 		}
-		mapping, err := input.Mapper.Mapper.RESTMapping(groupKind(change.Identity), groupVersion(change.Identity))
-		if err != nil {
-			return err
-		}
-		client, err := clientFor(input, change.Identity)
-		if err != nil {
-			return err
-		}
-		var rc dynamic.ResourceInterface = client.Dynamic.Resource(mapping.Resource)
-		if mapping.Scope.Name() == "namespace" {
-			rc = client.Dynamic.Resource(mapping.Resource).Namespace(change.Identity.Namespace)
-		}
-		object, err := render.NormalizedObject(resource)
-		if err != nil {
-			return err
-		}
-		object.SetLabels(mergeOwnerLabel(object.GetLabels(), plan.ApplicationID))
-		object.SetResourceVersion(change.LiveResourceVersion)
-		body, err := object.MarshalJSON()
-		if err != nil {
-			return err
-		}
-		options := applyPatchOptions(*change, "justcd/"+plan.ApplicationID)
-		options.DryRun = []string{metav1.DryRunAll}
-		applied, err := applyWithOwnershipMigration(ctx, rc, change.Identity.Name, body, options)
-		if !change.Takeover && fieldOwnershipConflict(err) {
-			change.Takeover = true
-			options = applyPatchOptions(*change, "justcd/"+plan.ApplicationID)
-			options.DryRun = []string{metav1.DryRunAll}
-			applied, err = applyWithOwnershipMigration(ctx, rc, change.Identity.Name, body, options)
-		}
-		if immutableStatefulSetUpdate(change.Identity, err) {
-			change.Takeover = false
-			change.RecreationRequired = true
-			if err := s.planStatefulSetRecreation(ctx, input, plan, change, object); err != nil {
-				return err
-			}
-			changes = append(changes, *change)
-			continue
-		}
-		if err != nil {
-			return &resourceAccessError{identity: change.Identity, action: "patch (dry-run)", err: err}
-		}
-		for _, selected := range plan.Selection.Recreations {
-			if selected.Identity.Key() == change.Identity.Key() {
-				return errors.New("StatefulSet no longer requires recreation; refresh the plan")
-			}
-		}
-		current, ok := liveByKey[change.Identity.Key()]
-		if !ok {
-			return errors.New("update plan live resource is missing")
-		}
-		if applied == nil || applied.GetAPIVersion() != change.Identity.APIVersion || applied.GetKind() != change.Identity.Kind || applied.GetName() != change.Identity.Name || applied.GetNamespace() != change.Identity.Namespace {
-			return fmt.Errorf("invalid dry-run response for %s %s/%s", change.Identity.Kind, change.Identity.Namespace, change.Identity.Name)
-		}
-		predicted, err := render.CanonicalLive(applied, change.Identity.ClusterID, plan.ApplicationID, change.Identity.ClusterScoped)
-		if err != nil {
-			return err
-		}
-		before, after, err := render.ServerSideComparisonManifests(current.Manifest, predicted.Manifest, ignoredPathsFor(input, change.Identity))
-		if err != nil {
-			return err
-		}
-		paths, err := render.ChangedJSONPointers(before, after)
-		if err != nil {
-			return err
-		}
-		if len(paths) == 0 {
-			// Server-side apply keeps fields that another manager still owns,
-			// so a field removed from Git can vanish from the dry-run diff while
-			// it is still live. Keep that Git-driven removal visible.
-			removed, err := unhonoredGitRemovals(change.Before, change.After, before)
-			if err != nil {
-				return err
-			}
-			if len(removed) > 0 {
-				for _, path := range removed {
-					if after, err = render.RemoveJSONPointer(after, path); err != nil {
-						return err
-					}
-				}
-				paths = removed
-			}
-		}
-		// A no-op value change may still transfer ownership. Keep takeovers
-		// visible so auto-safe never silently approves an ownership transfer.
-		if len(paths) == 0 && !change.Takeover {
-			continue
-		}
-		change.Before, change.After, change.ChangedPaths = before, after, paths
-		changes = append(changes, *change)
 	}
 	for _, selected := range plan.Selection.Recreations {
 		found := false
@@ -295,4 +228,106 @@ func (s *Service) reconcileUpdatePlan(ctx context.Context, input planInput, plan
 	}
 	plan.Changes = changes
 	return nil
+}
+
+// reconcileUpdateChange dry-runs one update and rewrites its comparison from
+// the server's prediction. It reports false when the update is a no-op. It
+// only modifies change and reads plan, so calls for different changes may run
+// concurrently.
+func (s *Service) reconcileUpdateChange(ctx context.Context, input planInput, plan *core.Plan, change *core.Change, byKey, liveByKey map[string]core.Resource) (bool, error) {
+	resource, ok := byKey[change.Identity.Key()]
+	if !ok {
+		return false, errors.New("update plan desired resource is missing")
+	}
+	mapping, err := input.Mapper.Mapper.RESTMapping(groupKind(change.Identity), groupVersion(change.Identity))
+	if err != nil {
+		return false, err
+	}
+	client, err := clientFor(input, change.Identity)
+	if err != nil {
+		return false, err
+	}
+	var rc dynamic.ResourceInterface = client.Dynamic.Resource(mapping.Resource)
+	if mapping.Scope.Name() == "namespace" {
+		rc = client.Dynamic.Resource(mapping.Resource).Namespace(change.Identity.Namespace)
+	}
+	object, err := render.NormalizedObject(resource)
+	if err != nil {
+		return false, err
+	}
+	object.SetLabels(mergeOwnerLabel(object.GetLabels(), plan.ApplicationID))
+	object.SetResourceVersion(change.LiveResourceVersion)
+	body, err := object.MarshalJSON()
+	if err != nil {
+		return false, err
+	}
+	known := input.Live.get(change.Identity.Key(), change.LiveResourceVersion)
+	options := applyPatchOptions(*change, "justcd/"+plan.ApplicationID)
+	options.DryRun = []string{metav1.DryRunAll}
+	applied, err := applyWithOwnershipMigrationFrom(ctx, rc, change.Identity.Name, body, options, known)
+	if !change.Takeover && fieldOwnershipConflict(err) {
+		change.Takeover = true
+		options = applyPatchOptions(*change, "justcd/"+plan.ApplicationID)
+		options.DryRun = []string{metav1.DryRunAll}
+		applied, err = applyWithOwnershipMigrationFrom(ctx, rc, change.Identity.Name, body, options, known)
+	}
+	if immutableStatefulSetUpdate(change.Identity, err) {
+		change.Takeover = false
+		change.RecreationRequired = true
+		if err := s.planStatefulSetRecreation(ctx, input, plan, change, object); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if err != nil {
+		return false, &resourceAccessError{identity: change.Identity, action: "patch (dry-run)", err: err}
+	}
+	for _, selected := range plan.Selection.Recreations {
+		if selected.Identity.Key() == change.Identity.Key() {
+			return false, errors.New("StatefulSet no longer requires recreation; refresh the plan")
+		}
+	}
+	current, ok := liveByKey[change.Identity.Key()]
+	if !ok {
+		return false, errors.New("update plan live resource is missing")
+	}
+	if applied == nil || applied.GetAPIVersion() != change.Identity.APIVersion || applied.GetKind() != change.Identity.Kind || applied.GetName() != change.Identity.Name || applied.GetNamespace() != change.Identity.Namespace {
+		return false, fmt.Errorf("invalid dry-run response for %s %s/%s", change.Identity.Kind, change.Identity.Namespace, change.Identity.Name)
+	}
+	predicted, err := render.CanonicalLive(applied, change.Identity.ClusterID, plan.ApplicationID, change.Identity.ClusterScoped)
+	if err != nil {
+		return false, err
+	}
+	before, after, err := render.ServerSideComparisonManifests(current.Manifest, predicted.Manifest, ignoredPathsFor(input, change.Identity))
+	if err != nil {
+		return false, err
+	}
+	paths, err := render.ChangedJSONPointers(before, after)
+	if err != nil {
+		return false, err
+	}
+	if len(paths) == 0 {
+		// Server-side apply keeps fields that another manager still owns,
+		// so a field removed from Git can vanish from the dry-run diff while
+		// it is still live. Keep that Git-driven removal visible.
+		removed, err := unhonoredGitRemovals(change.Before, change.After, before)
+		if err != nil {
+			return false, err
+		}
+		if len(removed) > 0 {
+			for _, path := range removed {
+				if after, err = render.RemoveJSONPointer(after, path); err != nil {
+					return false, err
+				}
+			}
+			paths = removed
+		}
+	}
+	// A no-op value change may still transfer ownership. Keep takeovers
+	// visible so auto-safe never silently approves an ownership transfer.
+	if len(paths) == 0 && !change.Takeover {
+		return false, nil
+	}
+	change.Before, change.After, change.ChangedPaths = before, after, paths
+	return true, nil
 }

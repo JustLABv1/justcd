@@ -32,6 +32,9 @@ type Service struct {
 	Store         *store.Store
 	EncryptionKey []byte
 	Metrics       *observability.Metrics
+	// Concurrency bounds simultaneous Kubernetes requests for one application.
+	// Zero uses DefaultConcurrency; one restores strictly sequential execution.
+	Concurrency int
 	// Failure-injection tests observe these boundaries; production leaves nil.
 	testCheckpoint func(string)
 }
@@ -216,6 +219,53 @@ type planInput struct {
 	// Only namespaces confirmed absent and validated for reviewed creation.
 	MissingNamespaces           map[string]bool
 	AuthorizeNamespaceBootstrap func(context.Context) error
+	// Concurrency bounds simultaneous Kubernetes requests; zero means the default.
+	Concurrency int
+	// Live keeps the raw objects read by the latest live snapshot so later
+	// steps can reuse them instead of reading each object again.
+	Live *liveObjects
+}
+
+func (input planInput) concurrency() int {
+	if input.Concurrency <= 0 {
+		return DefaultConcurrency
+	}
+	return min(input.Concurrency, MaxConcurrency)
+}
+
+// liveObjects is safe for concurrent reads and writes. A nil value stores
+// nothing, so callers that build a planInput by hand need not set it.
+type liveObjects struct {
+	mu      sync.RWMutex
+	objects map[string]*unstructured.Unstructured
+}
+
+func newLiveObjects() *liveObjects {
+	return &liveObjects{objects: map[string]*unstructured.Unstructured{}}
+}
+
+func (l *liveObjects) set(key string, object *unstructured.Unstructured) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.objects[key] = object
+	l.mu.Unlock()
+}
+
+// get returns the stored object only when it still has the expected
+// resourceVersion; anything else is treated as unknown.
+func (l *liveObjects) get(key, resourceVersion string) *unstructured.Unstructured {
+	if l == nil || resourceVersion == "" {
+		return nil
+	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	object := l.objects[key]
+	if object == nil || object.GetResourceVersion() != resourceVersion {
+		return nil
+	}
+	return object
 }
 
 func (s *Service) BuildPlan(ctx context.Context, applicationID, actorID string) (store.PlanRecord, error) {
@@ -407,7 +457,9 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 	if err != nil {
 		return core.Plan{}, nil, &planStageError{stage: "git", err: errors.New("application Git source is unavailable")}
 	}
-	checkout, err := gitops.Fetch(ctx, s.Store, s.EncryptionKey, source, app.Revision)
+	fetchCtx, fetchDone := s.beginStage(ctx, stageGitFetch)
+	checkout, err := gitops.Fetch(fetchCtx, s.Store, s.EncryptionKey, source, app.Revision)
+	fetchDone()
 	if err != nil {
 		return core.Plan{}, nil, &planStageError{stage: "git", err: err}
 	}
@@ -436,7 +488,9 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 	if err != nil {
 		return core.Plan{}, nil, err
 	}
-	desired, err := s.renderPlanResources(ctx, renderOptions, input.ReviewFingerprint)
+	renderCtx, renderDone := s.beginStage(ctx, stageRender)
+	desired, err := s.renderPlanResources(renderCtx, renderOptions, input.ReviewFingerprint)
+	renderDone()
 	if err != nil {
 		observability.MarkError(span, err)
 		return core.Plan{}, nil, &planStageError{stage: "render", err: err}
@@ -977,7 +1031,7 @@ func (s *Service) loadPlanInput(ctx context.Context, app store.Application) (pla
 	if err != nil {
 		return planInput{}, errors.New("application cluster is unavailable")
 	}
-	input := planInput{Application: app, Cluster: cluster, NamespaceBindings: map[string]store.NamespaceBinding{}, NamespaceClients: map[string]*kube.Clients{}, ManagedNamespaces: map[string]bool{}}
+	input := planInput{Application: app, Cluster: cluster, NamespaceBindings: map[string]store.NamespaceBinding{}, NamespaceClients: map[string]*kube.Clients{}, ManagedNamespaces: map[string]bool{}, Concurrency: s.concurrency(), Live: newLiveObjects()}
 	if len(app.Namespaces) == 0 {
 		return planInput{}, &PlanConfigurationError{Source: "cluster", Code: "kubernetes.namespace_binding_missing", Summary: "Application has no namespace bindings.", Remediation: "Bind the application's destination namespace to this workspace, then build a fresh plan."}
 	}
@@ -1057,6 +1111,8 @@ func (s *Service) loadPlanInput(ctx context.Context, app store.Application) (pla
 }
 
 func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []core.Resource) ([]core.Resource, map[string][]string, error) {
+	ctx, done := s.beginStage(ctx, stageLiveSnapshot)
+	defer done()
 	managed, err := s.Store.ManagedResources(ctx, input.Application.ID)
 	if err != nil {
 		return nil, nil, err
@@ -1086,10 +1142,32 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
+	kinds := map[string]core.Identity{}
+	for _, identity := range identities {
+		kinds[kindKey(identity)] = identity
+	}
+	// One owner-label List per kind and namespace returns every object this
+	// application already manages, so steady-state plans need no per-object
+	// reads. Objects a List did not return (new, unowned or deleted ones) are
+	// still read individually. List failures are reported below, in the same
+	// order a sequential scan would have reached them.
+	owned := listOwnedObjects(ctx, input, kinds)
+	listed := map[string]*unstructured.Unstructured{}
+	for _, list := range owned {
+		for _, object := range list.items {
+			listed[ownedObjectIdentity(input, list.id, object).Key()] = object
+		}
+	}
+	unlisted := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if _, ok := listed[key]; !ok {
+			unlisted = append(unlisted, key)
+		}
+	}
+	prefetched := prefetchLiveObjects(ctx, input, unlisted, identities)
 	liveByKey := map[string]core.Resource{}
 	changedIgnoredFields := map[string][]string{}
 	conflicts := make([]*OwnershipConflict, 0)
-	prefetched := prefetchLiveObjects(ctx, input, keys, identities)
 	for _, key := range keys {
 		identity := identities[key]
 		if identity.Namespace != "" && input.MissingNamespaces[identity.Namespace] {
@@ -1124,7 +1202,9 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 			resourceInterface = client.Dynamic.Resource(mapping.Resource)
 		}
 		var object *unstructured.Unstructured
-		if fetched, ok := prefetched[key]; ok {
+		if found, ok := listed[key]; ok {
+			object = found
+		} else if fetched, ok := prefetched[key]; ok {
 			object, err = fetched.object, fetched.err
 		} else {
 			object, err = resourceInterface.Get(ctx, identity.Name, v1.GetOptions{})
@@ -1158,51 +1238,104 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 		if object.GetLabels()["justcd.io/application-id"] != input.Application.ID || string(object.GetUID()) != tracked.UID {
 			return nil, nil, fmt.Errorf("%s %s/%s ownership changed; refusing to adopt or mutate it", identity.Kind, identity.Namespace, identity.Name)
 		}
-		var resource core.Resource
-		if index, exists := desiredIndex[identity.Key()]; exists {
-			paths := ignoredPathsFor(input, identity)
-			for _, path := range paths {
-				if !render.JSONPointerExists(desired[index].Manifest, path) && !render.JSONPointerExists(previousManifests[identity.Key()], path) {
-					return nil, nil, fmt.Errorf("ignored field %s is not present in the desired or previously managed manifest", path)
-				}
-				if !render.HasOtherManagerFieldOwnership(object, input.Application.ID, path) {
-					return nil, nil, fmt.Errorf("cannot ignore %s: another Kubernetes field manager must own this field before JustCD hands it off", path)
-				}
-			}
-			var desiredFingerprint string
-			var changed []string
-			resource, desiredFingerprint, changed, err = render.CanonicalLiveAgainstIgnoring(object, input.Cluster.ID, input.Application.ID, identity.ClusterScoped, desired[index].Manifest, previousManifests[identity.Key()], paths, selectedPathsFor(input, identity))
-			if err == nil {
-				desired[index].Fingerprint = desiredFingerprint
-				if len(changed) > 0 {
-					changedIgnoredFields[identity.Key()] = changed
-				}
-			}
-		} else {
-			resource, err = render.CanonicalLive(object, input.Cluster.ID, input.Application.ID, identity.ClusterScoped)
-		}
+		resource, err := s.canonicalSnapshotResource(input, identity, object, desired, desiredIndex, previousManifests, changedIgnoredFields)
 		if err != nil {
 			return nil, nil, err
 		}
+		input.Live.set(identity.Key(), object)
 		liveByKey[identity.Key()] = resource
 	}
 	if len(conflicts) > 0 {
 		return nil, nil, &OwnershipConflicts{Items: conflicts}
 	}
-	kinds := map[string]core.Identity{}
-	for _, identity := range identities {
-		kinds[kindKey(identity)] = identity
+	for _, list := range owned {
+		if list.err != nil {
+			return nil, nil, list.err
+		}
+		for _, object := range list.items {
+			objectIdentity := ownedObjectIdentity(input, list.id, object)
+			tracked, owned := managedByKey[objectIdentity.Key()]
+			if !owned {
+				continue
+			}
+			if string(object.GetUID()) != tracked.UID {
+				return nil, nil, fmt.Errorf("%s %s/%s ownership changed; refusing to adopt or mutate it", objectIdentity.Kind, objectIdentity.Namespace, objectIdentity.Name)
+			}
+			if _, alreadyFetched := liveByKey[objectIdentity.Key()]; alreadyFetched {
+				continue
+			}
+			resource, err := s.canonicalSnapshotResource(input, objectIdentity, object, desired, desiredIndex, previousManifests, changedIgnoredFields)
+			if err != nil {
+				return nil, nil, err
+			}
+			input.Live.set(objectIdentity.Key(), object)
+			liveByKey[resource.Identity.Key()] = resource
+			if len(liveByKey) > maxSnapshotResources {
+				return nil, nil, errors.New("application resource snapshot exceeds 10000 resources")
+			}
+		}
 	}
+	result := make([]core.Resource, 0, len(liveByKey))
+	for _, resource := range liveByKey {
+		result = append(result, resource)
+	}
+	return result, changedIgnoredFields, nil
+}
+
+// canonicalSnapshotResource projects one owned live object for comparison,
+// validating field ignores against the desired and previous manifests.
+func (s *Service) canonicalSnapshotResource(input planInput, identity core.Identity, object *unstructured.Unstructured, desired []core.Resource, desiredIndex map[string]int, previousManifests map[string][]byte, changedIgnoredFields map[string][]string) (core.Resource, error) {
+	index, exists := desiredIndex[identity.Key()]
+	if !exists {
+		return render.CanonicalLive(object, input.Cluster.ID, input.Application.ID, identity.ClusterScoped)
+	}
+	paths := ignoredPathsFor(input, identity)
+	for _, path := range paths {
+		if !render.JSONPointerExists(desired[index].Manifest, path) && !render.JSONPointerExists(previousManifests[identity.Key()], path) {
+			return core.Resource{}, fmt.Errorf("ignored field %s is not present in the desired or previously managed manifest", path)
+		}
+		if !render.HasOtherManagerFieldOwnership(object, input.Application.ID, path) {
+			return core.Resource{}, fmt.Errorf("cannot ignore %s: another Kubernetes field manager must own this field before JustCD hands it off", path)
+		}
+	}
+	resource, desiredFingerprint, changed, err := render.CanonicalLiveAgainstIgnoring(object, input.Cluster.ID, input.Application.ID, identity.ClusterScoped, desired[index].Manifest, previousManifests[identity.Key()], paths, selectedPathsFor(input, identity))
+	if err != nil {
+		return core.Resource{}, err
+	}
+	desired[index].Fingerprint = desiredFingerprint
+	if len(changed) > 0 {
+		changedIgnoredFields[identity.Key()] = changed
+	}
+	return resource, nil
+}
+
+func ownedObjectIdentity(input planInput, list core.Identity, object *unstructured.Unstructured) core.Identity {
+	return core.Identity{ClusterID: input.Cluster.ID, APIVersion: object.GetAPIVersion(), Kind: object.GetKind(), Namespace: object.GetNamespace(), Name: object.GetName(), ClusterScoped: list.ClusterScoped}
+}
+
+// ownedList is one owner-label List of a kind in a namespace. err is the
+// error a sequential scan would return on reaching this list, including
+// setup failures for its kind.
+type ownedList struct {
+	id       core.Identity
+	resource dynamic.ResourceInterface
+	items    []*unstructured.Unstructured
+	err      error
+}
+
+func listOwnedObjects(ctx context.Context, input planInput, kinds map[string]core.Identity) []ownedList {
 	kindKeys := make([]string, 0, len(kinds))
 	for key := range kinds {
 		kindKeys = append(kindKeys, key)
 	}
 	sort.Strings(kindKeys)
+	lists := make([]ownedList, 0, len(kindKeys))
 	for _, key := range kindKeys {
 		identity := kinds[key]
 		mapping, err := input.Mapper.Mapper.RESTMapping(groupKind(identity), groupVersion(identity))
 		if err != nil {
-			return nil, nil, err
+			lists = append(lists, ownedList{err: err})
+			break
 		}
 		namespaces := []string{identity.Namespace}
 		if mapping.Scope.Name() == "namespace" {
@@ -1213,10 +1346,12 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 			sort.Strings(namespaces)
 		} else {
 			if input.ClusterScopeClient == nil {
-				return nil, nil, clusterScopeRequired(&identity)
+				lists = append(lists, ownedList{err: clusterScopeRequired(&identity)})
+				break
 			}
 			namespaces = []string{""}
 		}
+		stop := false
 		for _, namespace := range namespaces {
 			if namespace != "" && input.MissingNamespaces[namespace] {
 				continue
@@ -1226,7 +1361,9 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 			id.ClusterScoped = mapping.Scope.Name() != "namespace"
 			client, err := clientFor(input, id)
 			if err != nil {
-				return nil, nil, err
+				lists = append(lists, ownedList{err: err})
+				stop = true
+				break
 			}
 			var resourceInterface dynamic.ResourceInterface
 			if mapping.Scope.Name() == "namespace" {
@@ -1234,80 +1371,51 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 			} else {
 				resourceInterface = client.Dynamic.Resource(mapping.Resource)
 			}
-			continueToken := ""
-			for page := 0; page < 100; page++ {
-				list, err := resourceInterface.List(ctx, v1.ListOptions{LabelSelector: "justcd.io/application-id=" + input.Application.ID, Limit: 500, Continue: continueToken})
-				if err != nil {
-					if apierrors.IsNotFound(err) && input.Application.CreateNamespaces && namespace != "" && !input.ManagedNamespaces[namespace] {
-						provisioningClient, clientErr := namespaceProvisioningClient(input, namespace)
-						if clientErr == nil {
-							_, namespaceErr := provisioningClient.Dynamic.Resource(namespaceResource).Get(ctx, namespace, v1.GetOptions{})
-							if apierrors.IsNotFound(namespaceErr) {
-								break
-							}
-						}
-					}
-					return nil, nil, fmt.Errorf("cannot fully list owned %s resources: %w", identity.Kind, err)
-				}
-				for i := range list.Items {
-					object := &list.Items[i]
-					objectIdentity := core.Identity{ClusterID: input.Cluster.ID, APIVersion: object.GetAPIVersion(), Kind: object.GetKind(), Namespace: object.GetNamespace(), Name: object.GetName(), ClusterScoped: id.ClusterScoped}
-					tracked, owned := managedByKey[objectIdentity.Key()]
-					if !owned {
-						continue
-					}
-					if string(object.GetUID()) != tracked.UID {
-						return nil, nil, fmt.Errorf("%s %s/%s ownership changed; refusing to adopt or mutate it", objectIdentity.Kind, objectIdentity.Namespace, objectIdentity.Name)
-					}
-					if _, alreadyFetched := liveByKey[objectIdentity.Key()]; alreadyFetched {
-						continue
-					}
-					var resource core.Resource
-					if desiredIndexFor, exists := desiredIndex[objectIdentity.Key()]; exists {
-						paths := ignoredPathsFor(input, objectIdentity)
-						for _, path := range paths {
-							if !render.JSONPointerExists(desired[desiredIndexFor].Manifest, path) && !render.JSONPointerExists(previousManifests[objectIdentity.Key()], path) {
-								return nil, nil, fmt.Errorf("ignored field %s is not present in the desired or previously managed manifest", path)
-							}
-							if !render.HasOtherManagerFieldOwnership(object, input.Application.ID, path) {
-								return nil, nil, fmt.Errorf("cannot ignore %s: another Kubernetes field manager must own this field before JustCD hands it off", path)
-							}
-						}
-						var desiredFingerprint string
-						var changed []string
-						resource, desiredFingerprint, changed, err = render.CanonicalLiveAgainstIgnoring(object, input.Cluster.ID, input.Application.ID, id.ClusterScoped, desired[desiredIndexFor].Manifest, previousManifests[objectIdentity.Key()], paths, selectedPathsFor(input, objectIdentity))
-						if err == nil {
-							desired[desiredIndexFor].Fingerprint = desiredFingerprint
-							if len(changed) > 0 {
-								changedIgnoredFields[objectIdentity.Key()] = changed
-							}
-						}
-					} else {
-						resource, err = render.CanonicalLive(object, input.Cluster.ID, input.Application.ID, id.ClusterScoped)
-					}
-					if err != nil {
-						return nil, nil, err
-					}
-					liveByKey[resource.Identity.Key()] = resource
-					if len(liveByKey) > maxSnapshotResources {
-						return nil, nil, errors.New("application resource snapshot exceeds 10000 resources")
-					}
-				}
-				continueToken = list.GetContinue()
-				if continueToken == "" {
-					break
-				}
-				if page == 99 {
-					return nil, nil, errors.New("resource listing exceeded page limit")
-				}
-			}
+			lists = append(lists, ownedList{id: id, resource: resourceInterface})
+		}
+		if stop {
+			break
 		}
 	}
-	result := make([]core.Resource, 0, len(liveByKey))
-	for _, resource := range liveByKey {
-		result = append(result, resource)
+	_ = forEachLimit(len(lists), input.concurrency(), func(i int) error {
+		if lists[i].resource != nil {
+			lists[i].items, lists[i].err = listOwnedKind(ctx, input, lists[i].id, lists[i].resource)
+		}
+		return nil
+	})
+	return lists
+}
+
+func listOwnedKind(ctx context.Context, input planInput, id core.Identity, resourceInterface dynamic.ResourceInterface) ([]*unstructured.Unstructured, error) {
+	var items []*unstructured.Unstructured
+	continueToken := ""
+	for page := 0; page < 100; page++ {
+		list, err := resourceInterface.List(ctx, v1.ListOptions{LabelSelector: "justcd.io/application-id=" + input.Application.ID, Limit: 500, Continue: continueToken})
+		if err != nil {
+			namespace := id.Namespace
+			if apierrors.IsNotFound(err) && input.Application.CreateNamespaces && namespace != "" && !input.ManagedNamespaces[namespace] {
+				provisioningClient, clientErr := namespaceProvisioningClient(input, namespace)
+				if clientErr == nil {
+					_, namespaceErr := provisioningClient.Dynamic.Resource(namespaceResource).Get(ctx, namespace, v1.GetOptions{})
+					if apierrors.IsNotFound(namespaceErr) {
+						return items, nil
+					}
+				}
+			}
+			return items, fmt.Errorf("cannot fully list owned %s resources: %w", id.Kind, err)
+		}
+		for i := range list.Items {
+			items = append(items, &list.Items[i])
+		}
+		if len(items) > maxSnapshotResources {
+			return items, errors.New("application resource snapshot exceeds 10000 resources")
+		}
+		continueToken = list.GetContinue()
+		if continueToken == "" {
+			return items, nil
+		}
 	}
-	return result, changedIgnoredFields, nil
+	return items, errors.New("resource listing exceeded page limit")
 }
 
 const maxSnapshotResources = 10000
@@ -1353,7 +1461,7 @@ type prefetchedObject struct {
 // objects concurrently; the caller still processes them in sorted order.
 // Anything that cannot be prefetched falls back to the sequential path.
 func prefetchLiveObjects(ctx context.Context, input planInput, keys []string, identities map[string]core.Identity) map[string]prefetchedObject {
-	const workers = 8
+	workers := input.concurrency()
 	results := make(map[string]prefetchedObject, len(keys))
 	var mu sync.Mutex
 	var wg sync.WaitGroup

@@ -103,6 +103,8 @@ func (s *Service) SavePreOperationCheckpoint(ctx context.Context, app store.Appl
 }
 
 func (s *Service) SaveSuccessfulDeploymentSnapshot(ctx context.Context, app store.Application, operationID string, revision string, settings core.RollbackSettings, input planInput) (store.RollbackSnapshot, error) {
+	ctx, done := s.beginStage(ctx, stageSuccessSnapshot)
+	defer done()
 	resources, err := s.captureManagedLiveState(ctx, app, input)
 	if err != nil {
 		return store.RollbackSnapshot{}, err

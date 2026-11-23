@@ -140,6 +140,13 @@ not install PostgreSQL or create credentials for target clusters. Set
 `/healthz` for Kubernetes probes; the backend's endpoint reports process
 availability after startup, not the health of every external connection.
 
+### Sync concurrency
+
+`backend.syncConcurrency` (default `8`, range `1`–`32`, exposed as
+`JUSTCD_SYNC_CONCURRENCY`) bounds the Kubernetes requests one application's
+plan or sync makes at once. Independent resources in the same dependency wave
+are applied concurrently; set it to `1` to apply resources strictly in sequence.
+
 ### Worker shutdown and recovery
 
 On SIGTERM or SIGINT the backend stops acquiring queued operations and stops

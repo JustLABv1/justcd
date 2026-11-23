@@ -64,3 +64,29 @@ func TestPublishingLimits(t *testing.T) {
 		t.Fatal("configured limits not applied", err)
 	}
 }
+
+func TestSyncConcurrency(t *testing.T) {
+	t.Setenv("JUSTCD_ENV", "development")
+	t.Setenv("JUSTCD_DATABASE_URL", "postgres://test.invalid/justcd")
+	t.Setenv("JUSTCD_ENCRYPTION_KEY", strings.Repeat("a", 32))
+	t.Setenv("JUSTCD_OTEL_ENABLED", "false")
+	for _, tc := range []struct {
+		value string
+		want  int
+	}{
+		{"", 8}, {"1", 1}, {"16", 16}, {"32", 32},
+		{"0", 0}, {"-1", 0}, {"33", 0}, {"eight", 0},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			t.Setenv("JUSTCD_SYNC_CONCURRENCY", tc.value)
+			cfg, err := Load()
+			if tc.want == 0 {
+				if err == nil || !strings.Contains(err.Error(), "JUSTCD_SYNC_CONCURRENCY") {
+					t.Fatalf("expected concurrency validation error, got %v", err)
+				}
+			} else if err != nil || cfg.SyncConcurrency != tc.want {
+				t.Fatalf("got %d, %v; want %d", cfg.SyncConcurrency, err, tc.want)
+			}
+		})
+	}
+}

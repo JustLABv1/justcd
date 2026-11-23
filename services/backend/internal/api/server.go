@@ -56,7 +56,7 @@ func New(s *store.Store, cfg config.Config, logger *slog.Logger) (*Server, error
 	if logger == nil {
 		logger = slog.Default()
 	}
-	server := &Server{Store: s, Config: cfg, EncryptionKey: cfg.EncryptionKey, Logger: logger, Syncer: &syncer.Service{Store: s, EncryptionKey: cfg.EncryptionKey}, dummyHash: dummy, Mux: http.NewServeMux()}
+	server := &Server{Store: s, Config: cfg, EncryptionKey: cfg.EncryptionKey, Logger: logger, Syncer: &syncer.Service{Store: s, EncryptionKey: cfg.EncryptionKey, Concurrency: cfg.SyncConcurrency}, dummyHash: dummy, Mux: http.NewServeMux()}
 	server.routes()
 	return server, nil
 }

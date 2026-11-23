@@ -22,15 +22,64 @@ func OrderChanges(changes []Change) ([]Change, error) {
 			apply = append(apply, change)
 		}
 	}
-	apply, err := orderChangePhase(apply, false)
+	apply, _, err := orderChangePhase(apply, false)
 	if err != nil {
 		return nil, err
 	}
-	remove, err = orderChangePhase(remove, true)
+	remove, _, err = orderChangePhase(remove, true)
 	if err != nil {
 		return nil, err
 	}
 	return append(apply, remove...), nil
+}
+
+// OrderChangeWaves groups the apply phase of OrderChanges into waves that may
+// run concurrently, followed by every delete as a wave of its own. Flattening
+// the result yields exactly OrderChanges. A wave is a contiguous run of that
+// order whose members share a rollout priority and do not depend on each
+// other, so everything a change depends on is in an earlier wave and kind
+// priorities (CRDs before custom resources, Services before workloads) still
+// apply.
+func OrderChangeWaves(changes []Change) ([][]Change, error) {
+	var apply, remove []Change
+	for _, change := range changes {
+		if change.Kind == Delete {
+			remove = append(remove, change)
+		} else {
+			apply = append(apply, change)
+		}
+	}
+	ordered, dependsOn, err := orderChangePhase(apply, false)
+	if err != nil {
+		return nil, err
+	}
+	var waves [][]Change
+	var wave []Change
+	members := map[string]bool{}
+	for _, change := range ordered {
+		key := change.Identity.Key()
+		split := len(wave) > 0 && rolloutPriority(wave[0].Identity) != rolloutPriority(change.Identity)
+		for dependency := range dependsOn[key] {
+			split = split || members[dependency]
+		}
+		if split {
+			waves = append(waves, wave)
+			wave, members = nil, map[string]bool{}
+		}
+		wave = append(wave, change)
+		members[key] = true
+	}
+	if len(wave) > 0 {
+		waves = append(waves, wave)
+	}
+	remove, _, err = orderChangePhase(remove, true)
+	if err != nil {
+		return nil, err
+	}
+	for _, change := range remove {
+		waves = append(waves, []Change{change})
+	}
+	return waves, nil
 }
 
 type rolloutObject struct {
@@ -41,7 +90,9 @@ type rolloutObject struct {
 	ImagePullSecrets []corev1.LocalObjectReference            `json:"imagePullSecrets"`
 }
 
-func orderChangePhase(changes []Change, deleting bool) ([]Change, error) {
+// orderChangePhase also returns, for each change key, the keys of the changes
+// it depends on.
+func orderChangePhase(changes []Change, deleting bool) ([]Change, map[string]map[string]bool, error) {
 	// Sorting first makes both graph traversal and cycle diagnostics reproducible.
 	sort.Slice(changes, func(i, j int) bool {
 		a, b := changes[i].Identity, changes[j].Identity
@@ -54,7 +105,7 @@ func orderChangePhase(changes []Change, deleting bool) ([]Change, error) {
 	index := make(map[string]int, len(changes))
 	for i, change := range changes {
 		if _, exists := index[change.Identity.Key()]; exists {
-			return nil, fmt.Errorf("duplicate rollout resource %s %s/%s", change.Identity.Kind, change.Identity.Namespace, change.Identity.Name)
+			return nil, nil, fmt.Errorf("duplicate rollout resource %s %s/%s", change.Identity.Kind, change.Identity.Namespace, change.Identity.Name)
 		}
 		index[change.Identity.Key()] = i
 		raw := change.After
@@ -63,7 +114,7 @@ func orderChangePhase(changes []Change, deleting bool) ([]Change, error) {
 		}
 		if len(raw) > 0 && string(raw) != "null" {
 			if err := json.Unmarshal(raw, &objects[i]); err != nil {
-				return nil, fmt.Errorf("cannot read rollout dependencies for %s %s/%s", change.Identity.Kind, change.Identity.Namespace, change.Identity.Name)
+				return nil, nil, fmt.Errorf("cannot read rollout dependencies for %s %s/%s", change.Identity.Kind, change.Identity.Namespace, change.Identity.Name)
 			}
 		}
 	}
@@ -132,7 +183,7 @@ func orderChangePhase(changes []Change, deleting bool) ([]Change, error) {
 			var spec corev1.PersistentVolumeClaimSpec
 			if len(obj.Spec) > 0 {
 				if err := json.Unmarshal(obj.Spec, &spec); err != nil {
-					return nil, fmt.Errorf("cannot read PVC dependencies for %s/%s", id.Namespace, id.Name)
+					return nil, nil, fmt.Errorf("cannot read PVC dependencies for %s/%s", id.Namespace, id.Name)
 				}
 			}
 			if spec.StorageClassName != nil {
@@ -172,7 +223,7 @@ func orderChangePhase(changes []Change, deleting bool) ([]Change, error) {
 		}
 		pod, err := rolloutPodSpec(id, obj.Spec)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if pod == nil {
 			continue
@@ -295,7 +346,7 @@ func orderChangePhase(changes []Change, deleting bool) ([]Change, error) {
 	}
 	for i := range changes {
 		if err := visit(i); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	if deleting {
@@ -303,7 +354,15 @@ func orderChangePhase(changes []Change, deleting bool) ([]Change, error) {
 			ordered[i], ordered[j] = ordered[j], ordered[i]
 		}
 	}
-	return ordered, nil
+	dependsOn := make(map[string]map[string]bool, len(changes))
+	for i, change := range changes {
+		keys := make(map[string]bool, len(deps[i]))
+		for j := range deps[i] {
+			keys[changes[j].Identity.Key()] = true
+		}
+		dependsOn[change.Identity.Key()] = keys
+	}
+	return ordered, dependsOn, nil
 }
 
 // Kind priority gives deterministic, conservative ordering for resources with

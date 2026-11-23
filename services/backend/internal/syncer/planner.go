@@ -32,6 +32,9 @@ type Service struct {
 	Store         *store.Store
 	EncryptionKey []byte
 	Metrics       *observability.Metrics
+	// Concurrency bounds simultaneous Kubernetes requests for one application.
+	// Zero uses DefaultConcurrency; one restores strictly sequential execution.
+	Concurrency int
 	// Failure-injection tests observe these boundaries; production leaves nil.
 	testCheckpoint func(string)
 }
@@ -216,6 +219,97 @@ type planInput struct {
 	// Only namespaces confirmed absent and validated for reviewed creation.
 	MissingNamespaces           map[string]bool
 	AuthorizeNamespaceBootstrap func(context.Context) error
+	// Concurrency bounds simultaneous Kubernetes requests; zero means the default.
+	Concurrency int
+	// ServerVersion is the Kubernetes API server's version at load time.
+	ServerVersion string
+	// Live keeps the raw objects read by the latest live snapshot so later
+	// steps can reuse them instead of reading each object again.
+	Live *liveObjects
+}
+
+func (input planInput) concurrency() int {
+	if input.Concurrency <= 0 {
+		return DefaultConcurrency
+	}
+	return min(input.Concurrency, MaxConcurrency)
+}
+
+// liveObjects is safe for concurrent reads and writes. A nil value stores
+// nothing, so callers that build a planInput by hand need not set it.
+type liveObjects struct {
+	mu      sync.RWMutex
+	objects map[string]*unstructured.Unstructured
+	absent  map[string]bool
+}
+
+func newLiveObjects() *liveObjects {
+	return &liveObjects{objects: map[string]*unstructured.Unstructured{}, absent: map[string]bool{}}
+}
+
+func (l *liveObjects) set(key string, object *unstructured.Unstructured) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.objects[key] = object
+	delete(l.absent, key)
+	l.mu.Unlock()
+}
+
+// setAbsent records that the object was read and does not exist.
+func (l *liveObjects) setAbsent(key string) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	delete(l.objects, key)
+	l.absent[key] = true
+	l.mu.Unlock()
+}
+
+// forget drops what is known about an object, for example before it is
+// mutated, so a later lookup cannot return its earlier state.
+func (l *liveObjects) forget(key string) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	delete(l.objects, key)
+	delete(l.absent, key)
+	l.mu.Unlock()
+}
+
+// lookup reports the last observed object, whether it was observed absent,
+// and whether anything is known about it at all.
+func (l *liveObjects) lookup(key string) (object *unstructured.Unstructured, absent, known bool) {
+	if l == nil {
+		return nil, false, false
+	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if object, ok := l.objects[key]; ok {
+		return object, false, true
+	}
+	if l.absent[key] {
+		return nil, true, true
+	}
+	return nil, false, false
+}
+
+// get returns the stored object only when it still has the expected
+// resourceVersion; anything else is treated as unknown.
+func (l *liveObjects) get(key, resourceVersion string) *unstructured.Unstructured {
+	if l == nil || resourceVersion == "" {
+		return nil
+	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	object := l.objects[key]
+	if object == nil || object.GetResourceVersion() != resourceVersion {
+		return nil
+	}
+	return object
 }
 
 func (s *Service) BuildPlan(ctx context.Context, applicationID, actorID string) (store.PlanRecord, error) {
@@ -230,7 +324,8 @@ func (s *Service) BuildPlanWithSelection(ctx context.Context, app store.Applicat
 	ctx, span := otel.Tracer("justcd/planner").Start(ctx, "plan.build")
 	defer span.End()
 	span.SetAttributes(attribute.String("application.id", app.ID))
-	plan, desired, err := s.CalculatePlanWithSelection(ctx, app, selection)
+	result, err := s.calculatePlan(ctx, app, selection)
+	plan, desired := result.plan, result.desired
 	if err != nil {
 		observability.MarkError(span, err)
 		if ctx.Err() == nil {
@@ -251,7 +346,7 @@ func (s *Service) BuildPlanWithSelection(ctx context.Context, app store.Applicat
 		return store.PlanRecord{}, err
 	}
 	now := time.Now().UTC()
-	record := store.PlanRecord{ID: store.NewID(), Plan: plan, Desired: desired, CreatedBy: actorID, CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute), Status: "current"}
+	record := store.PlanRecord{ID: store.NewID(), Plan: plan, Desired: desired, CreatedBy: actorID, CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute), Status: "current", RecheckBasis: result.basis}
 	s.checkpoint("plan.before_save")
 	record, _, err = s.Store.SavePlanOrReuse(ctx, record)
 	if err != nil {
@@ -333,11 +428,40 @@ func (s *Service) calculateDecommissionPlan(ctx context.Context, app store.Appli
 }
 
 func (s *Service) RecheckPlan(ctx context.Context, app store.Application, record store.PlanRecord) (core.Plan, error) {
-	plan, err := s.recalculatePlan(ctx, app, record)
+	plan, _, err := s.recheck(ctx, app, record)
+	return plan, err
+}
+
+// recheck recalculates a stored plan for comparison with its digest and also
+// returns the live objects it observed, when it observed them all. It uses
+// the fast recheck when the plan's inputs are provably unchanged.
+func (s *Service) recheck(ctx context.Context, app store.Application, record store.PlanRecord) (core.Plan, *liveObjects, error) {
+	fastCtx, span := otel.Tracer("justcd/syncer").Start(ctx, "sync."+stageRecheckFast)
+	started := time.Now()
+	plan, live, err := s.fastRecheck(fastCtx, app, record)
 	if err == nil {
 		err = preserveReviewSchema(&plan, record.Plan)
 	}
-	return plan, err
+	if err == nil {
+		span.End()
+		s.Metrics.RecordSyncStage(stageRecheckFast, time.Since(started))
+		return plan, live, nil
+	}
+	reason := "error"
+	var full errFullRecheck
+	if errors.As(err, &full) {
+		reason = full.reason
+	}
+	span.SetAttributes(attribute.String("recheck.full_reason", reason))
+	span.End()
+	if ctx.Err() != nil {
+		return core.Plan{}, nil, ctx.Err()
+	}
+	plan, live, err = s.recalculatePlanLive(ctx, app, record)
+	if err == nil {
+		err = preserveReviewSchema(&plan, record.Plan)
+	}
+	return plan, live, err
 }
 
 func preserveReviewSchema(fresh *core.Plan, stored core.Plan) error {
@@ -349,22 +473,23 @@ func preserveReviewSchema(fresh *core.Plan, stored core.Plan) error {
 	return core.RefreshDigest(fresh)
 }
 
-func (s *Service) recalculatePlan(ctx context.Context, app store.Application, record store.PlanRecord) (core.Plan, error) {
+func (s *Service) recalculatePlanLive(ctx context.Context, app store.Application, record store.PlanRecord) (core.Plan, *liveObjects, error) {
 	if record.Plan.Rollback != nil {
 		plan, _, err := s.CalculateRollbackPlan(ctx, app, *record.Plan.Rollback)
-		return plan, err
+		return plan, nil, err
 	}
 	if record.Plan.Decommission {
 		if !app.Decommissioning {
-			return core.Plan{}, errors.New("decommission plan was cancelled")
+			return core.Plan{}, nil, errors.New("decommission plan was cancelled")
 		}
-		return s.calculateDecommissionPlan(ctx, app, record.Plan.Selection.KeepNamespaces)
+		plan, err := s.calculateDecommissionPlan(ctx, app, record.Plan.Selection.KeepNamespaces)
+		return plan, nil, err
 	}
 	if app.Decommissioning {
-		return core.Plan{}, errors.New("application is being decommissioned; cancel deletion before normal sync")
+		return core.Plan{}, nil, errors.New("application is being decommissioned; cancel deletion before normal sync")
 	}
-	plan, _, err := s.CalculatePlanWithSelection(ctx, app, record.Plan.Selection)
-	return plan, err
+	result, err := s.calculatePlan(ctx, app, record.Plan.Selection)
+	return result.plan, result.live, err
 }
 
 func (s *Service) RefreshPlan(ctx context.Context, app store.Application, actorID string, record store.PlanRecord) (store.PlanRecord, error) {
@@ -385,68 +510,90 @@ func (s *Service) CalculatePlan(ctx context.Context, app store.Application) (cor
 }
 
 func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Application, selection core.PlanSelection) (core.Plan, []core.Resource, error) {
+	result, err := s.calculatePlan(ctx, app, selection)
+	return result.plan, result.desired, err
+}
+
+// planResult is a calculated plan with what is needed to recheck it cheaply.
+type planResult struct {
+	plan    core.Plan
+	desired []core.Resource
+	// basis digests the plan's Git, render and live-state inputs; empty when
+	// they could not all be recorded.
+	basis string
+	// live holds the objects observed while planning.
+	live *liveObjects
+}
+
+func (s *Service) calculatePlan(ctx context.Context, app store.Application, selection core.PlanSelection) (planResult, error) {
+	plan, desired, input, err := s.calculatePlanInput(ctx, app, selection)
+	if err != nil {
+		return planResult{}, err
+	}
+	managed, err := s.Store.ManagedResources(ctx, app.ID)
+	if err != nil {
+		return planResult{}, err
+	}
+	basis, _ := recheckBasis(input, plan.Revision, managed, desired)
+	return planResult{plan: plan, desired: desired, basis: basis, live: input.Live}, nil
+}
+
+func (s *Service) calculatePlanInput(ctx context.Context, app store.Application, selection core.PlanSelection) (core.Plan, []core.Resource, planInput, error) {
 	ctx, span := otel.Tracer("justcd/planner").Start(ctx, "plan.calculate")
 	defer span.End()
 	span.SetAttributes(attribute.String("application.id", app.ID), attribute.String("renderer", app.Renderer))
 	if app.ConfigurationMissing {
-		return core.Plan{}, nil, &PlanConfigurationError{Source: "git", Code: "application.definition_missing", Summary: "Application definition is missing from Git.", Remediation: "Restore the application's justcd.yaml definition on the tracked branch and run discovery before planning."}
+		return core.Plan{}, nil, planInput{}, &PlanConfigurationError{Source: "git", Code: "application.definition_missing", Summary: "Application definition is missing from Git.", Remediation: "Restore the application's justcd.yaml definition on the tracked branch and run discovery before planning."}
 	}
 	if app.Decommissioning {
-		return core.Plan{}, nil, errors.New("application is being decommissioned; cancel deletion before normal sync")
+		return core.Plan{}, nil, planInput{}, errors.New("application is being decommissioned; cancel deletion before normal sync")
 	}
 	rules, err := s.Store.IgnoreRules(ctx, app.ID)
 	if err != nil {
-		return core.Plan{}, nil, err
+		return core.Plan{}, nil, planInput{}, err
 	}
 	selectors, err := s.Store.IgnoreSelectors(ctx, app.ID)
 	if err != nil {
-		return core.Plan{}, nil, err
+		return core.Plan{}, nil, planInput{}, err
 	}
 	selection = normalizeSelection(selection)
 	source, err := s.Store.GitSourceForWorkspace(ctx, app.SourceID, app.WorkspaceID)
 	if err != nil {
-		return core.Plan{}, nil, &planStageError{stage: "git", err: errors.New("application Git source is unavailable")}
+		return core.Plan{}, nil, planInput{}, &planStageError{stage: "git", err: errors.New("application Git source is unavailable")}
 	}
-	checkout, err := gitops.Fetch(ctx, s.Store, s.EncryptionKey, source, app.Revision)
+	fetchCtx, fetchDone := s.beginStage(ctx, stageGitFetch)
+	checkout, err := gitops.Fetch(fetchCtx, s.Store, s.EncryptionKey, source, app.Revision)
+	fetchDone()
 	if err != nil {
-		return core.Plan{}, nil, &planStageError{stage: "git", err: err}
+		return core.Plan{}, nil, planInput{}, &planStageError{stage: "git", err: err}
 	}
 	defer checkout.Close()
 	input, err := s.loadPlanInput(ctx, app)
 	if err != nil {
-		return core.Plan{}, nil, &planStageError{stage: "cluster", err: err}
+		return core.Plan{}, nil, planInput{}, &planStageError{stage: "cluster", err: err}
 	}
 	input.IgnoreRules = rules
 	input.IgnoreSelectors = selectors
 	input.Selection = selection
-	namespaceBindings := make([]core.Binding, 0, len(input.Bindings))
-	for _, binding := range input.Bindings {
-		if !binding.ClusterScope {
-			namespaceBindings = append(namespaceBindings, binding)
-		}
-	}
-	ignoredResources := make([]core.Identity, 0, len(rules))
-	for _, rule := range rules {
-		if rule.Path == "" {
-			ignoredResources = append(ignoredResources, rule.Identity)
-		}
-	}
-	renderOptions := render.Options{RepositoryRoot: checkout.Root, ManifestPath: app.ManifestPath, TargetManifestPath: app.TargetManifestPath, NamespaceManifestPaths: app.NamespaceManifestPaths, Renderer: app.Renderer, KustomizeHelmEnabled: app.KustomizeHelmEnabled, KustomizeNamespaceOverride: app.KustomizeNamespaceOverride, HelmReleaseName: app.HelmReleaseName, HelmValuesFiles: app.HelmValuesFiles, HelmValuesYAML: app.HelmValuesYAML, TargetHelmValuesFiles: app.TargetHelmValuesFiles, TargetHelmValuesYAML: app.TargetHelmValuesYAML, NamespaceHelmValues: app.NamespaceHelmValues, ApplicationID: app.ID, ClusterID: app.ClusterID, Namespaces: namespaceBindings, Mapper: input.Mapper.Mapper, IgnoredResources: ignoredResources, IgnoredSelectors: selectors}
+	renderOptions := planRenderOptions(app, input, rules, selectors)
+	renderOptions.RepositoryRoot = checkout.Root
 	input.ReviewFingerprint, err = adoptionReviewFingerprint(source, app.Revision, checkout.Commit, renderOptions)
 	if err != nil {
-		return core.Plan{}, nil, err
+		return core.Plan{}, nil, planInput{}, err
 	}
-	desired, err := s.renderPlanResources(ctx, renderOptions, input.ReviewFingerprint)
+	renderCtx, renderDone := s.beginStage(ctx, stageRender)
+	desired, err := s.renderPlanResources(renderCtx, renderOptions, input.ReviewFingerprint)
+	renderDone()
 	if err != nil {
 		observability.MarkError(span, err)
-		return core.Plan{}, nil, &planStageError{stage: "render", err: err}
+		return core.Plan{}, nil, planInput{}, &planStageError{stage: "render", err: err}
 	}
 	for _, resource := range desired {
 		if app.BranchTest != nil && app.BranchTest.Mode == "isolated" && resource.Identity.ClusterScoped {
-			return core.Plan{}, nil, errors.New("isolated branch previews cannot manage cluster-scoped resources; remove them from the preview overlay")
+			return core.Plan{}, nil, planInput{}, errors.New("isolated branch previews cannot manage cluster-scoped resources; remove them from the preview overlay")
 		}
 		if resource.Identity.ClusterScoped && input.ClusterScopeClient == nil {
-			return core.Plan{}, nil, clusterScopeRequired(&resource.Identity)
+			return core.Plan{}, nil, planInput{}, clusterScopeRequired(&resource.Identity)
 		}
 	}
 	// Validate prerequisites before workload reads: a credential may not have
@@ -465,7 +612,7 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 	}
 	prerequisites := core.Plan{}
 	if err := addNamespaceCreations(ctx, input, &prerequisites, desired); err != nil {
-		return core.Plan{}, nil, &planStageError{stage: "cluster", err: err}
+		return core.Plan{}, nil, planInput{}, &planStageError{stage: "cluster", err: err}
 	}
 	input.MissingNamespaces = make(map[string]bool, len(prerequisites.NamespaceCreations))
 	for _, namespace := range prerequisites.NamespaceCreations {
@@ -473,16 +620,16 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 	}
 	live, changedIgnoredFields, err := s.liveSnapshot(ctx, input, desired)
 	if err != nil {
-		return core.Plan{}, nil, &planStageError{stage: "cluster", err: err}
+		return core.Plan{}, nil, planInput{}, &planStageError{stage: "cluster", err: err}
 	}
 	plan, err := core.BuildPlan(app.ID, checkout.Commit, input.Bindings, desired, live)
 	if err != nil {
 		observability.MarkError(span, err)
-		return core.Plan{}, nil, err
+		return core.Plan{}, nil, planInput{}, err
 	}
 	managed, err := s.Store.ManagedResources(ctx, app.ID)
 	if err != nil {
-		return core.Plan{}, nil, err
+		return core.Plan{}, nil, planInput{}, err
 	}
 	previousByKey := make(map[string][]byte, len(managed))
 	for _, resource := range managed {
@@ -492,26 +639,26 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 		if plan.Changes[index].Kind == core.Update {
 			plan.Changes[index].Before, plan.Changes[index].After, err = render.ComparisonManifests(plan.Changes[index].Before, plan.Changes[index].After, previousByKey[plan.Changes[index].Identity.Key()])
 			if err != nil {
-				return core.Plan{}, nil, err
+				return core.Plan{}, nil, planInput{}, err
 			}
 		}
 		for _, path := range persistentPathsFor(input, plan.Changes[index].Identity) {
 			if len(plan.Changes[index].Before) > 0 {
 				plan.Changes[index].Before, err = render.RemoveJSONPointer(plan.Changes[index].Before, path)
 				if err != nil {
-					return core.Plan{}, nil, err
+					return core.Plan{}, nil, planInput{}, err
 				}
 			}
 			if len(plan.Changes[index].After) > 0 {
 				plan.Changes[index].After, err = render.RemoveJSONPointer(plan.Changes[index].After, path)
 				if err != nil {
-					return core.Plan{}, nil, err
+					return core.Plan{}, nil, planInput{}, err
 				}
 			}
 		}
 		plan.Changes[index].ChangedPaths, err = render.ChangedJSONPointers(plan.Changes[index].Before, plan.Changes[index].After)
 		if err != nil {
-			return core.Plan{}, nil, err
+			return core.Plan{}, nil, planInput{}, err
 		}
 	}
 	plan.Selection = selection
@@ -543,19 +690,19 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 				if len(activeChange.Before) > 0 {
 					activeChange.Before, err = render.RemoveJSONPointer(activeChange.Before, path)
 					if err != nil {
-						return core.Plan{}, nil, err
+						return core.Plan{}, nil, planInput{}, err
 					}
 				}
 				if len(activeChange.After) > 0 {
 					activeChange.After, err = render.RemoveJSONPointer(activeChange.After, path)
 					if err != nil {
-						return core.Plan{}, nil, err
+						return core.Plan{}, nil, planInput{}, err
 					}
 				}
 			}
 			activeChange.ChangedPaths, err = render.ChangedJSONPointers(activeChange.Before, activeChange.After)
 			if err != nil {
-				return core.Plan{}, nil, err
+				return core.Plan{}, nil, planInput{}, err
 			}
 			plan.Ignored = append(plan.Ignored, core.Change{Kind: core.Update, Identity: activeChange.Identity, Before: ignoredBefore, After: ignoredAfter, ChangedPaths: paths, IgnoredPaths: paths, IgnoreReason: "Fields are excluded from this plan's selection"})
 			continue
@@ -580,13 +727,13 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 			if len(before) > 0 {
 				before, err = render.RemoveJSONPointer(before, path)
 				if err != nil {
-					return core.Plan{}, nil, err
+					return core.Plan{}, nil, planInput{}, err
 				}
 			}
 			if len(after) > 0 {
 				after, err = render.RemoveJSONPointer(after, path)
 				if err != nil {
-					return core.Plan{}, nil, err
+					return core.Plan{}, nil, planInput{}, err
 				}
 			}
 		}
@@ -599,7 +746,7 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 				if desired[desiredIndex].Identity.Key() == plan.Changes[index].Identity.Key() {
 					clean, removeErr := render.RemoveJSONPointer(desired[desiredIndex].Manifest, path)
 					if removeErr != nil {
-						return core.Plan{}, nil, removeErr
+						return core.Plan{}, nil, planInput{}, removeErr
 					}
 					desired[desiredIndex].Manifest = clean
 				}
@@ -607,22 +754,40 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 		}
 	}
 	if err := s.reconcileUpdatePlan(ctx, input, &plan, desired, live); err != nil {
-		return core.Plan{}, nil, &planStageError{stage: "cluster", err: err}
+		return core.Plan{}, nil, planInput{}, &planStageError{stage: "cluster", err: err}
 	}
 	plan.NamespaceCreations = prerequisites.NamespaceCreations
 	plan.Changes = append(plan.Changes, prerequisites.Changes...)
 	policy, err := s.Store.EffectiveApprovalPolicy(ctx, app)
 	if err != nil {
-		return core.Plan{}, nil, err
+		return core.Plan{}, nil, planInput{}, err
 	}
 	setSyncApprovalPolicy(&plan, app, policy)
 	if err := s.evaluateGuardrails(ctx, app, &plan, desired); err != nil {
-		return core.Plan{}, nil, err
+		return core.Plan{}, nil, planInput{}, err
 	}
 	if err := core.RefreshDigest(&plan); err != nil {
-		return core.Plan{}, nil, err
+		return core.Plan{}, nil, planInput{}, err
 	}
-	return plan, desired, nil
+	return plan, desired, input, nil
+}
+
+// planRenderOptions returns the renderer configuration for an application,
+// without the checkout root.
+func planRenderOptions(app store.Application, input planInput, rules []store.ApplicationIgnoreRule, selectors []core.IgnoreSelector) render.Options {
+	namespaceBindings := make([]core.Binding, 0, len(input.Bindings))
+	for _, binding := range input.Bindings {
+		if !binding.ClusterScope {
+			namespaceBindings = append(namespaceBindings, binding)
+		}
+	}
+	ignoredResources := make([]core.Identity, 0, len(rules))
+	for _, rule := range rules {
+		if rule.Path == "" {
+			ignoredResources = append(ignoredResources, rule.Identity)
+		}
+	}
+	return render.Options{ManifestPath: app.ManifestPath, TargetManifestPath: app.TargetManifestPath, NamespaceManifestPaths: app.NamespaceManifestPaths, Renderer: app.Renderer, KustomizeHelmEnabled: app.KustomizeHelmEnabled, KustomizeNamespaceOverride: app.KustomizeNamespaceOverride, HelmReleaseName: app.HelmReleaseName, HelmValuesFiles: app.HelmValuesFiles, HelmValuesYAML: app.HelmValuesYAML, TargetHelmValuesFiles: app.TargetHelmValuesFiles, TargetHelmValuesYAML: app.TargetHelmValuesYAML, NamespaceHelmValues: app.NamespaceHelmValues, ApplicationID: app.ID, ClusterID: app.ClusterID, Namespaces: namespaceBindings, Mapper: input.Mapper.Mapper, IgnoredResources: ignoredResources, IgnoredSelectors: selectors}
 }
 
 func setSyncApprovalPolicy(plan *core.Plan, app store.Application, policy store.ApprovalPolicy) {
@@ -977,7 +1142,7 @@ func (s *Service) loadPlanInput(ctx context.Context, app store.Application) (pla
 	if err != nil {
 		return planInput{}, errors.New("application cluster is unavailable")
 	}
-	input := planInput{Application: app, Cluster: cluster, NamespaceBindings: map[string]store.NamespaceBinding{}, NamespaceClients: map[string]*kube.Clients{}, ManagedNamespaces: map[string]bool{}}
+	input := planInput{Application: app, Cluster: cluster, NamespaceBindings: map[string]store.NamespaceBinding{}, NamespaceClients: map[string]*kube.Clients{}, ManagedNamespaces: map[string]bool{}, Concurrency: s.concurrency(), Live: newLiveObjects()}
 	if len(app.Namespaces) == 0 {
 		return planInput{}, &PlanConfigurationError{Source: "cluster", Code: "kubernetes.namespace_binding_missing", Summary: "Application has no namespace bindings.", Remediation: "Bind the application's destination namespace to this workspace, then build a fresh plan."}
 	}
@@ -1049,14 +1214,19 @@ func (s *Service) loadPlanInput(ctx context.Context, app store.Application) (pla
 	if input.Mapper == nil {
 		return planInput{}, errors.New("application has no Kubernetes discovery client")
 	}
-	_, err = input.Mapper.Discovery.ServerVersion()
+	version, err := input.Mapper.Discovery.ServerVersion()
 	if err != nil {
 		return planInput{}, fmt.Errorf("Kubernetes API discovery failed: %w", err)
+	}
+	if version != nil {
+		input.ServerVersion = version.GitVersion
 	}
 	return input, nil
 }
 
 func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []core.Resource) ([]core.Resource, map[string][]string, error) {
+	ctx, done := s.beginStage(ctx, stageLiveSnapshot)
+	defer done()
 	managed, err := s.Store.ManagedResources(ctx, input.Application.ID)
 	if err != nil {
 		return nil, nil, err
@@ -1086,15 +1256,38 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
+	kinds := map[string]core.Identity{}
+	for _, identity := range identities {
+		kinds[kindKey(identity)] = identity
+	}
+	// One owner-label List per kind and namespace returns every object this
+	// application already manages, so steady-state plans need no per-object
+	// reads. Objects a List did not return (new, unowned or deleted ones) are
+	// still read individually. List failures are reported below, in the same
+	// order a sequential scan would have reached them.
+	owned := listOwnedObjects(ctx, input, kinds)
+	listed := map[string]*unstructured.Unstructured{}
+	for _, list := range owned {
+		for _, object := range list.items {
+			listed[ownedObjectIdentity(input, list.id, object).Key()] = object
+		}
+	}
+	unlisted := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if _, ok := listed[key]; !ok {
+			unlisted = append(unlisted, key)
+		}
+	}
+	prefetched := prefetchLiveObjects(ctx, input, unlisted, identities)
 	liveByKey := map[string]core.Resource{}
 	changedIgnoredFields := map[string][]string{}
 	conflicts := make([]*OwnershipConflict, 0)
-	prefetched := prefetchLiveObjects(ctx, input, keys, identities)
 	for _, key := range keys {
 		identity := identities[key]
 		if identity.Namespace != "" && input.MissingNamespaces[identity.Namespace] {
 			// A missing namespace contains no live workloads. Match the normal
 			// NotFound bookkeeping without issuing a potentially forbidden read.
+			input.Live.setAbsent(identity.Key())
 			if _, tracked := managedByKey[identity.Key()]; tracked {
 				if err := s.Store.DeleteManagedResource(ctx, input.Application.ID, identity); err != nil {
 					return nil, nil, err
@@ -1124,12 +1317,15 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 			resourceInterface = client.Dynamic.Resource(mapping.Resource)
 		}
 		var object *unstructured.Unstructured
-		if fetched, ok := prefetched[key]; ok {
+		if found, ok := listed[key]; ok {
+			object = found
+		} else if fetched, ok := prefetched[key]; ok {
 			object, err = fetched.object, fetched.err
 		} else {
 			object, err = resourceInterface.Get(ctx, identity.Name, v1.GetOptions{})
 		}
 		if apierrors.IsNotFound(err) {
+			input.Live.setAbsent(identity.Key())
 			if _, tracked := managedByKey[identity.Key()]; tracked {
 				if err := s.Store.DeleteManagedResource(ctx, input.Application.ID, identity); err != nil {
 					return nil, nil, err
@@ -1158,51 +1354,104 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 		if object.GetLabels()["justcd.io/application-id"] != input.Application.ID || string(object.GetUID()) != tracked.UID {
 			return nil, nil, fmt.Errorf("%s %s/%s ownership changed; refusing to adopt or mutate it", identity.Kind, identity.Namespace, identity.Name)
 		}
-		var resource core.Resource
-		if index, exists := desiredIndex[identity.Key()]; exists {
-			paths := ignoredPathsFor(input, identity)
-			for _, path := range paths {
-				if !render.JSONPointerExists(desired[index].Manifest, path) && !render.JSONPointerExists(previousManifests[identity.Key()], path) {
-					return nil, nil, fmt.Errorf("ignored field %s is not present in the desired or previously managed manifest", path)
-				}
-				if !render.HasOtherManagerFieldOwnership(object, input.Application.ID, path) {
-					return nil, nil, fmt.Errorf("cannot ignore %s: another Kubernetes field manager must own this field before JustCD hands it off", path)
-				}
-			}
-			var desiredFingerprint string
-			var changed []string
-			resource, desiredFingerprint, changed, err = render.CanonicalLiveAgainstIgnoring(object, input.Cluster.ID, input.Application.ID, identity.ClusterScoped, desired[index].Manifest, previousManifests[identity.Key()], paths, selectedPathsFor(input, identity))
-			if err == nil {
-				desired[index].Fingerprint = desiredFingerprint
-				if len(changed) > 0 {
-					changedIgnoredFields[identity.Key()] = changed
-				}
-			}
-		} else {
-			resource, err = render.CanonicalLive(object, input.Cluster.ID, input.Application.ID, identity.ClusterScoped)
-		}
+		resource, err := s.canonicalSnapshotResource(input, identity, object, desired, desiredIndex, previousManifests, changedIgnoredFields)
 		if err != nil {
 			return nil, nil, err
 		}
+		input.Live.set(identity.Key(), object)
 		liveByKey[identity.Key()] = resource
 	}
 	if len(conflicts) > 0 {
 		return nil, nil, &OwnershipConflicts{Items: conflicts}
 	}
-	kinds := map[string]core.Identity{}
-	for _, identity := range identities {
-		kinds[kindKey(identity)] = identity
+	for _, list := range owned {
+		if list.err != nil {
+			return nil, nil, list.err
+		}
+		for _, object := range list.items {
+			objectIdentity := ownedObjectIdentity(input, list.id, object)
+			tracked, owned := managedByKey[objectIdentity.Key()]
+			if !owned {
+				continue
+			}
+			if string(object.GetUID()) != tracked.UID {
+				return nil, nil, fmt.Errorf("%s %s/%s ownership changed; refusing to adopt or mutate it", objectIdentity.Kind, objectIdentity.Namespace, objectIdentity.Name)
+			}
+			if _, alreadyFetched := liveByKey[objectIdentity.Key()]; alreadyFetched {
+				continue
+			}
+			resource, err := s.canonicalSnapshotResource(input, objectIdentity, object, desired, desiredIndex, previousManifests, changedIgnoredFields)
+			if err != nil {
+				return nil, nil, err
+			}
+			input.Live.set(objectIdentity.Key(), object)
+			liveByKey[resource.Identity.Key()] = resource
+			if len(liveByKey) > maxSnapshotResources {
+				return nil, nil, errors.New("application resource snapshot exceeds 10000 resources")
+			}
+		}
 	}
+	result := make([]core.Resource, 0, len(liveByKey))
+	for _, resource := range liveByKey {
+		result = append(result, resource)
+	}
+	return result, changedIgnoredFields, nil
+}
+
+// canonicalSnapshotResource projects one owned live object for comparison,
+// validating field ignores against the desired and previous manifests.
+func (s *Service) canonicalSnapshotResource(input planInput, identity core.Identity, object *unstructured.Unstructured, desired []core.Resource, desiredIndex map[string]int, previousManifests map[string][]byte, changedIgnoredFields map[string][]string) (core.Resource, error) {
+	index, exists := desiredIndex[identity.Key()]
+	if !exists {
+		return render.CanonicalLive(object, input.Cluster.ID, input.Application.ID, identity.ClusterScoped)
+	}
+	paths := ignoredPathsFor(input, identity)
+	for _, path := range paths {
+		if !render.JSONPointerExists(desired[index].Manifest, path) && !render.JSONPointerExists(previousManifests[identity.Key()], path) {
+			return core.Resource{}, fmt.Errorf("ignored field %s is not present in the desired or previously managed manifest", path)
+		}
+		if !render.HasOtherManagerFieldOwnership(object, input.Application.ID, path) {
+			return core.Resource{}, fmt.Errorf("cannot ignore %s: another Kubernetes field manager must own this field before JustCD hands it off", path)
+		}
+	}
+	resource, desiredFingerprint, changed, err := render.CanonicalLiveAgainstIgnoring(object, input.Cluster.ID, input.Application.ID, identity.ClusterScoped, desired[index].Manifest, previousManifests[identity.Key()], paths, selectedPathsFor(input, identity))
+	if err != nil {
+		return core.Resource{}, err
+	}
+	desired[index].Fingerprint = desiredFingerprint
+	if len(changed) > 0 {
+		changedIgnoredFields[identity.Key()] = changed
+	}
+	return resource, nil
+}
+
+func ownedObjectIdentity(input planInput, list core.Identity, object *unstructured.Unstructured) core.Identity {
+	return core.Identity{ClusterID: input.Cluster.ID, APIVersion: object.GetAPIVersion(), Kind: object.GetKind(), Namespace: object.GetNamespace(), Name: object.GetName(), ClusterScoped: list.ClusterScoped}
+}
+
+// ownedList is one owner-label List of a kind in a namespace. err is the
+// error a sequential scan would return on reaching this list, including
+// setup failures for its kind.
+type ownedList struct {
+	id       core.Identity
+	resource dynamic.ResourceInterface
+	items    []*unstructured.Unstructured
+	err      error
+}
+
+func listOwnedObjects(ctx context.Context, input planInput, kinds map[string]core.Identity) []ownedList {
 	kindKeys := make([]string, 0, len(kinds))
 	for key := range kinds {
 		kindKeys = append(kindKeys, key)
 	}
 	sort.Strings(kindKeys)
+	lists := make([]ownedList, 0, len(kindKeys))
 	for _, key := range kindKeys {
 		identity := kinds[key]
 		mapping, err := input.Mapper.Mapper.RESTMapping(groupKind(identity), groupVersion(identity))
 		if err != nil {
-			return nil, nil, err
+			lists = append(lists, ownedList{err: err})
+			break
 		}
 		namespaces := []string{identity.Namespace}
 		if mapping.Scope.Name() == "namespace" {
@@ -1213,10 +1462,12 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 			sort.Strings(namespaces)
 		} else {
 			if input.ClusterScopeClient == nil {
-				return nil, nil, clusterScopeRequired(&identity)
+				lists = append(lists, ownedList{err: clusterScopeRequired(&identity)})
+				break
 			}
 			namespaces = []string{""}
 		}
+		stop := false
 		for _, namespace := range namespaces {
 			if namespace != "" && input.MissingNamespaces[namespace] {
 				continue
@@ -1226,7 +1477,9 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 			id.ClusterScoped = mapping.Scope.Name() != "namespace"
 			client, err := clientFor(input, id)
 			if err != nil {
-				return nil, nil, err
+				lists = append(lists, ownedList{err: err})
+				stop = true
+				break
 			}
 			var resourceInterface dynamic.ResourceInterface
 			if mapping.Scope.Name() == "namespace" {
@@ -1234,80 +1487,51 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 			} else {
 				resourceInterface = client.Dynamic.Resource(mapping.Resource)
 			}
-			continueToken := ""
-			for page := 0; page < 100; page++ {
-				list, err := resourceInterface.List(ctx, v1.ListOptions{LabelSelector: "justcd.io/application-id=" + input.Application.ID, Limit: 500, Continue: continueToken})
-				if err != nil {
-					if apierrors.IsNotFound(err) && input.Application.CreateNamespaces && namespace != "" && !input.ManagedNamespaces[namespace] {
-						provisioningClient, clientErr := namespaceProvisioningClient(input, namespace)
-						if clientErr == nil {
-							_, namespaceErr := provisioningClient.Dynamic.Resource(namespaceResource).Get(ctx, namespace, v1.GetOptions{})
-							if apierrors.IsNotFound(namespaceErr) {
-								break
-							}
-						}
-					}
-					return nil, nil, fmt.Errorf("cannot fully list owned %s resources: %w", identity.Kind, err)
-				}
-				for i := range list.Items {
-					object := &list.Items[i]
-					objectIdentity := core.Identity{ClusterID: input.Cluster.ID, APIVersion: object.GetAPIVersion(), Kind: object.GetKind(), Namespace: object.GetNamespace(), Name: object.GetName(), ClusterScoped: id.ClusterScoped}
-					tracked, owned := managedByKey[objectIdentity.Key()]
-					if !owned {
-						continue
-					}
-					if string(object.GetUID()) != tracked.UID {
-						return nil, nil, fmt.Errorf("%s %s/%s ownership changed; refusing to adopt or mutate it", objectIdentity.Kind, objectIdentity.Namespace, objectIdentity.Name)
-					}
-					if _, alreadyFetched := liveByKey[objectIdentity.Key()]; alreadyFetched {
-						continue
-					}
-					var resource core.Resource
-					if desiredIndexFor, exists := desiredIndex[objectIdentity.Key()]; exists {
-						paths := ignoredPathsFor(input, objectIdentity)
-						for _, path := range paths {
-							if !render.JSONPointerExists(desired[desiredIndexFor].Manifest, path) && !render.JSONPointerExists(previousManifests[objectIdentity.Key()], path) {
-								return nil, nil, fmt.Errorf("ignored field %s is not present in the desired or previously managed manifest", path)
-							}
-							if !render.HasOtherManagerFieldOwnership(object, input.Application.ID, path) {
-								return nil, nil, fmt.Errorf("cannot ignore %s: another Kubernetes field manager must own this field before JustCD hands it off", path)
-							}
-						}
-						var desiredFingerprint string
-						var changed []string
-						resource, desiredFingerprint, changed, err = render.CanonicalLiveAgainstIgnoring(object, input.Cluster.ID, input.Application.ID, id.ClusterScoped, desired[desiredIndexFor].Manifest, previousManifests[objectIdentity.Key()], paths, selectedPathsFor(input, objectIdentity))
-						if err == nil {
-							desired[desiredIndexFor].Fingerprint = desiredFingerprint
-							if len(changed) > 0 {
-								changedIgnoredFields[objectIdentity.Key()] = changed
-							}
-						}
-					} else {
-						resource, err = render.CanonicalLive(object, input.Cluster.ID, input.Application.ID, id.ClusterScoped)
-					}
-					if err != nil {
-						return nil, nil, err
-					}
-					liveByKey[resource.Identity.Key()] = resource
-					if len(liveByKey) > maxSnapshotResources {
-						return nil, nil, errors.New("application resource snapshot exceeds 10000 resources")
-					}
-				}
-				continueToken = list.GetContinue()
-				if continueToken == "" {
-					break
-				}
-				if page == 99 {
-					return nil, nil, errors.New("resource listing exceeded page limit")
-				}
-			}
+			lists = append(lists, ownedList{id: id, resource: resourceInterface})
+		}
+		if stop {
+			break
 		}
 	}
-	result := make([]core.Resource, 0, len(liveByKey))
-	for _, resource := range liveByKey {
-		result = append(result, resource)
+	_ = forEachLimit(len(lists), input.concurrency(), func(i int) error {
+		if lists[i].resource != nil {
+			lists[i].items, lists[i].err = listOwnedKind(ctx, input, lists[i].id, lists[i].resource)
+		}
+		return nil
+	})
+	return lists
+}
+
+func listOwnedKind(ctx context.Context, input planInput, id core.Identity, resourceInterface dynamic.ResourceInterface) ([]*unstructured.Unstructured, error) {
+	var items []*unstructured.Unstructured
+	continueToken := ""
+	for page := 0; page < 100; page++ {
+		list, err := resourceInterface.List(ctx, v1.ListOptions{LabelSelector: "justcd.io/application-id=" + input.Application.ID, Limit: 500, Continue: continueToken})
+		if err != nil {
+			namespace := id.Namespace
+			if apierrors.IsNotFound(err) && input.Application.CreateNamespaces && namespace != "" && !input.ManagedNamespaces[namespace] {
+				provisioningClient, clientErr := namespaceProvisioningClient(input, namespace)
+				if clientErr == nil {
+					_, namespaceErr := provisioningClient.Dynamic.Resource(namespaceResource).Get(ctx, namespace, v1.GetOptions{})
+					if apierrors.IsNotFound(namespaceErr) {
+						return items, nil
+					}
+				}
+			}
+			return items, fmt.Errorf("cannot fully list owned %s resources: %w", id.Kind, err)
+		}
+		for i := range list.Items {
+			items = append(items, &list.Items[i])
+		}
+		if len(items) > maxSnapshotResources {
+			return items, errors.New("application resource snapshot exceeds 10000 resources")
+		}
+		continueToken = list.GetContinue()
+		if continueToken == "" {
+			return items, nil
+		}
 	}
-	return result, changedIgnoredFields, nil
+	return items, errors.New("resource listing exceeded page limit")
 }
 
 const maxSnapshotResources = 10000
@@ -1353,7 +1577,7 @@ type prefetchedObject struct {
 // objects concurrently; the caller still processes them in sorted order.
 // Anything that cannot be prefetched falls back to the sequential path.
 func prefetchLiveObjects(ctx context.Context, input planInput, keys []string, identities map[string]core.Identity) map[string]prefetchedObject {
-	const workers = 8
+	workers := input.concurrency()
 	results := make(map[string]prefetchedObject, len(keys))
 	var mu sync.Mutex
 	var wg sync.WaitGroup

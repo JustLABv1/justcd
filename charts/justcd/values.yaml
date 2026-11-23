@@ -114,6 +114,14 @@ backend:
       maxUnavailable: 0
   # Time allowed for in-flight work to finish before cancellation.
   shutdownGracePeriod: 30s
+  # Concurrent Kubernetes requests per application plan or sync (1-32).
+  # 1 applies resources strictly one at a time.
+  syncConcurrency: 8
+  # Cached Git mirrors that make repeated fetches incremental. Empty uses the
+  # container's temporary directory; mount a volume with extraVolumes and set
+  # an absolute path to keep the cache across restarts, or set "off". Use one
+  # directory per replica.
+  gitCacheDir: ""
   # Includes time for cancellation cleanup and telemetry flushing.
   terminationGracePeriodSeconds: 60
   # Set runAsUser/runAsGroup to null to let OpenShift SCC assign IDs.

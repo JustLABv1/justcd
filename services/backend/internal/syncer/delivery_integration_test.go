@@ -165,6 +165,7 @@ func TestIntegrationDeliveryAgainstKind(t *testing.T) {
 	workerStopped = true
 	verifyIntegrationWorkerCrash(t, ctx, svc, db, repo, workspaceID, clusterID, sourceID, credentialID, ownerID, namespace)
 	verifyIntegrationCrashMatrix(t, ctx, svc, kubeClient, repo, workspaceID, clusterID, sourceID, credentialID, ownerID, namespace, key)
+	verifyIntegrationFastRecheck(t, ctx, svc, kubeClient, repo, workspaceID, clusterID, sourceID, credentialID, ownerID, namespace)
 	audit, err := db.ListAuditEvents(ctx, 200, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -296,11 +297,17 @@ func verifyIntegrationPartialFailure(t *testing.T, ctx context.Context, svc *Ser
 	if len(failed.Progress.Completed) != 1 || failed.ErrorCode == "" {
 		t.Fatalf("partial failure lost progress or error: %+v", failed.Progress)
 	}
-	if _, err := kubeClient.CoreV1().ConfigMaps(namespace).Get(ctx, "a-partial", metav1.GetOptions{}); err != nil {
-		t.Fatalf("first resource was not applied: %v", err)
-	}
-	if _, err := kubeClient.CoreV1().ConfigMaps(namespace).Get(ctx, "z-partial", metav1.GetOptions{}); err == nil {
-		t.Fatal("quota-rejected second resource was applied")
+	// Both ConfigMaps are in one dependency wave and are applied concurrently,
+	// so either may take the last quota slot. Exactly the completed one exists.
+	completed := failed.Progress.Completed[0].Name
+	for _, name := range []string{"a-partial", "z-partial"} {
+		_, err := kubeClient.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
+		if name == completed && err != nil {
+			t.Fatalf("completed resource %s was not applied: %v", name, err)
+		}
+		if name != completed && err == nil {
+			t.Fatalf("quota-rejected resource %s was applied", name)
+		}
 	}
 }
 

@@ -41,6 +41,29 @@ retain their digest and security checks on recheck; the UI explicitly says that
 rule provenance is unavailable until refreshed. Actual policy changes continue
 invalidating the plan.
 
+### How a plan is rechecked
+
+A plan is rechecked before approval and again before it is applied, and any
+difference makes it stale. When nothing changed, the recheck does not fetch
+Git, render or dry-run again. Instead it verifies that:
+
+- the revision still names the reviewed commit on the remote (this also checks
+  the Git credential);
+- the render settings, bindings, ignore rules, Kubernetes server version and
+  JustCD's managed-resource records are unchanged;
+- every application object is unchanged apart from its status and
+  resourceVersion, field ownership included, and objects to be created still
+  do not exist;
+- every object the plan changes or deletes keeps its reviewed UID and
+  resourceVersion.
+
+Approval policy and guardrails are then evaluated from current settings. If any
+check differs or cannot be made, the plan is rechecked in full, exactly as
+before. Admission webhooks and custom resource schemas outside the application
+are only re-evaluated by a full recheck; plans expire after 15 minutes, and
+Kubernetes still validates every apply. Rollback, decommission and
+namespace-creating plans are always rechecked in full.
+
 Immutable-field warnings are evidence-based advisory warnings, not a replacement
 operation. StatefulSets can be explicitly selected for reviewed recreation as described below; other resources are not automatically deleted/recreated.
 The frontend checks known Deployment/DaemonSet/StatefulSet selector paths,

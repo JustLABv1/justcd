@@ -25,7 +25,10 @@ import (
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
-type Store struct{ DB *sql.DB }
+type Store struct {
+	DB      *sql.DB
+	wakeups wakeups
+}
 
 var ErrPlanNotCurrent = errors.New("plan is no longer current or has expired; generate a fresh plan")
 
@@ -2471,6 +2474,9 @@ type PlanRecord struct {
 	CreatedAt            time.Time       `json:"createdAt"`
 	ExpiresAt            time.Time       `json:"expiresAt"`
 	Status               string          `json:"status"`
+	// RecheckBasis digests the Git, render and live-state inputs of the plan.
+	// It is not part of the reviewed plan or its digest.
+	RecheckBasis string `json:"-"`
 }
 
 type RollbackSnapshot struct {
@@ -2674,7 +2680,12 @@ func (s *Store) savePlan(ctx context.Context, record PlanRecord, reuse bool) (Pl
 		var existingID string
 		err := tx.QueryRowContext(ctx, `SELECT id FROM plans WHERE application_id=$1 AND digest=$2 AND status='current' AND expires_at>NOW() ORDER BY created_at DESC LIMIT 1`, record.Plan.ApplicationID, record.Plan.Digest).Scan(&existingID)
 		if err == nil {
-			if err := tx.Rollback(); err != nil {
+			// The reviewed plan is identical; keep the newest observation of
+			// its inputs so a later recheck compares against current state.
+			if _, err := tx.ExecContext(ctx, `UPDATE plans SET recheck_basis=$2 WHERE id=$1`, existingID, record.RecheckBasis); err != nil {
+				return PlanRecord{}, false, err
+			}
+			if err := tx.Commit(); err != nil {
 				return PlanRecord{}, false, err
 			}
 			existing, err := s.PlanByID(ctx, existingID)
@@ -2687,7 +2698,7 @@ func (s *Store) savePlan(ctx context.Context, record PlanRecord, reuse bool) (Pl
 	if _, err = tx.ExecContext(ctx, `UPDATE plans SET status='stale' WHERE application_id=$1 AND status='current'`, record.Plan.ApplicationID); err != nil {
 		return PlanRecord{}, false, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO plans(id,application_id,revision,digest,bindings,changes,desired,created_by,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target,namespace_creations,approval_reasons,policy_evaluation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`, record.ID, record.Plan.ApplicationID, record.Plan.Revision, record.Plan.Digest, bindings, changes, desired, record.CreatedBy, record.ExpiresAt, record.Status, ignored, selection, record.Plan.IgnoreRulesDigest, record.Plan.Decommission, record.Plan.ApprovalKind, record.Plan.RequiredApprovals, approverRoles, approverUserIDs, rollbackTarget, namespaceCreations, reviewReasons, policyEvaluation)
+	_, err = tx.ExecContext(ctx, `INSERT INTO plans(id,application_id,revision,digest,bindings,changes,desired,created_by,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target,namespace_creations,approval_reasons,policy_evaluation,recheck_basis) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`, record.ID, record.Plan.ApplicationID, record.Plan.Revision, record.Plan.Digest, bindings, changes, desired, record.CreatedBy, record.ExpiresAt, record.Status, ignored, selection, record.Plan.IgnoreRulesDigest, record.Plan.Decommission, record.Plan.ApprovalKind, record.Plan.RequiredApprovals, approverRoles, approverUserIDs, rollbackTarget, namespaceCreations, reviewReasons, policyEvaluation, record.RecheckBasis)
 	if err != nil {
 		return PlanRecord{}, false, err
 	}
@@ -2721,7 +2732,7 @@ func (s *Store) savePlan(ctx context.Context, record PlanRecord, reuse bool) (Pl
 func (s *Store) PlanByID(ctx context.Context, id string) (PlanRecord, error) {
 	var out PlanRecord
 	var bindings, changes, desired, ignored, selection, approverRoles, approverUserIDs, rollbackTarget, triggerInfo, namespaceCreations, reviewReasons, policyEvaluation []byte
-	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target,trigger_info,namespace_creations,approval_reasons,policy_evaluation FROM plans WHERE id=$1`, id).Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission, &out.Plan.ApprovalKind, &out.Plan.RequiredApprovals, &approverRoles, &approverUserIDs, &rollbackTarget, &triggerInfo, &namespaceCreations, &reviewReasons, &policyEvaluation)
+	err := s.DB.QueryRowContext(ctx, `SELECT id,application_id,revision,digest,bindings,changes,desired,created_by,created_at,expires_at,status,ignored_changes,selection,ignore_rules_digest,decommission,approval_kind,required_approvals,approver_roles,approver_user_ids,rollback_target,trigger_info,namespace_creations,approval_reasons,policy_evaluation,recheck_basis FROM plans WHERE id=$1`, id).Scan(&out.ID, &out.Plan.ApplicationID, &out.Plan.Revision, &out.Plan.Digest, &bindings, &changes, &desired, &out.CreatedBy, &out.CreatedAt, &out.ExpiresAt, &out.Status, &ignored, &selection, &out.Plan.IgnoreRulesDigest, &out.Plan.Decommission, &out.Plan.ApprovalKind, &out.Plan.RequiredApprovals, &approverRoles, &approverUserIDs, &rollbackTarget, &triggerInfo, &namespaceCreations, &reviewReasons, &policyEvaluation, &out.RecheckBasis)
 	if err != nil {
 		return PlanRecord{}, err
 	}

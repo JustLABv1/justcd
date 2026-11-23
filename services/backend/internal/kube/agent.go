@@ -160,6 +160,11 @@ func (t *agentTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 	ctx, cancel := context.WithDeadline(r.Context(), deadline)
 	defer cancel()
+	// Subscribe before queueing so a fast result cannot be missed. The ticker
+	// remains as a fallback for results delivered to another replica while
+	// its wakeup is lost.
+	resultReady, stopWaiting := t.db.WaitForAgentResult(task.ID)
+	defer stopWaiting()
 	if err = t.db.QueueAgentTask(ctx, task.ID, t.cluster, cipher, deadline, task); err != nil {
 		return nil, &AgentError{Code: "cluster.agent_unavailable", Message: err.Error(), Transient: true}
 	}
@@ -195,6 +200,7 @@ func (t *agentTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		select {
 		case <-ctx.Done():
 			return nil, uncertainAgentError(r, "cluster agent request timed out; execution outcome may be unknown, refresh the plan before retrying")
+		case <-resultReady:
 		case <-ticker.C:
 		}
 	}

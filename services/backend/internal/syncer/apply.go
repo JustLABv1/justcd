@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/justlab/justcd/services/backend/internal/core"
@@ -156,6 +157,13 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 			return s.Store.OperationByID(finishCtx, operationID)
 		}
 		message := safeApplyFailure(cause, operation.Progress, operation.Type)
+		// Concurrent steps name the resource that failed; fall back to the
+		// single current resource for failures outside a resource step.
+		var step *resourceStepError
+		if errors.As(cause, &step) {
+			failed := step.identity
+			operation.Progress.Current = &failed
+		}
 		var appliedError *AppliedResourceError
 		if errors.As(cause, &appliedError) && operation.Progress.Current != nil {
 			for i := range operation.Progress.Resources {
@@ -281,7 +289,9 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 	if err := s.Store.SetOperationProgress(ctx, operationID, operation.Progress); err != nil {
 		return finishFailure(err, "failed")
 	}
-	fresh, err := s.RecheckPlan(ctx, app, record)
+	recheckCtx, recheckDone := s.beginStage(ctx, stageRecheck)
+	fresh, observed, err := s.recheck(recheckCtx, app, record)
+	recheckDone()
 	if err != nil {
 		return finishFailure(err, "failed")
 	}
@@ -293,6 +303,11 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		return finishFailure(err, "failed")
 	}
 	input.Selection = record.Plan.Selection
+	if observed != nil {
+		// The recheck has just read every object; the pre-operation
+		// checkpoint reuses those reads instead of scanning again.
+		input.Live = observed
+	}
 	input.IgnoreRules, err = s.Store.IgnoreRules(ctx, app.ID)
 	if err != nil {
 		return finishFailure(err, "failed")
@@ -326,7 +341,9 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		}
 	}
 	if len(record.Plan.Changes) > 0 && !record.Plan.Decommission {
-		checkpoint, err := s.SavePreOperationCheckpoint(ctx, app, operationID, input)
+		checkpointCtx, checkpointDone := s.beginStage(ctx, stageCheckpoint)
+		checkpoint, err := s.SavePreOperationCheckpoint(checkpointCtx, app, operationID, input)
+		checkpointDone()
 		if err != nil {
 			return finishFailure(fmt.Errorf("could not durably save the pre-operation checkpoint: %w", err), "failed")
 		}
@@ -356,23 +373,76 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 	if err := s.Store.SetOperationProgress(ctx, operationID, operation.Progress); err != nil {
 		return finishFailure(err, "failed")
 	}
-	beginResource := func(identity core.Identity) error {
+	// Progress is shared by the resources of a wave. Every change to it is made
+	// under progressMu, and each write persists the complete document.
+	var progressMu sync.Mutex
+	lastProgressWrite := time.Now()
+	writeProgress := func() error {
+		if err := s.Store.SetOperationProgress(ctx, operationID, operation.Progress); err != nil {
+			return err
+		}
+		lastProgressWrite = time.Now()
+		return nil
+	}
+	pointAtRunning := func() {
+		operation.Progress.Current = nil
+		for i := range operation.Progress.Resources {
+			if r := operation.Progress.Resources[i]; r.Status == "running" || r.Status == "retrying" {
+				identity := r.Identity
+				operation.Progress.Current = &identity
+				return
+			}
+		}
+	}
+	// beginResources starts a whole wave in one transaction, which also
+	// rechecks cancellation and the guardrail snapshot before any of it runs.
+	beginResources := func(identities []core.Identity) error {
+		progressMu.Lock()
+		defer progressMu.Unlock()
 		next := operation.Progress
 		next.Resources = append([]store.ResourceProgress(nil), next.Resources...)
-		next.BeginResource(identity, operation.AttemptCount)
+		for _, identity := range identities {
+			next.BeginResource(identity, operation.AttemptCount)
+		}
+		first := identities[0]
+		next.Current = &first
 		if err := s.Store.BeginOperationResource(ctx, operationID, next); err != nil {
 			return err
 		}
 		operation.Progress = next
+		lastProgressWrite = time.Now()
 		return nil
 	}
 	completeResource := func(identity core.Identity) error {
+		progressMu.Lock()
+		defer progressMu.Unlock()
 		operation.Progress.CompleteResource(identity)
-		if err := s.Store.SetOperationProgress(ctx, operationID, operation.Progress); err != nil {
+		pointAtRunning()
+		if err := writeProgress(); err != nil {
 			return err
 		}
 		s.checkpoint("resource.recorded")
 		return nil
+	}
+	// A stage that records a cluster mutation is written immediately: recovery
+	// relies on it. Earlier stages only update the timeline, so they are
+	// written at most once per progressWriteInterval.
+	stageReporter := func(identity core.Identity) func(string, bool) error {
+		return func(stage string, applied bool) error {
+			progressMu.Lock()
+			defer progressMu.Unlock()
+			for i := range operation.Progress.Resources {
+				r := &operation.Progress.Resources[i]
+				if r.Identity.Key() == identity.Key() {
+					r.Stage = stage
+					r.MutationApplied = r.MutationApplied || applied
+				}
+			}
+			if !applied && time.Since(lastProgressWrite) < progressWriteInterval {
+				return nil
+			}
+			return writeProgress()
+		}
 	}
 	for _, identity := range record.Plan.NamespaceCreations {
 		if !app.CreateNamespaces || record.Plan.Decommission || record.Plan.Rollback != nil || identity.ClusterID != app.ClusterID || identity.Kind != "Namespace" || identity.APIVersion != "v1" || !identity.ClusterScoped || identity.Namespace != "" {
@@ -382,81 +452,119 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		if err != nil {
 			return finishFailure(err, "failed")
 		}
-		if err := s.Store.RenewOperationLease(ctx, operationID, 90*time.Second); err != nil {
-			return finishFailure(err, "failed")
-		}
-		if err := beginResource(identity); err != nil {
+		if err := beginResources([]core.Identity{identity}); err != nil {
 			return finishFailure(err, "failed")
 		}
 		if err := createNamespacePrerequisite(ctx, client.Dynamic.Resource(namespaceResource), identity.Name); err != nil {
-			return finishFailure(fmt.Errorf("create namespace %q: %w", identity.Name, err), "failed")
+			return finishFailure(&resourceStepError{identity: identity, err: fmt.Errorf("create namespace %q: %w", identity.Name, err)}, "failed")
 		}
 		if err := completeResource(identity); err != nil {
 			return finishFailure(err, "failed")
 		}
 	}
-	for _, change := range orderedChanges {
-		if change.Kind == core.Delete {
-			continue
+	waves, err := s.executionWaves(record.Plan)
+	if err != nil {
+		return finishFailure(err, "failed")
+	}
+	applyCtx, applyDone := s.beginStage(ctx, stageApply)
+	for _, wave := range waves {
+		if wave[0].Kind == core.Delete {
+			applyDone()
+			applyDone = func() {}
+			break
 		}
-		resource := desired[change.Identity.Key()]
 		if err := s.Store.RenewOperationLease(ctx, operationID, 90*time.Second); err != nil {
+			applyDone()
 			return finishFailure(err, "failed")
 		}
+		identities := make([]core.Identity, len(wave))
+		for i, change := range wave {
+			identities[i] = change.Identity
+		}
+		// Rollback steps revalidate the operation per resource and reuse the
+		// result, so executionWaves keeps them one per wave.
 		if record.Plan.Rollback != nil {
-			input, err = s.ValidateRollbackResourceStep(ctx, operation, record, app, actorID)
+			input, err = s.ValidateRollbackResourceStep(applyCtx, operation, record, app, actorID)
 			if err != nil {
+				applyDone()
 				return finishFailure(err, "failed")
 			}
 		}
-		if err := beginResource(resource.Identity); err != nil {
+		if err := beginResources(identities); err != nil {
+			applyDone()
 			return finishFailure(err, "failed")
 		}
-		report := func(stage string, applied bool) error {
-			for i := range operation.Progress.Resources {
-				r := &operation.Progress.Resources[i]
-				if r.Identity.Key() == resource.Identity.Key() {
-					r.Stage = stage
-					r.MutationApplied = r.MutationApplied || applied
+		stepInput := input
+		started := make([]bool, len(wave))
+		err := forEachLimit(len(wave), input.concurrency(), func(i int) error {
+			started[i] = true
+			change := wave[i]
+			resource := desired[change.Identity.Key()]
+			stepCtx := context.WithValue(applyCtx, resourceStageKey{}, stageReporter(resource.Identity))
+			if err := s.applyResource(stepCtx, stepInput, app.ID, resource, change); err != nil {
+				return &resourceStepError{identity: resource.Identity, err: err}
+			}
+			return completeResource(resource.Identity)
+		})
+		if err != nil {
+			// Members that never started were not attempted. Return them to
+			// queued so the stopped operation reports them as skipped.
+			progressMu.Lock()
+			for i, change := range wave {
+				if started[i] {
+					continue
+				}
+				for j := range operation.Progress.Resources {
+					if r := &operation.Progress.Resources[j]; r.Identity.Key() == change.Identity.Key() {
+						r.Status, r.Stage, r.StartedAt = "queued", "", nil
+					}
 				}
 			}
-			return s.Store.SetOperationProgress(ctx, operationID, operation.Progress)
-		}
-		stepCtx := context.WithValue(ctx, resourceStageKey{}, report)
-		if err := s.applyResource(stepCtx, input, app.ID, resource, change); err != nil {
-			return finishFailure(err, "failed")
-		}
-		if err := completeResource(resource.Identity); err != nil {
+			progressMu.Unlock()
+			applyDone()
 			return finishFailure(err, "failed")
 		}
 	}
-	for _, change := range orderedChanges {
+	applyDone()
+	_, deleteDone := s.beginStage(ctx, stageDelete)
+	for _, wave := range waves {
+		change := wave[0]
 		if change.Kind != core.Delete {
 			continue
 		}
+		progressMu.Lock()
 		operation.Progress.Phase = "deleting"
-		if err := s.Store.SetOperationProgress(ctx, operationID, operation.Progress); err != nil {
+		err := writeProgress()
+		progressMu.Unlock()
+		if err != nil {
+			deleteDone()
 			return finishFailure(err, "failed")
 		}
 		if err := s.Store.RenewOperationLease(ctx, operationID, 90*time.Second); err != nil {
+			deleteDone()
 			return finishFailure(err, "failed")
 		}
 		if record.Plan.Rollback != nil {
 			input, err = s.ValidateRollbackResourceStep(ctx, operation, record, app, actorID)
 			if err != nil {
+				deleteDone()
 				return finishFailure(err, "failed")
 			}
 		}
-		if err := beginResource(change.Identity); err != nil {
+		if err := beginResources([]core.Identity{change.Identity}); err != nil {
+			deleteDone()
 			return finishFailure(err, "failed")
 		}
 		if err := s.deleteResource(ctx, input, app.ID, change); err != nil {
-			return finishFailure(err, "failed")
+			deleteDone()
+			return finishFailure(&resourceStepError{identity: change.Identity, err: err}, "failed")
 		}
 		if err := completeResource(change.Identity); err != nil {
+			deleteDone()
 			return finishFailure(err, "failed")
 		}
 	}
+	deleteDone()
 	operation.Progress.Phase = "complete"
 	if err := s.Store.BeginOperationResource(ctx, operationID, operation.Progress); err != nil {
 		return finishFailure(err, "failed")
@@ -535,6 +643,54 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 // Messages are only passed through for reasons whose text describes policy or availability
 // (permissions, quota, admission, existence). Validation errors can echo submitted values, so they
 // are reduced to the offending field paths and error types. Anything else yields no detail.
+// progressWriteInterval bounds how often timeline-only stage changes reach the
+// database. Stages that record a mutation are always written immediately.
+const progressWriteInterval = time.Second
+
+// resourceStepError attributes a failure to the resource whose step failed,
+// since several resources of a wave can be running at once.
+type resourceStepError struct {
+	identity core.Identity
+	err      error
+}
+
+func (e *resourceStepError) Error() string { return e.err.Error() }
+func (e *resourceStepError) Unwrap() error { return e.err }
+
+// executionWaves returns the plan's changes in execution order, grouped into
+// waves whose members may be applied concurrently. StatefulSet recreations,
+// rollback steps and sequential mode (Concurrency of one) run one at a time.
+func (s *Service) executionWaves(plan core.Plan) ([][]core.Change, error) {
+	waves, err := core.OrderChangeWaves(plan.Changes)
+	if err != nil {
+		return nil, err
+	}
+	if s.concurrency() > 1 && plan.Rollback == nil {
+		split := make([][]core.Change, 0, len(waves))
+		for _, wave := range waves {
+			var rest []core.Change
+			for _, change := range wave {
+				if change.Recreation != nil || change.RecreationRequired {
+					split = append(split, []core.Change{change})
+				} else {
+					rest = append(rest, change)
+				}
+			}
+			if len(rest) > 0 {
+				split = append(split, rest)
+			}
+		}
+		return split, nil
+	}
+	single := make([][]core.Change, 0, len(plan.Changes))
+	for _, wave := range waves {
+		for _, change := range wave {
+			single = append(single, []core.Change{change})
+		}
+	}
+	return single, nil
+}
+
 func kubernetesFailureDetail(cause error) string {
 	var api apierrors.APIStatus
 	var recreation *recreationFailure
@@ -609,6 +765,9 @@ func safeApplyFailure(cause error, progress store.OperationProgress, operationTy
 }
 
 func (s *Service) applyResource(ctx context.Context, input planInput, applicationID string, resource core.Resource, change core.Change) error {
+	// Whatever was observed before is about to change. Only the object the
+	// API server returns for a completed apply is recorded again.
+	input.Live.forget(resource.Identity.Key())
 	if err := reportResourceStage(ctx, "checking_live", false); err != nil {
 		return err
 	}
@@ -627,6 +786,7 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 		resourceClient = client.Dynamic.Resource(mapping.Resource)
 	}
 	var existingUID types.UID
+	var known *unstructured.Unstructured
 	resourceVersion := change.LiveResourceVersion
 	if change.Kind == core.Create {
 		if _, err := resourceClient.Get(ctx, resource.Identity.Name, metav1.GetOptions{}); err == nil {
@@ -650,6 +810,7 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 		}
 		existingUID = current.GetUID()
 		resourceVersion = current.GetResourceVersion()
+		known = current
 	}
 	if err := s.ensurePublishingDatabase(ctx, input, applicationID, resource); err != nil {
 		return err
@@ -680,7 +841,11 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 			return err
 		}
 		current.Manifest = resource.Manifest
-		return s.Store.UpsertManagedResource(ctx, applicationID, current)
+		if err := s.Store.UpsertManagedResource(ctx, applicationID, current); err != nil {
+			return err
+		}
+		input.Live.set(resource.Identity.Key(), applied)
+		return nil
 	}
 	object.SetResourceVersion(resourceVersion)
 	body, err = object.MarshalJSON()
@@ -689,7 +854,7 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 	}
 	fieldManager := "justcd/" + applicationID
 	patchOptions := applyPatchOptions(change, fieldManager)
-	applied, err := applyWithOwnershipMigration(ctx, resourceClient, resource.Identity.Name, body, patchOptions)
+	applied, err := applyWithOwnershipMigrationFrom(ctx, resourceClient, resource.Identity.Name, body, patchOptions, known)
 	if err != nil {
 		var appliedError *AppliedResourceError
 		if errors.As(err, &appliedError) {
@@ -712,6 +877,7 @@ func (s *Service) applyResource(ctx context.Context, input planInput, applicatio
 	if err := s.Store.UpsertManagedResource(ctx, applicationID, current); err != nil {
 		return err
 	}
+	input.Live.set(resource.Identity.Key(), applied)
 	return nil
 }
 

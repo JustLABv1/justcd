@@ -140,6 +140,23 @@ not install PostgreSQL or create credentials for target clusters. Set
 `/healthz` for Kubernetes probes; the backend's endpoint reports process
 availability after startup, not the health of every external connection.
 
+### Sync concurrency
+
+`backend.syncConcurrency` (default `8`, range `1`–`32`, exposed as
+`JUSTCD_SYNC_CONCURRENCY`) bounds the Kubernetes requests one application's
+plan or sync makes at once. Independent resources in the same dependency wave
+are applied concurrently; set it to `1` to apply resources strictly in sequence.
+
+### Git mirror cache
+
+The backend keeps a Git mirror per repository and credential so repeated
+fetches are incremental; each fetch still authenticates to the remote.
+`backend.gitCacheDir` (exposed as `JUSTCD_GIT_CACHE_DIR`) sets its location.
+Empty uses the container's temporary directory. Mount a volume with
+`extraVolumes`/`extraVolumeMounts` and set an absolute path to keep it across
+restarts, or set `off` to disable it. Do not share one directory between
+replicas.
+
 ### Worker shutdown and recovery
 
 On SIGTERM or SIGINT the backend stops acquiring queued operations and stops

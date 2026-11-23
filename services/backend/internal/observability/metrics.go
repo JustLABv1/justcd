@@ -27,6 +27,7 @@ type Metrics struct {
 	operationDuration      *prometheus.HistogramVec
 	operationQueueDepth    *prometheus.GaugeVec
 	approvalActions        *prometheus.CounterVec
+	syncStageDuration      *prometheus.HistogramVec
 }
 
 func NewMetrics(enabled bool) *Metrics {
@@ -65,10 +66,15 @@ func NewMetrics(enabled bool) *Metrics {
 	m.approvalActions = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "justcd_plan_approvals_total", Help: "Plan approvals recorded, grouped by resulting approval state.",
 	}, []string{"state"})
+	m.syncStageDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "justcd_sync_stage_duration_seconds", Help: "Duration of individual plan and sync stages in seconds.",
+		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600},
+	}, []string{"stage"})
 	m.registry.MustRegister(
 		collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		m.httpRequests, m.httpRequestDuration, m.reconciliations, m.reconciliationDuration,
 		m.driftChanges, m.operations, m.operationDuration, m.operationQueueDepth, m.approvalActions,
+		m.syncStageDuration,
 	)
 	return m
 }
@@ -122,6 +128,15 @@ func (m *Metrics) RecordOperation(operationType, status string, elapsed time.Dur
 	status = oneOf(status, "succeeded", "failed", "cancelled", "interrupted")
 	m.operations.WithLabelValues(operationType, status).Inc()
 	m.operationDuration.WithLabelValues(operationType, status).Observe(elapsed.Seconds())
+}
+
+// RecordSyncStage observes one plan or sync stage, such as git_fetch or apply.
+func (m *Metrics) RecordSyncStage(stage string, elapsed time.Duration) {
+	if !m.Enabled() {
+		return
+	}
+	stage = oneOf(stage, "git_fetch", "render", "live_snapshot", "dry_run", "recheck", "checkpoint", "apply", "delete", "success_snapshot")
+	m.syncStageDuration.WithLabelValues(stage).Observe(elapsed.Seconds())
 }
 
 func (m *Metrics) SetQueueDepth(queued, running int64) {

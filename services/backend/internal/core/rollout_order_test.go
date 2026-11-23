@@ -170,3 +170,74 @@ func TestRolloutOrderingIsDeterministicAndDoesNotMutatePlan(t *testing.T) {
 		t.Fatal("reviewed plan or digest mutated")
 	}
 }
+
+func TestRolloutWavesFlattenToOrderAndSeparateDependencies(t *testing.T) {
+	changes := []Change{
+		rolloutChange("v1", "ConfigMap", "apps", "settings", `{}`),
+		rolloutChange("v1", "ConfigMap", "apps", "other", `{}`),
+		rolloutChange("v1", "ServiceAccount", "apps", "runner", `{}`),
+		rolloutChange("v1", "Service", "apps", "web", `{}`),
+		rolloutChange("apps/v1", "Deployment", "apps", "web", `{"spec":{"template":{"spec":{"serviceAccountName":"runner","containers":[{"name":"web","envFrom":[{"configMapRef":{"name":"settings"}}]}]}}}}`),
+		rolloutChange("apps/v1", "Deployment", "apps", "worker", `{"spec":{"template":{"spec":{"serviceAccountName":"runner"}}}}`),
+		rolloutChange("example.com/v1", "Widget", "apps", "a", `{}`),
+		{Kind: Delete, Identity: Identity{ClusterID: "cluster", APIVersion: "v1", Kind: "Secret", Namespace: "apps", Name: "old"}, Before: json.RawMessage(`{}`)},
+		{Kind: Delete, Identity: Identity{ClusterID: "cluster", APIVersion: "v1", Kind: "ConfigMap", Namespace: "apps", Name: "old"}, Before: json.RawMessage(`{}`)},
+	}
+	waves, err := OrderChangeWaves(append([]Change(nil), changes...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var flat []Change
+	for _, wave := range waves {
+		if len(wave) == 0 {
+			t.Fatal("empty wave")
+		}
+		flat = append(flat, wave...)
+	}
+	if !reflect.DeepEqual(flat, orderedRollout(t, append([]Change(nil), changes...)...)) {
+		t.Fatalf("waves do not flatten to the rollout order: %+v", flat)
+	}
+	waveOf := map[string]int{}
+	for i, wave := range waves {
+		for _, change := range wave {
+			waveOf[change.Identity.Kind+"/"+change.Identity.Name] = i
+		}
+	}
+	if waveOf["ConfigMap/settings"] != waveOf["ConfigMap/other"] {
+		t.Fatalf("independent ConfigMaps should share a wave: %v", waveOf)
+	}
+	if waveOf["Deployment/web"] != waveOf["Deployment/worker"] || waveOf["Deployment/web"] != waveOf["Widget/a"] {
+		t.Fatalf("independent workloads should share a wave: %v", waveOf)
+	}
+	for _, prerequisite := range []string{"ConfigMap/settings", "ServiceAccount/runner", "Service/web"} {
+		if waveOf[prerequisite] >= waveOf["Deployment/web"] {
+			t.Fatalf("%s must be in an earlier wave than Deployment/web: %v", prerequisite, waveOf)
+		}
+	}
+	deletes := 0
+	for _, wave := range waves {
+		if wave[0].Kind == Delete {
+			deletes++
+			if len(wave) != 1 {
+				t.Fatalf("deletes must run one at a time: %+v", wave)
+			}
+		}
+	}
+	if deletes != 2 {
+		t.Fatalf("expected two delete waves, got %d", deletes)
+	}
+}
+
+func TestRolloutWavesSplitDependenciesWithinAPriority(t *testing.T) {
+	// Custom resources and workloads share the default priority band, but a
+	// reference inside that band must still split it into separate waves.
+	vault := rolloutChange("secrets.hashicorp.com/v1beta1", "VaultStaticSecret", "apps", "db", `{"spec":{"destination":{"name":"db-credentials"}}}`)
+	app := rolloutChange("apps/v1", "Deployment", "apps", "api", `{"spec":{"template":{"spec":{"containers":[{"name":"api","envFrom":[{"secretRef":{"name":"db-credentials"}}]}]}}}}`)
+	waves, err := OrderChangeWaves([]Change{app, vault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(waves) != 2 || waves[0][0].Identity.Kind != "VaultStaticSecret" || waves[1][0].Identity.Kind != "Deployment" {
+		t.Fatalf("the Secret producer must be applied in a wave before its consumer: %+v", waves)
+	}
+}

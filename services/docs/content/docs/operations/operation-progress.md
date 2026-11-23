@@ -48,6 +48,15 @@ Execution ordering leaves the reviewed plan and its approval digest unchanged.
 An older queued operation's resource rows are reordered when its worker starts;
 historical completed operations retain their recorded order.
 
+Creates and updates run in waves. A wave is a consecutive run of that order
+whose resources share a kind priority and do not reference each other, so every
+prerequisite is applied in an earlier wave. Resources in a wave are applied
+concurrently, up to `JUSTCD_SYNC_CONCURRENCY` at a time (default `8`, range
+`1`–`32`); the timeline can show several resources running at once. Deletions,
+StatefulSet recreations and rollback steps still run one at a time. Set
+`JUSTCD_SYNC_CONCURRENCY=1` to apply every resource strictly in sequence. The
+same limit bounds concurrent Kubernetes reads and dry-runs while planning.
+
 A resource succeeds when its Kubernetes mutation and managed-resource record
 complete. Ordering does not wait for pod readiness, PVC binding, Job completion,
 or controller health; runtime health is reported separately.
@@ -61,9 +70,9 @@ reconciliation. Its response distinguishes `cancellationRequested` from
 `cancelled` and includes the current operation; acknowledgment does not imply
 that an in-flight resource step has finished.
 
-The worker orders starting each resource step atomically against that request.
-An already-started step finishes normally, and its result is recorded. The worker
-then stops before the next resource. The application lease remains held until
+The worker orders starting each wave atomically against that request.
+Already-started steps finish normally, and their results are recorded. The worker
+then stops before the next wave. The application lease remains held until
 the worker records the terminal outcome, preventing a conflicting apply while
 the current mutation is still running. Repeated stop requests are idempotent.
 Cancellation closes when the final resource boundary enters finalization;

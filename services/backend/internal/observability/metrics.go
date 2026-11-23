@@ -135,7 +135,7 @@ func (m *Metrics) RecordSyncStage(stage string, elapsed time.Duration) {
 	if !m.Enabled() {
 		return
 	}
-	stage = oneOf(stage, "git_fetch", "render", "live_snapshot", "dry_run", "recheck", "checkpoint", "apply", "delete", "success_snapshot")
+	stage = oneOf(stage, "git_fetch", "render", "live_snapshot", "dry_run", "recheck", "recheck_fast", "checkpoint", "apply", "delete", "success_snapshot")
 	m.syncStageDuration.WithLabelValues(stage).Observe(elapsed.Seconds())
 }
 

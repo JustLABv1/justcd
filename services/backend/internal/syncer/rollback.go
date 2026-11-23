@@ -58,19 +58,59 @@ func (s *Service) saveRollbackSnapshot(ctx context.Context, app store.Applicatio
 	return snapshot, nil
 }
 
+// observedManagedState projects the managed objects from the live objects the
+// operation has already read, the way a live snapshot without desired
+// resources would. ok is false when any managed object was not observed or no
+// longer matches its record; the caller then takes a live snapshot, which
+// reports such ownership changes.
+func observedManagedState(input planInput, managed []store.ManagedResource) ([]core.Resource, bool, error) {
+	if input.Live == nil {
+		return nil, false, nil
+	}
+	live := make([]core.Resource, 0, len(managed))
+	for _, resource := range managed {
+		identity := resource.Identity
+		identity.ClusterScoped = identity.Namespace == ""
+		if !shouldTrackManagedResource(input, resource) {
+			continue
+		}
+		object, absent, known := input.Live.lookup(identity.Key())
+		if !known || absent {
+			return nil, false, nil
+		}
+		if object.GetLabels()["justcd.io/application-id"] != input.Application.ID || string(object.GetUID()) != resource.UID {
+			return nil, false, nil
+		}
+		current, err := render.CanonicalLive(object, input.Cluster.ID, input.Application.ID, identity.ClusterScoped)
+		if err != nil {
+			return nil, false, err
+		}
+		live = append(live, current)
+	}
+	return live, true, nil
+}
+
 // captureManagedLiveState returns only fields recorded as managed in JustCD's
 // last-applied manifests, workspaceed from the live object at checkpoint time.
 // It deliberately does not apply current ignore rules here: a rollback plan
 // must be able to show when a present-day rule prevents restoring part of the
 // complete captured checkpoint.
 func (s *Service) captureManagedLiveState(ctx context.Context, app store.Application, input planInput) ([]core.Resource, error) {
-	live, _, err := s.liveSnapshot(ctx, input, nil)
-	if err != nil {
-		return nil, err
-	}
 	managed, err := s.Store.ManagedResources(ctx, app.ID)
 	if err != nil {
 		return nil, err
+	}
+	live, ok, err := observedManagedState(input, managed)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		if live, _, err = s.liveSnapshot(ctx, input, nil); err != nil {
+			return nil, err
+		}
+		if managed, err = s.Store.ManagedResources(ctx, app.ID); err != nil {
+			return nil, err
+		}
 	}
 	previous := make(map[string][]byte, len(managed))
 	for _, item := range managed {

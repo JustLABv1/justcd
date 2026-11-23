@@ -165,6 +165,7 @@ func TestIntegrationDeliveryAgainstKind(t *testing.T) {
 	workerStopped = true
 	verifyIntegrationWorkerCrash(t, ctx, svc, db, repo, workspaceID, clusterID, sourceID, credentialID, ownerID, namespace)
 	verifyIntegrationCrashMatrix(t, ctx, svc, kubeClient, repo, workspaceID, clusterID, sourceID, credentialID, ownerID, namespace, key)
+	verifyIntegrationFastRecheck(t, ctx, svc, kubeClient, repo, workspaceID, clusterID, sourceID, credentialID, ownerID, namespace)
 	audit, err := db.ListAuditEvents(ctx, 200, 0)
 	if err != nil {
 		t.Fatal(err)

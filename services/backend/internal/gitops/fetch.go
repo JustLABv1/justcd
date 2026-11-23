@@ -59,75 +59,10 @@ func Fetch(ctx context.Context, db *store.Store, key []byte, source store.GitSou
 	}
 	cleanup := func() { _ = os.RemoveAll(workRoot) }
 	checkoutPath := filepath.Join(workRoot, "repository")
-	homePath := filepath.Join(workRoot, "home")
-	if err := os.Mkdir(homePath, 0700); err != nil {
+	env, err := gitEnvironment(ctx, db, key, source, workRoot)
+	if err != nil {
 		cleanup()
 		return nil, err
-	}
-	env := cleanGitEnvironment(os.Environ(), homePath)
-	var sshCommand string
-	if source.CredentialID == nil && (strings.HasPrefix(source.RepositoryURL, "git@") || strings.HasPrefix(source.RepositoryURL, "ssh://")) {
-		cleanup()
-		return nil, errors.New("SSH Git sources require a credential with a pinned known_hosts file")
-	}
-	if source.CredentialID != nil {
-		credential, err := db.CredentialByID(ctx, *source.CredentialID)
-		if err != nil {
-			cleanup()
-			return nil, fmt.Errorf("load Git credential: %w", err)
-		}
-		if credential.ExpiresAt != nil && !credential.ExpiresAt.After(time.Now()) {
-			cleanup()
-			return nil, errors.New("Git credential has expired")
-		}
-		plain, err := security.Decrypt(key, credential.Cipher, "credential:"+credential.ID)
-		if err != nil {
-			cleanup()
-			return nil, err
-		}
-		var secrets Credentials
-		if err := json.Unmarshal(plain, &secrets); err != nil {
-			cleanup()
-			return nil, errors.New("Git credential payload is invalid")
-		}
-		switch credential.Kind {
-		case "git-https":
-			if secrets.Token == "" {
-				cleanup()
-				return nil, errors.New("Git HTTPS token is empty")
-			}
-			askpass := filepath.Join(workRoot, "askpass.sh")
-			username := secrets.Username
-			if username == "" {
-				username = "justcd"
-			}
-			script := "#!/bin/sh\ncase \"$1\" in *Username*) printf '%s' " + shellQuote(username) + " ;; *) printf '%s' " + shellQuote(secrets.Token) + " ;; esac\n"
-			if err := os.WriteFile(askpass, []byte(script), 0700); err != nil {
-				cleanup()
-				return nil, err
-			}
-			env = append(env, "GIT_ASKPASS="+askpass, "GIT_ASKPASS_REQUIRE=force")
-		case "git-ssh":
-			if secrets.PrivateKey == "" || secrets.KnownHosts == "" {
-				cleanup()
-				return nil, errors.New("SSH key and known-hosts data are required")
-			}
-			identityPath := filepath.Join(workRoot, "identity")
-			knownHostsPath := filepath.Join(workRoot, "known_hosts")
-			if err := os.WriteFile(identityPath, []byte(secrets.PrivateKey), 0600); err != nil {
-				cleanup()
-				return nil, err
-			}
-			if err := os.WriteFile(knownHostsPath, []byte(secrets.KnownHosts), 0600); err != nil {
-				cleanup()
-				return nil, err
-			}
-			sshCommand = "ssh -i " + shellQuote(identityPath) + " -o IdentitiesOnly=yes -o UserKnownHostsFile=" + shellQuote(knownHostsPath) + " -o StrictHostKeyChecking=yes -o BatchMode=yes"
-			env = append(env, "GIT_SSH_COMMAND="+sshCommand)
-		default:
-			cleanup()
-			return nil, errors.New("credential is not a supported Git credential")
-		}
 	}
 	cloneCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
@@ -158,6 +93,70 @@ func Fetch(ctx context.Context, db *store.Store, key []byte, source store.GitSou
 		return nil, commandFailure(cloneCtx, "check out requested Git revision", err)
 	}
 	return &Checkout{Root: checkoutPath, Commit: commit, env: env, cleanup: cleanup}, nil
+}
+
+// gitEnvironment prepares an isolated Git environment under workRoot with the
+// source's credential, failing for expired or unsupported credentials.
+func gitEnvironment(ctx context.Context, db *store.Store, key []byte, source store.GitSource, workRoot string) ([]string, error) {
+	homePath := filepath.Join(workRoot, "home")
+	if err := os.Mkdir(homePath, 0700); err != nil {
+		return nil, err
+	}
+	env := cleanGitEnvironment(os.Environ(), homePath)
+	var sshCommand string
+	if source.CredentialID == nil && (strings.HasPrefix(source.RepositoryURL, "git@") || strings.HasPrefix(source.RepositoryURL, "ssh://")) {
+		return nil, errors.New("SSH Git sources require a credential with a pinned known_hosts file")
+	}
+	if source.CredentialID != nil {
+		credential, err := db.CredentialByID(ctx, *source.CredentialID)
+		if err != nil {
+			return nil, fmt.Errorf("load Git credential: %w", err)
+		}
+		if credential.ExpiresAt != nil && !credential.ExpiresAt.After(time.Now()) {
+			return nil, errors.New("Git credential has expired")
+		}
+		plain, err := security.Decrypt(key, credential.Cipher, "credential:"+credential.ID)
+		if err != nil {
+			return nil, err
+		}
+		var secrets Credentials
+		if err := json.Unmarshal(plain, &secrets); err != nil {
+			return nil, errors.New("Git credential payload is invalid")
+		}
+		switch credential.Kind {
+		case "git-https":
+			if secrets.Token == "" {
+				return nil, errors.New("Git HTTPS token is empty")
+			}
+			askpass := filepath.Join(workRoot, "askpass.sh")
+			username := secrets.Username
+			if username == "" {
+				username = "justcd"
+			}
+			script := "#!/bin/sh\ncase \"$1\" in *Username*) printf '%s' " + shellQuote(username) + " ;; *) printf '%s' " + shellQuote(secrets.Token) + " ;; esac\n"
+			if err := os.WriteFile(askpass, []byte(script), 0700); err != nil {
+				return nil, err
+			}
+			env = append(env, "GIT_ASKPASS="+askpass, "GIT_ASKPASS_REQUIRE=force")
+		case "git-ssh":
+			if secrets.PrivateKey == "" || secrets.KnownHosts == "" {
+				return nil, errors.New("SSH key and known-hosts data are required")
+			}
+			identityPath := filepath.Join(workRoot, "identity")
+			knownHostsPath := filepath.Join(workRoot, "known_hosts")
+			if err := os.WriteFile(identityPath, []byte(secrets.PrivateKey), 0600); err != nil {
+				return nil, err
+			}
+			if err := os.WriteFile(knownHostsPath, []byte(secrets.KnownHosts), 0600); err != nil {
+				return nil, err
+			}
+			sshCommand = "ssh -i " + shellQuote(identityPath) + " -o IdentitiesOnly=yes -o UserKnownHostsFile=" + shellQuote(knownHostsPath) + " -o StrictHostKeyChecking=yes -o BatchMode=yes"
+			env = append(env, "GIT_SSH_COMMAND="+sshCommand)
+		default:
+			return nil, errors.New("credential is not a supported Git credential")
+		}
+	}
+	return env, nil
 }
 
 func validURL(value string) bool {

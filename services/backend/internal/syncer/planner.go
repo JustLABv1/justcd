@@ -221,6 +221,8 @@ type planInput struct {
 	AuthorizeNamespaceBootstrap func(context.Context) error
 	// Concurrency bounds simultaneous Kubernetes requests; zero means the default.
 	Concurrency int
+	// ServerVersion is the Kubernetes API server's version at load time.
+	ServerVersion string
 	// Live keeps the raw objects read by the latest live snapshot so later
 	// steps can reuse them instead of reading each object again.
 	Live *liveObjects
@@ -238,10 +240,11 @@ func (input planInput) concurrency() int {
 type liveObjects struct {
 	mu      sync.RWMutex
 	objects map[string]*unstructured.Unstructured
+	absent  map[string]bool
 }
 
 func newLiveObjects() *liveObjects {
-	return &liveObjects{objects: map[string]*unstructured.Unstructured{}}
+	return &liveObjects{objects: map[string]*unstructured.Unstructured{}, absent: map[string]bool{}}
 }
 
 func (l *liveObjects) set(key string, object *unstructured.Unstructured) {
@@ -250,7 +253,48 @@ func (l *liveObjects) set(key string, object *unstructured.Unstructured) {
 	}
 	l.mu.Lock()
 	l.objects[key] = object
+	delete(l.absent, key)
 	l.mu.Unlock()
+}
+
+// setAbsent records that the object was read and does not exist.
+func (l *liveObjects) setAbsent(key string) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	delete(l.objects, key)
+	l.absent[key] = true
+	l.mu.Unlock()
+}
+
+// forget drops what is known about an object, for example before it is
+// mutated, so a later lookup cannot return its earlier state.
+func (l *liveObjects) forget(key string) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	delete(l.objects, key)
+	delete(l.absent, key)
+	l.mu.Unlock()
+}
+
+// lookup reports the last observed object, whether it was observed absent,
+// and whether anything is known about it at all.
+func (l *liveObjects) lookup(key string) (object *unstructured.Unstructured, absent, known bool) {
+	if l == nil {
+		return nil, false, false
+	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if object, ok := l.objects[key]; ok {
+		return object, false, true
+	}
+	if l.absent[key] {
+		return nil, true, true
+	}
+	return nil, false, false
 }
 
 // get returns the stored object only when it still has the expected
@@ -280,7 +324,8 @@ func (s *Service) BuildPlanWithSelection(ctx context.Context, app store.Applicat
 	ctx, span := otel.Tracer("justcd/planner").Start(ctx, "plan.build")
 	defer span.End()
 	span.SetAttributes(attribute.String("application.id", app.ID))
-	plan, desired, err := s.CalculatePlanWithSelection(ctx, app, selection)
+	result, err := s.calculatePlan(ctx, app, selection)
+	plan, desired := result.plan, result.desired
 	if err != nil {
 		observability.MarkError(span, err)
 		if ctx.Err() == nil {
@@ -301,7 +346,7 @@ func (s *Service) BuildPlanWithSelection(ctx context.Context, app store.Applicat
 		return store.PlanRecord{}, err
 	}
 	now := time.Now().UTC()
-	record := store.PlanRecord{ID: store.NewID(), Plan: plan, Desired: desired, CreatedBy: actorID, CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute), Status: "current"}
+	record := store.PlanRecord{ID: store.NewID(), Plan: plan, Desired: desired, CreatedBy: actorID, CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute), Status: "current", RecheckBasis: result.basis}
 	s.checkpoint("plan.before_save")
 	record, _, err = s.Store.SavePlanOrReuse(ctx, record)
 	if err != nil {
@@ -383,11 +428,40 @@ func (s *Service) calculateDecommissionPlan(ctx context.Context, app store.Appli
 }
 
 func (s *Service) RecheckPlan(ctx context.Context, app store.Application, record store.PlanRecord) (core.Plan, error) {
-	plan, err := s.recalculatePlan(ctx, app, record)
+	plan, _, err := s.recheck(ctx, app, record)
+	return plan, err
+}
+
+// recheck recalculates a stored plan for comparison with its digest and also
+// returns the live objects it observed, when it observed them all. It uses
+// the fast recheck when the plan's inputs are provably unchanged.
+func (s *Service) recheck(ctx context.Context, app store.Application, record store.PlanRecord) (core.Plan, *liveObjects, error) {
+	fastCtx, span := otel.Tracer("justcd/syncer").Start(ctx, "sync."+stageRecheckFast)
+	started := time.Now()
+	plan, live, err := s.fastRecheck(fastCtx, app, record)
 	if err == nil {
 		err = preserveReviewSchema(&plan, record.Plan)
 	}
-	return plan, err
+	if err == nil {
+		span.End()
+		s.Metrics.RecordSyncStage(stageRecheckFast, time.Since(started))
+		return plan, live, nil
+	}
+	reason := "error"
+	var full errFullRecheck
+	if errors.As(err, &full) {
+		reason = full.reason
+	}
+	span.SetAttributes(attribute.String("recheck.full_reason", reason))
+	span.End()
+	if ctx.Err() != nil {
+		return core.Plan{}, nil, ctx.Err()
+	}
+	plan, live, err = s.recalculatePlanLive(ctx, app, record)
+	if err == nil {
+		err = preserveReviewSchema(&plan, record.Plan)
+	}
+	return plan, live, err
 }
 
 func preserveReviewSchema(fresh *core.Plan, stored core.Plan) error {
@@ -399,22 +473,23 @@ func preserveReviewSchema(fresh *core.Plan, stored core.Plan) error {
 	return core.RefreshDigest(fresh)
 }
 
-func (s *Service) recalculatePlan(ctx context.Context, app store.Application, record store.PlanRecord) (core.Plan, error) {
+func (s *Service) recalculatePlanLive(ctx context.Context, app store.Application, record store.PlanRecord) (core.Plan, *liveObjects, error) {
 	if record.Plan.Rollback != nil {
 		plan, _, err := s.CalculateRollbackPlan(ctx, app, *record.Plan.Rollback)
-		return plan, err
+		return plan, nil, err
 	}
 	if record.Plan.Decommission {
 		if !app.Decommissioning {
-			return core.Plan{}, errors.New("decommission plan was cancelled")
+			return core.Plan{}, nil, errors.New("decommission plan was cancelled")
 		}
-		return s.calculateDecommissionPlan(ctx, app, record.Plan.Selection.KeepNamespaces)
+		plan, err := s.calculateDecommissionPlan(ctx, app, record.Plan.Selection.KeepNamespaces)
+		return plan, nil, err
 	}
 	if app.Decommissioning {
-		return core.Plan{}, errors.New("application is being decommissioned; cancel deletion before normal sync")
+		return core.Plan{}, nil, errors.New("application is being decommissioned; cancel deletion before normal sync")
 	}
-	plan, _, err := s.CalculatePlanWithSelection(ctx, app, record.Plan.Selection)
-	return plan, err
+	result, err := s.calculatePlan(ctx, app, record.Plan.Selection)
+	return result.plan, result.live, err
 }
 
 func (s *Service) RefreshPlan(ctx context.Context, app store.Application, actorID string, record store.PlanRecord) (store.PlanRecord, error) {
@@ -435,72 +510,90 @@ func (s *Service) CalculatePlan(ctx context.Context, app store.Application) (cor
 }
 
 func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Application, selection core.PlanSelection) (core.Plan, []core.Resource, error) {
+	result, err := s.calculatePlan(ctx, app, selection)
+	return result.plan, result.desired, err
+}
+
+// planResult is a calculated plan with what is needed to recheck it cheaply.
+type planResult struct {
+	plan    core.Plan
+	desired []core.Resource
+	// basis digests the plan's Git, render and live-state inputs; empty when
+	// they could not all be recorded.
+	basis string
+	// live holds the objects observed while planning.
+	live *liveObjects
+}
+
+func (s *Service) calculatePlan(ctx context.Context, app store.Application, selection core.PlanSelection) (planResult, error) {
+	plan, desired, input, err := s.calculatePlanInput(ctx, app, selection)
+	if err != nil {
+		return planResult{}, err
+	}
+	managed, err := s.Store.ManagedResources(ctx, app.ID)
+	if err != nil {
+		return planResult{}, err
+	}
+	basis, _ := recheckBasis(input, plan.Revision, managed, desired)
+	return planResult{plan: plan, desired: desired, basis: basis, live: input.Live}, nil
+}
+
+func (s *Service) calculatePlanInput(ctx context.Context, app store.Application, selection core.PlanSelection) (core.Plan, []core.Resource, planInput, error) {
 	ctx, span := otel.Tracer("justcd/planner").Start(ctx, "plan.calculate")
 	defer span.End()
 	span.SetAttributes(attribute.String("application.id", app.ID), attribute.String("renderer", app.Renderer))
 	if app.ConfigurationMissing {
-		return core.Plan{}, nil, &PlanConfigurationError{Source: "git", Code: "application.definition_missing", Summary: "Application definition is missing from Git.", Remediation: "Restore the application's justcd.yaml definition on the tracked branch and run discovery before planning."}
+		return core.Plan{}, nil, planInput{}, &PlanConfigurationError{Source: "git", Code: "application.definition_missing", Summary: "Application definition is missing from Git.", Remediation: "Restore the application's justcd.yaml definition on the tracked branch and run discovery before planning."}
 	}
 	if app.Decommissioning {
-		return core.Plan{}, nil, errors.New("application is being decommissioned; cancel deletion before normal sync")
+		return core.Plan{}, nil, planInput{}, errors.New("application is being decommissioned; cancel deletion before normal sync")
 	}
 	rules, err := s.Store.IgnoreRules(ctx, app.ID)
 	if err != nil {
-		return core.Plan{}, nil, err
+		return core.Plan{}, nil, planInput{}, err
 	}
 	selectors, err := s.Store.IgnoreSelectors(ctx, app.ID)
 	if err != nil {
-		return core.Plan{}, nil, err
+		return core.Plan{}, nil, planInput{}, err
 	}
 	selection = normalizeSelection(selection)
 	source, err := s.Store.GitSourceForWorkspace(ctx, app.SourceID, app.WorkspaceID)
 	if err != nil {
-		return core.Plan{}, nil, &planStageError{stage: "git", err: errors.New("application Git source is unavailable")}
+		return core.Plan{}, nil, planInput{}, &planStageError{stage: "git", err: errors.New("application Git source is unavailable")}
 	}
 	fetchCtx, fetchDone := s.beginStage(ctx, stageGitFetch)
 	checkout, err := gitops.Fetch(fetchCtx, s.Store, s.EncryptionKey, source, app.Revision)
 	fetchDone()
 	if err != nil {
-		return core.Plan{}, nil, &planStageError{stage: "git", err: err}
+		return core.Plan{}, nil, planInput{}, &planStageError{stage: "git", err: err}
 	}
 	defer checkout.Close()
 	input, err := s.loadPlanInput(ctx, app)
 	if err != nil {
-		return core.Plan{}, nil, &planStageError{stage: "cluster", err: err}
+		return core.Plan{}, nil, planInput{}, &planStageError{stage: "cluster", err: err}
 	}
 	input.IgnoreRules = rules
 	input.IgnoreSelectors = selectors
 	input.Selection = selection
-	namespaceBindings := make([]core.Binding, 0, len(input.Bindings))
-	for _, binding := range input.Bindings {
-		if !binding.ClusterScope {
-			namespaceBindings = append(namespaceBindings, binding)
-		}
-	}
-	ignoredResources := make([]core.Identity, 0, len(rules))
-	for _, rule := range rules {
-		if rule.Path == "" {
-			ignoredResources = append(ignoredResources, rule.Identity)
-		}
-	}
-	renderOptions := render.Options{RepositoryRoot: checkout.Root, ManifestPath: app.ManifestPath, TargetManifestPath: app.TargetManifestPath, NamespaceManifestPaths: app.NamespaceManifestPaths, Renderer: app.Renderer, KustomizeHelmEnabled: app.KustomizeHelmEnabled, KustomizeNamespaceOverride: app.KustomizeNamespaceOverride, HelmReleaseName: app.HelmReleaseName, HelmValuesFiles: app.HelmValuesFiles, HelmValuesYAML: app.HelmValuesYAML, TargetHelmValuesFiles: app.TargetHelmValuesFiles, TargetHelmValuesYAML: app.TargetHelmValuesYAML, NamespaceHelmValues: app.NamespaceHelmValues, ApplicationID: app.ID, ClusterID: app.ClusterID, Namespaces: namespaceBindings, Mapper: input.Mapper.Mapper, IgnoredResources: ignoredResources, IgnoredSelectors: selectors}
+	renderOptions := planRenderOptions(app, input, rules, selectors)
+	renderOptions.RepositoryRoot = checkout.Root
 	input.ReviewFingerprint, err = adoptionReviewFingerprint(source, app.Revision, checkout.Commit, renderOptions)
 	if err != nil {
-		return core.Plan{}, nil, err
+		return core.Plan{}, nil, planInput{}, err
 	}
 	renderCtx, renderDone := s.beginStage(ctx, stageRender)
 	desired, err := s.renderPlanResources(renderCtx, renderOptions, input.ReviewFingerprint)
 	renderDone()
 	if err != nil {
 		observability.MarkError(span, err)
-		return core.Plan{}, nil, &planStageError{stage: "render", err: err}
+		return core.Plan{}, nil, planInput{}, &planStageError{stage: "render", err: err}
 	}
 	for _, resource := range desired {
 		if app.BranchTest != nil && app.BranchTest.Mode == "isolated" && resource.Identity.ClusterScoped {
-			return core.Plan{}, nil, errors.New("isolated branch previews cannot manage cluster-scoped resources; remove them from the preview overlay")
+			return core.Plan{}, nil, planInput{}, errors.New("isolated branch previews cannot manage cluster-scoped resources; remove them from the preview overlay")
 		}
 		if resource.Identity.ClusterScoped && input.ClusterScopeClient == nil {
-			return core.Plan{}, nil, clusterScopeRequired(&resource.Identity)
+			return core.Plan{}, nil, planInput{}, clusterScopeRequired(&resource.Identity)
 		}
 	}
 	// Validate prerequisites before workload reads: a credential may not have
@@ -519,7 +612,7 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 	}
 	prerequisites := core.Plan{}
 	if err := addNamespaceCreations(ctx, input, &prerequisites, desired); err != nil {
-		return core.Plan{}, nil, &planStageError{stage: "cluster", err: err}
+		return core.Plan{}, nil, planInput{}, &planStageError{stage: "cluster", err: err}
 	}
 	input.MissingNamespaces = make(map[string]bool, len(prerequisites.NamespaceCreations))
 	for _, namespace := range prerequisites.NamespaceCreations {
@@ -527,16 +620,16 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 	}
 	live, changedIgnoredFields, err := s.liveSnapshot(ctx, input, desired)
 	if err != nil {
-		return core.Plan{}, nil, &planStageError{stage: "cluster", err: err}
+		return core.Plan{}, nil, planInput{}, &planStageError{stage: "cluster", err: err}
 	}
 	plan, err := core.BuildPlan(app.ID, checkout.Commit, input.Bindings, desired, live)
 	if err != nil {
 		observability.MarkError(span, err)
-		return core.Plan{}, nil, err
+		return core.Plan{}, nil, planInput{}, err
 	}
 	managed, err := s.Store.ManagedResources(ctx, app.ID)
 	if err != nil {
-		return core.Plan{}, nil, err
+		return core.Plan{}, nil, planInput{}, err
 	}
 	previousByKey := make(map[string][]byte, len(managed))
 	for _, resource := range managed {
@@ -546,26 +639,26 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 		if plan.Changes[index].Kind == core.Update {
 			plan.Changes[index].Before, plan.Changes[index].After, err = render.ComparisonManifests(plan.Changes[index].Before, plan.Changes[index].After, previousByKey[plan.Changes[index].Identity.Key()])
 			if err != nil {
-				return core.Plan{}, nil, err
+				return core.Plan{}, nil, planInput{}, err
 			}
 		}
 		for _, path := range persistentPathsFor(input, plan.Changes[index].Identity) {
 			if len(plan.Changes[index].Before) > 0 {
 				plan.Changes[index].Before, err = render.RemoveJSONPointer(plan.Changes[index].Before, path)
 				if err != nil {
-					return core.Plan{}, nil, err
+					return core.Plan{}, nil, planInput{}, err
 				}
 			}
 			if len(plan.Changes[index].After) > 0 {
 				plan.Changes[index].After, err = render.RemoveJSONPointer(plan.Changes[index].After, path)
 				if err != nil {
-					return core.Plan{}, nil, err
+					return core.Plan{}, nil, planInput{}, err
 				}
 			}
 		}
 		plan.Changes[index].ChangedPaths, err = render.ChangedJSONPointers(plan.Changes[index].Before, plan.Changes[index].After)
 		if err != nil {
-			return core.Plan{}, nil, err
+			return core.Plan{}, nil, planInput{}, err
 		}
 	}
 	plan.Selection = selection
@@ -597,19 +690,19 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 				if len(activeChange.Before) > 0 {
 					activeChange.Before, err = render.RemoveJSONPointer(activeChange.Before, path)
 					if err != nil {
-						return core.Plan{}, nil, err
+						return core.Plan{}, nil, planInput{}, err
 					}
 				}
 				if len(activeChange.After) > 0 {
 					activeChange.After, err = render.RemoveJSONPointer(activeChange.After, path)
 					if err != nil {
-						return core.Plan{}, nil, err
+						return core.Plan{}, nil, planInput{}, err
 					}
 				}
 			}
 			activeChange.ChangedPaths, err = render.ChangedJSONPointers(activeChange.Before, activeChange.After)
 			if err != nil {
-				return core.Plan{}, nil, err
+				return core.Plan{}, nil, planInput{}, err
 			}
 			plan.Ignored = append(plan.Ignored, core.Change{Kind: core.Update, Identity: activeChange.Identity, Before: ignoredBefore, After: ignoredAfter, ChangedPaths: paths, IgnoredPaths: paths, IgnoreReason: "Fields are excluded from this plan's selection"})
 			continue
@@ -634,13 +727,13 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 			if len(before) > 0 {
 				before, err = render.RemoveJSONPointer(before, path)
 				if err != nil {
-					return core.Plan{}, nil, err
+					return core.Plan{}, nil, planInput{}, err
 				}
 			}
 			if len(after) > 0 {
 				after, err = render.RemoveJSONPointer(after, path)
 				if err != nil {
-					return core.Plan{}, nil, err
+					return core.Plan{}, nil, planInput{}, err
 				}
 			}
 		}
@@ -653,7 +746,7 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 				if desired[desiredIndex].Identity.Key() == plan.Changes[index].Identity.Key() {
 					clean, removeErr := render.RemoveJSONPointer(desired[desiredIndex].Manifest, path)
 					if removeErr != nil {
-						return core.Plan{}, nil, removeErr
+						return core.Plan{}, nil, planInput{}, removeErr
 					}
 					desired[desiredIndex].Manifest = clean
 				}
@@ -661,22 +754,40 @@ func (s *Service) CalculatePlanWithSelection(ctx context.Context, app store.Appl
 		}
 	}
 	if err := s.reconcileUpdatePlan(ctx, input, &plan, desired, live); err != nil {
-		return core.Plan{}, nil, &planStageError{stage: "cluster", err: err}
+		return core.Plan{}, nil, planInput{}, &planStageError{stage: "cluster", err: err}
 	}
 	plan.NamespaceCreations = prerequisites.NamespaceCreations
 	plan.Changes = append(plan.Changes, prerequisites.Changes...)
 	policy, err := s.Store.EffectiveApprovalPolicy(ctx, app)
 	if err != nil {
-		return core.Plan{}, nil, err
+		return core.Plan{}, nil, planInput{}, err
 	}
 	setSyncApprovalPolicy(&plan, app, policy)
 	if err := s.evaluateGuardrails(ctx, app, &plan, desired); err != nil {
-		return core.Plan{}, nil, err
+		return core.Plan{}, nil, planInput{}, err
 	}
 	if err := core.RefreshDigest(&plan); err != nil {
-		return core.Plan{}, nil, err
+		return core.Plan{}, nil, planInput{}, err
 	}
-	return plan, desired, nil
+	return plan, desired, input, nil
+}
+
+// planRenderOptions returns the renderer configuration for an application,
+// without the checkout root.
+func planRenderOptions(app store.Application, input planInput, rules []store.ApplicationIgnoreRule, selectors []core.IgnoreSelector) render.Options {
+	namespaceBindings := make([]core.Binding, 0, len(input.Bindings))
+	for _, binding := range input.Bindings {
+		if !binding.ClusterScope {
+			namespaceBindings = append(namespaceBindings, binding)
+		}
+	}
+	ignoredResources := make([]core.Identity, 0, len(rules))
+	for _, rule := range rules {
+		if rule.Path == "" {
+			ignoredResources = append(ignoredResources, rule.Identity)
+		}
+	}
+	return render.Options{ManifestPath: app.ManifestPath, TargetManifestPath: app.TargetManifestPath, NamespaceManifestPaths: app.NamespaceManifestPaths, Renderer: app.Renderer, KustomizeHelmEnabled: app.KustomizeHelmEnabled, KustomizeNamespaceOverride: app.KustomizeNamespaceOverride, HelmReleaseName: app.HelmReleaseName, HelmValuesFiles: app.HelmValuesFiles, HelmValuesYAML: app.HelmValuesYAML, TargetHelmValuesFiles: app.TargetHelmValuesFiles, TargetHelmValuesYAML: app.TargetHelmValuesYAML, NamespaceHelmValues: app.NamespaceHelmValues, ApplicationID: app.ID, ClusterID: app.ClusterID, Namespaces: namespaceBindings, Mapper: input.Mapper.Mapper, IgnoredResources: ignoredResources, IgnoredSelectors: selectors}
 }
 
 func setSyncApprovalPolicy(plan *core.Plan, app store.Application, policy store.ApprovalPolicy) {
@@ -1103,9 +1214,12 @@ func (s *Service) loadPlanInput(ctx context.Context, app store.Application) (pla
 	if input.Mapper == nil {
 		return planInput{}, errors.New("application has no Kubernetes discovery client")
 	}
-	_, err = input.Mapper.Discovery.ServerVersion()
+	version, err := input.Mapper.Discovery.ServerVersion()
 	if err != nil {
 		return planInput{}, fmt.Errorf("Kubernetes API discovery failed: %w", err)
+	}
+	if version != nil {
+		input.ServerVersion = version.GitVersion
 	}
 	return input, nil
 }
@@ -1173,6 +1287,7 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 		if identity.Namespace != "" && input.MissingNamespaces[identity.Namespace] {
 			// A missing namespace contains no live workloads. Match the normal
 			// NotFound bookkeeping without issuing a potentially forbidden read.
+			input.Live.setAbsent(identity.Key())
 			if _, tracked := managedByKey[identity.Key()]; tracked {
 				if err := s.Store.DeleteManagedResource(ctx, input.Application.ID, identity); err != nil {
 					return nil, nil, err
@@ -1210,6 +1325,7 @@ func (s *Service) liveSnapshot(ctx context.Context, input planInput, desired []c
 			object, err = resourceInterface.Get(ctx, identity.Name, v1.GetOptions{})
 		}
 		if apierrors.IsNotFound(err) {
+			input.Live.setAbsent(identity.Key())
 			if _, tracked := managedByKey[identity.Key()]; tracked {
 				if err := s.Store.DeleteManagedResource(ctx, input.Application.ID, identity); err != nil {
 					return nil, nil, err

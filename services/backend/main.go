@@ -73,6 +73,9 @@ func runCommand(logger *slog.Logger, args []string) error {
 		logger.Info("encryption key rotation committed", "valuesRotated", count)
 		return nil
 	}
+	if err := db.BootstrapJustScan(startupCtx, cfg.JustScanURL); err != nil {
+		return fmt.Errorf("initialize JustScan settings: %w", err)
+	}
 	gitops.ConfigureCache(cfg.GitCacheDir)
 	server, err := api.New(db, cfg, logger)
 	if err != nil {
@@ -131,6 +134,7 @@ func runCommand(logger *slog.Logger, args []string) error {
 	})
 	lifecycle.Start(func(ctx, _ context.Context) { server.RunReviewWorker(ctx, logger) })
 	lifecycle.Start(func(ctx, _ context.Context) { server.RunPublishingWorker(ctx, logger) })
+	lifecycle.Start(server.RunJustScanWorker)
 	if telemetry.Metrics.Enabled() {
 		lifecycle.Start(func(ctx, _ context.Context) { runQueueMetrics(ctx, db, telemetry.Metrics, logger) })
 	}

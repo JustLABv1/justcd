@@ -200,6 +200,7 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 	}
 	testPlanReviewPersistence(t, ctx, s)
 	testGuardrailPolicies(t, ctx, s)
+	testJustScanQueue(t, ctx, s)
 
 	clusterApps, err := s.ListApplications(ctx, "integration-workspace")
 	if err != nil || len(clusterApps) != 1 {

@@ -15,6 +15,7 @@ import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
 import { Button } from "@/components/panelui/button"
 import { FormSelect } from "@/components/form-select"
 import { Input } from "@/components/panelui/input"
+import { JustScanConnection } from "@/components/settings/justscan-connection"
 import { PublishingProfiles } from "@/components/settings/publishing-profiles"
 import { WorkspaceSettings } from "@/components/workspace-settings"
 import { ErrorNotice } from "@/components/workspace-ui"
@@ -25,7 +26,7 @@ import { useToast } from "@/components/toast-provider"
 import { api, apiPost, errorMessage } from "@/lib/api"
 import type { ListResponse, Workspace, WorkspaceMember } from "@/lib/types"
 
-const settingsTabs = ["general", "members", "policies", "notifications", "ai", "publishing"]
+const settingsTabs = ["general", "members", "policies", "notifications", "ai", "publishing", "justscan"]
 
 /**
  * Workspace settings. Each section has its own path, /workspaces/:id/settings/:section, so it can be
@@ -134,6 +135,7 @@ function WorkspaceSettingsContent({ section }: { section?: string }) {
     ] },
     ...(isOwner ? [{ label: "Delivery", items: [
       { id: "publishing", label: "Publishing profiles", href: `/workspaces/${workspaceID}/settings/publishing` },
+      { id: "justscan", label: "JustScan", href: `/workspaces/${workspaceID}/settings/justscan` },
       { id: "policies", label: "Deployment policies", href: `/workspaces/${workspaceID}/settings/policies` },
       { id: "notifications", label: "Notifications", href: `/workspaces/${workspaceID}/settings/notifications` },
     ] }] : []),
@@ -150,6 +152,7 @@ function WorkspaceSettingsContent({ section }: { section?: string }) {
       {!isOwner && <SettingsNotice>Workspace owners manage general settings, deployment policies, and notifications. You can view members and their roles here.</SettingsNotice>}
     {deletionPlans.length > 0 && <Alert tone="warning" variant="plain"><Alert.Icon /><Alert.Title>Deletion plans are ready for review.</Alert.Title><Alert.Description>Approve and apply each application plan. Once all managed resources are gone, choose “Delete workspace” again to remove the workspace record.</Alert.Description><ul className="col-start-2 mt-3 space-y-2">{deletionPlans.map((item) => <li key={item.applicationId}><Button variant="outline" size="sm" nativeButton={false} render={<Link href={`/applications/${item.applicationId}?tab=changes`} />} className="h-auto max-w-full whitespace-normal break-words text-left">{item.applicationName} · {item.managedResources} resources</Button></li>)}</ul></Alert>}
 
+    {isOwner && activeTab === "justscan" && <JustScanConnection key={workspaceID} workspaceId={workspaceID} />}
     {isOwner && activeTab === "publishing" && <PublishingProfiles key={workspaceID} workspaceId={workspaceID} />}
     {isOwner && activeTab === "ai" && <WorkspaceAIPolicy key={workspaceID} workspaceId={workspaceID} />}
     {activeTab === "members" && <div className="min-w-0">

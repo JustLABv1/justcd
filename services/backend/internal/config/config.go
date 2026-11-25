@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/justlab/justcd/services/backend/internal/justscan"
 	"github.com/justlab/justcd/services/backend/internal/publishing"
 	"github.com/justlab/justcd/services/backend/internal/security"
 )
@@ -35,6 +36,7 @@ type Config struct {
 	// GitCacheDir holds cached Git mirrors. Empty uses the OS temporary
 	// directory and "off" disables the cache.
 	GitCacheDir string
+	JustScanURL string
 }
 
 type Observability struct {
@@ -63,6 +65,14 @@ func Load() (Config, error) {
 	}
 	cfg.PublicURL = strings.TrimRight(value("JUSTCD_PUBLIC_URL", "http://localhost:8080"), "/")
 	cfg.FrontendURL = strings.TrimRight(value("JUSTCD_FRONTEND_URL", "http://localhost:3000"), "/")
+	cfg.JustScanURL = strings.TrimSpace(os.Getenv("JUSTCD_JUSTSCAN_URL"))
+	if cfg.JustScanURL != "" {
+		endpoint, err := justscan.ParseServer(cfg.JustScanURL)
+		if err != nil || (cfg.Production && endpoint.Scheme != "https") {
+			return Config{}, errors.New("JUSTCD_JUSTSCAN_URL must be a valid HTTP(S) URL and use HTTPS in production")
+		}
+		cfg.JustScanURL = strings.TrimRight(endpoint.String(), "/")
+	}
 	secure := value("JUSTCD_COOKIE_SECURE", "true")
 	cfg.SessionCookieSecure, err = strconv.ParseBool(secure)
 	if err != nil {

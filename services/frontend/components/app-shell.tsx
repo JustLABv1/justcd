@@ -32,6 +32,7 @@ const deliveryNavigation: NavItem[] = [
 const adminNavigation: NavItem[] = [
   { href: "/onboarding", label: "Get started", icon: Rocket01Icon },
   { href: "/settings", label: "Instance settings", icon: Settings02Icon, children: [
+    { href: "/settings/justscan", label: "JustScan" },
     { href: "/settings/maintenance", label: "Maintenance" },
     { href: "/settings/ai", label: "AI" },
     { href: "/settings/access", label: "Sign-in & access" },
@@ -245,6 +246,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       { href: `${settingsBase}/members`, label: "Members & access" },
       ...(workspaceOwner ? [
         { href: `${settingsBase}/publishing`, label: "Publishing profiles" },
+        { href: `${settingsBase}/justscan`, label: "JustScan" },
         { href: `${settingsBase}/policies`, label: "Deployment policies" },
         { href: `${settingsBase}/notifications`, label: "Notifications" },
         { href: `${settingsBase}/ai`, label: "AI" },
@@ -454,7 +456,7 @@ function pageCrumbs(pathname: string, workspace: Workspace | null, application: 
     const connectionsParent = { label: "Connections", href: `/workspaces/${parts[1]}/connections` }
     const connectionsLabels: Record<string, string> = { "git-sources": "Git sources", clusters: "Kubernetes", namespaces: "Kubernetes", credentials: "Credentials", shares: "Sharing" }
     if (parts[2] === "settings") {
-      const labels: Record<string, string> = { general: "General", members: "Members & access", publishing: "Publishing profiles", policies: "Deployment policies", notifications: "Notifications", ai: "AI" }
+      const labels: Record<string, string> = { general: "General", members: "Members & access", publishing: "Publishing profiles", justscan: "JustScan", policies: "Deployment policies", notifications: "Notifications", ai: "AI" }
       return parts[3] ? [parent, { label: "Settings", href: `/workspaces/${parts[1]}/settings` }, { label: labels[parts[3]] ?? "Settings" }] : [parent, { label: "Settings" }]
     }
     if (parts[2] === "connections") return parts[3] ? [parent, connectionsParent, { label: connectionsLabels[parts[3]] ?? "Connections" }] : [parent, { label: "Connections" }]
@@ -474,7 +476,7 @@ function pageCrumbs(pathname: string, workspace: Workspace | null, application: 
   if (parts[0] === "settings" && parts[1] === "mcp") return [{ label: "MCP access" }]
   if (parts[0] === "settings" && parts[1] === "security") return [{ label: "Account security" }]
   if (parts[0] === "settings") {
-    const section = { "git-sources": "Git sources", clusters: "Clusters", namespaces: "Namespace access", credentials: "Credentials", ai: "AI", maintenance: "Maintenance", access: "Sign-in & access", oidc: "OIDC providers", users: "Platform users" }[parts[1] as "git-sources"]
+    const section = { "git-sources": "Git sources", clusters: "Clusters", namespaces: "Namespace access", credentials: "Credentials", ai: "AI", maintenance: "Maintenance", justscan: "JustScan", access: "Sign-in & access", oidc: "OIDC providers", users: "Platform users" }[parts[1] as "git-sources"]
     return parts[1] ? [{ label: "Instance settings", href: "/settings" }, { label: section ?? "Section" }] : [{ label: "Instance settings" }]
   }
   if (parts[0] === "onboarding") return [{ label: "Get started" }]

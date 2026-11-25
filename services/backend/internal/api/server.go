@@ -65,6 +65,7 @@ func (s *Server) routes() {
 	s.mcpRoutes()
 	s.aiRoutes()
 	s.notificationRoutes()
+	s.justScanRoutes()
 	s.securityRoutes()
 	s.Mux.HandleFunc("GET /api/v1/service-status", s.serviceStatus)
 	s.Mux.Handle("GET /api/v1/admin/instance-settings", s.requireAuth(s.requireAdmin(http.HandlerFunc(s.getInstanceSettings))))

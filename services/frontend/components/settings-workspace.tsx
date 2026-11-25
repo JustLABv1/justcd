@@ -23,6 +23,7 @@ import { useWorkspaceSelection } from "@/hooks/workspace-selection"
 import { PlatformUsersPanel } from "@/components/settings/users-panel"
 import { AIPanel } from "@/components/settings/ai-panel"
 import { AccessPanel } from "@/components/settings/access-panel"
+import { JustScanServerPanel } from "@/components/settings/justscan-server"
 import { MaintenancePanel } from "@/components/settings/maintenance-panel"
 import { LoadErrorNotice, SectionSkeleton, type ActionRunner } from "@/components/settings/shared"
 import type {
@@ -39,7 +40,7 @@ import type {
 const workspaceSections = ["git-sources", "clusters", "namespaces", "credentials", "shares"]
 
 const navGroups = [
-  { title: "Instance", ids: ["maintenance", "ai"] },
+  { title: "Instance", ids: ["maintenance", "ai", "justscan"] },
   { title: "Delivery", ids: ["git-sources", "clusters", "namespaces"] },
   { title: "Security & access", ids: ["credentials", "shares", "access", "oidc", "users"] },
 ]
@@ -63,6 +64,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
     { id: "oidc", title: "OIDC providers", description: "Organization sign-in and group mapping", adminOnly: true },
     { id: "users", title: "Platform users", description: "Accounts and access on this JustCD instance", adminOnly: true },
     { id: "ai", title: "AI", description: "LiteLLM connection and model settings", adminOnly: true },
+    { id: "justscan", title: "JustScan", description: "Configure the JustScan server used by workspaces", adminOnly: true },
     { id: "maintenance", title: "Maintenance", description: "Restrict access while administrators work on the instance", adminOnly: true },
   ]
   const visibleSections = sections.filter((item) => workspaceScoped ? workspaceSections.includes(item.id) : !workspaceSections.includes(item.id))
@@ -305,6 +307,7 @@ export function SettingsWorkspace({ fixedWorkspaceId, sectionOverride }: { fixed
       ) : (
         <div className="settings-content min-w-0">
                 {section === "ai" && user?.isAdmin && <AIPanel />}
+                {section === "justscan" && user?.isAdmin && <JustScanServerPanel />}
                 {section === "maintenance" && user?.isAdmin && <MaintenancePanel />}
                 {section === "access" && user?.isAdmin && <AccessPanel />}
                 {workspaceScoped && workspace && scopeLoading && <SectionSkeleton label="Loading workspace connections" />}

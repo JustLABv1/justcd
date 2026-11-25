@@ -31,6 +31,7 @@ func (s *Store) RotateEncryptionKey(ctx context.Context, oldKey, newKey []byte) 
 		{"cluster_agent_tasks", "response_cipher", "id", "'agent-task:'||id||':response'"},
 		{"user_mfa", "secret_cipher", "user_id", "'mfa:'||user_id"},
 		{"notification_destinations", "config_cipher", "id", "'notification:'||id"},
+		{"justscan_connections", "token_cipher", "workspace_id", "'justscan:'||workspace_id"},
 	}
 	count := 0
 	for _, target := range targets {

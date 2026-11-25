@@ -58,3 +58,12 @@ for backend/frontend development and verification, and
 [the docs service guide](services/docs/content/docs/getting-started/docs-service.md)
 for standalone hosting and authoring. Documentation source lives in
 `services/docs/content/docs`; recovery SQL and RBAC examples live in `scripts/operations`.
+
+
+## JustScan integration
+
+In **Instance settings → JustScan**, an instance administrator sets the server URL. Production requires HTTPS. Leave the URL blank to disable scanning. An existing `JUSTCD_JUSTSCAN_URL` is imported once during the upgrade. Changing to a different server requires reconnecting each workspace with a token for that server.
+
+In **Workspace settings → JustScan**, enter the JustScan organization ID and an organization token with the `pipeline_scan` scope. Configure access to private registries in that JustScan organization.
+
+Open a current deployment plan and select **Scan images**. JustCD queues scans for SHA-256 digest-pinned images and shows the verdict and report link in the plan. Images referenced by tags are marked **Digest required**. Scan results are advisory.

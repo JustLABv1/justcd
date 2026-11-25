@@ -349,6 +349,7 @@ function SettingsDialogContent({
       onOpenChange={onOpenChange}
       busy={busy}
       size="xl"
+      bodyClassName="min-w-0!"
       title="Pull request discovery"
       description={`Discover justcd.yaml applications added in pull requests targeting ${repository.revision}, including drafts.`}
     >
@@ -420,6 +421,40 @@ function SettingsDialogContent({
               />
               {settings.enabled ? (
                 <>
+                  <FormField
+                    label="Provider"
+                    htmlFor="repo-pr-provider"
+                    hint="Select GitLab explicitly for a self-hosted instance."
+                  >
+                    <FormSelect
+                      id="repo-pr-provider"
+                      value={settings.provider ?? ""}
+                      emptyOption="Detect from Git source"
+                      items={[
+                        { value: "github", label: "GitHub" },
+                        { value: "gitlab", label: "GitLab" },
+                      ]}
+                      onValueChange={(provider) =>
+                        setSettings((s) => ({ ...s, provider }))
+                      }
+                    />
+                  </FormField>
+                  <FormField
+                    label="Provider API URL"
+                    htmlFor="repo-pr-api"
+                    hint="Optional. For a custom API path or port, enter the HTTPS URL ending in /api/v4 on the Git source host."
+                  >
+                    <Input
+                      id="repo-pr-api"
+                      value={settings.apiUrl ?? ""}
+                      onChange={(event) =>
+                        setSettings((s) => ({
+                          ...s,
+                          apiUrl: event.target.value,
+                        }))
+                      }
+                    />
+                  </FormField>
                   <FormField
                     label="Provider API credential"
                     htmlFor="repo-pr-credential"
@@ -778,36 +813,6 @@ function SettingsDialogContent({
             <TabsContent value="approvals" className="space-y-4 outline-none">
               {settings.enabled ? (
                 <>
-                  <FormField label="Provider" htmlFor="repo-pr-provider">
-                    <FormSelect
-                      id="repo-pr-provider"
-                      value={settings.provider ?? ""}
-                      emptyOption="Detect from Git source"
-                      items={[
-                        { value: "github", label: "GitHub" },
-                        { value: "gitlab", label: "GitLab" },
-                      ]}
-                      onValueChange={(provider) =>
-                        setSettings((s) => ({ ...s, provider }))
-                      }
-                    />
-                  </FormField>
-                  <FormField
-                    label="Provider API URL"
-                    htmlFor="repo-pr-api"
-                    hint="For a custom host, for example https://git.example.com/api/v4."
-                  >
-                    <Input
-                      id="repo-pr-api"
-                      value={settings.apiUrl ?? ""}
-                      onChange={(event) =>
-                        setSettings((s) => ({
-                          ...s,
-                          apiUrl: event.target.value,
-                        }))
-                      }
-                    />
-                  </FormField>
                   <div className="border-t pt-4">
                     <h3 className="text-sm font-semibold">
                       Pull request comment approval identities

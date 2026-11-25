@@ -38,7 +38,7 @@ func rollbackSettings(app store.Application) core.RollbackSettings {
 		namespaces = append(namespaces, binding.Namespace)
 	}
 	sort.Strings(namespaces)
-	return core.RollbackSettings{SourceID: app.SourceID, Revision: app.Revision, ManifestPath: app.ManifestPath, TargetManifestPath: app.TargetManifestPath, NamespaceManifestPaths: app.NamespaceManifestPaths, Renderer: app.Renderer, KustomizeHelmEnabled: app.KustomizeHelmEnabled, KustomizeNamespaceOverride: app.KustomizeNamespaceOverride, HelmReleaseName: app.HelmReleaseName, HelmValuesFiles: app.HelmValuesFiles, HelmValuesYAML: app.HelmValuesYAML, TargetHelmValuesFiles: app.TargetHelmValuesFiles, TargetHelmValuesYAML: app.TargetHelmValuesYAML, NamespaceHelmValues: app.NamespaceHelmValues, ClusterID: app.ClusterID, Namespaces: namespaces}
+	return core.RollbackSettings{SourceID: app.SourceID, Revision: app.Revision, ManifestPath: app.ManifestPath, TargetManifestPath: app.TargetManifestPath, NamespaceManifestPaths: app.NamespaceManifestPaths, Renderer: app.Renderer, KustomizeHelmEnabled: app.KustomizeHelmEnabled, KustomizeNamespaceOverride: app.KustomizeNamespaceOverride, HelmReleaseName: app.HelmReleaseName, HelmChart: app.HelmChart, HelmValuesFiles: app.HelmValuesFiles, HelmValuesYAML: app.HelmValuesYAML, TargetHelmValuesFiles: app.TargetHelmValuesFiles, TargetHelmValuesYAML: app.TargetHelmValuesYAML, NamespaceHelmValues: app.NamespaceHelmValues, ClusterID: app.ClusterID, Namespaces: namespaces}
 }
 
 func (s *Service) saveRollbackSnapshot(ctx context.Context, app store.Application, operationID, kind, revision string, settings core.RollbackSettings, resources []core.Resource) (store.RollbackSnapshot, error) {
@@ -524,6 +524,7 @@ func (s *Service) ValidateResumeRevision(ctx context.Context, app store.Applicat
 	if app.RollbackResumeState != nil {
 		state := app.RollbackResumeState
 		app.SourceID, app.ManifestPath, app.Renderer = state.SourceID, state.ManifestPath, state.Renderer
+		app.HelmChart = state.HelmChart
 		app.TargetManifestPath, app.NamespaceManifestPaths = state.TargetManifestPath, state.NamespaceManifestPaths
 		app.KustomizeHelmEnabled, app.KustomizeNamespaceOverride = state.KustomizeHelmEnabled, state.KustomizeNamespaceOverride
 		app.HelmValuesFiles, app.HelmValuesYAML = state.HelmValuesFiles, state.HelmValuesYAML
@@ -583,7 +584,7 @@ func (s *Service) ValidateRollbackResourceStep(ctx context.Context, operation st
 }
 
 func sameRollbackApplicationConfig(left, right store.Application) bool {
-	return left.ID == right.ID && left.WorkspaceID == right.WorkspaceID && left.SourceID == right.SourceID && left.Revision == right.Revision && left.ManifestPath == right.ManifestPath && left.TargetManifestPath == right.TargetManifestPath && reflect.DeepEqual(left.NamespaceManifestPaths, right.NamespaceManifestPaths) && left.Renderer == right.Renderer && left.KustomizeHelmEnabled == right.KustomizeHelmEnabled && left.KustomizeNamespaceOverride == right.KustomizeNamespaceOverride && reflect.DeepEqual(left.HelmValuesFiles, right.HelmValuesFiles) && left.HelmValuesYAML == right.HelmValuesYAML && reflect.DeepEqual(left.TargetHelmValuesFiles, right.TargetHelmValuesFiles) && left.TargetHelmValuesYAML == right.TargetHelmValuesYAML && reflect.DeepEqual(left.NamespaceHelmValues, right.NamespaceHelmValues) && left.ClusterID == right.ClusterID && left.CreateNamespaces == right.CreateNamespaces && reflect.DeepEqual(left.Namespaces, right.Namespaces) && left.Decommissioning == right.Decommissioning
+	return left.ID == right.ID && left.WorkspaceID == right.WorkspaceID && left.SourceID == right.SourceID && left.Revision == right.Revision && left.ManifestPath == right.ManifestPath && left.TargetManifestPath == right.TargetManifestPath && reflect.DeepEqual(left.NamespaceManifestPaths, right.NamespaceManifestPaths) && left.Renderer == right.Renderer && reflect.DeepEqual(left.HelmChart, right.HelmChart) && left.KustomizeHelmEnabled == right.KustomizeHelmEnabled && left.KustomizeNamespaceOverride == right.KustomizeNamespaceOverride && reflect.DeepEqual(left.HelmValuesFiles, right.HelmValuesFiles) && left.HelmValuesYAML == right.HelmValuesYAML && reflect.DeepEqual(left.TargetHelmValuesFiles, right.TargetHelmValuesFiles) && left.TargetHelmValuesYAML == right.TargetHelmValuesYAML && reflect.DeepEqual(left.NamespaceHelmValues, right.NamespaceHelmValues) && left.ClusterID == right.ClusterID && left.CreateNamespaces == right.CreateNamespaces && reflect.DeepEqual(left.Namespaces, right.Namespaces) && left.Decommissioning == right.Decommissioning
 }
 
 func samePlanBindings(left, right []core.Binding) bool {

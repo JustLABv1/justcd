@@ -152,6 +152,7 @@ func (selector IgnoreSelector) Matches(identity Identity, labels map[string]stri
 // application's current workspace bindings when a plan is reviewed and applied.
 type RollbackSettings struct {
 	HelmReleaseName            string                        `json:"helmReleaseName,omitempty"`
+	HelmChart                  *HelmChartSource              `json:"helmChart,omitempty"`
 	SourceID                   string                        `json:"sourceId"`
 	Revision                   string                        `json:"revision"`
 	ManifestPath               string                        `json:"manifestPath"`

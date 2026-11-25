@@ -5,7 +5,8 @@ import { HugeiconsIcon } from "@hugeicons/react"
 import { PlusSignIcon, SecurityLockIcon } from "@hugeicons/core-free-icons"
 import { Badge } from "@/components/panelui/badge"
 import { Button } from "@/components/panelui/button"
-import { AppDialog, DialogCancel, DialogFooter } from "@/components/app-dialog"
+import { DialogCancel, DialogFooter } from "@/components/app-dialog"
+import { ConnectionDialog } from "@/components/connection-dialog"
 import { FormSelect } from "@/components/form-select"
 import { Input } from "@/components/panelui/input"
 import { Textarea } from "@/components/panelui/textarea"
@@ -29,6 +30,7 @@ import { SettingsPanel } from "@/components/settings/settings-section"
 const secretFields: Record<Credential["kind"], { first: string; firstKey: string; second?: string; secondKey?: string }> = {
   "git-ssh": { first: "Private key", firstKey: "privateKey", second: "Pinned host keys", secondKey: "knownHosts" },
   "git-https": { first: "Access token", firstKey: "token" },
+  "helm-registry": { first: "Password or token", firstKey: "password" },
   kubeconfig: { first: "Static kubeconfig content", firstKey: "content" },
   "kubernetes-token": { first: "Bearer token", firstKey: "token" },
 }
@@ -64,7 +66,8 @@ export function CredentialPanel({
   const canChange = (credential: Credential) => (credential.workspaceId ? isOwner : isAdmin)
   const groups = [
     { title: "Git credentials", items: credentials.filter((item) => item.kind.startsWith("git")) },
-    { title: "Kubernetes credentials", items: credentials.filter((item) => !item.kind.startsWith("git")) },
+    { title: "Helm registry credentials", items: credentials.filter((item) => item.kind === "helm-registry") },
+    { title: "Kubernetes credentials", items: credentials.filter((item) => item.kind === "kubeconfig" || item.kind === "kubernetes-token") },
   ]
   return (
     <div className="space-y-6">
@@ -85,7 +88,7 @@ export function CredentialPanel({
                   key={credential.id}
                   icon={<WorkspaceIcon name={credential.kind.startsWith("git") ? "branch" : "server"} className="size-4" />}
                   title={credential.name}
-                  subtitle={credentialKindLabels[credential.kind]}
+                  subtitle={credential.endpoint ?? credentialKindLabels[credential.kind]}
                   badges={
                     <>
                       <Badge variant="outline" >{credential.workspaceId ? "Private to this workspace" : "Instance-wide"}</Badge>
@@ -125,7 +128,7 @@ export function CredentialPanel({
         ) : (
           <SectionEmpty
             title="No credentials yet"
-            description="Add a credential to connect a private repository or a Kubernetes cluster. Secret values are never shown after saving."
+            description="Add a credential to connect a private repository, Helm registry, or Kubernetes cluster. Secret values are never shown after saving."
             action={isOwner ? (
               <Button type="button" onClick={() => onCreateOpenChange(true)}>
                 <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} aria-hidden="true" />
@@ -188,6 +191,9 @@ function CredentialDialog({ workspace, isAdmin, action, editing, onClose, onSave
   const [secretOne, setSecretOne] = useState("")
   const [secretTwo, setSecretTwo] = useState("")
   const [username, setUsername] = useState(editing?.username ?? "")
+  const [endpoint, setEndpoint] = useState(editing?.endpoint ?? "")
+  const registry = kind === "helm-registry"
+  const hasUsername = registry || kind === "git-https"
   const fields = secretFields[kind]
   const allowed = editing ? (editing.workspaceId ? workspace.role === "owner" : isAdmin) : workspace.role === "owner"
   async function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -197,18 +203,20 @@ function CredentialDialog({ workspace, isAdmin, action, editing, onClose, onSave
         const secret = {
           [fields.firstKey]: secretOne,
           ...(fields.secondKey ? { [fields.secondKey]: secretTwo } : {}),
-          ...(kind === "git-https" ? { username } : {}),
+          ...(hasUsername ? { username } : {}),
+          ...(registry && secretTwo ? { caData: secretTwo } : {}),
         }
         return editing
           ? await api<Credential>(`/api/v1/credentials/${encodeURIComponent(editing.id)}`, {
               method: "PUT",
               body: JSON.stringify({
                 name,
-                ...(kind === "git-https" ? { username } : {}),
+                ...(registry && isAdmin ? { endpoint } : {}),
+                ...(hasUsername ? { username } : {}),
                 ...(secretOne ? { secret } : {}),
               }),
             })
-          : await apiPost<Credential>("/api/v1/credentials", { workspaceId: workspace.id, name, kind, secret })
+          : await apiPost<Credential>("/api/v1/credentials", { workspaceId: workspace.id, name, kind, secret, ...(registry ? { endpoint } : {}) })
       },
       editing ? "Credential updated. The stored secret was kept unless you entered a replacement." : "Encrypted credential added.",
       onSaved
@@ -216,7 +224,7 @@ function CredentialDialog({ workspace, isAdmin, action, editing, onClose, onSave
     if (ok) onClose()
   }
   return (
-    <AppDialog
+    <ConnectionDialog
       open
       onOpenChange={(open) => { if (!open) onClose() }}
       busy={saving}
@@ -234,12 +242,17 @@ function CredentialDialog({ workspace, isAdmin, action, editing, onClose, onSave
               value={kind}
               onValueChange={(value) => setKind(value as Credential["kind"])}
               disabled={!!editing}
-              items={Object.entries(credentialKindLabels).map(([value, label]) => ({ value, label }))}
+              items={Object.entries(credentialKindLabels).filter(([value]) => value !== "helm-registry" || isAdmin || registry).map(([value, label]) => ({ value, label }))}
             />
           </FormField>
         </div>
-        {kind === "git-https" && (
-          <FormField label="Git username" htmlFor="git-username" hint="Use the username required by your Git provider; the token is sent as the password.">
+        {registry && (
+          <FormField label="Registry endpoint" htmlFor="credential-endpoint" hint="Use an oci:// or https:// URL. Include the repository path to scope where JustCD uses this credential.">
+            <Input id="credential-endpoint" value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder="oci://registry.example.com/charts" required disabled={!isAdmin} />
+          </FormField>
+        )}
+        {hasUsername && (
+          <FormField label={registry ? "Registry username" : "Git username"} htmlFor="git-username" hint={registry ? undefined : "Use the username required by your Git provider; the token is sent as the password."}>
             <Input id="git-username" value={username} onChange={(event) => setUsername(event.target.value)} required />
           </FormField>
         )}
@@ -248,8 +261,13 @@ function CredentialDialog({ workspace, isAdmin, action, editing, onClose, onSave
           htmlFor="credential-secret"
           hint={editing ? "Leave blank to keep the stored secret. To rotate it, enter all secret fields again." : kind === "kubeconfig" ? "Exec plugins, auth-provider plugins, and token files are rejected." : undefined}
         >
-          <Textarea id="credential-secret" className={monoTextareaClass} value={secretOne} onChange={(event) => setSecretOne(event.target.value)} required={!editing} />
+          {registry ? <Input id="credential-secret" type="password" autoComplete="new-password" value={secretOne} onChange={(event) => setSecretOne(event.target.value)} required={!editing || !!secretTwo} /> : <Textarea id="credential-secret" className={monoTextareaClass} value={secretOne} onChange={(event) => setSecretOne(event.target.value)} required={!editing} />}
         </FormField>
+        {registry && (
+          <FormField label="TLS CA certificate (optional)" htmlFor="registry-ca" hint={editing ? "To replace or remove the stored CA, enter the password or token again. Include a PEM bundle to keep using a custom CA." : "Paste a PEM certificate bundle for a registry using a private CA."}>
+            <Textarea id="registry-ca" className={monoTextareaClass} value={secretTwo} onChange={(event) => setSecretTwo(event.target.value)} spellCheck={false} />
+          </FormField>
+        )}
         {fields.second && (
           <FormField label={fields.second} htmlFor="credential-secret-two" hint="Paste the server's host keys (known_hosts format). Unknown hosts are rejected.">
             <Textarea id="credential-secret-two" className={monoTextareaClass} value={secretTwo} onChange={(event) => setSecretTwo(event.target.value)} required={!editing || !!secretOne} />
@@ -262,6 +280,6 @@ function CredentialDialog({ workspace, isAdmin, action, editing, onClose, onSave
           </Button>
         </DialogFooter>
       </form>
-    </AppDialog>
+    </ConnectionDialog>
   )
 }

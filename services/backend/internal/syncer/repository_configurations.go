@@ -169,7 +169,7 @@ func (s *Service) ResolveRepositoryDefinition(ctx context.Context, repository st
 	}
 	app := store.Application{
 		Labels: definition.Metadata.Labels, WorkspaceID: repository.WorkspaceID, Name: definition.Metadata.Name, SourceID: repository.SourceID, Revision: repository.Revision,
-		ManifestPath: definition.Spec.Source.Path, Renderer: definition.Spec.Source.Renderer,
+		ManifestPath: definition.Spec.Source.Path, Renderer: definition.Spec.Source.Renderer, HelmChart: definition.Spec.Source.Chart,
 		HelmReleaseName: definition.Spec.Source.ReleaseName, HelmValuesFiles: definition.Spec.Source.ValuesFiles, HelmValuesYAML: definition.Spec.Source.ValuesYAML,
 		KustomizeHelmEnabled: definition.Spec.Source.KustomizeHelmEnabled, KustomizeNamespaceOverride: definition.Spec.Source.KustomizeNamespaceOverride,
 		CreateNamespaces: definition.Spec.Destination.CreateNamespaces, ClusterID: clusterID, Namespaces: []store.NamespaceBinding{binding}, SyncPolicy: definition.Spec.SyncPolicy, PollSeconds: definition.Spec.PollSeconds, RetryPolicy: store.DefaultRetryPolicy(),

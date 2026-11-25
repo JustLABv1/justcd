@@ -37,6 +37,7 @@ type applicationGroupInput struct {
 	KustomizeNamespaceOverride bool                          `json:"kustomizeNamespaceOverride"`
 	HelmValuesFiles            []string                      `json:"helmValuesFiles"`
 	HelmValuesYAML             string                        `json:"helmValuesYaml"`
+	HelmChart                  *core.HelmChartSource         `json:"helmChart"`
 	SyncPolicy                 string                        `json:"syncPolicy"`
 	PollSeconds                int                           `json:"pollSeconds"`
 	Targets                    []applicationGroupTargetInput `json:"targets"`
@@ -48,12 +49,19 @@ func cleanGroupSource(input *applicationGroupInput) error {
 	if !resourceNamePattern.MatchString(input.Name) || input.Revision == "" || len(input.Revision) > 256 || strings.HasPrefix(input.Revision, "-") || strings.ContainsAny(input.Revision, " \t\r\n\x00") {
 		return errors.New("invalid deployment group name or Git revision")
 	}
-	input.ManifestPath = path.Clean(strings.TrimSpace(input.ManifestPath))
-	if input.ManifestPath == "." || input.ManifestPath == ".." || strings.HasPrefix(input.ManifestPath, "../") || path.IsAbs(input.ManifestPath) || strings.ContainsRune(input.ManifestPath, '\x00') {
-		return errors.New("manifest path must be repository-relative")
-	}
 	if input.Renderer == "" {
 		input.Renderer = "helm"
+	}
+	chart, err := applicationChartSource(input.Renderer, input.HelmChart)
+	if err != nil {
+		return err
+	}
+	input.HelmChart = chart
+	input.ManifestPath = path.Clean(strings.TrimSpace(input.ManifestPath))
+	if chart != nil {
+		input.ManifestPath = registryChartManifestPath
+	} else if input.ManifestPath == "." || input.ManifestPath == ".." || strings.HasPrefix(input.ManifestPath, "../") || path.IsAbs(input.ManifestPath) || strings.ContainsRune(input.ManifestPath, '\x00') {
+		return errors.New("manifest path must be repository-relative")
 	}
 	if input.Renderer != "helm" && input.Renderer != "kustomize" {
 		return errors.New("deployment groups support Helm or Kustomize")
@@ -102,7 +110,7 @@ func (s *Server) createApplicationGroup(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "Git source is not available to this workspace")
 		return
 	}
-	group := store.ApplicationGroup{ID: store.NewID(), WorkspaceID: input.WorkspaceID, Name: input.Name, SourceID: input.SourceID, Revision: input.Revision, ManifestPath: input.ManifestPath, Renderer: input.Renderer, KustomizeHelmEnabled: input.KustomizeHelmEnabled, KustomizeNamespaceOverride: input.KustomizeNamespaceOverride, HelmValuesFiles: input.HelmValuesFiles, HelmValuesYAML: input.HelmValuesYAML, SyncPolicy: input.SyncPolicy, PollSeconds: input.PollSeconds}
+	group := store.ApplicationGroup{ID: store.NewID(), WorkspaceID: input.WorkspaceID, Name: input.Name, SourceID: input.SourceID, Revision: input.Revision, ManifestPath: input.ManifestPath, Renderer: input.Renderer, KustomizeHelmEnabled: input.KustomizeHelmEnabled, KustomizeNamespaceOverride: input.KustomizeNamespaceOverride, HelmValuesFiles: input.HelmValuesFiles, HelmValuesYAML: input.HelmValuesYAML, HelmChart: input.HelmChart, SyncPolicy: input.SyncPolicy, PollSeconds: input.PollSeconds}
 	apps := make([]store.Application, 0, len(input.Targets))
 	seenClusters, seenNames := map[string]bool{}, map[string]bool{}
 	for _, target := range input.Targets {
@@ -196,7 +204,7 @@ func applicationIDs(apps []store.Application) []string {
 func applicationGroupAuditDetails(group store.ApplicationGroup) map[string]any {
 	return map[string]any{
 		"name": group.Name, "workspaceId": group.WorkspaceID, "sourceId": group.SourceID,
-		"revision": group.Revision, "manifestPath": group.ManifestPath, "renderer": group.Renderer,
+		"revision": group.Revision, "manifestPath": group.ManifestPath, "renderer": group.Renderer, "helmChart": group.HelmChart,
 		"syncPolicy": group.SyncPolicy, "pollSeconds": group.PollSeconds,
 		"kustomizeHelmEnabled": group.KustomizeHelmEnabled, "kustomizeNamespaceOverride": group.KustomizeNamespaceOverride,
 		"helmValuesFiles": group.HelmValuesFiles, "helmValuesConfigured": group.HelmValuesYAML != "",
@@ -234,23 +242,32 @@ func (s *Server) updateApplicationGroup(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var input struct {
-		SourceID                   string   `json:"sourceId"`
-		Revision                   string   `json:"revision"`
-		ManifestPath               string   `json:"manifestPath"`
-		KustomizeHelmEnabled       bool     `json:"kustomizeHelmEnabled"`
-		KustomizeNamespaceOverride bool     `json:"kustomizeNamespaceOverride"`
-		HelmValuesFiles            []string `json:"helmValuesFiles"`
-		HelmValuesYAML             string   `json:"helmValuesYaml"`
-		SyncPolicy                 string   `json:"syncPolicy"`
-		PollSeconds                int      `json:"pollSeconds"`
+		SourceID                   string                `json:"sourceId"`
+		Revision                   string                `json:"revision"`
+		ManifestPath               string                `json:"manifestPath"`
+		KustomizeHelmEnabled       bool                  `json:"kustomizeHelmEnabled"`
+		KustomizeNamespaceOverride bool                  `json:"kustomizeNamespaceOverride"`
+		HelmValuesFiles            []string              `json:"helmValuesFiles"`
+		HelmValuesYAML             string                `json:"helmValuesYaml"`
+		HelmChart                  *core.HelmChartSource `json:"helmChart"`
+		SyncPolicy                 string                `json:"syncPolicy"`
+		PollSeconds                int                   `json:"pollSeconds"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	chart, err := applicationChartSource(group.Renderer, input.HelmChart)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	input.Revision = strings.TrimSpace(input.Revision)
 	input.ManifestPath = path.Clean(strings.TrimSpace(input.ManifestPath))
-	if input.Revision == "" || len(input.Revision) > 256 || strings.ContainsAny(input.Revision, " \t\r\n\x00") || input.ManifestPath == "." || input.ManifestPath == ".." || strings.HasPrefix(input.ManifestPath, "../") || path.IsAbs(input.ManifestPath) || strings.ContainsRune(input.ManifestPath, '\x00') {
+	if chart != nil {
+		input.ManifestPath = registryChartManifestPath
+	}
+	if input.Revision == "" || len(input.Revision) > 256 || strings.ContainsAny(input.Revision, " \t\r\n\x00") || (chart == nil && input.ManifestPath == ".") || input.ManifestPath == ".." || strings.HasPrefix(input.ManifestPath, "../") || path.IsAbs(input.ManifestPath) || strings.ContainsRune(input.ManifestPath, '\x00') {
 		writeError(w, http.StatusBadRequest, "invalid Git revision or manifest path")
 		return
 	}
@@ -275,6 +292,7 @@ func (s *Server) updateApplicationGroup(w http.ResponseWriter, r *http.Request) 
 	group.SourceID, group.Revision, group.ManifestPath = input.SourceID, input.Revision, input.ManifestPath
 	group.KustomizeHelmEnabled, group.KustomizeNamespaceOverride = input.KustomizeHelmEnabled, input.KustomizeNamespaceOverride
 	group.HelmValuesFiles, group.HelmValuesYAML = files, values
+	group.HelmChart = chart
 	group.SyncPolicy, group.PollSeconds = input.SyncPolicy, input.PollSeconds
 	if err := s.Store.UpdateApplicationGroup(r.Context(), group); err != nil {
 		writeError(w, http.StatusConflict, err.Error())

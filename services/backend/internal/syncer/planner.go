@@ -581,6 +581,12 @@ func (s *Service) calculatePlanInput(ctx context.Context, app store.Application,
 	if err != nil {
 		return core.Plan{}, nil, planInput{}, err
 	}
+	if rendererUsesHelm(app) {
+		renderOptions.RegistryCredentials, err = s.registryCredentials(ctx, app.WorkspaceID)
+		if err != nil {
+			return core.Plan{}, nil, planInput{}, &planStageError{stage: "render", err: err}
+		}
+	}
 	renderCtx, renderDone := s.beginStage(ctx, stageRender)
 	desired, err := s.renderPlanResources(renderCtx, renderOptions, input.ReviewFingerprint)
 	renderDone()
@@ -787,7 +793,7 @@ func planRenderOptions(app store.Application, input planInput, rules []store.App
 			ignoredResources = append(ignoredResources, rule.Identity)
 		}
 	}
-	return render.Options{ManifestPath: app.ManifestPath, TargetManifestPath: app.TargetManifestPath, NamespaceManifestPaths: app.NamespaceManifestPaths, Renderer: app.Renderer, KustomizeHelmEnabled: app.KustomizeHelmEnabled, KustomizeNamespaceOverride: app.KustomizeNamespaceOverride, HelmReleaseName: app.HelmReleaseName, HelmValuesFiles: app.HelmValuesFiles, HelmValuesYAML: app.HelmValuesYAML, TargetHelmValuesFiles: app.TargetHelmValuesFiles, TargetHelmValuesYAML: app.TargetHelmValuesYAML, NamespaceHelmValues: app.NamespaceHelmValues, ApplicationID: app.ID, ClusterID: app.ClusterID, Namespaces: namespaceBindings, Mapper: input.Mapper.Mapper, IgnoredResources: ignoredResources, IgnoredSelectors: selectors}
+	return render.Options{ManifestPath: app.ManifestPath, TargetManifestPath: app.TargetManifestPath, NamespaceManifestPaths: app.NamespaceManifestPaths, Renderer: app.Renderer, KustomizeHelmEnabled: app.KustomizeHelmEnabled, KustomizeNamespaceOverride: app.KustomizeNamespaceOverride, HelmReleaseName: app.HelmReleaseName, HelmChart: app.HelmChart, HelmValuesFiles: app.HelmValuesFiles, HelmValuesYAML: app.HelmValuesYAML, TargetHelmValuesFiles: app.TargetHelmValuesFiles, TargetHelmValuesYAML: app.TargetHelmValuesYAML, NamespaceHelmValues: app.NamespaceHelmValues, ApplicationID: app.ID, ClusterID: app.ClusterID, Namespaces: namespaceBindings, Mapper: input.Mapper.Mapper, IgnoredResources: ignoredResources, IgnoredSelectors: selectors}
 }
 
 func setSyncApprovalPolicy(plan *core.Plan, app store.Application, policy store.ApprovalPolicy) {

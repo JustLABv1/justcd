@@ -76,7 +76,9 @@ function SourceSettings({ application, canApprove }: { application: Application;
   </>}>
     <SettingsGroup>
       <SettingsRow label="Revision" value={<span className="font-medium break-all">{application.revision}</span>} />
-      <SettingsRow label="Manifest path" value={<span className={mono}>{application.manifestPath}</span>} />
+      {application.helmChart
+        ? <SettingsRow label="Helm chart" value={<span className={mono}>{application.helmChart.repository} · {application.helmChart.chart} {application.helmChart.version}</span>} />
+        : <SettingsRow label="Manifest path" value={<span className={mono}>{application.manifestPath}</span>} />}
       <SettingsRow label="Renderer" value={rendererLabels[application.renderer] ?? application.renderer} />
       {application.renderer === "kustomize" && <SettingsRow label="Cluster overlay path" value={<span className={mono}>{application.targetManifestPath || "Shared path"}</span>} />}
       {overlays.length > 0 && <SettingsRow label="Namespace overlays" value={<ul className="space-y-1">{overlays.map(([namespace, path]) => <li key={namespace} className={mono}>{namespace}: {path}</li>)}</ul>} />}

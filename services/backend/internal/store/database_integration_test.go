@@ -417,4 +417,5 @@ func testIntegrationMigrationUpgradeAndPoller(t *testing.T, dsn string, pending 
 	testRepositoryConfigurationSafety(t, ctx, s)
 	testConnectionDeletionSafety(t, ctx, s)
 	testClusterScopedApplicationNames(t, ctx, s)
+	testHelmRegistrySources(t, ctx, s)
 }

@@ -5,6 +5,7 @@ import { Section } from "@/components/section"
 import { useEffect, useState, type FormEvent } from "react"
 import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
+import { HelmChartFields } from "@/components/applications/helm-chart-source"
 import { Button } from "@/components/panelui/button"
 import { Disclosure } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -67,7 +68,7 @@ export default function EditApplicationPage() {
     try {
       await api<Application>(`/api/v1/applications/${encodeURIComponent(applicationID)}`, { method: "PUT", body: JSON.stringify({
         createNamespaces: app.createNamespaces, name: app.name, sourceId: app.sourceId, revision: app.revision, manifestPath: app.manifestPath,
-        renderer: app.renderer, kustomizeHelmEnabled: app.renderer === "kustomize" && app.kustomizeHelmEnabled,
+        renderer: app.renderer, helmChart: app.renderer === "helm" ? app.helmChart : null, kustomizeHelmEnabled: app.renderer === "kustomize" && app.kustomizeHelmEnabled,
         kustomizeNamespaceOverride: app.renderer === "kustomize" && app.kustomizeNamespaceOverride,
         targetManifestPath: app.renderer === "kustomize" ? app.targetManifestPath : "",
         namespaceManifestPaths: app.renderer === "kustomize" ? Object.fromEntries(namespaces.reduce<[string, string][]>((entries, namespace) => {
@@ -123,8 +124,9 @@ export default function EditApplicationPage() {
         <FormField label="Application name" htmlFor="edit-app-name"><Input id="edit-app-name" value={app.name} onChange={(event) => setApp({ ...app, name: event.target.value })} required pattern="[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?" /></FormField>
         <FormField label="Git source" htmlFor="edit-app-source"><FormSelect id="edit-app-source" value={app.sourceId} onValueChange={(value) => setApp({ ...app, sourceId: value })} disabled={Boolean(app.applicationGroupId)} items={sources.map((source) => ({ value: source.id, label: source.name }))} /></FormField>
         <FormField label="Git revision" htmlFor="edit-app-revision"><Input id="edit-app-revision" value={app.revision} onChange={(event) => setApp({ ...app, revision: event.target.value })} required disabled={Boolean(app.applicationGroupId)} /></FormField>
-        <FormField label={app.renderer === "helm" ? "Chart path" : app.renderer === "kustomize" ? "Shared Kustomize path" : "Manifest path"} htmlFor="edit-app-path" hint={app.renderer === "kustomize" ? "Fallback Kustomize entry point. Cluster and namespace paths can select complete overlays." : undefined}><Input id="edit-app-path" value={app.manifestPath} onChange={(event) => setApp({ ...app, manifestPath: event.target.value })} required disabled={Boolean(app.applicationGroupId)} /></FormField>
-        <FormField label="Renderer" htmlFor="edit-app-renderer"><FormSelect id="edit-app-renderer" value={app.renderer} onValueChange={(value) => setApp({ ...app, renderer: value as Application["renderer"] })} disabled={Boolean(app.applicationGroupId)} items={[{ value: "yaml", label: "Plain YAML / JSON" }, { value: "kustomize", label: "Kustomize build" }, { value: "helm", label: "Helm template" }]} /></FormField>
+        {app.renderer === "helm" && <HelmChartFields id="applications-chart-source" chart={app.helmChart} onChange={(helmChart) => setApp({ ...app, helmChart, manifestPath: app.manifestPath === "." ? "" : app.manifestPath })} disabled={Boolean(app.applicationGroupId)} />}
+        {(app.renderer !== "helm" || !app.helmChart) && <FormField label={app.renderer === "helm" ? "Chart path" : app.renderer === "kustomize" ? "Shared Kustomize path" : "Manifest path"} htmlFor="edit-app-path" hint={app.renderer === "kustomize" ? "Fallback Kustomize entry point. Cluster and namespace paths can select complete overlays." : undefined}><Input id="edit-app-path" value={app.manifestPath} onChange={(event) => setApp({ ...app, manifestPath: event.target.value })} required disabled={Boolean(app.applicationGroupId)} /></FormField>}
+        <FormField label="Renderer" htmlFor="edit-app-renderer"><FormSelect id="edit-app-renderer" value={app.renderer} onValueChange={(value) => setApp({ ...app, renderer: value as Application["renderer"], helmChart: value === "helm" ? app.helmChart : null })} disabled={Boolean(app.applicationGroupId)} items={[{ value: "yaml", label: "Plain YAML / JSON" }, { value: "kustomize", label: "Kustomize build" }, { value: "helm", label: "Helm template" }]} /></FormField>
         <CheckboxCard id="edit-app-create-namespaces" checked={app.createNamespaces} onCheckedChange={(checked) => setApp({ ...app, createNamespaces: checked })} title="Create missing namespaces" description="Create target namespaces before workloads. Requires namespace creation permissions and plan approval. Namespaces are retained." />
         {app.renderer === "kustomize" && <div className="flex flex-col gap-3 sm:col-span-2 text-sm">{app.applicationGroupId && <p className="text-muted-foreground">Shared Kustomize settings are managed by the <Link href={`/application-groups/${app.applicationGroupId}`} className="font-medium text-primary hover:underline">deployment group</Link>.</p>}<KustomizeOptions idPrefix="edit-app-kustomize" disabled={Boolean(app.applicationGroupId)} namespaceOverride={app.kustomizeNamespaceOverride} onNamespaceOverrideChange={(checked) => setApp({ ...app, kustomizeNamespaceOverride: checked })} helmEnabled={app.kustomizeHelmEnabled} onHelmEnabledChange={(checked) => setApp({ ...app, kustomizeHelmEnabled: checked })} /></div>}
         {app.renderer === "helm" && <div className="space-y-4 sm:col-span-2">

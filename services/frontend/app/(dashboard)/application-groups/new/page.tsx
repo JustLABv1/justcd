@@ -5,6 +5,7 @@ import { Section } from "@/components/section"
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
+import { HelmChartFields } from "@/components/applications/helm-chart-source"
 import { Button } from "@/components/panelui/button"
 import { Disclosure } from "@/components/ui/collapsible"
 import { HugeiconsIcon } from "@hugeicons/react"
@@ -18,7 +19,7 @@ import { SummaryList, Wizard, WizardFooter, useWizard } from "@/components/appli
 import { ErrorNotice } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
 import { api, apiPost } from "@/lib/api"
-import type { ApplicationGroupResponse, Cluster, GitSource, ListResponse, NamespaceBinding, Workspace } from "@/lib/types"
+import type { HelmChartSource, ApplicationGroupResponse, Cluster, GitSource, ListResponse, NamespaceBinding, Workspace } from "@/lib/types"
 
 type TargetDraft = {
   id: string
@@ -50,6 +51,7 @@ export default function NewApplicationGroupPage() {
   const [kustomizeHelmEnabled, setKustomizeHelmEnabled] = useState(false)
   const [kustomizeNamespaceOverride, setKustomizeNamespaceOverride] = useState(false)
   const [revision, setRevision] = useState("main")
+  const [helmChart, setHelmChart] = useState<HelmChartSource | null>(null)
   const [manifestPath, setManifestPath] = useState("charts/monitoring-agent")
   const [helmValuesFiles, setHelmValuesFiles] = useState("")
   const [helmValuesYaml, setHelmValuesYaml] = useState("")
@@ -137,7 +139,7 @@ export default function NewApplicationGroupPage() {
     setBusy(true)
     try {
       const result = await apiPost<ApplicationGroupResponse>("/api/v1/application-groups", {
-        workspaceId, name: name.trim(), sourceId, revision: revision.trim(), manifestPath: manifestPath.trim(),
+        workspaceId, name: name.trim(), sourceId, revision: revision.trim(), manifestPath: manifestPath.trim(), helmChart: renderer === "helm" ? helmChart : null,
         renderer, kustomizeHelmEnabled: renderer === "kustomize" && kustomizeHelmEnabled,
         kustomizeNamespaceOverride: renderer === "kustomize" && kustomizeNamespaceOverride,
         helmValuesFiles: renderer === "helm" ? valuesFileList(helmValuesFiles) : [],
@@ -185,7 +187,8 @@ export default function NewApplicationGroupPage() {
         { title: "Renderer options", content: <>
           <Section title="Renderer" description="Choose Helm values layering or Kustomize overlays."><div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <FormField label="Renderer" htmlFor="group-renderer"><FormSelect id="group-renderer" value={renderer} onValueChange={(value) => { const next = value as "helm" | "kustomize"; setRenderer(next); setHelmValuesFiles(""); setHelmValuesYaml(""); if (next === "helm") { setKustomizeHelmEnabled(false); setKustomizeNamespaceOverride(false) } setTargets((current) => current.map((target) => ({ ...target, valuesFiles: "", valuesYaml: "", manifestPath: "", namespaceValues: {} }))) }} items={[{ value: "helm", label: "Helm" }, { value: "kustomize", label: "Kustomize" }]} /></FormField>
-            <FormField label={renderer === "helm" ? "Chart path" : "Shared Kustomize path"} htmlFor="group-path" hint={renderer === "helm" ? "Repository-relative Helm chart directory." : "Repository-relative shared base or Kustomize overlay directory."}><Input id="group-path" value={manifestPath} onChange={(event) => setManifestPath(event.target.value)} required /></FormField>
+            {renderer === "helm" && <HelmChartFields id="application-groups-chart-source" chart={helmChart} onChange={setHelmChart} />}
+            {(renderer !== "helm" || !helmChart) && <FormField label={renderer === "helm" ? "Chart path" : "Shared Kustomize path"} htmlFor="group-path" hint={renderer === "helm" ? "Repository-relative Helm chart directory." : "Repository-relative shared base or Kustomize overlay directory."}><Input id="group-path" value={manifestPath} onChange={(event) => setManifestPath(event.target.value)} required /></FormField>}
           </div></Section>
           {renderer === "helm" ? <Section title="Shared Helm values" description="The chart's values.yaml is the base. Add optional Git files in order, then a shared JustCD YAML override."><div className="space-y-4">
             <FormField label="Shared values files" htmlFor="group-values-files" hint="One repository-relative YAML path per line. Later files override earlier values."><Textarea id="group-values-files" value={helmValuesFiles} onChange={(event) => setHelmValuesFiles(event.target.value)} placeholder={"values/common.yaml\nvalues/production.yaml"} className="min-h-20 font-mono text-xs" /></FormField>
@@ -227,7 +230,7 @@ export default function NewApplicationGroupPage() {
             { label: "Git source", value: sourceName || "—" },
             { label: "Git revision", value: revision || "—" },
             { label: "Renderer", value: rendererLabel },
-            { label: renderer === "helm" ? "Chart path" : "Shared Kustomize path", value: <span className="font-mono">{manifestPath || "—"}</span> },
+            { label: renderer === "helm" ? "Chart path" : "Shared Kustomize path", value: <span className="font-mono">{renderer === "helm" && helmChart ? `${helmChart.repository} · ${helmChart.chart} ${helmChart.version}` : manifestPath || "—"}</span> },
             { label: "Sync policy", value: syncPolicy === "auto" ? "Auto" : syncPolicy === "auto-safe" ? "Auto-safe" : "Manual" },
             { label: "Poll interval (seconds)", value: pollSeconds },
             ...targets.map((target, index) => ({ label: `Target ${index + 1}`, value: <>{target.name || "—"} <span className="font-normal text-muted-foreground">· {clusters.find((cluster) => cluster.id === target.clusterId)?.name ?? "no cluster"} / {target.namespaces.join(", ") || "no namespace"}</span></> })),

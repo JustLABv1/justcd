@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react"
 import { useParams } from "next/navigation"
 import { AIAssistant } from "@/components/ai-assistant"
 import Link from "next/link"
+import { HelmChartFields } from "@/components/applications/helm-chart-source"
 import { Button } from "@/components/panelui/button"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { ArrowLeft01Icon, Edit02Icon, ViewIcon, Layers01Icon } from "@hugeicons/core-free-icons"
@@ -20,7 +21,7 @@ import { ConnectionRow, FormField, PageHeading, StatusBadge } from "@/components
 import { ErrorNotice } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
 import { api } from "@/lib/api"
-import type { Application, ApplicationGroup, ApplicationGroupResponse, Cluster, GitSource, ListResponse, Workspace } from "@/lib/types"
+import type { HelmChartSource, Application, ApplicationGroup, ApplicationGroupResponse, Cluster, GitSource, ListResponse, Workspace } from "@/lib/types"
 
 export default function ApplicationGroupPage() {
   const { groupID } = useParams<{ groupID: string }>()
@@ -31,6 +32,7 @@ export default function ApplicationGroupPage() {
   const [clusters, setClusters] = useState<Cluster[]>([])
   const [sources, setSources] = useState<GitSource[]>([])
   const [revision, setRevision] = useState("")
+  const [helmChart, setHelmChart] = useState<HelmChartSource | null>(null)
   const [manifestPath, setManifestPath] = useState("")
   const [valuesFiles, setValuesFiles] = useState("")
   const [valuesYaml, setValuesYaml] = useState("")
@@ -57,7 +59,8 @@ export default function ApplicationGroupPage() {
       setWorkspace(workspaces.items.find((item) => item.id === result.group.workspaceId) ?? null)
       setClusters(clusterList.items)
       setRevision(result.group.revision)
-      setManifestPath(result.group.manifestPath)
+      setManifestPath(result.group.helmChart ? "" : result.group.manifestPath)
+      setHelmChart(result.group.helmChart ?? null)
       setValuesFiles(result.group.helmValuesFiles.join("\n"))
       setValuesYaml(result.group.helmValuesYaml)
       setKustomizeHelmEnabled(result.group.kustomizeHelmEnabled)
@@ -73,7 +76,8 @@ export default function ApplicationGroupPage() {
 
   function resetFields(source: ApplicationGroup) {
     setRevision(source.revision)
-    setManifestPath(source.manifestPath)
+    setManifestPath(source.helmChart ? "" : source.manifestPath)
+    setHelmChart(source.helmChart ?? null)
     setValuesFiles(source.helmValuesFiles.join("\n"))
     setValuesYaml(source.helmValuesYaml)
     setKustomizeHelmEnabled(source.kustomizeHelmEnabled)
@@ -93,7 +97,7 @@ export default function ApplicationGroupPage() {
         body: JSON.stringify({
           sourceId: group.sourceId,
           revision: revision.trim(),
-          manifestPath: manifestPath.trim(),
+          manifestPath: manifestPath.trim(), helmChart: group.renderer === "helm" ? helmChart : null,
           kustomizeHelmEnabled: group.renderer === "kustomize" && kustomizeHelmEnabled,
           kustomizeNamespaceOverride: group.renderer === "kustomize" && kustomizeNamespaceOverride,
           helmValuesFiles: group.renderer === "helm" ? valuesFiles.split("\n").map((line) => line.trim()).filter(Boolean) : [],
@@ -148,7 +152,8 @@ export default function ApplicationGroupPage() {
             <FormField label="Git source" htmlFor="group-source"><FormSelect id="group-source" value={group.sourceId} onValueChange={(value) => setGroup({ ...group, sourceId: value })} disabled={!owner} items={sources.map((source) => ({ value: source.id, label: source.name }))} /></FormField>
             <FormField label="Git revision" htmlFor="group-revision"><Input id="group-revision" value={revision} onChange={(event) => setRevision(event.target.value)} required disabled={!owner} /></FormField>
             <FormField label="Renderer" htmlFor="group-renderer"><FormSelect id="group-renderer" value={group.renderer} onValueChange={() => {}} disabled items={[{ value: "helm", label: "Helm" }, { value: "kustomize", label: "Kustomize" }]} /></FormField>
-            <FormField label={group.renderer === "helm" ? "Chart path" : "Shared Kustomize path"} htmlFor="group-path" hint={group.renderer === "helm" ? undefined : "Fallback path for targets. Cluster or namespace paths must include this base when needed."}><Input id="group-path" value={manifestPath} onChange={(event) => setManifestPath(event.target.value)} required disabled={!owner} /></FormField>
+            {group.renderer === "helm" && <HelmChartFields id="application-groups-chart-source" chart={helmChart} onChange={setHelmChart} disabled={!owner} />}
+            {(group.renderer !== "helm" || !helmChart) && <FormField label={group.renderer === "helm" ? "Chart path" : "Shared Kustomize path"} htmlFor="group-path" hint={group.renderer === "helm" ? undefined : "Fallback path for targets. Cluster or namespace paths must include this base when needed."}><Input id="group-path" value={manifestPath} onChange={(event) => setManifestPath(event.target.value)} required disabled={!owner} /></FormField>}
             {group.renderer === "helm" ? <>
               <FormField label="Shared values files" htmlFor="group-files" hint="One Git path per line; later files override earlier files."><Textarea id="group-files" value={valuesFiles} onChange={(event) => setValuesFiles(event.target.value)} className="font-mono text-xs" disabled={!owner} /></FormField>
               <FormField label="Shared JustCD values" htmlFor="group-yaml" hint="Applied after shared Git files and before target values. Use Kubernetes Secret references for sensitive values."><Textarea id="group-yaml" value={valuesYaml} onChange={(event) => setValuesYaml(event.target.value)} className="min-h-32 font-mono text-xs" spellCheck={false} disabled={!owner} /></FormField>

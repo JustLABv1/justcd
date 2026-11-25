@@ -49,7 +49,8 @@ export type Credential = {
   id: string
   workspaceId?: string
   name: string
-  kind: "git-ssh" | "git-https" | "kubernetes-token" | "kubeconfig"
+  kind: "git-ssh" | "git-https" | "kubernetes-token" | "kubeconfig" | "helm-registry"
+  endpoint?: string
   username?: string
   expiresAt?: string
   createdAt: string
@@ -259,7 +260,10 @@ export type RepositoryConfiguration = {
   createdAt: string
 }
 
+export type HelmChartSource = { repository: string; chart: string; version: string }
+
 export type Application = {
+  helmChart?: HelmChartSource | null
   publishingProfile?: {
     profileId: string
     name: string
@@ -387,6 +391,7 @@ export type ApplicationHealthTransition = {
 }
 
 export type ApplicationGroup = {
+  helmChart?: HelmChartSource | null
   id: string
   workspaceId: string
   name: string

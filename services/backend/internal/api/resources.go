@@ -242,12 +242,12 @@ func (s *Server) listCredentials(w http.ResponseWriter, r *http.Request) {
 	}
 	items = visible
 	for i := range items {
-		if items[i].Kind != "git-https" {
+		if items[i].Kind != "git-https" && items[i].Kind != "helm-registry" {
 			continue
 		}
-		items[i].Username, err = s.gitHTTPSUsername(items[i])
+		items[i].Username, err = s.credentialUsername(items[i])
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "could not read Git credential username")
+			writeError(w, http.StatusInternalServerError, "could not read credential username")
 			return
 		}
 		items[i].Cipher = nil
@@ -262,12 +262,17 @@ func (s *Server) createCredential(w http.ResponseWriter, r *http.Request) {
 		Kind        string            `json:"kind"`
 		ExpiresAt   *string           `json:"expiresAt"`
 		Secret      map[string]string `json:"secret"`
+		Endpoint    string            `json:"endpoint"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	user := currentUser(r)
+	if input.Kind == "helm-registry" && !user.IsAdmin {
+		writeError(w, http.StatusForbidden, "instance administrator role required to register a Helm endpoint")
+		return
+	}
 	if input.WorkspaceID != nil {
 		if !s.requireWorkspaceRole(w, r, *input.WorkspaceID, "owner") {
 			return
@@ -290,7 +295,12 @@ func (s *Server) createCredential(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid credential payload")
 		return
 	}
-	credential := store.Credential{ID: store.NewID(), WorkspaceID: input.WorkspaceID, Name: input.Name, Kind: input.Kind}
+	endpoint, err := credentialEndpoint(input.Kind, input.Endpoint)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	credential := store.Credential{ID: store.NewID(), WorkspaceID: input.WorkspaceID, Name: input.Name, Kind: input.Kind, Endpoint: endpoint}
 	if input.ExpiresAt != nil {
 		value := strings.TrimSpace(*input.ExpiresAt)
 		if value != "" {
@@ -313,13 +323,52 @@ func (s *Server) createCredential(w http.ResponseWriter, r *http.Request) {
 			credential.Username = "justcd"
 		}
 	}
+	if credential.Kind == "helm-registry" {
+		credential.Username = strings.TrimSpace(input.Secret["username"])
+	}
 	if err := s.Store.CreateCredential(r.Context(), credential); err != nil {
 		writeError(w, http.StatusConflict, "could not save credential")
 		return
 	}
-	_ = s.Store.Audit(r.Context(), user.ID, "credential.created", "credential", credential.ID, map[string]string{"name": credential.Name, "kind": credential.Kind})
+	_ = s.Store.Audit(r.Context(), user.ID, "credential.created", "credential", credential.ID, map[string]string{"name": credential.Name, "kind": credential.Kind, "endpoint": credential.Endpoint})
 	credential.Cipher = nil
 	writeJSON(w, http.StatusCreated, credential)
+}
+
+// registryChartManifestPath is stored as the manifest path of applications
+// that render a registry chart; their Git source only supplies values files.
+const registryChartManifestPath = "."
+
+// applicationChartSource validates an optional registry chart for the given
+// renderer.
+func applicationChartSource(renderer string, chart *core.HelmChartSource) (*core.HelmChartSource, error) {
+	if chart == nil {
+		return nil, nil
+	}
+	if renderer != "helm" {
+		return nil, errors.New("a registry chart requires the Helm renderer")
+	}
+	normalized, err := chart.Normalize()
+	if err != nil {
+		return nil, err
+	}
+	return &normalized, nil
+}
+
+// credentialEndpoint validates the registry location of a helm-registry
+// credential; other kinds have no endpoint.
+func credentialEndpoint(kind, endpoint string) (string, error) {
+	endpoint = strings.TrimSpace(endpoint)
+	if kind != "helm-registry" {
+		if endpoint != "" {
+			return "", errors.New("endpoint is only supported for Helm registry credentials")
+		}
+		return "", nil
+	}
+	if endpoint == "" {
+		return "", errors.New("Helm registry credentials require an oci:// or https:// endpoint")
+	}
+	return render.NormalizeRegistryEndpoint(endpoint)
 }
 
 func validateCredentialPayload(kind string, secret map[string]string) error {
@@ -392,8 +441,28 @@ func validateCredentialPayload(kind string, secret map[string]string) error {
 			return fmtError("kubeconfig content exceeds 1 MiB")
 		}
 		return nil
+	case "helm-registry":
+		if err := allowOnly("username", "password", "caData"); err != nil {
+			return err
+		}
+		if err := required("username"); err != nil {
+			return err
+		}
+		if err := required("password"); err != nil {
+			return err
+		}
+		if len(secret["username"]) > 256 || strings.ContainsAny(secret["username"], ":\r\n\x00") {
+			return fmtError("registry username is invalid")
+		}
+		if len(secret["password"]) > 64<<10 {
+			return fmtError("registry password exceeds 64 KiB")
+		}
+		if err := render.ValidateRegistryCA(secret["caData"]); err != nil {
+			return err
+		}
+		return nil
 	default:
-		return fmtError("kind must be git-ssh, git-https, kubernetes-token, or kubeconfig")
+		return fmtError("kind must be git-ssh, git-https, kubernetes-token, kubeconfig, or helm-registry")
 	}
 }
 
@@ -875,6 +944,7 @@ func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 		TargetHelmValuesFiles      []string                           `json:"targetHelmValuesFiles"`
 		TargetHelmValuesYAML       string                             `json:"targetHelmValuesYaml"`
 		NamespaceHelmValues        map[string]core.HelmValuesOverride `json:"namespaceHelmValues"`
+		HelmChart                  *core.HelmChartSource              `json:"helmChart"`
 		ClusterID                  string                             `json:"clusterId"`
 		Namespaces                 []string                           `json:"namespaces"`
 		SyncPolicy                 string                             `json:"syncPolicy"`
@@ -901,8 +971,15 @@ func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "a Git branch, tag, or commit revision is required")
 		return
 	}
+	helmChart, err := applicationChartSource(input.Renderer, input.HelmChart)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	input.ManifestPath = path.Clean(strings.TrimSpace(input.ManifestPath))
-	if input.ManifestPath == "." || strings.HasPrefix(input.ManifestPath, "../") || path.IsAbs(input.ManifestPath) {
+	if helmChart != nil {
+		input.ManifestPath = registryChartManifestPath
+	} else if input.ManifestPath == "." || strings.HasPrefix(input.ManifestPath, "../") || path.IsAbs(input.ManifestPath) {
 		writeError(w, http.StatusBadRequest, "manifestPath must be a repository-relative path")
 		return
 	}
@@ -988,7 +1065,7 @@ func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 		}
 		bindings = append(bindings, binding)
 	}
-	app := store.Application{Labels: input.Labels, ID: store.NewID(), WorkspaceID: input.WorkspaceID, Name: input.Name, SourceID: input.SourceID, Revision: input.Revision, ManifestPath: input.ManifestPath, TargetManifestPath: input.TargetManifestPath, NamespaceManifestPaths: input.NamespaceManifestPaths, Renderer: input.Renderer, KustomizeHelmEnabled: input.KustomizeHelmEnabled, KustomizeNamespaceOverride: input.KustomizeNamespaceOverride, CreateNamespaces: input.CreateNamespaces, HelmValuesFiles: input.HelmValuesFiles, HelmValuesYAML: input.HelmValuesYAML, TargetHelmValuesFiles: input.TargetHelmValuesFiles, TargetHelmValuesYAML: input.TargetHelmValuesYAML, NamespaceHelmValues: input.NamespaceHelmValues, ClusterID: input.ClusterID, Namespaces: bindings, SyncPolicy: input.SyncPolicy, PollSeconds: input.PollSeconds, RetryPolicy: retryPolicy, Health: "unknown"}
+	app := store.Application{Labels: input.Labels, ID: store.NewID(), WorkspaceID: input.WorkspaceID, Name: input.Name, SourceID: input.SourceID, Revision: input.Revision, ManifestPath: input.ManifestPath, TargetManifestPath: input.TargetManifestPath, NamespaceManifestPaths: input.NamespaceManifestPaths, Renderer: input.Renderer, HelmChart: helmChart, KustomizeHelmEnabled: input.KustomizeHelmEnabled, KustomizeNamespaceOverride: input.KustomizeNamespaceOverride, CreateNamespaces: input.CreateNamespaces, HelmValuesFiles: input.HelmValuesFiles, HelmValuesYAML: input.HelmValuesYAML, TargetHelmValuesFiles: input.TargetHelmValuesFiles, TargetHelmValuesYAML: input.TargetHelmValuesYAML, NamespaceHelmValues: input.NamespaceHelmValues, ClusterID: input.ClusterID, Namespaces: bindings, SyncPolicy: input.SyncPolicy, PollSeconds: input.PollSeconds, RetryPolicy: retryPolicy, Health: "unknown"}
 	if err := s.Store.CreateApplication(r.Context(), app); err != nil {
 		writeError(w, http.StatusConflict, "could not create application")
 		return
@@ -1006,7 +1083,7 @@ func applicationAuditDetails(app store.Application) map[string]any {
 		"name": app.Name, "workspaceId": app.WorkspaceID, "sourceId": app.SourceID,
 		"revision": app.Revision, "manifestPath": app.ManifestPath,
 		"targetManifestPath": app.TargetManifestPath, "namespaceManifestPaths": app.NamespaceManifestPaths,
-		"renderer": app.Renderer, "clusterId": app.ClusterID, "namespaces": app.Namespaces,
+		"renderer": app.Renderer, "helmChart": app.HelmChart, "clusterId": app.ClusterID, "namespaces": app.Namespaces,
 		"syncPolicy": app.SyncPolicy, "pollSeconds": app.PollSeconds,
 		"retryPolicy":      app.RetryPolicy,
 		"createNamespaces": app.CreateNamespaces, "kustomizeHelmEnabled": app.KustomizeHelmEnabled, "kustomizeNamespaceOverride": app.KustomizeNamespaceOverride,

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"path"
+	"reflect"
 	"strings"
 
 	"github.com/justlab/justcd/services/backend/internal/core"
@@ -250,6 +251,7 @@ func (s *Server) updateApplication(w http.ResponseWriter, r *http.Request) {
 		TargetHelmValuesFiles      []string                           `json:"targetHelmValuesFiles"`
 		TargetHelmValuesYAML       string                             `json:"targetHelmValuesYaml"`
 		NamespaceHelmValues        map[string]core.HelmValuesOverride `json:"namespaceHelmValues"`
+		HelmChart                  *core.HelmChartSource              `json:"helmChart"`
 		ClusterID                  string                             `json:"clusterId"`
 		Namespaces                 []string                           `json:"namespaces"`
 		SyncPolicy                 string                             `json:"syncPolicy"`
@@ -265,8 +267,15 @@ func (s *Server) updateApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid application name or Git revision")
 		return
 	}
+	helmChart, err := applicationChartSource(input.Renderer, input.HelmChart)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	input.ManifestPath = path.Clean(strings.TrimSpace(input.ManifestPath))
-	if input.ManifestPath == "." || input.ManifestPath == ".." || strings.HasPrefix(input.ManifestPath, "../") || path.IsAbs(input.ManifestPath) {
+	if helmChart != nil {
+		input.ManifestPath = registryChartManifestPath
+	} else if input.ManifestPath == "." || input.ManifestPath == ".." || strings.HasPrefix(input.ManifestPath, "../") || path.IsAbs(input.ManifestPath) {
 		writeError(w, http.StatusBadRequest, "manifestPath must be repository-relative")
 		return
 	}
@@ -303,7 +312,7 @@ func (s *Server) updateApplication(w http.ResponseWriter, r *http.Request) {
 		}
 		app.RetryPolicy = *input.RetryPolicy
 	}
-	if app.ApplicationGroupID != "" && (input.SourceID != app.SourceID || input.Revision != app.Revision || input.ManifestPath != app.ManifestPath || input.Renderer != app.Renderer || input.KustomizeHelmEnabled != app.KustomizeHelmEnabled || input.KustomizeNamespaceOverride != app.KustomizeNamespaceOverride || strings.Join(input.HelmValuesFiles, "\x00") != strings.Join(app.HelmValuesFiles, "\x00") || input.HelmValuesYAML != app.HelmValuesYAML || input.SyncPolicy != app.SyncPolicy || input.PollSeconds != app.PollSeconds) {
+	if app.ApplicationGroupID != "" && (input.SourceID != app.SourceID || input.Revision != app.Revision || input.ManifestPath != app.ManifestPath || input.Renderer != app.Renderer || !reflect.DeepEqual(helmChart, app.HelmChart) || input.KustomizeHelmEnabled != app.KustomizeHelmEnabled || input.KustomizeNamespaceOverride != app.KustomizeNamespaceOverride || strings.Join(input.HelmValuesFiles, "\x00") != strings.Join(app.HelmValuesFiles, "\x00") || input.HelmValuesYAML != app.HelmValuesYAML || input.SyncPolicy != app.SyncPolicy || input.PollSeconds != app.PollSeconds) {
 		writeError(w, http.StatusBadRequest, "edit shared source and values through the deployment group")
 		return
 	}
@@ -349,6 +358,7 @@ func (s *Server) updateApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	app.CreateNamespaces = input.CreateNamespaces
 	app.Name, app.SourceID, app.Revision, app.ManifestPath, app.Renderer = input.Name, input.SourceID, input.Revision, input.ManifestPath, input.Renderer
+	app.HelmChart = helmChart
 	app.TargetManifestPath, app.NamespaceManifestPaths = input.TargetManifestPath, input.NamespaceManifestPaths
 	app.KustomizeHelmEnabled, app.KustomizeNamespaceOverride, app.ClusterID, app.Namespaces = input.KustomizeHelmEnabled, input.KustomizeNamespaceOverride, input.ClusterID, bindings
 	app.HelmValuesFiles, app.HelmValuesYAML = input.HelmValuesFiles, input.HelmValuesYAML

@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/justlab/justcd/services/backend/internal/core"
 	"github.com/justlab/justcd/services/backend/internal/schedule"
 	"github.com/justlab/justcd/services/backend/internal/store"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
@@ -46,13 +47,16 @@ type Definition struct {
 	} `json:"metadata"`
 	Spec struct {
 		Source struct {
-			Renderer                   string   `json:"renderer"`
-			ReleaseName                string   `json:"releaseName,omitempty"`
-			Path                       string   `json:"path"`
-			ValuesFiles                []string `json:"valuesFiles,omitempty"`
-			ValuesYAML                 string   `json:"valuesYaml,omitempty"`
-			KustomizeHelmEnabled       bool     `json:"kustomizeHelmEnabled,omitempty"`
-			KustomizeNamespaceOverride bool     `json:"kustomizeNamespaceOverride,omitempty"`
+			Renderer    string `json:"renderer"`
+			ReleaseName string `json:"releaseName,omitempty"`
+			Path        string `json:"path"`
+			// Chart selects a packaged chart from a Helm repository or OCI
+			// registry instead of the chart directory at Path.
+			Chart                      *core.HelmChartSource `json:"chart,omitempty"`
+			ValuesFiles                []string              `json:"valuesFiles,omitempty"`
+			ValuesYAML                 string                `json:"valuesYaml,omitempty"`
+			KustomizeHelmEnabled       bool                  `json:"kustomizeHelmEnabled,omitempty"`
+			KustomizeNamespaceOverride bool                  `json:"kustomizeNamespaceOverride,omitempty"`
 		} `json:"source"`
 		Destination struct {
 			CreateNamespaces bool   `json:"createNamespaces,omitempty"`
@@ -190,12 +194,28 @@ func Discover(root string) ([]Definition, error) {
 				return fail(fmt.Errorf("Helm values must be a YAML mapping"))
 			}
 		}
-		if source.Path == "" {
+		if source.Chart != nil {
+			if source.Renderer != "helm" {
+				return fail(fmt.Errorf("chart requires the helm renderer"))
+			}
+			if source.Path != "" {
+				return fail(fmt.Errorf("path and chart are mutually exclusive; values files still resolve from Git"))
+			}
+			chart, chartErr := source.Chart.Normalize()
+			if chartErr != nil {
+				return fail(chartErr)
+			}
+			source.Chart = &chart
+			// Registry charts do not use a Git chart directory.
 			source.Path = "."
-		}
-		source.Path, err = resolvePath(root, filepath.Dir(file), source.Path)
-		if err != nil {
-			return fail(err)
+		} else {
+			if source.Path == "" {
+				source.Path = "."
+			}
+			source.Path, err = resolvePath(root, filepath.Dir(file), source.Path)
+			if err != nil {
+				return fail(err)
+			}
 		}
 		for i, value := range source.ValuesFiles {
 			source.ValuesFiles[i], err = resolvePath(root, filepath.Dir(file), value)

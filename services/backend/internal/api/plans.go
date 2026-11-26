@@ -180,7 +180,15 @@ func (s *Server) getPlan(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, toPlanView(record))
+	images, err := core.WorkloadImages(record.Desired)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not read plan image inventory")
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		planView
+		Images []string `json:"images"`
+	}{planView: toPlanView(record), Images: images})
 }
 
 func (s *Server) approvePlanNow(w http.ResponseWriter, r *http.Request) {

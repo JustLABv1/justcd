@@ -138,19 +138,7 @@ func (BuiltinPolicyEngine) Evaluate(config PolicyConfig, resources []Resource) (
 				add("public-services", "Service exposes traffic through "+typ+" or externalIPs", "Use ClusterIP and remove externalIPs, or disable this rule if public exposure is intended.")
 			}
 		}
-		var pod map[string]any
-		switch {
-		case r.Identity.Kind == "Pod" && r.Identity.APIVersion == "v1":
-			pod = spec
-		case slices.Contains([]string{"Deployment", "StatefulSet", "DaemonSet", "ReplicaSet"}, r.Identity.Kind) && r.Identity.APIVersion == "apps/v1":
-			pod = object(object(spec, "template"), "spec")
-		case r.Identity.Kind == "ReplicationController" && r.Identity.APIVersion == "v1":
-			pod = object(object(spec, "template"), "spec")
-		case r.Identity.Kind == "Job" && r.Identity.APIVersion == "batch/v1":
-			pod = object(object(spec, "template"), "spec")
-		case r.Identity.Kind == "CronJob" && r.Identity.APIVersion == "batch/v1":
-			pod = object(object(object(object(spec, "jobTemplate"), "spec"), "template"), "spec")
-		}
+		pod := workloadPodSpec(r.Identity, spec)
 		if pod == nil {
 			continue
 		}
@@ -191,6 +179,23 @@ func (BuiltinPolicyEngine) Evaluate(config PolicyConfig, resources []Resource) (
 		}
 	}
 	return out, nil
+}
+
+func workloadPodSpec(identity Identity, spec map[string]any) map[string]any {
+	var pod map[string]any
+	switch {
+	case identity.Kind == "Pod" && identity.APIVersion == "v1":
+		pod = spec
+	case slices.Contains([]string{"Deployment", "StatefulSet", "DaemonSet", "ReplicaSet"}, identity.Kind) && identity.APIVersion == "apps/v1":
+		pod = object(object(spec, "template"), "spec")
+	case identity.Kind == "ReplicationController" && identity.APIVersion == "v1":
+		pod = object(object(spec, "template"), "spec")
+	case identity.Kind == "Job" && identity.APIVersion == "batch/v1":
+		pod = object(object(spec, "template"), "spec")
+	case identity.Kind == "CronJob" && identity.APIVersion == "batch/v1":
+		pod = object(object(object(object(spec, "jobTemplate"), "spec"), "template"), "spec")
+	}
+	return pod
 }
 
 func object(m map[string]any, key string) map[string]any {

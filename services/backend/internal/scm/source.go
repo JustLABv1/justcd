@@ -51,7 +51,7 @@ func Details(repositoryURL string, inputProvider, inputAPIURL string) (SourceDet
 	default:
 		provider, apiURL = "gitlab", "https://"+host+"/api/v4"
 		if inputProvider != "gitlab" {
-			return SourceDetails{}, errors.New("unknown Git host; confirm it is self-hosted GitLab")
+			return SourceDetails{}, errors.New("select GitLab as the provider to use this self-hosted Git source")
 		}
 		if inputAPIURL != "" {
 			apiURL = inputAPIURL

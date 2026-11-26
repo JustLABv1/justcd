@@ -40,6 +40,12 @@ func testRepositoryConfigurationSafety(t *testing.T, ctx context.Context, s *Sto
 	if !stored.CreateNamespaces || stored.ID == "" || stored.RepositoryConfigurationID != repository.ID || stored.ConfigurationCommit != "commit-1" || stored.ConfigurationPath != app.ConfigurationPath {
 		t.Fatalf("missing Git provenance: %+v", stored)
 	}
+	untrackedTarget := app
+	untrackedTarget.Namespaces = []NamespaceBinding{{Namespace: "migration-target"}}
+	untrackedTarget.ConfigurationHash = "untracked-target"
+	if err := s.ApplyRepositoryApplications(ctx, repository, "untracked-target", []Application{untrackedTarget}); err == nil || !strings.Contains(err.Error(), "cannot change cluster or namespace") {
+		t.Fatalf("namespace changed without inventory: %v", err)
+	}
 	policy, err := s.DeploymentPolicy(ctx, "application", stored.ID)
 	if err != nil || len(policy.Freezes) != 1 || policy.Freezes[0].Reason != "Git freeze" {
 		t.Fatalf("lost Git schedule %+v %v", policy, err)
@@ -296,6 +302,32 @@ func testRepositoryConfigurationSafety(t *testing.T, ctx context.Context, s *Sto
 	invalidTarget.ClusterID = "integration-owned-cluster"
 	if err := s.ApplyRepositoryApplications(ctx, repository, "bad-target", []Application{invalidTarget}); err == nil || !strings.Contains(err.Error(), "cannot change cluster") {
 		t.Fatalf("managed target changed: %v", err)
+	}
+	newTarget := app
+	newTarget.Namespaces = []NamespaceBinding{{Namespace: "migration-target"}}
+	newTarget.CreateNamespaces = true
+	newTarget.ConfigurationHash = "migration-target"
+	if err := s.ApplyRepositoryApplications(ctx, repository, "bad-namespace", []Application{newTarget}); err == nil || !strings.Contains(err.Error(), "cannot change cluster or namespace") {
+		t.Fatalf("managed namespace changed: %v", err)
+	}
+	newTarget.Name = "git-managed-migration"
+	if err := s.ApplyRepositoryApplications(ctx, repository, "bad-rename", []Application{newTarget}); err == nil || !strings.Contains(err.Error(), "cannot replace application") {
+		t.Fatalf("managed application replaced: %v", err)
+	}
+	stored, err = s.ApplicationByID(ctx, originalID)
+	if err != nil || stored.ConfigurationMissing || stored.ConfigurationCommit != "commit-4" || stored.Namespaces[0].Namespace != "default" {
+		t.Fatalf("rejected replacement changed the original: %+v %v", stored, err)
+	}
+	if _, err := s.NamespaceBinding(ctx, repository.WorkspaceID, app.ClusterID, "migration-target"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("rejected change registered a namespace binding: %v", err)
+	}
+	newTarget.ConfigurationPath = "migration/justcd.yaml"
+	if err := s.ApplyRepositoryApplications(ctx, repository, "parallel-migration", []Application{app, newTarget}); err != nil {
+		t.Fatalf("parallel migration rejected: %v", err)
+	}
+	stored, err = s.ApplicationByID(ctx, originalID)
+	if err != nil || stored.ConfigurationMissing || stored.Namespaces[0].Namespace != "default" {
+		t.Fatalf("parallel migration changed the original target: %+v %v", stored, err)
 	}
 	if _, err := s.DB.ExecContext(ctx, `INSERT INTO plans(id,application_id,revision,digest,changes,desired,created_by,expires_at) VALUES('repository-before-removal',$1,'main','before','[]','[]','integration-owner',NOW()+INTERVAL '15 minutes')`, originalID); err != nil {
 		t.Fatal(err)

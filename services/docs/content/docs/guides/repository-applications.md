@@ -226,9 +226,38 @@ while pinned are picked up on a subsequent discovery pass. Application retry
 settings use JustCD's defaults. Existing approval rules still apply to deployment;
 `auto-safe` never automatically prunes or applies cluster-scoped changes.
 
-Changing a cluster or namespace while the application manages resources is
-rejected. Decommission the old target through the normal reviewed workflow
-before moving it. Repository configuration does not bypass those rules.
+Discovery rejects cluster and namespace changes to an existing Git-managed
+application, including when JustCD has no managed resources recorded for it.
+Discovery also rejects a new application name in a previously
+discovered file when the previous application identity is absent from the
+snapshot. The Git sources page identifies the conflicting definition. To
+recover from an accidental edit, restore the previous name and destination
+and run **Discover now**.
+
+### Migrate to a new namespace or application name
+
+1. Keep the old definition and its destination in Git. Add a separate
+   `justcd.yaml` at a new path with a distinct name and the intended
+   destination. Set `syncPolicy: manual` during migration.
+2. Review the new application's plan before applying it. Check for shared or
+   cluster-scoped resources that could conflict with the old application.
+   Migrate persistent data and credentials as required by the workload.
+3. Verify the new deployment, switch traffic or clients, and verify the
+   cutover. Keep the old workload available until you are ready to retire it.
+4. Remove the old definition in a subsequent commit. Review, approve, and
+   apply its decommission plan, then remove the decommissioned application
+   from JustCD.
+
+The rename check uses the definition path. If you move a definition to a
+different path, keep its application name and cluster unchanged in that commit.
+
+If a previous change already left resources behind, pause reconciliation for
+the affected applications and compare the live resources in both namespaces
+with JustCD's recorded inventory and resource UIDs. Restore the original
+definition if JustCD still has the original application and destination.
+Resources missing from its inventory require [verified adoption or separate cleanup](/operations/production-operations).
+
+### Remove an application
 
 Removing a definition marks its existing application as removed from Git,
 invalidates outstanding sync plans, and prepares a deletion plan from the live
@@ -459,7 +488,9 @@ the pinned Git snapshot.
 Select an existing HTTPS Git credential for provider API access and explicitly
 allow the destination cluster/namespace bindings that feature-branch definitions
 may reference. Git fetching keeps using the repository's Git source credential.
-For a custom GitLab host, configure the provider and its HTTPS `/api/v4` URL.
+For a self-hosted GitLab instance, enable discovery in the **Policy** tab and
+select **GitLab** under **Provider**. JustCD defaults to the Git source host
+with HTTPS and `/api/v4`. Set **Provider API URL** for a custom port or path.
 These settings belong to the trusted repository connection; a branch's
 `spec.pullRequests`, credentials, sync policy, or `createNamespaces` flag cannot
 grant itself deployment access. Fork PRs are excluded.

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -117,6 +118,9 @@ func (s *Store) ApplyRepositoryApplications(ctx context.Context, repository Repo
 		}
 		seen[key] = true
 	}
+	if err := guardRepositoryRenames(ctx, tx, repository.ID, apps, seen); err != nil {
+		return err
+	}
 	ids := []string{}
 	for _, app := range apps {
 		existing, err := repositoryApplication(ctx, tx, repository.ID, app, apps)
@@ -146,6 +150,11 @@ func (s *Store) ApplyRepositoryApplications(ctx context.Context, repository Repo
 			return err
 		default:
 			app.ID = existing.ID
+			if existing.ClusterID != app.ClusterID || !slices.EqualFunc(existing.Namespaces, app.Namespaces, func(a, b NamespaceBinding) bool {
+				return a.Namespace == b.Namespace
+			}) {
+				return fmt.Errorf("%s: application %q: cannot change cluster or namespace of an existing Git-managed application; restore its previous destination or add a separate justcd.yaml with a new application name for a reviewed migration", app.ConfigurationPath, app.Name)
+			}
 			// Restoring a removed definition cancels its pending deletion. Locking
 			// the application serializes this with plan save and operation enqueue.
 			if existing.ConfigurationMissing && existing.Decommissioning {
@@ -282,6 +291,43 @@ func (s *Store) ApplyRepositoryApplications(ctx context.Context, repository Repo
 		return err
 	}
 	return tx.Commit()
+}
+
+// A new name in a file whose previous identity disappeared could otherwise
+// create a second application and mark the original for decommissioning.
+func guardRepositoryRenames(ctx context.Context, tx *sql.Tx, repositoryID string, apps []Application, incoming map[[2]string]bool) error {
+	rows, err := tx.QueryContext(ctx, `SELECT cluster_id,name,configuration_path FROM applications WHERE repository_configuration_id=$1 ORDER BY id`, repositoryID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	known := map[[2]string]bool{}
+	replaced := map[string][]string{}
+	for rows.Next() {
+		var cluster, name, path string
+		if err := rows.Scan(&cluster, &name, &path); err != nil {
+			return err
+		}
+		key := [2]string{cluster, name}
+		known[key] = true
+		if path != "" && !incoming[key] {
+			replaced[path] = append(replaced[path], name)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, app := range apps {
+		if known[[2]string{app.ClusterID, app.Name}] {
+			continue
+		}
+		for _, name := range replaced[app.ConfigurationPath] {
+			if name != app.Name {
+				return fmt.Errorf("%s: cannot replace application %q with %q; restore the previous definition or add the new application in a separate justcd.yaml, then remove the old definition after cutover", app.ConfigurationPath, name, app.Name)
+			}
+		}
+	}
+	return nil
 }
 
 // Bindings inherit credentials rather than copying their IDs, so changing the

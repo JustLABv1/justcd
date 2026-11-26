@@ -11,7 +11,7 @@ const sizes = { sm: "sm", md: "md", lg: "lg", xl: "lg" } as const
  * button (see DialogFooter); `info` dialogs have no footer and close through the header X.
  * A dialog never shows both, so there is exactly one obvious way out.
  */
-function AppDialog({ open, onOpenChange, title, description, busy = false, variant = "form", size = "lg", children }: {
+function AppDialog({ open, onOpenChange, title, description, busy = false, variant = "form", size = "lg", bodyClassName, children }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   title: ReactNode
@@ -19,6 +19,7 @@ function AppDialog({ open, onOpenChange, title, description, busy = false, varia
   busy?: boolean
   variant?: "form" | "info"
   size?: keyof typeof sizes
+  bodyClassName?: string
   children: ReactNode
 }) {
   // Keep form ownership intact while the body scrolls independently of its actions.
@@ -26,7 +27,7 @@ function AppDialog({ open, onOpenChange, title, description, busy = false, varia
     const parts = Children.toArray(content)
     const footers = parts.filter((part) => isValidElement(part) && part.type === DialogFooter)
     const body = parts.filter((part) => !isValidElement(part) || part.type !== DialogFooter)
-    if (footers.length) return <><Dialog.Header title={title} description={description} /><Dialog.Body>{body}</Dialog.Body>{footers}</>
+    if (footers.length) return <><Dialog.Header title={title} description={description} /><Dialog.Body className={bodyClassName}>{body}</Dialog.Body>{footers}</>
     if (parts.length === 1 && isValidElement<{ children?: ReactNode; className?: string }>(parts[0]) &&
         (parts[0].type === "form" || parts[0].type === "div")) {
       const wrapper = parts[0]
@@ -38,7 +39,7 @@ function AppDialog({ open, onOpenChange, title, description, busy = false, varia
         })
       }
     }
-    return <><Dialog.Header title={title} description={description} /><Dialog.Body>{content}</Dialog.Body></>
+    return <><Dialog.Header title={title} description={description} /><Dialog.Body className={bodyClassName}>{content}</Dialog.Body></>
   }
   return <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next) }} dismissible={!busy}>
     <Dialog.Content variant="plain" size={sizes[size]} showClose={variant === "info" && !busy}>

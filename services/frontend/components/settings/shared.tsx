@@ -33,6 +33,7 @@ export const credentialKindLabels: Record<Credential["kind"], string> = {
   "kubernetes-token": "Kubernetes bearer token",
   kubeconfig: "Static kubeconfig",
   "git-https": "Git over HTTPS",
+  "helm-registry": "Helm registry",
   "git-ssh": "Git over SSH",
 }
 

@@ -42,6 +42,7 @@ func (s *Server) updateCredential(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt *string           `json:"expiresAt"`
 		Secret    map[string]string `json:"secret"`
 		Username  *string           `json:"username"`
+		Endpoint  *string           `json:"endpoint"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -52,14 +53,26 @@ func (s *Server) updateCredential(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "credential name is required and must be at most 100 characters")
 		return
 	}
-	if input.Username != nil && c.Kind != "git-https" {
-		writeError(w, http.StatusBadRequest, "username is only supported for Git HTTPS credentials")
+	if input.Username != nil && c.Kind != "git-https" && c.Kind != "helm-registry" {
+		writeError(w, http.StatusBadRequest, "username is only supported for Git HTTPS and Helm registry credentials")
 		return
+	}
+	if input.Endpoint != nil {
+		endpoint, err := credentialEndpoint(c.Kind, *input.Endpoint)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if c.Kind == "helm-registry" && endpoint != c.Endpoint && !currentUser(r).IsAdmin {
+			writeError(w, http.StatusForbidden, "instance administrator role required to change a Helm endpoint")
+			return
+		}
+		c.Endpoint = endpoint
 	}
 	if input.Username != nil {
 		value := strings.TrimSpace(*input.Username)
 		if value == "" {
-			writeError(w, http.StatusBadRequest, "Git username is required")
+			writeError(w, http.StatusBadRequest, "username is required")
 			return
 		}
 		if input.Secret == nil {
@@ -87,10 +100,10 @@ func (s *Server) updateCredential(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if c.Kind == "git-https" {
-		c.Username, err = s.gitHTTPSUsername(c)
+	if c.Kind == "git-https" || c.Kind == "helm-registry" {
+		c.Username, err = s.credentialUsername(c)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "could not read Git credential username")
+			writeError(w, http.StatusInternalServerError, "could not read credential username")
 			return
 		}
 	}
@@ -109,12 +122,12 @@ func (s *Server) updateCredential(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, "could not update credential")
 		return
 	}
-	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "credential.updated", "credential", c.ID, map[string]any{"name": c.Name, "secretRotated": input.Secret != nil})
+	_ = s.Store.Audit(r.Context(), currentUser(r).ID, "credential.updated", "credential", c.ID, map[string]any{"name": c.Name, "secretRotated": input.Secret != nil, "endpoint": c.Endpoint})
 	c.Cipher = nil
 	writeJSON(w, http.StatusOK, c)
 }
 
-func (s *Server) gitHTTPSUsername(c store.Credential) (string, error) {
+func (s *Server) credentialUsername(c store.Credential) (string, error) {
 	plain, err := security.Decrypt(s.EncryptionKey, c.Cipher, "credential:"+c.ID)
 	if err != nil {
 		return "", err
@@ -125,7 +138,7 @@ func (s *Server) gitHTTPSUsername(c store.Credential) (string, error) {
 	if err := json.Unmarshal(plain, &secret); err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(secret.Username) == "" {
+	if strings.TrimSpace(secret.Username) == "" && c.Kind == "git-https" {
 		return "justcd", nil
 	}
 	return secret.Username, nil

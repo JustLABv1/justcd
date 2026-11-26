@@ -9,8 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,7 +34,14 @@ const (
 )
 
 type Options struct {
-	HelmReleaseName            string
+	HelmReleaseName string
+	// HelmChart selects a packaged chart from a registry instead of the chart
+	// directory at ManifestPath.
+	// Omitted when nil so fingerprints of existing applications are unchanged.
+	HelmChart *core.HelmChartSource `json:",omitempty"`
+	// RegistryCredentials are the workspace's decrypted helm-registry
+	// credentials. They are secret and excluded from render fingerprints.
+	RegistryCredentials        []RegistryAuth `json:"-"`
 	RepositoryRoot             string
 	ManifestPath               string
 	Renderer                   string
@@ -129,7 +134,7 @@ func Render(ctx context.Context, opts Options) ([]core.Resource, error) {
 				return nil, err
 			}
 		}
-		if err := validateKustomizeSources(ctx, manifestPath, opts.RepositoryRoot, opts.KustomizeHelmEnabled); err != nil {
+		if err := prepareKustomizeSources(ctx, manifestPath, opts); err != nil {
 			return nil, err
 		}
 		buildPath := manifestPath
@@ -146,6 +151,17 @@ func Render(ctx context.Context, opts Options) ([]core.Resource, error) {
 		}
 		output, err = runKustomizeRenderer(ctx, buildPath, opts.RepositoryRoot, opts.KustomizeHelmEnabled)
 	case "helm":
+		if opts.HelmChart != nil {
+			chartDir, cleanup, pullErr := pullApplicationChart(ctx, opts)
+			if pullErr != nil {
+				return nil, pullErr
+			}
+			defer cleanup()
+			return renderHelm(ctx, opts, chartDir)
+		}
+		if err := ensureHelmDependencies(ctx, manifestPath, opts.RepositoryRoot, opts.RegistryCredentials); err != nil {
+			return nil, err
+		}
 		return renderHelm(ctx, opts, manifestPath)
 	default:
 		return nil, fmt.Errorf("unsupported renderer %q", opts.Renderer)
@@ -154,6 +170,22 @@ func Render(ctx context.Context, opts Options) ([]core.Resource, error) {
 		return nil, err
 	}
 	return parseAndNormalize(output, opts)
+}
+
+// pullApplicationChart downloads the application's registry chart into a
+// temporary directory outside the Git checkout.
+func pullApplicationChart(ctx context.Context, opts Options) (string, func(), error) {
+	destination, err := os.MkdirTemp("", "justcd-chart-")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(destination) }
+	chartDir, err := pullHelmChart(ctx, *opts.HelmChart, opts.RegistryCredentials, opts.RepositoryRoot, destination)
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("download Helm chart %q: %w", opts.HelmChart.Chart, err)
+	}
+	return chartDir, cleanup, nil
 }
 
 func renderHelm(ctx context.Context, opts Options, chartPath string) ([]core.Resource, error) {
@@ -482,9 +514,18 @@ func runRenderer(parent context.Context, name string, args []string, repositoryR
 		return nil, err
 	}
 	defer os.RemoveAll(home)
+	return execRenderer(ctx, name, args, repositoryRoot, cleanEnvironment(os.Environ(), home), "")
+}
+
+// execRenderer runs one renderer command with a prepared environment. stdin
+// carries secrets such as registry passwords, never command arguments.
+func execRenderer(ctx context.Context, name string, args []string, dir string, env []string, stdin string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = repositoryRoot
-	cmd.Env = cleanEnvironment(os.Environ(), home)
+	cmd.Dir = dir
+	cmd.Env = env
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
 	stdout := &cappedBuffer{max: maxRenderOutputBytes}
 	stderr := &cappedBuffer{max: 1 << 20}
 	cmd.Stdout = stdout
@@ -523,17 +564,35 @@ func cleanEnvironment(in []string, home string) []string {
 }
 
 func validateKustomizeSources(ctx context.Context, root, repositoryRoot string, enableHelm bool) error {
+	_, err := inspectKustomizeSources(ctx, root, repositoryRoot, enableHelm, nil)
+	return err
+}
+
+// prepareKustomizeSources validates the kustomization tree and downloads
+// remote helmCharts that need registry credentials.
+func prepareKustomizeSources(ctx context.Context, root string, opts Options) error {
+	charts, err := inspectKustomizeSources(ctx, root, opts.RepositoryRoot, opts.KustomizeHelmEnabled, opts.RegistryCredentials)
+	if err != nil {
+		return err
+	}
+	return prefetchKustomizeHelmCharts(ctx, charts, opts.RepositoryRoot, opts.RegistryCredentials)
+}
+
+// inspectKustomizeSources validates every kustomization reachable from root
+// and returns the remote helmCharts that match a registry credential.
+func inspectKustomizeSources(ctx context.Context, root, repositoryRoot string, enableHelm bool, auths []RegistryAuth) ([]kustomizeRemoteChart, error) {
+	var remoteCharts []kustomizeRemoteChart
 	repositoryRoot, err := filepath.EvalSymlinks(repositoryRoot)
 	if err != nil {
-		return fmt.Errorf("repository root cannot be resolved: %w", err)
+		return nil, fmt.Errorf("repository root cannot be resolved: %w", err)
 	}
 	root, err = filepath.EvalSymlinks(root)
 	if err != nil {
-		return fmt.Errorf("kustomization root cannot be resolved: %w", err)
+		return nil, fmt.Errorf("kustomization root cannot be resolved: %w", err)
 	}
 	rootRelative, err := filepath.Rel(repositoryRoot, root)
 	if err != nil || rootRelative == ".." || strings.HasPrefix(rootRelative, ".."+string(filepath.Separator)) {
-		return errors.New("kustomization is outside repository root")
+		return nil, errors.New("kustomization is outside repository root")
 	}
 	pending := []string{root}
 	visited := map[string]bool{}
@@ -577,7 +636,11 @@ func validateKustomizeSources(ctx context.Context, root, repositoryRoot string, 
 				return errors.New("invalid kustomization file")
 			}
 			base := filepath.Dir(p)
+			chartHome := "charts"
 			if globals, ok := data["helmGlobals"].(map[string]any); ok {
+				if value, ok := globals["chartHome"].(string); ok && value != "" {
+					chartHome = value
+				}
 				for _, field := range []string{"chartHome", "configHome"} {
 					if value, ok := globals[field].(string); ok && value != "" {
 						if err := validateKustomizePath(repositoryRoot, base, value); err != nil {
@@ -677,11 +740,27 @@ func validateKustomizeSources(ctx context.Context, root, repositoryRoot string, 
 						return errors.New("helmCharts chart name must be a single directory name")
 					}
 					if repo, _ := chart["repo"].(string); repo != "" {
-						if version, _ := chart["version"].(string); strings.TrimSpace(version) == "" {
+						version, _ := chart["version"].(string)
+						if strings.TrimSpace(version) == "" {
 							return errors.New("remote helmCharts require a pinned version")
 						}
-						if err := validateHelmRepository(ctx, repo); err != nil {
-							return err
+						source := core.HelmChartSource{Repository: repo, Chart: name, Version: version}
+						if err := validateChartRepository(ctx, repo, source.Reference(), auths); err != nil {
+							return fmt.Errorf("helmCharts %q: %w", name, err)
+						}
+						if matchRegistryAuth(auths, source.Reference()) != nil {
+							normalized, err := source.Normalize()
+							if err != nil {
+								return fmt.Errorf("helmCharts %q: %w", name, err)
+							}
+							if normalized.Version != version {
+								return fmt.Errorf("helmCharts %q: version must not contain surrounding whitespace", name)
+							}
+							home := chartHome
+							if !filepath.IsAbs(home) {
+								home = filepath.Join(base, filepath.FromSlash(home))
+							}
+							remoteCharts = append(remoteCharts, kustomizeRemoteChart{chart: normalized, untarDir: filepath.Join(home, name+"-"+version), reference: normalized.Reference()})
 						}
 					}
 					for _, field := range []string{"valuesFile", "chartHome"} {
@@ -711,33 +790,10 @@ func validateKustomizeSources(ctx context.Context, root, repositoryRoot string, 
 			return nil
 		})
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
-}
-
-func validateHelmRepository(parent context.Context, value string) error {
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Port() != "" && parsed.Port() != "443") {
-		return errors.New("helmCharts repo must be a public HTTPS URL without credentials")
-	}
-	host := strings.ToLower(parsed.Hostname())
-	if net.ParseIP(host) != nil || host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal") {
-		return errors.New("helmCharts repo must use a public DNS hostname")
-	}
-	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
-	defer cancel()
-	addresses, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
-	if err != nil || len(addresses) == 0 {
-		return errors.New("helmCharts repo hostname could not be resolved")
-	}
-	for _, address := range addresses {
-		if !address.IsGlobalUnicast() || address.IsPrivate() {
-			return errors.New("helmCharts repo must resolve only to public addresses")
-		}
-	}
-	return nil
+	return remoteCharts, nil
 }
 
 func validateKustomizePath(repositoryRoot, base, value string) error {
@@ -1138,7 +1194,7 @@ func renderKustomizeNamespaces(ctx context.Context, opts Options) ([]core.Resour
 		if err != nil {
 			return nil, fmt.Errorf("Kustomize path for namespace %q: %w", binding.Namespace, err)
 		}
-		if err := validateKustomizeSources(ctx, manifestPath, opts.RepositoryRoot, opts.KustomizeHelmEnabled); err != nil {
+		if err := prepareKustomizeSources(ctx, manifestPath, opts); err != nil {
 			return nil, fmt.Errorf("Kustomize path for namespace %q: %w", binding.Namespace, err)
 		}
 		buildPath := manifestPath

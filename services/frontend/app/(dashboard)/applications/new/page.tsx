@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
+import { HelmChartFields } from "@/components/applications/helm-chart-source"
 import { Button } from "@/components/panelui/button"
 import { Input } from "@/components/panelui/input"
 import { Textarea } from "@/components/panelui/textarea"
@@ -13,7 +14,7 @@ import { SummaryList, useWizard } from "@/components/applications/wizard"
 import { ErrorNotice } from "@/components/workspace-ui"
 import { useToast } from "@/components/toast-provider"
 import { api, apiPost } from "@/lib/api"
-import type { Application, Cluster, GitSource, ListResponse, NamespaceBinding, Workspace } from "@/lib/types"
+import type { HelmChartSource, Application, Cluster, GitSource, ListResponse, NamespaceBinding, Workspace } from "@/lib/types"
 
 export default function NewApplicationPage() {
   const router = useRouter()
@@ -30,6 +31,7 @@ export default function NewApplicationPage() {
   const [namespaceManifestPaths, setNamespaceManifestPaths] = useState<Record<string, string>>({})
   const [name, setName] = useState("")
   const [revision, setRevision] = useState("main")
+  const [helmChart, setHelmChart] = useState<HelmChartSource | null>(null)
   const [manifestPath, setManifestPath] = useState("deploy/")
   const [renderer, setRenderer] = useState("yaml")
   const [kustomizeHelmEnabled, setKustomizeHelmEnabled] = useState(false)
@@ -116,7 +118,7 @@ export default function NewApplicationPage() {
     setBusy(true)
     try {
       const app = await apiPost<Application>("/api/v1/applications", {
-        workspaceId, name, sourceId, revision, manifestPath, renderer,
+        workspaceId, name, sourceId, revision, manifestPath, renderer, helmChart: renderer === "helm" ? helmChart : null,
         kustomizeHelmEnabled: renderer === "kustomize" && kustomizeHelmEnabled,
         kustomizeNamespaceOverride: renderer === "kustomize" && kustomizeNamespaceOverride,
         targetManifestPath: renderer === "kustomize" ? targetManifestPath : "",
@@ -155,7 +157,8 @@ export default function NewApplicationPage() {
         </div></PanelStep> },
         { title: "Renderer", content: <PanelStep title="Renderer" description="Choose how the repository path is turned into Kubernetes manifests."><div className="grid min-w-0 gap-4 sm:grid-cols-2 [&>*]:min-w-0">
           <PanelField label="Renderer"><PanelSelect id="renderer" value={renderer} onValueChange={setRenderer} items={[{ value: "yaml", label: "Plain YAML / JSON" }, { value: "kustomize", label: "Kustomize build" }, { value: "helm", label: "Helm template" }]} /></PanelField>
-          <PanelField label={renderer === "helm" ? "Chart path" : renderer === "kustomize" ? "Shared Kustomize path" : "Manifest path"} hint={renderer === "helm" ? "Repository-relative Helm chart directory." : renderer === "kustomize" ? "Fallback Kustomize entry point. Cluster and namespace paths can select complete overlays." : "Repository-relative directory or file."}><Input id="path" placeholder="deploy/" value={manifestPath} onChange={(event) => setManifestPath(event.target.value)} required /></PanelField>
+          {renderer === "helm" && <HelmChartFields id="applications-chart-source" chart={helmChart} onChange={setHelmChart} />}
+          {(renderer !== "helm" || !helmChart) && <PanelField label={renderer === "helm" ? "Chart path" : renderer === "kustomize" ? "Shared Kustomize path" : "Manifest path"} hint={renderer === "helm" ? "Repository-relative Helm chart directory." : renderer === "kustomize" ? "Fallback Kustomize entry point. Cluster and namespace paths can select complete overlays." : "Repository-relative directory or file."}><Input id="path" placeholder="deploy/" value={manifestPath} onChange={(event) => setManifestPath(event.target.value)} required /></PanelField>}
           {renderer === "kustomize" && <div className="sm:col-span-2"><PanelKustomizeOptions idPrefix="new-app-kustomize" namespaceOverride={kustomizeNamespaceOverride} onNamespaceOverrideChange={setKustomizeNamespaceOverride} helmEnabled={kustomizeHelmEnabled} onHelmEnabledChange={setKustomizeHelmEnabled} /></div>}
           {renderer === "helm" && <div className="space-y-4 sm:col-span-2"><PanelField label="Helm values files" hint="One repository-relative YAML path per line. Later files override earlier files."><Textarea id="helm-values-files" value={helmValuesFiles} onChange={(event) => setHelmValuesFiles(event.target.value)} placeholder={"values/common.yaml\nvalues/production.yaml"} className="font-mono text-xs" /></PanelField><PanelField label="Helm values overrides" hint="Optional JustCD values applied after the Git files."><Textarea id="helm-values-yaml" value={helmValuesYaml} onChange={(event) => setHelmValuesYaml(event.target.value)} placeholder={"agent:\n  logLevel: info"} className="min-h-32 font-mono text-xs" spellCheck={false} /></PanelField></div>}
         </div></PanelStep> },
@@ -206,7 +209,7 @@ export default function NewApplicationPage() {
             { label: "Application name", value: name || "—" },
             { label: "Git revision", value: revision || "—" },
             { label: "Renderer", value: rendererLabel },
-            { label: "Path", value: <span className="font-mono">{manifestPath || "—"}</span> },
+            { label: "Path", value: <span className="font-mono">{renderer === "helm" && helmChart ? `${helmChart.repository} · ${helmChart.chart} ${helmChart.version}` : manifestPath || "—"}</span> },
             { label: "Cluster", value: clusterName || "—" },
             { label: "Namespaces", value: namespaces.length ? namespaces.join(", ") : "—" },
             { label: "Create missing namespaces", value: createNamespaces ? "Yes" : "No" },

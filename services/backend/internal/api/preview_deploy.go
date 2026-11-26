@@ -117,7 +117,7 @@ func (s *Server) previewApplication(ctx context.Context, production store.Applic
 	if err != nil {
 		return store.Application{}, "", err
 	}
-	preview := store.Application{ID: id, WorkspaceID: production.WorkspaceID, Name: id, SourceID: production.SourceID, Revision: pullRequestRef(connection.Provider, review.Number), ManifestPath: production.ManifestPath, Renderer: production.Renderer, KustomizeHelmEnabled: production.KustomizeHelmEnabled, KustomizeNamespaceOverride: production.Renderer == "kustomize", ClusterID: production.ClusterID, Namespaces: []store.NamespaceBinding{binding}, CreateNamespaces: provisioning, SyncPolicy: "manual", PollSeconds: 86400, RetryPolicy: store.DefaultRetryPolicy(), Health: "unknown"}
+	preview := store.Application{ID: id, WorkspaceID: production.WorkspaceID, Name: id, SourceID: production.SourceID, Revision: pullRequestRef(connection.Provider, review.Number), ManifestPath: production.ManifestPath, Renderer: production.Renderer, HelmChart: production.HelmChart, KustomizeHelmEnabled: production.KustomizeHelmEnabled, KustomizeNamespaceOverride: production.Renderer == "kustomize", ClusterID: production.ClusterID, Namespaces: []store.NamespaceBinding{binding}, CreateNamespaces: provisioning, SyncPolicy: "manual", PollSeconds: 86400, RetryPolicy: store.DefaultRetryPolicy(), Health: "unknown"}
 	if p.ManifestPath != "" {
 		preview.ManifestPath = p.ManifestPath
 	}

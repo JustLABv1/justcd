@@ -18,7 +18,7 @@ func TestGitHTTPSUsernameIsVisibleWithoutToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	credential.Username, err = server.gitHTTPSUsername(credential)
+	credential.Username, err = server.credentialUsername(credential)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestGitHTTPSUsernameLegacyFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	username, err := server.gitHTTPSUsername(credential)
+	username, err := server.credentialUsername(credential)
 	if err != nil {
 		t.Fatal(err)
 	}

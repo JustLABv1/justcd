@@ -584,6 +584,7 @@ func (s *Service) executeQueuedOperation(ctx context.Context, operation store.Op
 		app.TargetManifestPath = record.Plan.Rollback.Settings.TargetManifestPath
 		app.NamespaceManifestPaths = record.Plan.Rollback.Settings.NamespaceManifestPaths
 		app.Renderer = record.Plan.Rollback.Settings.Renderer
+		app.HelmChart = record.Plan.Rollback.Settings.HelmChart
 		app.KustomizeHelmEnabled = record.Plan.Rollback.Settings.KustomizeHelmEnabled
 		app.KustomizeNamespaceOverride = record.Plan.Rollback.Settings.KustomizeNamespaceOverride
 		app.HelmValuesFiles = record.Plan.Rollback.Settings.HelmValuesFiles
